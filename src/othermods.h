@@ -15,6 +15,8 @@ using SetFn = int (*)(const char* key, float value);
 // A DLL mod's settings calls (<prefix>_get / _set); false while it isn't loaded.
 bool api(Mod mod, GetFn& get, SetFn& set);
 bool loaded(Mod mod);
+// A DLL mod's menu export (<prefix>_menu: UTF-16 rows, its docs/MENU-EXPORT.md); nullptr without one.
+const wchar_t* menu(Mod mod);
 
 // The script mods the script mod found loaded (bit 1 << kPerformance). Any thread.
 void setScriptMods(int bits);

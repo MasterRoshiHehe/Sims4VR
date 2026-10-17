@@ -47,6 +47,16 @@ bool loaded(Mod mod) {
     return api(mod, get, set);
 }
 
+const wchar_t* menu(Mod mod) {
+    if (mod != kBodyPhysics && mod != kSoundControl) return nullptr;
+    using MenuFn = const wchar_t* (*)();
+    const char* const names[2] = {"ibp_menu", "esc_menu"};
+    for (const Names& file : kNames[mod])
+        if (HMODULE m = GetModuleHandleW(file.file))
+            if (auto fn = reinterpret_cast<MenuFn>(GetProcAddress(m, names[mod]))) return fn();
+    return nullptr;
+}
+
 void setScriptMods(int bits) {
     if (g_scriptMods.exchange(bits) != bits)
         LOG("Other mods: Claude Performance %s", (bits >> kPerformance) & 1 ? "loaded" : "not loaded");

@@ -6,9 +6,13 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cwchar>
+#include <cwctype>
+#include <iterator>
 #include <mutex>
 #include <thread>
 #include <deque>
+#include <string>
 #include <vector>
 
 #include "armik.h"
@@ -107,11 +111,8 @@ const Page kFixedPages[] = {
     {L"Tablet", L"Tablet (build/buy)", L"Phone"},
     {L"Sound", L"Sound", L"Advanced"},
     {L"Performance", L"Claude Performance", L"", othermods::kPerformance},
-    // Extended Sound Control's pages (its /mnt/project-files/sound/docs/VR-ROWS.md, 2026-10-17).
-    {L"Sound control", L"Extended Sound Control", L"", othermods::kSoundControl},
-    {L"Sound control advanced", L"Advanced", L"Sound control"},
 };
-// The pages: ours, then those other mods' menu exports add (Integrated Body Physics, mergeMenus).
+// The pages: ours, then those other mods' menu exports add (Integrated Body Physics, Extended Sound Control: mergeMenus).
 std::vector<Page> g_pages(std::begin(kFixedPages), std::end(kFixedPages));
 int pageCount() { return static_cast<int>(g_pages.size()); }
 
@@ -244,12 +245,6 @@ Row choice(const wchar_t* group, const wchar_t* label, const char* section, cons
     return r;
 }
 
-// A row of the separate Extended Sound Control mod instead of Integrated Body Physics.
-Row soundRow(Row r) {
-    r.sound = true;
-    return r;
-}
-
 std::vector<Row> makeRows() {
     const wchar_t* view = L"View";
     const wchar_t* moving = L"Moving";
@@ -350,9 +345,9 @@ std::vector<Row> makeRows() {
         link(advanced, L"Phone", phone),
         link(advanced, L"Sound", sound),
         reset,
-        // Its pages come from its own menu export once it is loaded (mergeMenus, v0.13.236).
+        // Their pages come from their own menu exports once they are loaded (mergeMenus, v0.13.236/237).
         link(L"Other mods", L"Integrated Body Physics", L"ibp:main"),
-        link(L"Other mods", L"Extended Sound Control", L"Sound control"),
+        link(L"Other mods", L"Extended Sound Control", L"esc:main"),
         link(L"Other mods", L"Claude Performance", L"Performance"),
 
         cheats,
@@ -376,49 +371,6 @@ std::vector<Row> makeRows() {
                                         L"claudeperf_profile.txt. The game runs slower while it records."),
         perfButton(L"Profile 60 s", 76, L"Records for 60 s which game functions take the most time and writes them to "
                                         L"claudeperf_profile.txt. The game runs slower while it records."),
-
-        // The separate Extended Sound Control mod (was Claude Sound; user 2026-10-16 19:45Z): its settings through
-        // esc_get/set, like Integrated Body Physics'. Pages as its docs/VR-ROWS.md (2026-10-17).
-        soundRow(jiggleNumber(L"Sound control", L"Master boost", "boost", 1, 4, 0.1f, 100, L"%.0f%%",
-                              L"Makes the whole game louder than its own 100 %. Goes through the game's own "
-                              L"limiter, so loud moments get squeezed instead of crackling. 100 % = the game's "
-                              L"own loudness.")),
-        soundRow(jiggleNumber(L"Sound control", L"Music boost", "music_boost", 1, 4, 0.1f, 100, L"%.0f%%",
-                              L"Music (radios, stereos, the score) louder than the game's Music slider allows. "
-                              L"On top of Master boost.")),
-        soundRow(jiggleNumber(L"Sound control", L"Sound effects boost", "effects_boost", 1, 4, 0.1f, 100, L"%.0f%%",
-                              L"Sound effects louder than the game's Sound Effects slider allows. On top of Master boost.")),
-        soundRow(jiggleNumber(L"Sound control", L"Voices boost", "voices_boost", 1, 4, 0.1f, 100, L"%.0f%%",
-                              L"Sims' voices louder than the game's Voices slider allows. On top of Master boost.")),
-        soundRow(jiggleNumber(L"Sound control", L"Ambient boost", "ambient_boost", 1, 4, 0.1f, 100, L"%.0f%%",
-                              L"Ambience (birds, wind, rain, city hum) louder. The game has no slider for it. Set "
-                              L"Advanced > Ambient sounds are first so this boosts the right sounds. On top of "
-                              L"Master boost.")),
-        soundRow(jiggleSwitch(L"Sound control", L"Clarity", "clarity",
-                              L"Stops the game muffling ordinary sounds below the Muffle floor and opens its treble "
-                              L"cuts, for a clearer, brighter sound. Phone, TV and radio speaker sounds stay as the "
-                              L"game makes them. Off = the game's own sound.")),
-        link(L"Sound control", L"Advanced settings", L"Sound control advanced"),
-        soundRow(jiggleNumber(L"Sound control advanced", L"Muffle floor", "clarity_floor", 1000, 16000, 500, 1,
-                              L"%.0f Hz",
-                              L"With Clarity on, how dull the game may make a sound (distance, walls, closed doors). "
-                              L"Higher = clearer but less muffled through walls. The game goes down to 500 Hz.")),
-        soundRow(jiggleNumber(L"Sound control advanced", L"UI sounds boost", "ui_boost", 1, 4, 0.1f, 100, L"%.0f%%",
-                              L"Menu clicks and notification sounds louder. On top of Master boost.")),
-        soundRow(jiggleNumber(L"Sound control advanced", L"Menu music boost", "menu_music_boost", 1, 4, 0.1f, 100,
-                              L"%.0f%%", L"The main menu and loading music louder. On top of Master boost.")),
-        soundRow(jiggleNumber(L"Sound control advanced", L"Ambient sounds are", "ambient_bus", 1, 4, 1, 1,
-                              L"group %.0f",
-                              L"Which of the game's 4 hidden sound groups is ambience. Each change silences that "
-                              L"group for 4 seconds: stand outside, step through 1 to 4 and stop on the one that "
-                              L"makes the birds and wind drop out.")),
-        soundRow(jiggleConfirm(L"Sound control advanced", L"Look at the game's mixer now", "probe",
-                               L"Writes how the game's sound mixer is built to extendedsoundcontrol_probe.txt in the "
-                               L"Extended Sound Control mod folder. Changes no sound. Takes a few seconds in the "
-                               L"background.")),
-        soundRow(jiggleSwitch(L"Sound control advanced", L"Look at the mixer after each lot load", "probe_on_load",
-                              L"Does the same once a lot has loaded, so the file shows the mixer as it is while "
-                              L"you play.")),
 
         link(view, L"Picture", L"View picture"),
         link(view, L"Smooth motion", L"View motion"),
@@ -774,11 +726,13 @@ void buildLines() {
 }
 
 // How many settings a page holds, its own pages' too (shown on the rows that open it).
-int pageSize(int page) {
+int pageSize(int page, int depth = 0) {
     int n = 0;
     for (const Row& r : g_rows) {
         if (r.page != page || r.kind == Kind::Back) continue;
-        n += r.kind == Kind::Link && r.linkPage != page ? pageSize(r.linkPage) : 1;
+        if (r.kind == Kind::Link && (r.linkPage <= 0 || !pageShown(r.linkPage))) continue;
+        // depth: another mod's menu could link round in a circle
+        n += r.kind == Kind::Link && r.linkPage != page ? depth < 8 ? pageSize(r.linkPage, depth + 1) : 0 : 1;
     }
     return n;
 }
@@ -924,6 +878,170 @@ void readJiggle() {
         else
             g_values[i] = v;
     }
+}
+
+// A number field of a menu export ("." the decimal point, whatever the locale).
+float menuNumber(const std::wstring& s) {
+    size_t i = 0;
+    float sign = 1, value = 0, scale = 0;
+    if (i < s.size() && (s[i] == L'-' || s[i] == L'+')) sign = s[i++] == L'-' ? -1.0f : 1.0f;
+    for (; i < s.size(); ++i) {
+        if (s[i] == L'.' && scale == 0) {
+            scale = 1;
+        } else if (s[i] >= L'0' && s[i] <= L'9') {
+            value = value * 10 + (s[i] - L'0');
+            scale *= 10;
+        } else {
+            break;
+        }
+    }
+    return sign * (scale > 1 ? value / scale : value);
+}
+
+// A number format from a menu export: exactly one %f/%g/%e (with flags, width,
+// precision) and any %%; anything else could read past the one value we pass.
+bool safeFormat(const std::wstring& f) {
+    int conversions = 0;
+    for (size_t i = 0; i < f.size(); ++i) {
+        if (f[i] != L'%') continue;
+        if (++i < f.size() && f[i] == L'%') continue;
+        while (i < f.size() && wcschr(L"-+ 0#", f[i])) ++i;
+        while (i < f.size() && iswdigit(f[i])) ++i;
+        if (i < f.size() && f[i] == L'.')
+            for (++i; i < f.size() && iswdigit(f[i]);) ++i;
+        if (i >= f.size() || !wcschr(L"fFgGeE", f[i])) return false;
+        ++conversions;
+    }
+    return conversions == 1;
+}
+
+// Another mod's menu export (othermods::menu, Integrated Body Physics'
+// docs/MENU-EXPORT.md; user 2026-10-17 16:09Z): its pages and rows join ours
+// the first time the menu opens with that mod loaded, so its layout changes
+// with no Sims4VR build. Rows flagged novr (only without VR), key rows (its
+// keyboard hotkey, off while Sims4VR is loaded) and kinds or flags we don't
+// know are left out.
+bool mergeMenu(othermods::Mod mod, const wchar_t* prefix) {
+    const wchar_t* text = othermods::menu(mod);
+    if (!text) return false;
+    static std::deque<std::wstring> texts;  // pages and rows keep pointers to these
+    static std::deque<std::string> keys;
+    auto keep = [](std::wstring s) {
+        texts.push_back(std::move(s));
+        return texts.back().c_str();
+    };
+    auto pageId = [&](const std::wstring& id) { return keep(prefix + id); };
+    auto key = [](const std::wstring& k) {
+        std::string s;
+        for (wchar_t c : k) s += c < 128 ? static_cast<char>(c) : '?';
+        keys.push_back(s);
+        return keys.back().c_str();
+    };
+    const int pagesBefore = pageCount();
+    std::vector<Row> rows;
+    int skipped = 0;
+    for (const wchar_t* at = text; *at;) {
+        const wchar_t* end = wcschr(at, L'\n');
+        std::wstring line(at, end ? end : at + wcslen(at));
+        at = end ? end + 1 : at + line.size();
+        if (!line.empty() && line.back() == L'\r') line.pop_back();
+        if (line.empty()) continue;
+        std::vector<std::wstring> f;
+        for (size_t a = 0;;) {
+            size_t b = line.find(L'\t', a);
+            f.push_back(line.substr(a, b == std::wstring::npos ? std::wstring::npos : b - a));
+            if (b == std::wstring::npos) break;
+            a = b + 1;
+        }
+        f.resize(std::max<size_t>(f.size(), 11));
+        const std::wstring& kind = f[0];
+        if (kind == L"page") {
+            if (f[1].empty()) continue;
+            Page page{pageId(f[1]), keep(f[3]), f[2].empty() ? L"" : pageId(f[2])};
+            if (f[2].empty()) page.mod = mod;  // its first page: shown while the mod is loaded
+            g_pages.push_back(page);
+            continue;
+        }
+        if (kind == L"link") {
+            rows.push_back(link(pageId(f[1]), keep(f[2]), pageId(f[3])));
+            continue;
+        }
+        const bool isNumber = kind == L"number";
+        if (!isNumber && kind != L"switch" && kind != L"confirm") {
+            ++skipped;  // key rows and kinds we don't know
+            continue;
+        }
+        bool show = true;
+        const std::wstring& flags = f[isNumber ? 9 : 4];
+        for (size_t a = 0; a <= flags.size();) {
+            size_t b = flags.find(L',', a);
+            std::wstring flag = flags.substr(a, b == std::wstring::npos ? std::wstring::npos : b - a);
+            flag.erase(0, flag.find_first_not_of(L' '));
+            flag.erase(flag.find_last_not_of(L' ') + 1);
+            if (!flag.empty() && flag != L"vr") show = false;  // novr, or a flag we don't know
+            if (b == std::wstring::npos) break;
+            a = b + 1;
+        }
+        if (!show || f[3].empty()) {
+            ++skipped;
+            continue;
+        }
+        const wchar_t* tip = f[isNumber ? 10 : 5].empty() ? nullptr : keep(f[isNumber ? 10 : 5]);
+        if (isNumber) {
+            float min = menuNumber(f[4]), max = menuNumber(f[5]), step = menuNumber(f[6]), shown = menuNumber(f[7]);
+            if (!(max > min) || !(step > 0)) {
+                ++skipped;
+                continue;
+            }
+            rows.push_back(jiggleNumber(pageId(f[1]), keep(f[2]), key(f[3]), min, max, step, shown != 0 ? shown : 1,
+                                        safeFormat(f[8]) ? keep(f[8]) : L"%.2f", tip));
+        } else if (kind == L"switch") {
+            rows.push_back(jiggleSwitch(pageId(f[1]), keep(f[2]), key(f[3]), tip));
+        } else {
+            rows.push_back(jiggleConfirm(pageId(f[1]), keep(f[2]), key(f[3]), tip));
+        }
+        rows.back().sound = mod == othermods::kSoundControl;
+    }
+    std::lock_guard<std::mutex> lock(g_valueMutex);  // liveValue reads the rows on the script mod's thread
+    size_t added = 0;
+    for (Row& r : rows) {
+        r.page = pageOf(r.group);
+        if (r.page < pagesBefore) {  // not one of its own pages
+            ++skipped;
+            continue;
+        }
+        if (r.kind == Kind::Link) r.linkPage = pageOf(r.target);
+        g_rows.push_back(r);
+        ++added;
+    }
+    for (int p = pagesBefore; p < pageCount(); ++p) {
+        Row back;
+        back.group = g_pages[p].group;
+        back.label = L"‹  Back";
+        back.kind = Kind::Back;
+        back.page = p;
+        back.linkPage = parentOf(p);
+        g_rows.push_back(back);
+    }
+    for (Row& r : g_rows)
+        if (r.kind == Kind::Link) r.linkPage = pageOf(r.target);  // ours to its pages (Other mods)
+    g_flags.resize(g_rows.size(), 0);
+    g_values.resize(g_rows.size(), 0.0f);
+    g_changed.resize(g_rows.size(), 0);
+    g_removed.resize(g_rows.size(), 0);
+    LOG("Settings: %ls's menu: %d pages, %zu rows (%d left out)", prefix, pageCount() - pagesBefore, added, skipped);
+    return true;
+}
+
+// The other mods' menus, once each, as soon as they are loaded. True when one came in now.
+bool mergeMenus() {
+    static bool merged[othermods::kModCount] = {};
+    bool any = false;
+    if (!merged[othermods::kBodyPhysics] && mergeMenu(othermods::kBodyPhysics, L"ibp:"))
+        any = merged[othermods::kBodyPhysics] = true;
+    if (!merged[othermods::kSoundControl] && mergeMenu(othermods::kSoundControl, L"esc:"))
+        any = merged[othermods::kSoundControl] = true;
+    return any;
 }
 
 void changed(size_t i) {
@@ -1663,6 +1781,8 @@ void open() {
     g_dirX = g_dirY = 9;
     g_pressWas = true;
     g_resetArmed = 0;
+    if (mergeMenus() && g_reopenPage < 0 && !g_savedPage.empty())
+        loadPage(g_savedPage);  // the page you left was one of its pages
     readJiggle();
     if (g_reopenPage >= 0) {
         openPage(g_reopenPage, g_reopenRow);
