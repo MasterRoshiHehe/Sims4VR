@@ -2338,6 +2338,38 @@ void hookedProjection(void* camera) {
             std::memcpy(at, centre, sizeof(centre));
         }
     }
+    {
+        // The mirror pass's camera has the eye's centre (copied) and its glass clip on (+0x280). The game's clip
+        // maths assumes a centred frustum, which popped objects out of mirrors. Build it with no centre, so the clip
+        // is right, then put the centre's shift (third column, x and y) back into the matrix: it is only a shear of
+        // x/y, the clip is the depth row (user marks 2026-10-20: right with the lopsided eye off).
+        uint8_t* cam = static_cast<uint8_t*>(camera);
+        float* centre = reinterpret_cast<float*>(cam + kCentreOffset);
+        uint32_t* clip = reinterpret_cast<uint32_t*>(cam + 0x280);
+        float* m = reinterpret_cast<float*>(cam + 0x70);
+        if (reinterpret_cast<uintptr_t>(camera) != g_writtenCamera.load(std::memory_order_relaxed) && *clip != 0 &&
+            std::isfinite(centre[0]) && std::isfinite(centre[1]) && (centre[0] != 0 || centre[1] != 0)) {
+            const float keep[2] = {centre[0], centre[1]};
+            const uint32_t keepClip = *clip;
+            *clip = 0;
+            g_originalProjection(camera);  // the eye's own projection, no clip
+            const float shear[2] = {m[8], m[9]};
+            *clip = keepClip;
+            centre[0] = centre[1] = 0;
+            g_originalProjection(camera);  // centred, with the clip
+            m[8] = shear[0];
+            m[9] = shear[1];
+            centre[0] = keep[0];
+            centre[1] = keep[1];
+            static int logs = 0;
+            if (logs < 5) {
+                ++logs;
+                LOG("Mirror clip: camera %p built centred with the glass clip, then sheared by the eye's centre %.3f %.3f (%.3f %.3f)",
+                    camera, keep[0], keep[1], shear[0], shear[1]);
+            }
+            return;
+        }
+    }
     clearOldCentre(camera, "projection build");
     g_originalProjection(camera);
 }

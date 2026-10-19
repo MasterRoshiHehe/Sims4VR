@@ -268,7 +268,7 @@ void hookedUpdater(void* manager) {
         }
         const bool inFront = mine && front;
         if (mine && !inFront) continue;  // in your head: left as the game has it
-        if (mine && (type == kFlyaway || type == kHeadline)) continue;  // your own stat changes and nameplate stay on the flat UI
+        if (mine && type == kHeadline) continue;  // your own nameplate stays on the flat UI (your stat changes and relationship +/- show in front of you)
         if (!inFront && !at<uint8_t>(rec, kRecShown)) continue;
         if (count >= kMaxPieces) continue;
         float p[4] = {};
@@ -396,11 +396,13 @@ int frameCards(const camera::View& view, int textureWidth, int textureHeight, Ca
             static int s_frontLogs = 0;
             if (s_frontLogs < 10) {
                 ++s_frontLogs;
-                LOG("Bubbles: your Sim's %s card, slot %.3f,%.3f-%.3f,%.3f of the UI", piece.type == kBalloon ? "bubble" : "skill bar",
+                LOG("Bubbles: your Sim's %s card, slot %.3f,%.3f-%.3f,%.3f of the UI", piece.type == kBalloon ? "bubble" : piece.type == kFlyaway ? "stat/relationship change" : "skill bar",
                     piece.uv[0], piece.uv[1], piece.uv[2], piece.uv[3]);
             }
             const float s = o.worldScale;
-            const float* pos = piece.type == kBalloon ? o.bubbleOwnPos : o.skillOwnPos;
+            float pos[3];
+            std::memcpy(pos, piece.type == kBalloon ? o.bubbleOwnPos : o.skillOwnPos, sizeof(pos));
+            if (piece.type == kFlyaway) pos[1] += 0.07f;  // over the skill bar's place
             k = o.bubbleOwnSize * s / kBalloonWidth;
             centre = {hp.x + (hr.x * pos[0] + hu.x * pos[1] - hb.x * pos[2]) * s,
                       hp.y + (hr.y * pos[0] + hu.y * pos[1] - hb.y * pos[2]) * s,
