@@ -1302,7 +1302,9 @@ void solveArm(void* pose, uint8_t* skeleton, Xf* locals, const Arm& arm, int sid
     }
     if (curled) g_gameCurl[sideIndex].store(curl / curled, std::memory_order_relaxed);
 
-    float fingers = weight * (1 - side.hold);
+    // Our phone in this hand (setHoldPose): its fingers are ours whatever the
+    // game's animation does or holds (an idle's hand pose, a carried prop's grip).
+    float fingers = held ? weight : weight * (1 - side.hold);
     Side posed = side;
     posed.index = side.index * (1 - side.point);  // a pointing finger stays straight
     if (grabbing) {
@@ -1317,7 +1319,7 @@ void solveArm(void* pose, uint8_t* skeleton, Xf* locals, const Arm& arm, int sid
         posed.thumbSpread = hold.spread;
     }
     if (fingers > 0.01f) {
-        if (g_gripHold[sideIndex].load(std::memory_order_relaxed) && g_sideGrip[sideIndex].valid)
+        if (!held && g_gripHold[sideIndex].load(std::memory_order_relaxed) && g_sideGrip[sideIndex].valid)
             poseGrip(locals, arm, g_sideGrip[sideIndex], fingers);
         else
             poseFingers(skeleton, locals, arm, posed, fingers);
