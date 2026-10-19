@@ -45,6 +45,7 @@ void s4vr_set_body_view(int on);
 void s4vr_set_voice_sim(unsigned long long objectId);
 void s4vr_set_game_menu(int open);
 void s4vr_set_popup(int open);
+void s4vr_set_call(int on);
 void s4vr_set_paused(int paused);
 void s4vr_set_clock(int hour, int minute, int day, int speed);
 void s4vr_hud_items(int kind, const char* data, int size);
@@ -315,6 +316,12 @@ PyObject* setPopup(PyObject*, PyObject* args) {
     int open = 0;
     if (!py.PyArg_ParseTuple(args, "p", &open)) return nullptr;
     s4vr_set_popup(open);
+    return none();
+}
+PyObject* setCall(PyObject*, PyObject* args) {
+    int on = 0;
+    if (!py.PyArg_ParseTuple(args, "p", &on)) return nullptr;
+    s4vr_set_call(on);
     return none();
 }
 PyObject* setClock(PyObject*, PyObject* args) {
@@ -754,6 +761,7 @@ PyMethodDef methods[] = {
      "set_script_mods(int): other script mods loaded, for the debug menu's pages (4: Claude Performance)"},
     {"set_voice_sim", setVoiceSim, METH_VARARGS, "set_voice_sim(object_id): the Sim whose mouth your mic moves; 0 = none"},
     {"set_game_menu", setGameMenu, METH_VARARGS, "set_game_menu(bool): a game menu or dialog (UI modal) is open"},
+    {"set_call", setCall, METH_VARARGS, "set_call(bool): a phone call of your Sim runs"},
     {"set_popup", setPopup, METH_VARARGS, "set_popup(bool): the game shows a popup (a modal dialog)"},
     {"set_paused", setPaused, METH_VARARGS, "set_paused(bool): the game clock is paused"},
     {"set_clock", setClock, METH_VARARGS, "set_clock(hour, minute, day, speed): the game clock, for the HUD"},

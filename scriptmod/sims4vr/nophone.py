@@ -56,6 +56,39 @@ def _phone_context(asm, interaction):
         return False
 
 
+_call = None  # the phone interaction you picked and which still runs: a call
+
+
+def _start_call(interaction):
+    """A phone interaction you picked (not an idle) keeps the phone in your hand until it ends."""
+    global _call
+    try:
+        source = getattr(getattr(interaction, 'context', None), 'source', None)
+        from interactions.context import InteractionSource
+        if source in (InteractionSource.PIE_MENU, InteractionSource.SCRIPT_WITH_USER_INTENT) and \
+                not interaction.is_finishing:
+            if _call is not interaction:
+                _call = interaction
+                _log('phone call: {}'.format(interaction))
+            native.set_call(True)
+    except Exception as e:
+        _log('call start failed: {!r}'.format(e))
+
+
+def call_check():
+    """The DLL asks (control 82) while the phone is held out for a call: still running?"""
+    global _call
+    try:
+        call = _call
+        if call is None or getattr(call, 'is_finishing', True) or getattr(call, 'has_been_reset', False):
+            _call = None
+            native.set_call(False)
+    except Exception as e:
+        _call = None
+        native.set_call(False)
+        _log('call check failed: {!r}'.format(e))
+
+
 def _wrap_get_prop():
     import animation
 
@@ -78,6 +111,7 @@ def _wrap_get_prop():
                     _props[id(prop)] = prop
                     if len(_props) > 40:
                         _props.pop(next(iter(_props)))
+                    _start_call(interaction)
                     if prop_name not in _hidden:
                         _hidden.add(prop_name)
                         _log('the game\'s phone prop "{}" hidden for {}'.format(prop_name, interaction))

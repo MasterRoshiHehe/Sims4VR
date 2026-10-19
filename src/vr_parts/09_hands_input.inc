@@ -64,6 +64,7 @@ static void smoothAim(XrVector3f& origin, XrVector3f& dir) {
 // Your Sim's phone (see "Your Sim's phone" below), and the hand holding it
 // (0 left, 1 right).
 static bool g_phoneOut = false;
+static std::atomic<bool> g_onCall{false};  // a phone call of your Sim is running (nophone.py): the phone stays in the hand
 static int g_phoneHand = 1;
 static bool g_tablet = false;  // what's out is the tablet (first-person build/buy), not the phone
 static float g_tabletAspect = 1;  // its screen's width / height (the palette's, or the whole UI's)

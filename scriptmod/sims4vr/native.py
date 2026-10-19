@@ -335,6 +335,13 @@ def set_game_menu(open_):
         fn(bool(open_))
 
 
+def set_call(on):
+    """Whether a phone call of your Sim runs (the phone then stays in its hand)."""
+    fn = _optional('set_call')  # absent in a DLL older than the script
+    if fn is not None:
+        fn(bool(on))
+
+
 def set_popup(open_):
     """Whether the game shows a popup (a modal dialog), for the phone's buzz."""
     fn = _optional('set_popup')  # absent in a DLL older than the script

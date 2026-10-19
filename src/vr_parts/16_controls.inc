@@ -121,9 +121,23 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
         for (int i = 0; i < 2; ++i) closed[i] = closed[i] ? hands[i].grip > 0.35f : hands[i].grip > 0.6f;
         // Into or out of build/buy with it out: put away (it comes back as the other).
         const bool tabletNow = g_buildBuy && g_config.tablet;
-        if (g_phoneOut && (!closed[g_phoneHand] || !firstPerson || !g_config.phone || g_tablet != tabletNow)) {
+        // A phone call of your Sim keeps the phone in its hand (opening the hand doesn't put it away); every
+        // 2 s the script is asked whether the call still runs (nophone.call_check).
+        const bool callHold = g_onCall.load(std::memory_order_relaxed) && firstPerson && g_config.phone && !tabletNow;
+        if (callHold) {
+            static ULONGLONG askedAt = 0;
+            const ULONGLONG t = GetTickCount64();
+            if (t - askedAt > 2000) {
+                askedAt = t;
+                grab::pushControl(82);
+            }
+        }
+        if (callHold && !g_phoneOut && head.valid) {
+            phoneOpen(1);  // the call brings the phone out in your right hand
+        } else if (g_phoneOut && !callHold &&
+                   (!closed[g_phoneHand] || !firstPerson || !g_config.phone || g_tablet != tabletNow)) {
             phoneClose(!firstPerson ? "left first person" : g_tablet != tabletNow ? "build/buy changed" : "hand opened");
-        } else if (!g_phoneOut && firstPerson && g_config.phone && head.valid) {
+        } else if (!g_phoneOut && !callHold && firstPerson && g_config.phone && head.valid) {
             for (int i : {1, 0}) {
                 if (closed[i] && !closedWas[i] && hands[i].valid && !grab::holding(i) && !armik::holding(i) &&
                     atRightHip(hands[i], i, head)) {

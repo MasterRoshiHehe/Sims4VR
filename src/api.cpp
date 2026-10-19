@@ -257,6 +257,7 @@ S4VR_API void s4vr_set_body_view(int on) { s4vr::camera::setBodyView(on != 0); }
 // A game menu or dialog is open (1) or not (0): the phone closes it when put away.
 S4VR_API void s4vr_set_game_menu(int open) { s4vr::vr::setGameMenu(open != 0); }
 S4VR_API void s4vr_set_popup(int open) { s4vr::vr::setPopup(open != 0); }
+S4VR_API void s4vr_set_call(int on) { s4vr::vr::setCall(on != 0); }
 S4VR_API void s4vr_set_paused(int paused) { s4vr::vr::setPaused(paused != 0); }
 S4VR_API void s4vr_set_clock(int hour, int minute, int day, int speed) { s4vr::vr::setClock(hour, minute, day, speed); }
 

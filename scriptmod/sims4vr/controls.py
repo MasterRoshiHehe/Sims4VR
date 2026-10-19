@@ -305,6 +305,9 @@ def _tick(_handle):
             elif what in (78, 79):
                 from sims4vr import notify
                 notify.opened() if what == 78 else notify.clear()
+            elif what == 82:
+                from sims4vr import nophone
+                nophone.call_check()
             elif what == 81:
                 from sims4vr import phonecal
                 phonecal.send()

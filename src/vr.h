@@ -50,6 +50,7 @@ bool pieShown();
 void setGameMenu(bool open);
 // The game shows a popup (a modal dialog; phone.py): the phone buzzes, and shows it when taken out.
 void setPopup(bool open);
+void setCall(bool on);  // a phone call of your Sim runs (the phone stays in your hand)
 // Python (phone.py): the game clock is paused (the pause symbol in first person).
 void setPaused(bool paused);
 // Python (controls.py): the game clock for the HUD (hud.h).

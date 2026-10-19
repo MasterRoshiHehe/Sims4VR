@@ -161,6 +161,14 @@ void setPopup(bool open) {
     }
 }
 
+// A phone call of your Sim (nophone.py): the phone stays out until it ends, whatever the hand does.
+void setCall(bool on) {
+    if (g_onCall.exchange(on) != on) {
+        static int logged = 0;
+        if (logged++ < 40) LOG("Phone: call %s", on ? "started" : "ended");
+    }
+}
+
 // Build/buy mode (buildbuy.py): in first person the phone gesture brings out
 // the tablet, with the whole build/buy UI on its screen.
 static std::atomic<bool> g_buildBuy{false};
