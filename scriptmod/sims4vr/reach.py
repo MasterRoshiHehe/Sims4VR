@@ -40,7 +40,7 @@ import clock
 import services
 import sims4.math
 
-from sims4vr import native
+from sims4vr import hooks, native
 
 REACH = 1.0  # metres from you to the nearest edge of what you use
 SIM_RADIUS = 0.25  # metres: a Sim's edge from its centre
@@ -347,15 +347,10 @@ def _greyed(why):
 def _wrap_menu():
     """Options you can't use show greyed out with why, instead of doing nothing."""
     from interactions.choices import ChoiceMenu
-    original = ChoiceMenu.__dict__.get('is_valid_aop')
-    if original is None:
-        native._log('reach: ChoiceMenu.is_valid_aop not found')
-        return
-    plain = original.__func__ if isinstance(original, staticmethod) else original
     counts = {}
 
-    def is_valid_aop(aop, context, *args, **kwargs):
-        result = plain(aop, context, *args, **kwargs)
+    def is_valid_aop(original, aop, context, *args, **kwargs):
+        result = original(aop, context, *args, **kwargs)
         try:
             if not result or not native.setting_flag('body', 'grey_far', True) or not _on():
                 return result
@@ -374,17 +369,13 @@ def _wrap_menu():
             _log('grey check failed: {!r}'.format(e))
             return result
 
-    ChoiceMenu.is_valid_aop = staticmethod(is_valid_aop)
+    hooks.hook('reach', ChoiceMenu, 'is_valid_aop', is_valid_aop, first_person_only=True)
 
 
 def _wrap_select():
     from interactions.choices import ChoiceMenu
-    original = ChoiceMenu.__dict__.get('select')
-    if original is None:
-        native._log('reach: ChoiceMenu.select not found')
-        return
 
-    def select(self, choice_id, *args, **kwargs):
+    def select(original, self, choice_id, *args, **kwargs):
         try:
             result = _check(self, choice_id)
         except Exception as e:
@@ -394,7 +385,7 @@ def _wrap_select():
             return result
         return original(self, choice_id, *args, **kwargs)
 
-    ChoiceMenu.select = select
+    hooks.hook('reach', ChoiceMenu, 'select', select, first_person_only=True)
 
 
 # ---------------------------------------------------------------------------

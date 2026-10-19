@@ -18,7 +18,7 @@ import os
 
 import services
 
-from sims4vr import native
+from sims4vr import hooks, native
 
 _reported = None
 _wallpaper_wanted = None  # (type, instance) still to read and send
@@ -161,9 +161,7 @@ def _wrap():
     from zone import Zone
 
     def wrap(name, on):
-        original = getattr(Zone, name)
-
-        def wrapped(self, *args, **kwargs):
+        def wrapped(original, self, *args, **kwargs):
             try:
                 return original(self, *args, **kwargs)
             finally:
@@ -171,8 +169,7 @@ def _wrap():
                     _report(on, name)
                 except Exception as e:
                     native._log('buildbuy: report failed: {!r}'.format(e))
-        wrapped.__name__ = name
-        setattr(Zone, name, wrapped)
+        hooks.hook('buildbuy', Zone, name, wrapped)
 
     wrap('on_build_buy_enter', True)
     wrap('on_build_buy_exit', False)

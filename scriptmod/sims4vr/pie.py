@@ -25,7 +25,7 @@ import services
 from server.client import Client
 from server_commands import interaction_commands
 
-from sims4vr import native
+from sims4vr import hooks, native
 
 _errors = 0
 # The PieMenu widget's request id of the last pie menu it asked for: it shows
@@ -48,16 +48,12 @@ def _log_error(where, e):
 
 
 def _wrap_create():
-    original = getattr(interaction_commands, 'create_pie_menu_message', None)
-    if original is None:
-        native._log('pie: create_pie_menu_message not found')
-        return
 
-    def create_pie_menu_message(*args, **kwargs):
+    def create_pie_menu_message(original, *args, **kwargs):
         global _last_reference
         msg = original(*args, **kwargs)
         try:
-            frame = sys._getframe(1)
+            frame = hooks.caller_frame(1)
             if frame.f_code.co_name == 'generate_choices':
                 if _self_pie:
                     # Your own pie as the game's self-click has it: the widget skips the
@@ -73,7 +69,7 @@ def _wrap_create():
             _log_error('create_pie_menu_message', e)
         return msg
 
-    interaction_commands.create_pie_menu_message = create_pie_menu_message
+    hooks.hook('pie', interaction_commands, 'create_pie_menu_message', create_pie_menu_message)
 
 
 def _opened_on(target, sim):
@@ -86,19 +82,15 @@ def _opened_on(target, sim):
 
 
 def _wrap_select():
-    original = getattr(Client, 'select_interaction', None)
-    if original is None:
-        native._log('pie: Client.select_interaction not found')
-        return
 
-    def select_interaction(self, *args, **kwargs):
+    def select_interaction(original, self, *args, **kwargs):
         try:
             native.pie_menu(0)
         except Exception as e:
             _log_error('select_interaction', e)
         return original(self, *args, **kwargs)
 
-    Client.select_interaction = select_interaction
+    hooks.hook('pie', Client, 'select_interaction', select_interaction)
 
 
 def open_self():

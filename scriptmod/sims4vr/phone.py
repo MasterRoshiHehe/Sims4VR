@@ -27,7 +27,7 @@ import sims4.math
 from clock import ClockSpeedMode, GameClock, GameSpeedChangeSource
 from objects.system import create_prop
 
-from sims4vr import native
+from sims4vr import hooks, native
 
 PHONE_DEFINITIONS = (0x285C, 0x23819)  # the cell phone prop; a newer one if that is missing
 HAND_JOINT = 'b__R_Hand__'
@@ -284,11 +284,8 @@ def _report_modal(clock_service):
 
 
 def _wrap_clock():
-    original_push = GameClock.push_speed
-    original_pop = GameClock.pop_speed
-    original_remove = GameClock.remove_request
 
-    def push_speed(self, speed, source=GameSpeedChangeSource.GAMEPLAY, validity_check=None, reason='',
+    def push_speed(original_push, self, speed, source=GameSpeedChangeSource.GAMEPLAY, validity_check=None, reason='',
                    immediate=False):
         if speed == ClockSpeedMode.PAUSED and source == GameSpeedChangeSource.UI_MODAL:
             check = validity_check
@@ -306,21 +303,21 @@ def _wrap_clock():
             _report_modal(self)
         return request
 
-    def pop_speed(self, speed=None, source=GameSpeedChangeSource.GAMEPLAY, reason='', immediate=False):
+    def pop_speed(original_pop, self, speed=None, source=GameSpeedChangeSource.GAMEPLAY, reason='', immediate=False):
         request = original_pop(self, speed=speed, source=source, reason=reason, immediate=immediate)
         if source == GameSpeedChangeSource.UI_MODAL:
             _report_modal(self)
         return request
 
-    def remove_request(self, request, source=GameSpeedChangeSource.GAMEPLAY, reason='', immediate=False):
+    def remove_request(original_remove, self, request, source=GameSpeedChangeSource.GAMEPLAY, reason='', immediate=False):
         result = original_remove(self, request, source=source, reason=reason, immediate=immediate)
         if source == GameSpeedChangeSource.UI_MODAL:
             _report_modal(self)
         return result
 
-    GameClock.push_speed = push_speed
-    GameClock.pop_speed = pop_speed
-    GameClock.remove_request = remove_request
+    hooks.hook('phone', GameClock, 'push_speed', push_speed)
+    hooks.hook('phone', GameClock, 'pop_speed', pop_speed)
+    hooks.hook('phone', GameClock, 'remove_request', remove_request)
 
 
 try:
@@ -348,15 +345,12 @@ def _wrap_dialogs():
     from ui.ui_dialog_service import UiDialogService
 
     def wrap(name):
-        original = getattr(UiDialogService, name)
-
-        def wrapped(self, *args, **kwargs):
+        def wrapped(original, self, *args, **kwargs):
             try:
                 return original(self, *args, **kwargs)
             finally:
                 _report_popup(self)
-        wrapped.__name__ = name
-        setattr(UiDialogService, name, wrapped)
+        hooks.hook('phone', UiDialogService, name, wrapped)
 
     for name in ('dialog_show', 'dialog_respond', 'dialog_cancel', '_dialog_cancel_internal',
                  'disable_on_teardown'):
@@ -378,9 +372,8 @@ _paused = None
 
 def _wrap_clock():
     from clock import GameClock, ClockSpeedMode
-    original = GameClock._update_speed
 
-    def _update_speed(self, *args, **kwargs):
+    def _update_speed(original, self, *args, **kwargs):
         try:
             return original(self, *args, **kwargs)
         finally:
@@ -392,8 +385,7 @@ def _wrap_clock():
                     native.set_paused(paused)
             except Exception:
                 pass
-    _update_speed.__name__ = '_update_speed'
-    GameClock._update_speed = _update_speed
+    hooks.hook('phone', GameClock, '_update_speed', _update_speed)
 
 
 try:

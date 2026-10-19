@@ -7,14 +7,13 @@ import time
 
 import camera
 
-from sims4vr import body, native
+from sims4vr import body, hooks, native
 
 latest = None  # (time, (x, y, z) position, (x, y, z) target)
 _calls = 0
-_original_update = camera.update
 
 
-def _update(*args, **kwargs):
+def _update(original, *args, **kwargs):
     global latest, _calls
     try:
         position = kwargs.get('camera_position')
@@ -31,10 +30,10 @@ def _update(*args, **kwargs):
         body.tick()
     except Exception:
         pass
-    return _original_update(*args, **kwargs)
+    return original(*args, **kwargs)
 
 
-camera.update = _update
+hooks.hook('camwatch', camera, 'update', _update)
 
 
 def current():

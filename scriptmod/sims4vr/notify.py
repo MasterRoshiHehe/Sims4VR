@@ -29,7 +29,7 @@ delete one (the wall's DeleteButton), 10000000 + id * 8 + k = its k-th button
 the game's notification button answers it (ui_dialog_service().dialog_respond
 with the button's choice id) while the game still waits for the answer.
 """
-from sims4vr import native
+from sims4vr import hooks, native
 
 _MAX = 60
 _SHOW_SECONDS = 9.0  # how long a card stays over the head
@@ -263,19 +263,15 @@ def clear():
 
 def _wrap():
     from ui.ui_dialog_notification import UiDialogNotification
-    original = UiDialogNotification.distribute_dialog
-    if getattr(original, '_sims4vr', False):
-        return
 
-    def distribute_dialog(self, dialog_type, dialog_msg, **kwargs):
+    def distribute_dialog(original, self, dialog_type, dialog_msg, **kwargs):
         result = original(self, dialog_type, dialog_msg, **kwargs)
         try:
             _record(self, dialog_msg)
         except Exception as e:
             _log_error('keeping a notification', e)
         return result
-    distribute_dialog._sims4vr = True
-    UiDialogNotification.distribute_dialog = distribute_dialog
+    hooks.hook('notify', UiDialogNotification, 'distribute_dialog', distribute_dialog)
 
 
 try:

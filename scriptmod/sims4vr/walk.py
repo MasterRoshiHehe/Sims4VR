@@ -43,6 +43,7 @@ import terrain
 from interactions.utils.interaction_liabilities import ANIMATION_CONTEXT_LIABILITY
 
 from sims4vr import carried, doors, follow, halt, hint, native, outdoors, scripted, stairs, stride, trail
+from sims4vr import hooks
 from sims4vr import livedrag  # noqa: F401  (no live-mode pick-up in first person)
 
 TICK_SECONDS = 0.1
@@ -163,17 +164,13 @@ def _game_planning():
 
 def _wrap_plan_route():
     from interactions.utils.routing import PlanRoute
-    original = PlanRoute.generate_path
-    if getattr(original, '_sims4vr_walk', False):
-        return
 
-    def generate_path(self, timeline):
+    def generate_path(original, self, timeline):
         _plans.add(self)
         result = yield from original(self, timeline)
         return result
 
-    generate_path._sims4vr_walk = True
-    PlanRoute.generate_path = generate_path
+    hooks.hook('walk', PlanRoute, 'generate_path', generate_path)
 
 
 @native.timed('walk wall check reused (the game was planning a route)', 0.006)

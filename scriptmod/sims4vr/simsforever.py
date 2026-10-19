@@ -24,7 +24,7 @@ import weakref
 import alarms
 import clock
 
-from sims4vr import native
+from sims4vr import hooks, native
 
 TICK_SECONDS = 0.5
 
@@ -153,9 +153,8 @@ def _wrap_sound():
     if _wrapped:
         return
     from audio.primitive import PlaySound
-    original = PlaySound.start
 
-    def start(self):
+    def start(original, self):
         global _through
         try:
             if _silenced(self):
@@ -174,7 +173,7 @@ def _wrap_sound():
             pass  # not weak-referenceable: not tracked
         return result
 
-    PlaySound.start = start
+    hooks.hook('simsforever', PlaySound, 'start', start)
     _wrapped = True
 
 

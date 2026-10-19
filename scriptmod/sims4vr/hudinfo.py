@@ -21,7 +21,7 @@ import time
 
 import services
 
-from sims4vr import native
+from sims4vr import hooks, native
 
 # hud.h Kind
 NEEDS, MOODLETS, QUEUE, WANTS, QUEUE_BADGES = range(5)
@@ -564,9 +564,8 @@ def _wrap_funds():
     SetMoney op's vfx_amount) for the active household: the HUD shows it in
     first person, in front of you a little up and right (user 2026-10-15 20:46Z)."""
     from sims.funds import _Funds
-    original = _Funds._send_money_update_internal
 
-    def _send_money_update_internal(self, household_id, vfx_amount, reason=0):
+    def _send_money_update_internal(original, self, household_id, vfx_amount, reason=0):
         result = original(self, household_id, vfx_amount, reason)
         try:
             if vfx_amount and household_id == services.active_household_id():
@@ -574,8 +573,7 @@ def _wrap_funds():
         except Exception as e:
             native._log('hudinfo: money flyaway failed: {!r}'.format(e))
         return result
-    _send_money_update_internal.__name__ = '_send_money_update_internal'
-    _Funds._send_money_update_internal = _send_money_update_internal
+    hooks.hook('hudinfo', _Funds, '_send_money_update_internal', _send_money_update_internal)
 
 
 try:

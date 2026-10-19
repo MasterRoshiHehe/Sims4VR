@@ -36,7 +36,7 @@ has the same names as the one before, the eyes open at once.
 import re
 import sys
 
-from sims4vr import native
+from sims4vr import hooks, native
 
 MAX_LOGS = 40
 SCENE_ANIMATION = 'WickedWhims_Sex_Animation'  # affordance names of a scene's animations
@@ -70,9 +70,8 @@ def install():
     from distributor.system import Distributor
     fade_ops = (distributor.ops.FadeOpacity, distributor.ops.SetOpacity)
     arb_op = distributor.ops.StartArb
-    original = Distributor.add_op
 
-    def add_op(self, obj, op):
+    def add_op(original, self, obj, op):
         result = original(self, obj, op)
         if isinstance(op, fade_ops):
             try:
@@ -86,7 +85,7 @@ def install():
                 native._log('fades: animation check failed: {!r}'.format(e))
         return result
 
-    Distributor.add_op = add_op
+    hooks.hook('fades', Distributor, 'add_op', add_op)
     _installed = True
 
 

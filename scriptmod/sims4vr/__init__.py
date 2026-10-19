@@ -9,3 +9,10 @@ except Exception:
     native._log(traceback.format_exc())
 
 native.load()
+
+try:
+    from sims4vr import hooks
+    hooks.start()  # [hooks] switches from sims4vr.ini, one log line per wrapped game function
+except Exception:
+    import traceback
+    native._log(traceback.format_exc())

@@ -76,7 +76,7 @@ import time
 import sims4.math
 import services
 
-from sims4vr import native
+from sims4vr import hooks, native
 
 LINE_UP = 1.0  # m: a walk this short is the game's line-up step and plays as usual
 TICK = 0.25  # s (game time at normal speed) between checks while an action waits
@@ -97,7 +97,6 @@ _holds = {}  # sim id -> dict(interaction, goal, level, nodes, started)
 _arrived_at = None  # when you last walked onto a spot (the stick may still be pushed)
 _logs = 0
 _errors = 0
-_original = None
 _walk_to = None  # a social mixer waiting for you to walk to its Sim (walk_to)
 MIXER_NEAR = 1.5  # m: unused since v0.13.197: the mixer plays within scripted.talk_distance()
 MIXER_TEST_EVERY = 1.0  # s: the waiting mixer pick is tested again this often
@@ -529,14 +528,14 @@ def _hold_gen(timeline, sim, path, interaction, why, callback_fn=None):
         _log('{} {} after {:.0f} s'.format(outcome, interaction, time.monotonic() - hold['started']))
 
 
-def _do_route(timeline, agent, path, *args, **kwargs):
+def _do_route(original, timeline, agent, path, *args, **kwargs):
     why = None
     try:
         why = _should_hold(agent, path, kwargs.get('interaction'))
     except Exception as e:
         _error('the hold check', e)
     if why is None:
-        result = yield from _original(timeline, agent, path, *args, **kwargs)
+        result = yield from original(timeline, agent, path, *args, **kwargs)
         return result
     result = yield from _hold_gen(timeline, agent, path, kwargs.get('interaction'), why,
                                   kwargs.get('callback_fn'))
@@ -544,17 +543,8 @@ def _do_route(timeline, agent, path, *args, **kwargs):
 
 
 def _wrap_do_route():
-    global _original
     import interactions.utils.routing as game_routing
-    original = getattr(game_routing, 'do_route', None)
-    if original is None:
-        native._log('trail: routing.do_route not found')
-        return
-    if getattr(original, '_sims4vr_trail', False):
-        return
-    _original = original
-    _do_route._sims4vr_trail = True
-    game_routing.do_route = _do_route
+    hooks.hook('trail', game_routing, 'do_route', _do_route)
 
 
 def walk_to(sim, target, aop, context, front=False):

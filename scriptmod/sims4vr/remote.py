@@ -40,7 +40,7 @@ to do with the TV is left.
 """
 import time
 
-from sims4vr import native
+from sims4vr import hooks, native
 
 TURN_OFF = 'tv_turnoff'  # the game's remote-in-hand Turn Off
 TV_PICKS = ('tv_turnoff', 'tv_turnoff_immediate')
@@ -551,12 +551,8 @@ def _wrap_get_prop():
     """The game's remote animation makes its own remote: learn which prop that
     is, and hide it while yours is in your hand."""
     import animation
-    original = animation.AnimationContext.__dict__.get('_get_prop')
-    if original is None:
-        native._log('remote: AnimationContext._get_prop not found; the remote stays the game\'s')
-        return
 
-    def _get_prop(self, asm, prop_name, definition_id, interaction=None):
+    def _get_prop(original, self, asm, prop_name, definition_id, interaction=None):
         global _remote_def
         prop = original(self, asm, prop_name, definition_id, interaction)
         try:
@@ -579,20 +575,19 @@ def _wrap_get_prop():
             _log('remote prop check failed: {!r}'.format(e))
         return prop
 
-    animation.AnimationContext._get_prop = _get_prop
+    hooks.hook('remote', animation.AnimationContext, '_get_prop', _get_prop)
 
 
 def _wrap_queue_append():
     from event_testing.results import TestResult
     from interactions.interaction_finisher import FinishingType
     from interactions.interaction_queue import InteractionQueue
-    original = InteractionQueue.__dict__.get('append')
     watch = _watch_class()
-    if original is None or watch is None:
-        native._log('remote: InteractionQueue.append or WatchSuperInteraction not found; TVs keep the game\'s way')
+    if watch is None:
+        native._log('remote: WatchSuperInteraction not found; TVs keep the game\'s way')
         return
 
-    def append(self, interaction, *args, **kwargs):
+    def append(original, self, interaction, *args, **kwargs):
         value = None
         try:
             if _first_person(getattr(interaction, 'sim', None)):
@@ -626,7 +621,7 @@ def _wrap_queue_append():
             _set_directly(tv, value, 'remote failed')
         return TestResult(False, 'VR first person: switched with the remote where you are')
 
-    InteractionQueue.append = append
+    hooks.hook('remote', InteractionQueue, 'append', append, first_person_only=True)
 
 
 try:

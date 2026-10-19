@@ -11,7 +11,7 @@ God view keeps the game's switching. Switch: [body] keep_sim in sims4vr.ini.
 """
 import sys
 
-from sims4vr import native
+from sims4vr import hooks, native
 
 _logs = 0
 
@@ -50,30 +50,25 @@ def _refuse(client, what):
 
 def _wrap_client():
     from server.client import Client
-    by_id = Client.__dict__.get('set_active_sim_by_id')
-    next_sim = Client.__dict__.get('set_next_sim')
-    if by_id is None or next_sim is None:
-        native._log('onesim: Client switching methods not found')
-        return
 
-    def set_active_sim_by_id(self, sim_id, *args, **kwargs):
+    def set_active_sim_by_id(by_id, self, sim_id, *args, **kwargs):
         # Only the sims.set_active command (portraits) calls this.
         current = self.active_sim_info
         if current is not None and current.id != sim_id and locked(self):
             return _refuse(self, 'switching to Sim {}'.format(sim_id))
         return by_id(self, sim_id, *args, **kwargs)
 
-    def set_next_sim(self, *args, **kwargs):
+    def set_next_sim(next_sim, self, *args, **kwargs):
         # The game also calls this itself when the active Sim can't stay active;
         # only the player's next-Sim command is refused.
-        caller = sys._getframe(1)
+        caller = hooks.caller_frame(1)
         if caller.f_code.co_name == 'set_next_sim' and \
                 caller.f_globals.get('__name__', '').endswith('sim_commands') and locked(self):
             return _refuse(self, 'next Sim')
         return next_sim(self, *args, **kwargs)
 
-    Client.set_active_sim_by_id = set_active_sim_by_id
-    Client.set_next_sim = set_next_sim
+    hooks.hook('onesim', Client, 'set_active_sim_by_id', set_active_sim_by_id)
+    hooks.hook('onesim', Client, 'set_next_sim', set_next_sim)
 
 
 try:

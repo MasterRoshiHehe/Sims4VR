@@ -7,16 +7,11 @@ play_mode = body play starts in first person.
 """
 import zone
 
-from sims4vr import native
+from sims4vr import hooks, native
 
 
 def _wrap(name, playing):
-    original = getattr(zone.Zone, name, None)
-    if original is None:
-        native._log('autostereo: Zone.{} not found'.format(name))
-        return
-
-    def wrapper(self, *args, **kwargs):
+    def wrapper(original, self, *args, **kwargs):
         if not playing:
             steps = [('body', 'disable'), ('controls', 'stop')]
         else:
@@ -34,7 +29,7 @@ def _wrap(name, playing):
             native._log('autostereo {}: {!r}'.format(name, e))
         return original(self, *args, **kwargs)
 
-    setattr(zone.Zone, name, wrapper)
+    hooks.hook('autostereo', zone.Zone, name, wrapper)
 
 
 _wrap('on_loading_screen_animation_finished', True)

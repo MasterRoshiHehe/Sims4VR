@@ -12,7 +12,7 @@ without you play mid-head).
 """
 import sys
 
-from sims4vr import native
+from sims4vr import hooks, native
 
 MAX_LOGS = 150
 _seen = set()  # (sound, target kind, caller) already logged
@@ -26,9 +26,8 @@ def install():
     if _installed:
         return
     from audio.primitive import PlaySound
-    original = PlaySound.start
 
-    def start(self):
+    def start(original, self):
         result = original(self)
         try:
             note(self)
@@ -36,7 +35,7 @@ def install():
             native._log('sound log failed: {!r}'.format(e))
         return result
 
-    PlaySound.start = start
+    hooks.hook('soundlog', PlaySound, 'start', start)
     _installed = True
     try:
         _install_ops()
@@ -51,9 +50,8 @@ def install():
 def _install_clips():
     """Clip Sound events as an animation's events are handled."""
     from native.animation import arb
-    original = arb.NativeArb.handle_events
 
-    def handle_events(self, events=None, event_context=None):
+    def handle_events(original, self, events=None, event_context=None):
         if events is None:
             events = self._events()
         try:
@@ -66,7 +64,7 @@ def _install_clips():
             native._log('sound log failed: {!r}'.format(e))
         return original(self, events, event_context)
 
-    arb.NativeArb.handle_events = handle_events
+    hooks.hook('soundlog', arb.NativeArb, 'handle_events', handle_events)
 
 
 _clip_keys_logged = False
@@ -124,19 +122,17 @@ def _install_ops():
     from audio.primitive import PlaySound
     sound_start = DistributorOps_pb2.Operation.SOUND_START
     generic = distributor.ops.GenericProtocolBufferOp
-    original_init = generic.__init__
-    original_serialize = distributor.ops.Op.serialize_op
 
-    def init(self, *args, **kwargs):
+    def init(original_init, self, *args, **kwargs):
         original_init(self, *args, **kwargs)
         if getattr(self, 'type_constant', None) == sound_start:
             try:
-                made_in = sys._getframe(1).f_code.co_filename.replace('\\', '/')
+                made_in = hooks.caller_frame(1).f_code.co_filename.replace('\\', '/')
                 self._s4vr_by = None if made_in.endswith('audio/primitive.py') else _caller()  # PlaySound's: logged there
             except Exception:
                 pass
 
-    def serialize_op(self, msg, op, op_type):
+    def serialize_op(original_serialize, self, msg, op, op_type):
         original_serialize(self, msg, op, op_type)
         if op_type == sound_start and not isinstance(self, PlaySound) and getattr(self, '_s4vr_by', '') is not None:
             try:
@@ -144,8 +140,8 @@ def _install_ops():
             except Exception as e:
                 native._log('sound log failed: {!r}'.format(e))
 
-    generic.__init__ = init
-    distributor.ops.Op.serialize_op = serialize_op
+    hooks.hook('soundlog', generic, '__init__', init)
+    hooks.hook('soundlog', distributor.ops.Op, 'serialize_op', serialize_op)
 
 
 def _caller():
@@ -154,7 +150,8 @@ def _caller():
     parts = []
     while frame is not None and len(parts) < 5:
         path = frame.f_code.co_filename.replace('\\', '/')
-        if not path.endswith(('audio/primitive.py', 'sims4vr/simsforever.py', 'sims4vr/soundlog.py')):
+        if not path.endswith(('audio/primitive.py', 'sims4vr/simsforever.py', 'sims4vr/soundlog.py',
+                              'sims4vr/hooks.py')):
             parts.append('{}:{}'.format('/'.join(path.split('/')[-2:]), frame.f_code.co_name))
         frame = frame.f_back
     return ' < '.join(parts) or '?'

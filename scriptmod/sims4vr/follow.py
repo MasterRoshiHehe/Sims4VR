@@ -40,7 +40,7 @@ import math
 import time
 import weakref
 
-from sims4vr import native
+from sims4vr import hooks, native
 
 CHECK_EVERY = 0.5  # seconds
 FOLLOW_START = 2.2  # m: farther than this (or on another floor) they walk to you
@@ -264,9 +264,7 @@ def _wrap_leaving():
     from situations.situation_manager import SituationManager
 
     def wrap(name, how):
-        original = getattr(SituationManager, name)
-
-        def leave(self, sim, *args, **kwargs):
+        def leave(original, self, sim, *args, **kwargs):
             try:
                 if not _paused and getattr(sim, 'id', None) in _followers:
                     if _leave_later.get(sim.id) != 'now':
@@ -277,7 +275,7 @@ def _wrap_leaving():
                 _log('leave check failed: {!r}'.format(e))
             return original(self, sim, *args, **kwargs)
 
-        setattr(SituationManager, name, leave)
+        hooks.hook('follow', SituationManager, name, leave)
 
     wrap('make_sim_leave', 'leave')
     wrap('make_sim_leave_now_must_run', 'now')
@@ -443,12 +441,8 @@ def _wrap_queue_append():
     from event_testing.results import TestResult
     from interactions.interaction_finisher import FinishingType
     from interactions.interaction_queue import InteractionQueue
-    original = InteractionQueue.__dict__.get('append')
-    if original is None:
-        _log('InteractionQueue.append not found')
-        return
 
-    def append(self, interaction, *args, **kwargs):
+    def append(original, self, interaction, *args, **kwargs):
         why = None
         if _followers and not _sending:
             try:
@@ -469,7 +463,7 @@ def _wrap_queue_append():
             pass
         return TestResult(False, 'VR first person: ' + why)
 
-    InteractionQueue.append = append
+    hooks.hook('follow', InteractionQueue, 'append', append)
 
 
 # ---------------------------------------------------------------------------

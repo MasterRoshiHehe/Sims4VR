@@ -21,7 +21,7 @@ on TVs too; user 2026-10-14 23:53Z), from wherever you are.
 Switch: [claude] on in sims4vr.ini; [claude] exe = where claude.exe is when
 it isn't in the usual place (empty: %LOCALAPPDATA%\\AnthropicClaude).
 """
-from sims4vr import body, native
+from sims4vr import body, hooks, native
 
 CLOSE_DISTANCE = 2.0  # metres from the computer's nearest edge
 TV_CLOSE_DISTANCE = 10.0  # a TV is used from the sofa
@@ -297,9 +297,8 @@ def _wrap_affordances():
     _wrapped = True
     try:
         from interactions.choices import ChoiceMenu
-        add_aop = ChoiceMenu.add_aop
 
-        def add_aop_logged(self, aop, *args, **kwargs):
+        def add_aop_logged(add_aop, self, aop, *args, **kwargs):
             before = len(self)
             result = add_aop(self, aop, *args, **kwargs)
             try:
@@ -311,15 +310,13 @@ def _wrap_affordances():
                 pass
             return result
 
-        ChoiceMenu.add_aop = add_aop_logged
+        hooks.hook('claude', ChoiceMenu, 'add_aop', add_aop_logged)
 
         # A computer's options left out of its pie, with why (user 20:50Z: the
         # computer's pie lost most of its options; 185 one time, 22 the next).
-        current = ChoiceMenu.__dict__.get('is_valid_aop')
-        plain = current.__func__ if isinstance(current, staticmethod) else current
         state = {'context': None, 'target': None, 'tested': 0, 'left_out': 0}
 
-        def is_valid_aop(aop, context, *args, **kwargs):
+        def is_valid_aop(plain, aop, context, *args, **kwargs):
             result = plain(aop, context, *args, **kwargs)
             try:
                 target = _owner(aop.target)
@@ -342,7 +339,7 @@ def _wrap_affordances():
                 pass
             return result
 
-        ChoiceMenu.is_valid_aop = staticmethod(is_valid_aop)
+        hooks.hook('claude', ChoiceMenu, 'is_valid_aop', is_valid_aop)
     except Exception as e:
         _log('pie logging not set up: {!r}'.format(e))
 

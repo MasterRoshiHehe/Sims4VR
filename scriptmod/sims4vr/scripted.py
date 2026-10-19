@@ -79,7 +79,7 @@ import time
 
 import sims4.math
 
-from sims4vr import native
+from sims4vr import hooks, native
 
 HERE = 0.5  # m: how far from where it stands your Sim may be placed for another Sim's social
 
@@ -572,17 +572,13 @@ def _wrap_queue_append():
     from interactions.context import InteractionSource
     from interactions.interaction_finisher import FinishingType
     from interactions.interaction_queue import InteractionQueue
-    original = InteractionQueue.__dict__.get('append')
-    if original is None:
-        native._log('scripted: InteractionQueue.append not found')
-        return
     on_its_own = {
         InteractionSource.AUTONOMY: 'on its own',
         InteractionSource.SOCIAL_ADJUSTMENT: 'to fit a conversation',
         InteractionSource.GET_COMFORTABLE: 'to get comfortable',
     }
 
-    def append(self, interaction, *args, **kwargs):
+    def append(original, self, interaction, *args, **kwargs):
         why = None
         unwelcome = False
         try:
@@ -631,55 +627,47 @@ def _wrap_queue_append():
             pass
         return TestResult(False, 'VR first person: your Sim does nothing on its own')
 
-    InteractionQueue.append = append
+    hooks.hook('scripted', InteractionQueue, 'append', append)
 
 
 def _wrap_social_init():
     from interactions.social.social_super_interaction import SocialSuperInteraction
-    original = SocialSuperInteraction.__init__
 
-    def __init__(self, *args, **kwargs):
+    def __init__(original, self, *args, **kwargs):
         original(self, *args, **kwargs)
         try:
             _social_with_you(self)
         except Exception as e:
             _error('a social with you', e)
 
-    SocialSuperInteraction.__init__ = __init__
+    hooks.hook('scripted', SocialSuperInteraction, '__init__', __init__)
 
 
 def _wrap_should_push_consume():
     from crafting import crafting_interactions
     cls = crafting_interactions.CraftingPhaseSuperInteractionMixin
-    original = cls.__dict__.get('should_push_consume')
-    if original is None:
-        native._log('scripted: should_push_consume not found')
-        return
 
-    def should_push_consume(self, *args, **kwargs):
+    def should_push_consume(original, self, *args, **kwargs):
         if _yours(getattr(self, 'sim', None)):
             _log('{}: no automatic eating or drinking for you'.format(self))
             return False
         return original(self, *args, **kwargs)
 
-    cls.should_push_consume = should_push_consume
+    hooks.hook('scripted', cls, 'should_push_consume', should_push_consume, first_person_only=True)
 
 
 def _wrap_pick_up_and_consume():
     from crafting import serving_interactions
-    original = getattr(serving_interactions, 'push_object_pick_up_and_consume', None)
-    if original is None:
-        native._log('scripted: push_object_pick_up_and_consume not found')
-        return
 
-    def push_object_pick_up_and_consume(parent_crafting_interaction, order_sim, object_to_serve, *args, **kwargs):
+    def push_object_pick_up_and_consume(original, parent_crafting_interaction, order_sim, object_to_serve, *args, **kwargs):
         if _yours(order_sim):
             from event_testing.results import TestResult
             _log('{} served: yours to pick up'.format(object_to_serve))
             return TestResult(False, 'VR first person: you pick it up yourself')
         return original(parent_crafting_interaction, order_sim, object_to_serve, *args, **kwargs)
 
-    serving_interactions.push_object_pick_up_and_consume = push_object_pick_up_and_consume
+    hooks.hook('scripted', serving_interactions, 'push_object_pick_up_and_consume', push_object_pick_up_and_consume,
+               first_person_only=True)
 
 
 _balloon_logs = 0
@@ -688,9 +676,8 @@ _balloon_logs = 0
 def _wrap_balloon_distribute():
     """Diagnostics (bubbles thread): logs balloons the game sends for your Sim in first person."""
     from balloon.balloon_request import BalloonRequest
-    original = BalloonRequest.distribute
 
-    def distribute(self, *args, **kwargs):
+    def distribute(original, self, *args, **kwargs):
         global _balloon_logs
         result = original(self, *args, **kwargs)
         try:
@@ -704,7 +691,7 @@ def _wrap_balloon_distribute():
             _error('balloon log', e)
         return result
 
-    BalloonRequest.distribute = distribute
+    hooks.hook('scripted', BalloonRequest, 'distribute', distribute)
 
 
 for _wrap in (_wrap_should_push_consume, _wrap_pick_up_and_consume, _wrap_queue_append, _wrap_social_init,

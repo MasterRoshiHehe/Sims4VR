@@ -29,7 +29,7 @@ import struct
 import sys
 import time
 
-from sims4vr import native
+from sims4vr import hooks, native
 
 DOOR, SCREEN, VIDEO = 1, 2, 3  # VIDEO: the TV's own video screen, found in its model
 POPUP_FRONT, POPUP_SIM = 4, 5     # a popup in front of you / beside the Sim it is about
@@ -1051,9 +1051,8 @@ def _on_object():
 
 def _wrap_clock():
     from clock import ClockSpeedMode, GameClock, GameSpeedChangeSource
-    original = GameClock.push_speed  # phone.py's wrapper, if it loaded first
 
-    def push_speed(self, speed, source=GameSpeedChangeSource.GAMEPLAY, validity_check=None, reason='',
+    def push_speed(original, self, speed, source=GameSpeedChangeSource.GAMEPLAY, validity_check=None, reason='',
                    immediate=False):
         if speed == ClockSpeedMode.PAUSED and source == GameSpeedChangeSource.UI_MODAL:
             check = validity_check
@@ -1066,14 +1065,13 @@ def _wrap_clock():
         return original(self, speed, source=source, validity_check=validity_check, reason=reason,
                         immediate=immediate)
 
-    GameClock.push_speed = push_speed
+    hooks.hook('objmenu', GameClock, 'push_speed', push_speed)
 
 
 def _wrap():
     from ui.ui_dialog_service import UiDialogService
-    original_show = UiDialogService.dialog_show
 
-    def dialog_show(self, dialog, *args, **kwargs):
+    def dialog_show(original_show, self, dialog, *args, **kwargs):
         try:
             if _map_shown(dialog):
                 return original_show(self, dialog, *args, **kwargs)
@@ -1137,13 +1135,10 @@ def _wrap():
         except Exception as e:
             _log('showing the popup in the world failed: {!r}'.format(e))
         return result
-    dialog_show.__name__ = 'dialog_show'
-    UiDialogService.dialog_show = dialog_show
+    hooks.hook('objmenu', UiDialogService, 'dialog_show', dialog_show)
 
     def wrap_close(name):
-        original = getattr(UiDialogService, name)
-
-        def wrapped(self, *args, **kwargs):
+        def wrapped(original, self, *args, **kwargs):
             try:
                 return original(self, *args, **kwargs)
             finally:
@@ -1159,8 +1154,7 @@ def _wrap():
                     _map_gone(self)
                 except Exception:
                     pass
-        wrapped.__name__ = name
-        setattr(UiDialogService, name, wrapped)
+        hooks.hook('objmenu', UiDialogService, name, wrapped)
 
     for name in ('dialog_respond', 'dialog_cancel', '_dialog_cancel_internal', 'disable_on_teardown'):
         if hasattr(UiDialogService, name):

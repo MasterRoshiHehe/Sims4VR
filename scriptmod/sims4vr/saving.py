@@ -8,12 +8,10 @@ save (manual, travel, exit) goes through.
 """
 from services import persistence_service
 
-from sims4vr import native
-
-_original = getattr(persistence_service.PersistenceService, '_fill_and_send_save_game_protobufs_gen', None)
+from sims4vr import hooks, native
 
 
-def _fill_and_send_save_game_protobufs_gen(self, *args, **kwargs):
+def _fill_and_send_save_game_protobufs_gen(original, self, *args, **kwargs):
     try:
         from sims4vr import hands
         hands.release_all('the game is saving')
@@ -21,7 +19,7 @@ def _fill_and_send_save_game_protobufs_gen(self, *args, **kwargs):
         phone.before_save()
     except Exception as e:
         native._log('saving: putting things down failed: {!r}'.format(e))
-    result = yield from _original(self, *args, **kwargs)
+    result = yield from original(self, *args, **kwargs)
     try:
         from sims4vr import phone
         phone.after_save()
@@ -30,7 +28,5 @@ def _fill_and_send_save_game_protobufs_gen(self, *args, **kwargs):
     return result
 
 
-if _original is not None:
-    persistence_service.PersistenceService._fill_and_send_save_game_protobufs_gen = _fill_and_send_save_game_protobufs_gen
-else:
-    native._log('saving: save step not found; held objects are not put down before saving')
+hooks.hook('saving', persistence_service.PersistenceService, '_fill_and_send_save_game_protobufs_gen',
+           _fill_and_send_save_game_protobufs_gen)
