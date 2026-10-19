@@ -56,15 +56,48 @@ Config g_options;
 // Their content around the element's origin, in its own units at scale 1 (y down), padded: the
 // SWF timeline bounds (union of all bubble types, show and hide; the bar with its mood clip and
 // level-up glow, not the far-reaching level-up VFX). The balloon's tail is its origin.
-enum Type { kBalloon, kBar };
+enum Type { kBalloon, kBar, kFlyaway };
 struct Box {
     float l, t, r, b;
     float ax, ay;  // where the anchor is (the element's origin minus screenOffset)
 };
-const Box kBoxes[2] = {{-210, -230, 40, 28, 0, 0}, {-22, -405, 220, 50, 100, 50}};
+// The stat flyaway (SimFlyaway, screenOffset -150,-50: the +/- icons that float up over a Sim, a relationship
+// change among them): its text field [127.8,-45,611.8,62.6] and the 70 px it rises.
+const Box kBoxes[3] = {{-210, -230, 40, 28, 0, 0}, {-22, -405, 220, 50, 100, 50}, {127, -115, 612, 64, 150, 50}};
 constexpr float kBalloonWidth = 245;  // the size settings are a bubble's width
 // Lifted pieces are drawn at this scale into slots along the top of the UI.
 constexpr float kSlotScale = 0.6f;
+
+// A lifted piece keeps its slot on the UI for as long as its record lives (and a moment after), so the
+// slot the card is cut from is the slot the piece is drawn into even when the UI texture lags the game
+// thread by a frame, or other pieces come and go (before: slots followed the list order, so cards
+// flickered and showed another Sim's piece). One pool per type, laid out in the top middle of the UI.
+constexpr int kSlotCols[3] = {7, 7, 3}, kSlotRows[3] = {2, 1, 3};
+constexpr int kSlotMax = 21;
+struct SlotOwner {
+    uintptr_t rec = 0;
+    ULONGLONG seen = 0;
+};
+SlotOwner g_slotOwner[3][kSlotMax];
+constexpr ULONGLONG kSlotHoldMs = 400;
+
+// The slot of `rec` in its type's pool (-1: the pool is full).
+int slotFor(int type, uintptr_t rec, ULONGLONG now) {
+    const int n = kSlotCols[type] * kSlotRows[type];
+    int free = -1;
+    for (int i = 0; i < n; ++i) {
+        SlotOwner& o = g_slotOwner[type][i];
+        if (o.rec == rec) {
+            o.seen = now;
+            return i;
+        }
+        if (free < 0 && (!o.rec || now - o.seen > kSlotHoldMs)) free = i;
+    }
+    if (free >= 0) {
+        g_slotOwner[type][free] = {rec, now};
+    }
+    return free;
+}
 
 struct Piece {
     uint64_t object;
@@ -103,6 +136,7 @@ int classify(const uint8_t* rec) {
     std::memcpy(so, rec + kRecScreenOffset, sizeof(so));
     if (about(so[0], 0) && about(so[1], 0) && std::fabs(so[2] + 0.1f) < 0.02f) return kBalloon;
     if (about(so[0], -100) && about(so[1], -50)) return kBar;
+    if (about(so[0], -150) && about(so[1], -50)) return kFlyaway;
     return -1;
 }
 
@@ -149,8 +183,7 @@ void hookedUpdater(void* manager) {
         }
     }
     const bool slots = wanted && stageW > 16 && stageH > 16;
-    // Slots: shelves left to right along the top middle of the UI.
-    float shelfX = stageW * 0.2f, shelfY = stageH * 0.03f, shelfH = 0;
+    const ULONGLONG nowMs = GetTickCount64();
     Piece found[kMaxPieces];
     int count = 0, hidden = 0;
     auto* head = static_cast<uint8_t*>(manager) + kManagerList;
@@ -218,6 +251,7 @@ void hookedUpdater(void* manager) {
         }
         const bool inFront = mine && front;
         if (mine && !inFront) continue;  // in your head: left as the game has it
+        if (mine && type == kFlyaway) continue;  // your own stat changes stay on the flat UI
         if (!inFront && !at<uint8_t>(rec, kRecShown)) continue;
         if (count >= kMaxPieces) continue;
         float p[4] = {};
@@ -225,12 +259,13 @@ void hookedUpdater(void* manager) {
             continue;
         const Box& box = kBoxes[type];
         const float w = (box.r - box.l) * kSlotScale, h = (box.b - box.t) * kSlotScale;
-        if (shelfX + w > stageW * 0.8f) {
-            shelfX = stageW * 0.2f;
-            shelfY += shelfH;
-            shelfH = 0;
-        }
-        if (shelfY + h > stageH * 0.6f) continue;  // no room left
+        const int slot = slotFor(type, reinterpret_cast<uintptr_t>(rec), nowMs);
+        if (slot < 0) continue;  // no room left
+        // The pools are stacked down the top middle: balloons, bars, flyaways.
+        float poolY = stageH * 0.03f;
+        for (int t = 0; t < type; ++t) poolY += (kBoxes[t].b - kBoxes[t].t) * kSlotScale * kSlotRows[t];
+        const float shelfX = stageW * 0.2f + (slot % kSlotCols[type]) * w, shelfY = poolY + (slot / kSlotCols[type]) * h;
+        if (shelfX + w > stageW || shelfY + h > stageH) continue;
         // Its element origin so its box lands in the slot.
         const double x = shelfX - box.l * kSlotScale, y = shelfY - box.t * kSlotScale;
         rec[kRecOccluded] = 0;  // walls hide the card in the world instead
@@ -245,8 +280,6 @@ void hookedUpdater(void* manager) {
         piece.uv[3] = (shelfY + h) / stageH;
         piece.type = static_cast<Type>(type);
         piece.front = inFront;
-        shelfX += w;
-        shelfH = std::max(shelfH, h);
     }
     std::copy(ownNow, ownNow + 8, s_ownSeen);
     static uint64_t s_lastOwn = 0;
