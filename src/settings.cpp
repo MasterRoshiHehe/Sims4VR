@@ -408,6 +408,12 @@ std::vector<Row> makeRows() {
         number(L"View near", L"Near clipping at most", "body", "near_max", &Config::bodyNearMax, 0.1f, 2, 0.05f, 100, L"%.0f cm",
                kView),
         flag(L"View near", L"Rooms in doorways stay whole", "body", "rooms_whole", true, kLive),  // gamefix.cpp
+        number(L"View picture", L"Mirrors reach in rooms (0 = game's)", "stereo", "mirror_far_inside", &Config::mirrorInterior, 0, 15,
+               1, 1, L"%.0f m", kNextStart),
+        number(L"View picture", L"Mirrors and water reach outdoors (0 = game's)", "stereo", "mirror_far_outside",
+               &Config::mirrorExterior, 0, 100, 5, 1, L"%.0f m", kNextStart),
+        toggle(L"View picture", L"No mirror or water reflections", "stereo", "reflections_off", &Config::reflectionsOff,
+               kNextStart),
         toggle(L"View shadows", L"Steady shadows", "body", "steady_shadows", &Config::steadyShadows, kShadows),
         number(L"View shadows", L"Shadows follow the sun every", "body", "shadow_step", &Config::shadowStep, 0, 2, 0.05f, 1,
                L"%.2f°", kShadows),
