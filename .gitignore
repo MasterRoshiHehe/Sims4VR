@@ -13,3 +13,5 @@ handoffs/
 tools/localdumps
 src/linkdump.*
 tools/map_dx9.py
+tools/toolchain/
+build-release/

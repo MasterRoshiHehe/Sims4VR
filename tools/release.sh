@@ -5,6 +5,7 @@
 #   --no-dll      skip the CMake build, reuse the DLL/exe files of the newest release
 #   --allow-dirty build even with uncommitted changes (the version line then says "+dirty")
 # Env: PY37 (Python 3.7 for the .ts4script; default python3.7 / python3), BUILD_DIR (default build-release).
+# Fresh container: bash tools/setup-toolchain.sh first (restores Python 3.7, mingw, cached deps; release.sh sources tools/toolchain/env.sh).
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
@@ -16,6 +17,7 @@ while [ $# -gt 0 ]; do case "$1" in
 REL="$ROOT/release"; mkdir -p "$REL"
 exec 9>"$REL/.lock"; flock 9          # one release at a time; version claimed under this lock
 
+[ -f tools/toolchain/env.sh ] && . tools/toolchain/env.sh   # written by tools/setup-toolchain.sh
 PYBIN="${PY37:-$(command -v python3.7 || command -v python3)}"
 COMMIT="$(git rev-parse --short HEAD)"
 PATHS="src scriptmod config tools CMakeLists.txt"
@@ -34,7 +36,7 @@ for d, _, fs in os.walk(sys.argv[1]):
         if f.endswith('.py'):
             p = os.path.join(d, f)
             try:
-                ast.parse(open(p, encoding='utf-8').read(), p, feature_version=(3, 7))
+                ast.parse(open(p, encoding='utf-8').read(), p, **({} if sys.version_info[:2] == (3, 7) else {'feature_version': (3, 7)}))
             except SyntaxError as e:
                 print('SYNTAX', p, e, file=sys.stderr); bad += 1
 sys.exit(1 if bad else 0)
@@ -59,7 +61,11 @@ if [ $NODLL = 1 ]; then
   cp "$REL/$PREV/sims4vr.map" "$OUT/" 2>/dev/null || true
 else
   B="${BUILD_DIR:-$ROOT/build-release}"
-  cmake -S . -B "$B" -DCMAKE_TOOLCHAIN_FILE="$ROOT/tools/mingw-toolchain.cmake" -DCMAKE_BUILD_TYPE=Release \
+  DEPS=""; if [ -n "${S4VR_DEPS:-}" ] && [ -d "$S4VR_DEPS" ]; then   # cached CMake deps: no network fetch
+    DEPS="-DFETCHCONTENT_SOURCE_DIR_OPENXR=$S4VR_DEPS/openxr -DFETCHCONTENT_SOURCE_DIR_MINHOOK=$S4VR_DEPS/minhook -DFETCHCONTENT_SOURCE_DIR_IMGUI=$S4VR_DEPS/imgui"
+    [ -d "$B/openxr_loader" ] || { mkdir -p "$B"; cp -r "$S4VR_DEPS/openxr_loader" "$B/"; cp "$S4VR_DEPS"/openxr_loader_windows-*.zip "$B/"; }
+  fi
+  cmake -S . -B "$B" $DEPS -DCMAKE_TOOLCHAIN_FILE="$ROOT/tools/mingw-toolchain.cmake" -DCMAKE_BUILD_TYPE=Release \
         -DS4VR_BUILD_VERSION="$VER" -DS4VR_BUILD_COMMIT="$COMMIT" >/dev/null
   cmake --build "$B" -j"$(nproc)" --target sims4vr
   cp "$B"/package/sims4vr/*.dll "$B"/package/sims4vr/*.exe "$B"/package/sims4vr/*.package "$PKG/" 2>/dev/null || true
