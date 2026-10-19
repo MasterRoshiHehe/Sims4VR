@@ -412,6 +412,8 @@ std::vector<Row> makeRows() {
                1, 1, L"%.0f m", kNextStart),
         number(L"View picture", L"Mirrors and water reach outdoors (0 = game's)", "stereo", "mirror_far_outside",
                &Config::mirrorExterior, 0, 100, 5, 1, L"%.0f m", kNextStart),
+        toggle(L"View picture", L"Mirrors clip at the glass (may pop objects)", "stereo", "mirror_clip", &Config::mirrorClip,
+               kLive),
         toggle(L"View picture", L"No mirror or water reflections", "stereo", "reflections_off", &Config::reflectionsOff,
                kNextStart),
         toggle(L"View shadows", L"Steady shadows", "body", "steady_shadows", &Config::steadyShadows, kShadows),

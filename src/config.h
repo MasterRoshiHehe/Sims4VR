@@ -203,6 +203,7 @@ struct Config {
     float outdoorFade = 4.0f;
     float mirrorInterior = 0;  // max metres a mirror in a room renders (0: the game's 15)
     float mirrorExterior = 0;  // ... outdoors (0: the game's 100)
+    bool mirrorClip = false;  // first person lopsided eye: keep the game's clip at the mirror glass
     bool reflectionsOff = false;  // no mirror or water reflections at all
 
     // Phone (first person): close your right hand at your right hip and your

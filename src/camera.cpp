@@ -1421,6 +1421,30 @@ void applyEye(uint8_t* dst) {
         for (int i = 0; i < 3; ++i) g_writtenEye[slot][i].store(eyeAt[i], std::memory_order_relaxed);
         g_writtenCamera.store(reinterpret_cast<uintptr_t>(dst), std::memory_order_release);
     }
+    // The mirror pass clips its camera at the glass (CameraObliqueClip 0x1209c30, run when the byte at
+    // 0x280cb7c is set, game 1.128): on the eye's off-centre projection that skews the clip and objects pop in
+    // and out of mirrors. In first person it goes off ([stereo] mirror_clip = 0; user A2), the game's again
+    // outside it.
+    {
+        static uint8_t* flag = nullptr;
+        static int original = -1;
+        static bool tried = false;
+        if (!tried) {
+            tried = true;
+            if (gameaddr::recognised() && !gameaddr::dx9()) flag = reinterpret_cast<uint8_t*>(GetModuleHandleW(nullptr)) + 0x280cb7c;
+        }
+        if (flag) {
+            if (original < 0) {
+                original = *flag;
+                LOG("Mirror clip: the game's glass clip is %d", original);
+            }
+            const uint8_t want = body && !g_centred && !g_config.mirrorClip ? 0 : static_cast<uint8_t>(original);
+            if (*flag != want) {
+                *flag = want;
+                LOG("Mirror clip: %d (%s)", want, want ? "the game's" : "off while the eye is lopsided");
+            }
+        }
+    }
     // The game's near limit (about 1.5 m) is meant for a camera far above; at
     // eye height it cuts off the table in front of you. In first person it
     // follows what is actually close (nearplane.h), never under near_clip.
