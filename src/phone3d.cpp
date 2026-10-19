@@ -198,6 +198,9 @@ std::mutex g_mutex;
 Phone g_phone;
 ID3D11ShaderResourceView* g_uiView = nullptr;
 ID3D11Texture2D* g_uiTexture = nullptr;  // what g_uiView shows (not owned)
+// The panel's own picture (a cut of the game's UI): the phone's app screen shows the HUD atlas in g_uiView.
+ID3D11ShaderResourceView* g_panelView = nullptr;
+ID3D11Texture2D* g_panelTexture = nullptr;
 ID3D11ShaderResourceView* g_pieView = nullptr;  // the pie's: the UI, or a still of it while it flies off
 ID3D11Texture2D* g_pieTexture = nullptr;        // what g_pieView shows (not owned)
 // Speech bubbles and the like (bubbles.h): clear cards in the world, from their atlas.
@@ -261,6 +264,8 @@ void safeRelease(T*& p) {
 void releaseAll() {
     safeRelease(g_uiView);
     g_uiTexture = nullptr;
+    safeRelease(g_panelView);
+    g_panelTexture = nullptr;
     safeRelease(g_pieView);
     g_pieTexture = nullptr;
     safeRelease(g_bubbleView);
@@ -674,7 +679,7 @@ void setPhone(const Phone& phone, ID3D11Texture2D* ui) {
 void setPanel(const Panel& panel, ID3D11Texture2D* ui) {
     std::lock_guard<std::mutex> lock(g_mutex);
     g_panel = panel;
-    if (panel.show) useUi(ui);
+    if (panel.show) viewOf(ui, g_panelView, g_panelTexture);
 }
 
 bool panelDrawnRecently() { return GetTickCount64() - g_panelDrawnAt.load(std::memory_order_relaxed) < 200; }
@@ -1060,6 +1065,8 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
     fromApp(pie, view);
     ID3D11ShaderResourceView* uiView = g_uiView;
     if (uiView) uiView->AddRef();
+    ID3D11ShaderResourceView* panelView = showPanel ? g_panelView : nullptr;
+    if (panelView) panelView->AddRef();
     ID3D11ShaderResourceView* pieView = showPie ? g_pieView : nullptr;
     if (pieView) pieView->AddRef();
     Panel bubbles[kMaxBubbles];
@@ -1097,6 +1104,7 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
             LOG("Phone 3D: depth %ux%u x%u doesn't fit the view %ux%u x%u; not drawn", dd.Width, dd.Height,
                 dd.SampleDesc.Count, td.Width, td.Height, td.SampleDesc.Count);
         if (uiView) uiView->Release();
+        if (panelView) panelView->Release();
         if (pieView) pieView->Release();
         if (bubbleView) bubbleView->Release();
         if (pieceView) pieceView->Release();
@@ -1216,7 +1224,7 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
     ID3D11ShaderResourceView* sims1View = showSims1 ? simsforever::frameView(context) : nullptr;
     if (showSims1) panelConstants(sims1, kSims1, sims1View);
     if (showSims1 && !buildSims1Mesh(device, sims1.width)) showSims1 = false;
-    if (showPanel) panelConstants(q, kPanel, uiView);
+    if (showPanel) panelConstants(q, kPanel, panelView);
     if (showPie) panelConstants(pie, kPie, pieView);
     // The pie in front of the world, your arms and hands excepted (psPie): with
     // this frame's scene depth and your arms in view space; else depth-tested.
@@ -1310,9 +1318,11 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
             }
             context->OMSetDepthStencilState(g_noDepth, 0);
         }
+        context->PSSetShaderResources(0, 1, &panelView);
         context->UpdateSubresource(g_constants, 0, nullptr, &kPanel, 0, 0);
         context->IASetVertexBuffers(0, 1, &g_panelVertices, &stride, &offset);
         context->Draw(6, 0);
+        context->PSSetShaderResources(0, 1, &uiView);
         if (panelTop) {
             context->PSSetShader(g_ps, nullptr, 0);
             context->OMSetDepthStencilState(g_depthState[reversed ? 1 : 0], 0);
@@ -1408,6 +1418,7 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
     }
     saved.put(context);
     if (uiView) uiView->Release();
+    if (panelView) panelView->Release();
     if (pieView) pieView->Release();
     if (bubbleView) bubbleView->Release();
     if (pieceView) pieceView->Release();

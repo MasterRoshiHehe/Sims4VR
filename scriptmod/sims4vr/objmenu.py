@@ -791,7 +791,8 @@ def _send_popup_content(dialog):
         if msg.HasField('text'):
             records.append('text\x1f' + _loc(msg.text))
         for c in msg.choices:
-            records.append('button\x1f' + (_loc(c.text) if c.HasField('text') else '{}') + '\x1f' + str(c.choice_id))
+            records.append('button\x1f' + (_loc(c.text) if c.HasField('text') else '{}') + '\x1f' + str(c.choice_id) +
+                           '\x1f' + (_loc(c.tooltip_text) if c.HasField('tooltip_text') else ''))
             _popup_choices.append(c.choice_id)
         native.popup_content('\x1e'.join(records).encode('utf-8'))
         _log('popup card from the game\'s message: {} buttons{}'.format(len(_popup_choices), ', two Sims' if chat else ''))

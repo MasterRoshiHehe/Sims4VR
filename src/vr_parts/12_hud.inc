@@ -493,11 +493,43 @@ static void updateNoteCard(const camera::View& view, bool firstPerson, bool head
 static void hideAllHud() {
     bool any = false;
     for (int i = 0; i < kHudCount; ++i) {
-        if (i == kHudPopup || i == kHudPicker || i == kHudNote) continue;
+        if (i == kHudPopup || i == kHudPicker || i == kHudNote || i == kHudTip) continue;  // the tip: updateTip
         any = any || g_hud[i].m.active;
         hideHud(g_hud[i]);
     }
     if (any) phone3d::setPieces(nullptr, 0, nullptr);
+}
+
+// The tooltip of the need, moodlet, want, queue button or popup answer the
+// laser points at (user 18:34Z: as the game's UI shows one), just above that
+// sheet (under the wants), turned as it is; outside the sheet, so never cut.
+static void updateTip() {
+    HudSheet& tip = g_hud[kHudTip];
+    const int kind = hud::tipKind();
+    const float used = hud::tipHeight();
+    const int from = kind == hud::kNeedItems      ? kHudNeeds
+                     : kind == hud::kMoodletItems ? kHudMoodlets
+                     : kind == hud::kWantItems    ? kHudWants
+                     : kind == hud::kQueueItems   ? kHudQueue
+                     : kind == hud::kPopupButtons ? kHudPopup
+                                                  : -1;
+    if (from >= 0 && g_hud[from].m.active && used > 0) {
+        const PieMenu& m = g_hud[from].m;
+        // The wants' tip under them (they are above you), as wide as they are.
+        const bool wants = from == kHudWants;
+        const float w = wants ? m.width * 0.75f
+                        : from == kHudPopup ? std::max(0.22f * g_config.wristScale, m.width * 0.7f)
+                                            : 0.22f * g_config.wristScale,
+                    h = w * used / hud::kTip.w;
+        const float up = (m.height / 2 + h / 2 + 0.006f) * (wants ? -1 : 1);
+        const XrVector3f at{m.pose.position.x + m.y.x * up + m.z.x * 0.006f,
+                            m.pose.position.y + m.y.y * up + m.z.y * 0.006f,
+                            m.pose.position.z + m.y.z * up + m.z.z * 0.006f};
+        tip.onTop = true;
+        placeHud(tip, at, m.x, m.y, w, {hud::kTip.x, hud::kTip.y, hud::kTip.w, used});
+    } else {
+        hideHud(tip);
+    }
 }
 
 // Every frame (updateControls), before the pointer is worked out.
@@ -514,9 +546,10 @@ static void updateHud(const armik::Hand hands[2], bool firstPerson, bool headOk,
         // The popup, picker and notification cards alone (taken away again once they are gone).
         static bool alone = false;
         ID3D11Texture2D* atlas = hud::texture();
-        phone3d::Panel panels[3];
+        phone3d::Panel panels[4];
         int count = 0;
-        for (int i : {kHudPopup, kHudPicker, kHudNote})
+        updateTip();
+        for (int i : {kHudPopup, kHudPicker, kHudNote, kHudTip})
             if (viewOk && atlas && g_hud[i].m.active) {
                 panels[count] = hudPanel(g_hud[i], view);
                 panels[count++].tag = i;
@@ -624,32 +657,7 @@ static void updateHud(const armik::Hand hands[2], bool firstPerson, bool headOk,
         }
     }
 
-    // The tooltip of the need or moodlet the laser points at (user 18:34Z: as
-    // the game's UI shows one), just above that sheet, turned as it is.
-    {
-        HudSheet& tip = g_hud[kHudTip];
-        const int kind = hud::tipKind();
-        const float used = hud::tipHeight();
-        const int from = kind == hud::kNeedItems      ? kHudNeeds
-                         : kind == hud::kMoodletItems ? kHudMoodlets
-                         : kind == hud::kWantItems    ? kHudWants
-                         : kind == hud::kQueueItems   ? kHudQueue
-                                                      : -1;
-        if (from >= 0 && g_hud[from].m.active && used > 0) {
-            const PieMenu& m = g_hud[from].m;
-            // The wants' tip under them (they are above you), as wide as they are.
-            const bool wants = from == kHudWants;
-            const float w = wants ? m.width * 0.75f : 0.22f * g_config.wristScale, h = w * used / hud::kTip.w;
-            const float up = (m.height / 2 + h / 2 + 0.006f) * (wants ? -1 : 1);
-            const XrVector3f at{m.pose.position.x + m.y.x * up + m.z.x * 0.006f,
-                                m.pose.position.y + m.y.y * up + m.z.y * 0.006f,
-                                m.pose.position.z + m.y.z * up + m.z.z * 0.006f};
-            tip.onTop = true;
-            placeHud(tip, at, m.x, m.y, w, {hud::kTip.x, hud::kTip.y, hud::kTip.w, used});
-        } else {
-            hideHud(tip);
-        }
-    }
+    updateTip();
 
     // Asleep: the watch low in your view, over the closed eyelids (ahead =
     // where you look, half its tilt up or down).

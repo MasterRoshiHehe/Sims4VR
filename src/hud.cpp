@@ -69,6 +69,7 @@ struct PopupContent {
     uint64_t pictures[2] = {};          // the other Sim's, yours (icon or thumbnail ids)
     std::string titleJson, textJson;
     std::vector<std::string> buttonJson;
+    std::vector<std::string> tipJson;   // each button's tooltip ("" none)
     std::vector<long long> choices;
     bool resolved = false, valid = false;
     std::string title, text;
@@ -742,6 +743,14 @@ void resolvePopup() {
         }
         p.buttons.push_back(label);
     }
+    {
+        // The buttons' tooltips (the game's response tooltip_text), for drawTip.
+        std::vector<Tip> tips(p.buttonJson.size());
+        for (size_t i = 0; i < tips.size() && i < p.tipJson.size(); ++i)
+            if (p.tipJson[i].size() > 2) tips[i].json[1] = p.tipJson[i];
+        std::lock_guard<std::mutex> lock(g_itemMutex);
+        g_tips[kPopupButtons] = tips;
+    }
     // Its words must be there: an unknown text (a string we don't have) keeps
     // the cut of the game's own dialog.
     bool textOk = p.textJson.empty() || !p.text.empty();
@@ -778,6 +787,7 @@ Action drawPopup(int* index) {
             action = kAnswer;
             if (index) *index = i;
         }
+        if (ImGui::IsItemHovered()) g_hoverKind = kPopupButtons, g_hoverIndex = i;
     };
     if (p.layout == 1) {
         const float P = 176, gap = 26;
@@ -2397,6 +2407,7 @@ void setPopupContent(const char* data, size_t size) {
         } else if (f[0] == "button" && f.size() > 2) {
             c.buttonJson.push_back(f[1]);
             c.choices.push_back(std::atoll(f[2].c_str()));
+            c.tipJson.push_back(f.size() > 3 ? f[3] : std::string());
         }
         if (end >= all.size()) break;
     }

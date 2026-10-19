@@ -65,7 +65,7 @@ void setClock(int hour, int minute, int day, int speed);
 //             bit 1 can be cancelled, bit 2 running; icon and colour as above.
 //   wants:    flags bit 0: a fear (a confrontation want, the game's spiky
 //             bubble; it can't be dismissed).
-enum Kind { kNeedItems = 0, kMoodletItems, kQueueItems, kWantItems, kQueueBadges, kKinds };
+enum Kind { kNeedItems = 0, kMoodletItems, kQueueItems, kWantItems, kQueueBadges, kPopupButtons, kKinds };  // kPopupButtons: tooltips only (the popup's answers)
 struct Item {
     uint64_t icon = 0;
     uint32_t colour = 0;
