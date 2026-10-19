@@ -23,6 +23,7 @@
 #include "log.h"
 #include "phone3d.h"
 #include "strings.h"
+#include "uikit.h"
 
 // The game's own UI art (tools/pack_hud_art.py: colour re-cut of re/liveui/art),
 // in the DLL: u32 width, height, then run-length coded straight-alpha BGRA.
@@ -60,6 +61,7 @@ ImFont* g_small = nullptr;  // the day, labels
 ImFont* g_text = nullptr;   // popup text (regular)
 ImFont* g_title = nullptr;  // popup titles
 ID3D11ShaderResourceView* g_art = nullptr;  // the game's art
+void bindKit();  // hands the UI kit (uikit.h) the art, fonts and icons, once they exist
 
 // The popup on show (objmenu.py), its texts once the strings are loaded.
 struct PopupContent {
@@ -338,6 +340,7 @@ bool init(ID3D11Device* device, ID3D11DeviceContext* context) {
         return false;
     }
     if (!loadArt(device)) LOG("HUD: the game's art did not load; shapes only");
+    bindKit();
     {
         D3D11_TEXTURE2D_DESC icons{};
         icons.Width = icons.Height = kIconSize * kIconsAcross;
@@ -358,28 +361,19 @@ bool init(ID3D11Device* device, ID3D11DeviceContext* context) {
     return true;
 }
 
-const ImU32 kWhite = IM_COL32(255, 255, 255, 255), kShadow = IM_COL32(0, 0, 0, 110);
-const ImU32 kTextOn = IM_COL32(120, 214, 82, 255);  // the game's selected-speed green, for text
-
-// A piece of the game's art, its own size times `scale`, centred on c.
-void piece(ImDrawList* d, const art::Piece& p, ImVec2 c, float scale = 1, ImU32 tint = kWhite) {
-    if (!g_art) return;
-    float w = p.w * scale, h = p.h * scale;
-    d->AddImage(reinterpret_cast<ImTextureID>(g_art), {c.x - w / 2, c.y - h / 2}, {c.x + w / 2, c.y + h / 2},
-                {static_cast<float>(p.x) / art::kAtlasW, static_cast<float>(p.y) / art::kAtlasH},
-                {static_cast<float>(p.x + p.w) / art::kAtlasW, static_cast<float>(p.y + p.h) / art::kAtlasH}, tint);
-}
-// Stretched into a box.
-void pieceIn(ImDrawList* d, const art::Piece& p, ImVec2 a, ImVec2 b, ImU32 tint = kWhite) {
-    if (!g_art) return;
-    d->AddImage(reinterpret_cast<ImTextureID>(g_art), a, b,
-                {static_cast<float>(p.x) / art::kAtlasW, static_cast<float>(p.y) / art::kAtlasH},
-                {static_cast<float>(p.x + p.w) / art::kAtlasW, static_cast<float>(p.y + p.h) / art::kAtlasH}, tint);
-}
-void shadowText(ImDrawList* d, ImFont* font, float size, ImVec2 at, ImU32 colour, const char* text) {
-    d->AddText(font, size, {at.x + 2, at.y + 2}, kShadow, text);
-    d->AddText(font, size, at, colour, text);
-}
+// The generic pieces live in the UI kit (uikit.h, docs/UI-KIT.md).
+using uikit::kBodyDark;
+using uikit::kButtonBlue;
+using uikit::kReasonGrey;
+using uikit::kShadow;
+using uikit::kTextOn;
+using uikit::kTitleBlue;
+using uikit::kWhite;
+using uikit::nine;
+using uikit::piece;
+using uikit::pieceIn;
+using uikit::shadowText;
+void icon(ImDrawList* d, uint64_t id, ImVec2 c, float size, ImU32 tint = kWhite);  // below
 
 // The game's TimeControls in its own art (TimeControlTray, the speed buttons'
 // up / over / selected_up pictures; selected = running speed, pause red when
@@ -451,13 +445,10 @@ void drawPause() {
 ImU32 fromArgb(uint32_t c) {
     return IM_COL32((c >> 16) & 0xff, (c >> 8) & 0xff, c & 0xff, (c >> 24) & 0xff);
 }
-ImU32 moodTint(uint32_t mood, int alpha = 255) {
-    ImU32 c = art::kMoodTint[mood < sizeof(art::kMoodTint) / sizeof(art::kMoodTint[0]) ? mood : 0];
-    return (c & 0x00ffffffu) | (static_cast<ImU32>(alpha) << 24);
-}
+using uikit::moodTint;
 
 // The game's icon `id` in a box centred on c (nothing until it is read).
-void icon(ImDrawList* d, uint64_t id, ImVec2 c, float size, ImU32 tint = kWhite) {
+void icon(ImDrawList* d, uint64_t id, ImVec2 c, float size, ImU32 tint) {
     if (!id || !g_icons) return;
     for (int i = 0; i < kIconSlots; ++i) {
         IconSlot& slot = g_slots[i];
@@ -469,6 +460,14 @@ void icon(ImDrawList* d, uint64_t id, ImVec2 c, float size, ImU32 tint = kWhite)
                     {c.x + size / 2, c.y + size / 2}, {u, v}, {u + step, v + step}, tint);
         return;
     }
+}
+
+void bindKit() {
+    uikit::Resources kit;
+    kit.art = reinterpret_cast<ImTextureID>(g_art);
+    kit.big = g_big, kit.small = g_small, kit.text = g_text, kit.title = g_title;
+    kit.icon = [](ImDrawList* d, uint64_t id, ImVec2 c, float size, ImU32 tint) { icon(d, id, c, size, tint); };
+    uikit::bind(kit);
 }
 
 // Decoded icons into free (or the longest unused) slots.
@@ -580,7 +579,6 @@ Action drawQueue(const Item* items, const Item* badges, int count, int* index) {
     const float cy = r.y + 72;
     auto at = [&](int i) { return ImVec2{r.x + 8 + centres[i] * px, cy}; };
     auto badgeAt = [&](int i) { return ImVec2{at(i).x + 20 * px, cy + 10 * px}; };
-    auto mood = [](uint32_t m) { return m < sizeof(art::kQueueDisc) / sizeof(art::kQueueDisc[0]) ? m : 0u; };
     // The side actions' buttons first: over their main button, they get the pointer.
     bool badgeHover[kMaxItems] = {}, hover[kMaxItems] = {};
     for (int i = 0; i < count; ++i) {
@@ -619,39 +617,10 @@ Action drawQueue(const Item* items, const Item* badges, int count, int* index) {
         const ImVec2 c = at(i);
         const bool full = it.flags & 1;  // running or starting
         const bool over = hover[i] || ((preview >> i) & 1);
-        const float done = std::max(0.0f, std::min(1.0f, it.value));
-        if (full && done > 0) {
-            piece(d, art::kProgressShadow, c, 62 * px / art::kProgressShadow.w);
-            const art::Piece& s = art::kProgressSpoke;
-            const ImVec2 uv0{static_cast<float>(s.x) / art::kAtlasW, static_cast<float>(s.y) / art::kAtlasH};
-            const ImVec2 uv1{static_cast<float>(s.x + s.w) / art::kAtlasW, static_cast<float>(s.y + s.h) / art::kAtlasH};
-            const float len = 30 * px, half = 1 * px;
-            const int spokes = static_cast<int>(done * 100 + 0.5f);
-            for (int k = 0; k < spokes && g_art; ++k) {
-                const float a = k * 6.2831853f / 100;
-                const ImVec2 dir{std::sin(a), -std::cos(a)}, side{std::cos(a), std::sin(a)};
-                d->AddImageQuad(reinterpret_cast<ImTextureID>(g_art), {c.x - side.x * half, c.y - side.y * half},
-                                {c.x + dir.x * len - side.x * half, c.y + dir.y * len - side.y * half},
-                                {c.x + dir.x * len + side.x * half, c.y + dir.y * len + side.y * half},
-                                {c.x + side.x * half, c.y + side.y * half}, uv0, {uv1.x, uv0.y}, uv1, {uv0.x, uv1.y});
-            }
-            piece(d, art::kProgressRim, c, 58 * px / art::kProgressRim.w);
-        }
-        const art::Piece& disc = art::kQueueDisc[mood(it.colour)];
-        piece(d, disc, {c.x, c.y + 1 * px}, (over ? 1.0f : 0.917f) * 60 * px / disc.w,
-              IM_COL32(255, 255, 255, full ? 255 : 51));
-        const int alpha = full ? 255 : over ? 229 : 204;
-        icon(d, it.icon, c, (over ? 48 : 44) * px, IM_COL32(255, 255, 255, alpha));
-        if (over && (it.flags & 2)) piece(d, art::kCancel, c, 36 * px / art::kCancel.w);
+        if (full) uikit::progressRing(d, c, px, it.value);
+        uikit::pictureButton(d, it.icon, it.colour, c, px, full, over, it.flags & 2);
         const Item& b = badges[i];
-        if (b.flags & 1) {
-            const ImVec2 m = badgeAt(i);
-            const bool bfull = b.flags & 4, bover = badgeHover[i];
-            const art::Piece& mdisc = art::kMixerDisc[mood(b.colour)];
-            piece(d, mdisc, m, (bover ? 1.0f : 0.889f) * 36 * px / mdisc.w, IM_COL32(255, 255, 255, bfull ? 255 : 51));
-            icon(d, b.icon, m, (bover ? 28 : 24) * px, IM_COL32(255, 255, 255, bfull ? 255 : bover ? 229 : 204));
-            if (bover && (b.flags & 2)) piece(d, art::kMixerCancel, {m.x - 1 * px, m.y}, 22 * px / art::kMixerCancel.w);
-        }
+        if (b.flags & 1) uikit::badge(d, b.icon, b.colour, badgeAt(i), px, b.flags & 4, badgeHover[i], b.flags & 2);
     }
     return action;
 }
@@ -741,24 +710,6 @@ Action drawWants(const Item* items, int count, int* index) {
     return action;
 }
 
-// A piece of art stretched over a box by nine slices: its corners (insets
-// l, t, r, b in the piece's own pixels, drawn k times that) kept, its edges
-// and middle stretched.
-void nine(ImDrawList* d, const art::Piece& p, ImVec2 a, ImVec2 b, float l, float t, float r, float bt, float k = 1,
-          ImU32 tint = kWhite) {
-    if (!g_art) return;
-    const float xs[4] = {a.x, a.x + l * k, b.x - r * k, b.x}, ys[4] = {a.y, a.y + t * k, b.y - bt * k, b.y};
-    const float us[4] = {static_cast<float>(p.x), p.x + l, p.x + p.w - r, static_cast<float>(p.x + p.w)};
-    const float vs[4] = {static_cast<float>(p.y), p.y + t, p.y + p.h - bt, static_cast<float>(p.y + p.h)};
-    for (int j = 0; j < 3; ++j)
-        for (int i = 0; i < 3; ++i) {
-            if (xs[i + 1] <= xs[i] || ys[j + 1] <= ys[j]) continue;
-            d->AddImage(reinterpret_cast<ImTextureID>(g_art), {xs[i], ys[j]}, {xs[i + 1], ys[j + 1]},
-                        {us[i] / art::kAtlasW, vs[j] / art::kAtlasH}, {us[i + 1] / art::kAtlasW, vs[j + 1] / art::kAtlasH},
-                        tint);
-        }
-}
-
 // The texts of the popup from the game's string tables, once they are loaded.
 void resolvePopup() {
     {
@@ -807,32 +758,8 @@ void resolvePopup() {
             p.buttons.size(), named);
 }
 
-// A Sim's picture in a portrait ring, centred on c: the bust the game's
-// SimSpeechHeader / SimSpeechFooter load (thumbs.cpp), or the dialog's icon.
-void portrait(ImDrawList* d, uint64_t picture, const art::Piece& ring, ImVec2 c, float size) {
-    // The ring's inner circle is 102 of its 138 pixels.
-    piece(d, ring, c, size * (138.0f / 102.0f) / ring.w);
-    icon(d, picture, c, size);
-}
-
-// One of the dialog's buttons (DialogButton: the white pill, its over
-// picture under the pointer) with its text in the game's button blue.
-bool dialogButton(ImDrawList* d, int i, const std::string& label, ImVec2 a, ImVec2 b) {
-    ImGui::SetCursorScreenPos(a);
-    ImGui::PushID(300 + i);
-    bool pressed = ImGui::InvisibleButton("answer", {b.x - a.x, b.y - a.y});
-    bool hover = ImGui::IsItemHovered();
-    ImGui::PopID();
-    if (hover)
-        nine(d, art::kDialogButtonOver, {a.x - 2, a.y - 3}, {b.x + 2, b.y + 6}, 48, 36, 48, 54, 0.8f);
-    else
-        nine(d, art::kDialogButton, a, b, 48, 36, 48, 42, 0.8f);
-    const float size = g_text->FontSize * 0.92f, wrap = b.x - a.x - 60;
-    ImVec2 ts = g_text->CalcTextSizeA(size, FLT_MAX, wrap, label.c_str());
-    ImVec2 at{(a.x + b.x - ts.x) / 2, a.y + (b.y - a.y - 10 - ts.y) / 2};
-    d->AddText(g_text, size, at, IM_COL32(30, 70, 128, 255), label.c_str(), nullptr, wrap);
-    return pressed;
-}
+using uikit::dialogButton;
+using uikit::portrait;
 
 // The popup as the game draws it. Two Sims talking (SimInteractionDialog):
 // the other Sim's portrait with what they say in the blue speech bubble, your
@@ -861,7 +788,7 @@ Action drawPopup(int* index) {
         const float size = g_text->FontSize, wrap = bx1 - bx0 - 40 - 44;
         ImVec2 ts = g_text->CalcTextSizeA(size, FLT_MAX, wrap, said.c_str());
         const float y0 = r.y + 8, h = std::max(P * 0.75f, ts.y + 64);
-        nine(d, art::kSpeechBubble, {bx0, y0}, {bx1, y0 + h}, 66, 108, 66, 66, 0.6f);
+        uikit::speechBubble(d, {bx0, y0}, {bx1, y0 + h});
         d->AddText(g_text, size, {bx0 + 40 + 16, y0 + 5 + (h - 9 - ts.y) / 2}, kWhite, said.c_str(), nullptr, wrap);
         portrait(d, p.pictures[0], art::kPortraitRing, {r.x + 8 + P / 2, y0 + P / 2}, P);
         // Your answers: the light bubble (its tail on the right, low), twice
@@ -869,7 +796,7 @@ Action drawPopup(int* index) {
         const float bh = 76, bgap = 12;
         const float y1 = y0 + h + 18;
         const float fh = std::max(130.0f, 30 + n * bh + std::max(0, n - 1) * bgap + 34);
-        for (int k = 0; k < 2; ++k) nine(d, art::kAnswerBubble, {bx0, y1}, {bx1 + 40, y1 + fh}, 60, 60, 66, 138, 0.6f);
+        uikit::answerBubble(d, {bx0, y1}, {bx1 + 40, y1 + fh});
         for (int i = 0; i < n; ++i) {
             float y = y1 + 30 + i * (bh + bgap);
             answer(i, {bx0 + 24, y}, {bx1 + 40 - 40 - 18, y + bh});
@@ -888,7 +815,7 @@ Action drawPopup(int* index) {
         const float bh = 76, bgap = 16;
         float buttonsH = n == 0 ? 0 : row ? bh : n * bh + (n - 1) * bgap;
         float h = 44 + tt.y + (tt.y > 0 && xs.y > 0 ? 20 : 0) + xs.y + (n ? 40 : 0) + buttonsH + 50;
-        nine(d, art::kDialogPanel, {x0, r.y + 8}, {x1, r.y + 8 + h}, 36, 36, 36, 36, 1, IM_COL32(244, 247, 252, 255));
+        uikit::dialogPanel(d, {x0, r.y + 8}, {x1, r.y + 8 + h});
         if (tt.y > 0) {
             d->AddText(g_title, g_title->FontSize, {(x0 + x1 - tt.x) / 2, y}, kTitle, p.title.c_str(), nullptr, wrap);
             y += tt.y + (xs.y > 0 ? 20 : 0);
@@ -941,35 +868,10 @@ bool drawTip(const Tip& tip) {
     if (title.empty() && text.empty()) return false;
     ImDrawList* d = ImGui::GetBackgroundDrawList();
     const Rect r = kTip;
-    const float pad = 34, wrap = r.w - 16 - 2 * pad;
-    struct Line {
-        ImFont* font;
-        float size;
-        ImU32 colour;
-        const std::string* text;
-    };
-    const Line lines[4] = {{g_small, g_small->FontSize, IM_COL32(29, 58, 102, 255), &title},
-                           {g_text, g_text->FontSize * 0.9f, IM_COL32(44, 52, 66, 255), &text},
-                           {g_text, g_text->FontSize * 0.8f, IM_COL32(110, 118, 130, 255), &reason},
-                           {g_text, g_text->FontSize * 0.8f, IM_COL32(44, 52, 66, 255), &left}};
-    float w = 0, h = 0;
-    ImVec2 sizes[4];
-    for (int i = 0; i < 4; ++i) {
-        sizes[i] = lines[i].text->empty() ? ImVec2{0, 0}
-                                          : lines[i].font->CalcTextSizeA(lines[i].size, FLT_MAX, wrap, lines[i].text->c_str());
-        w = std::max(w, sizes[i].x);
-        if (sizes[i].y > 0) h += sizes[i].y + (h > 0 ? 10 : 0);
-    }
-    w += 2 * pad;
-    h += 2 * pad - 6;
-    const float x0 = r.x + (r.w - w) / 2, y0 = r.y + 8;
-    nine(d, art::kDialogPanel, {x0, y0}, {x0 + w, y0 + h}, 36, 36, 36, 36, 1, IM_COL32(244, 247, 252, 250));
-    float y = y0 + pad - 4;
-    for (int i = 0; i < 4; ++i) {
-        if (sizes[i].y <= 0) continue;
-        d->AddText(lines[i].font, lines[i].size, {x0 + pad, y}, lines[i].colour, lines[i].text->c_str(), nullptr, wrap);
-        y += sizes[i].y + 10;
-    }
+    uikit::TipLine lines[4];
+    uikit::tipLines(lines, title, text, reason, left);
+    const ImVec2 size = uikit::tooltip(d, r.x + r.w / 2, r.y + 8, lines, 4, r.w - 16 - 2 * 34);
+    const float h = size.y;
     g_tipHeight = std::min(r.h, h + 16);
     return true;
 }

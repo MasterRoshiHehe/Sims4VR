@@ -92,6 +92,7 @@ add_library(sims4vr SHARED
     src/vr.cpp
     src/voice.cpp
     src/hud.cpp
+    src/uikit.cpp
     src/thumbs.cpp
     ${imgui_SOURCE_DIR}/imgui.cpp
     ${imgui_SOURCE_DIR}/imgui_draw.cpp
