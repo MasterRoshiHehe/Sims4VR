@@ -260,15 +260,8 @@ def _judge(you, npc, region, rough=False):
     # The social's own availability tests are not used: outside a conversation
     # they fail on what a touch doesn't have (a social group, the pie menu),
     # which made every touch inappropriate (user test 2026-10-17 05:45Z).
-    # Logged only, for tuning.
-    if allowed:
-        for tests in (affordance.test_globals, affordance.tests):
-            try:
-                result = tests.run_tests(resolver) if tests is not None else True
-                if not result:
-                    _log('({} tests say no: {})'.format(affordance.__name__, getattr(result, 'reason', result)))
-            except Exception as e:
-                _error('tests', e)
+    # (They need SocialGroup / PickedSim participants a DoubleSimResolver
+    # doesn't have, so they are not run at all.)
     if allowed and romantic and _family(you, npc):
         allowed = False
     if allowed:

@@ -116,9 +116,14 @@ def _load_choices():
             if os.path.isfile(path):
                 with open(path, 'r', encoding='utf-8') as f:
                     for line in f:
+                        if line.lstrip().startswith(';'):
+                            continue
                         name, sep, value = line.partition('=')
                         if sep and name.strip().endswith('#background'):
-                            _chosen[int(name.strip().split('#')[0])] = int(value.strip())
+                            try:
+                                _chosen[int(name.strip().split('#')[0])] = int(value.strip())
+                            except ValueError:
+                                pass
     except Exception as e:
         _log_error('reading sims4vr_phone.ini', e)
     return _chosen
