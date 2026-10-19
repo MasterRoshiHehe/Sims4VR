@@ -19,6 +19,7 @@ IDLE_WORDS = ('browse', 'playonphone', 'fanatic', 'sitphone', 'usephone', 'tend_
 
 _logs = 0
 _hidden = set()
+_seen = 0
 
 
 def _log(message):
@@ -44,15 +45,31 @@ def _is_phone(prop_name, definition_id):
     return definition_id in PHONE_DEFINITIONS or 'phone' in str(prop_name).lower()
 
 
+def _phone_context(asm, interaction):
+    """Every prop of a phone animation (its asm or interaction is a phone one)."""
+    try:
+        name = (str(getattr(asm, 'name', '')) + ' ' + type(interaction).__name__ + ' ' +
+                str(getattr(getattr(interaction, 'affordance', None), '__name__', ''))).lower()
+        return 'phone' in name and not any(w in name for w in ('phonebook',))
+    except Exception:
+        return False
+
+
 def _wrap_get_prop():
     import animation
 
     def _get_prop(original, self, asm, prop_name, definition_id, interaction=None):
+        global _seen
         prop = original(self, asm, prop_name, definition_id, interaction)
         try:
+            if prop is not None and _first_person(getattr(interaction, 'sim', None)) and _seen < 40:
+                _seen += 1
+                _log('prop "{}" def {:#x} asm {} for {}'.format(prop_name, getattr(getattr(prop, 'definition', None), 'id', 0),
+                                                           getattr(asm, 'name', '?'), interaction))
             sim = getattr(interaction, 'sim', None) if interaction is not None else None
             if prop is not None and _first_person(sim) and _on() and \
-                    _is_phone(prop_name, definition_id or getattr(getattr(prop, 'definition', None), 'id', 0)):
+                    (_is_phone(prop_name, definition_id or getattr(getattr(prop, 'definition', None), 'id', 0)) or
+                     _phone_context(asm, interaction)):
                 from sims4vr import phone
                 if prop is not getattr(phone, '_phone', None):
                     from objects import VisibilityState

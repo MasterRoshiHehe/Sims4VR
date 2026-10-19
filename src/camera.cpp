@@ -1585,17 +1585,13 @@ void logDrawnProjection(const void* dst, void* caller) {
                                         reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr))));
 }
 
-// An eye centre left in a game camera that isn't the render camera goes back
-// to the game's own 0,0 (exact matches only: the game sets other centres
-// itself, e.g. for picks). With no eye applied, that is any camera; with a
-// lopsided eye applied, every camera but the one carrying it: mirrors and
-// water draw from a camera made from the render camera, which kept the eye's
-// off-centre frustum, so each eye's mirror looked into a different shifted
-// view (objects in one eye only, vanishing when you look around; A2).
+// While no eye's centre is applied, an eye centre left in a game camera goes
+// back to the game's own 0,0 (exact matches only: the game sets other centres
+// itself, e.g. for picks). (Cameras made from the render camera while an eye is
+// applied keep its centre on purpose: mirrors and the sky need it, v0.13.272
+// cleared it and they drew from different angles per eye.)
 void clearOldCentre(void* camera, const char* where) {
-    if (!std::isnan(g_appliedCentre[0].load(std::memory_order_relaxed)) &&
-        reinterpret_cast<uintptr_t>(camera) == g_writtenCamera.load(std::memory_order_relaxed))
-        return;
+    if (!std::isnan(g_appliedCentre[0].load(std::memory_order_relaxed))) return;
     float* at = reinterpret_cast<float*>(static_cast<uint8_t*>(camera) + kCentreOffset);
     if (at[0] == 0 && at[1] == 0) return;
     for (const auto& eye : g_eyeCentre) {
