@@ -120,10 +120,23 @@ S4VR_API int s4vr_init() {
     if (g_initialized.exchange(true)) return 0;
     g_moduleDir = moduleDirectory();
     s4vr::log::init(g_moduleDir + L"\\sims4vr.log");
-    LOG("sims4vr v%s (commit %s) loading from %ls", S4VR_BUILD_VERSION, S4VR_BUILD_COMMIT, g_moduleDir.c_str());
+    LOGT("session", "sims4vr v%s (commit %s) loading from %ls", S4VR_BUILD_VERSION, S4VR_BUILD_COMMIT, g_moduleDir.c_str());
+    {
+        // PE link time stamp of the running exe (what the address table is keyed on).
+        auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(GetModuleHandleW(nullptr));
+        auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(reinterpret_cast<const char*>(dos) + dos->e_lfanew);
+        LOGT("session", "game exe stamp 0x%08x", static_cast<unsigned>(nt->FileHeader.TimeDateStamp));
+    }
     s4vr::crashlog::install(g_moduleDir);
     s4vr::screenshot::init(g_moduleDir);
     g_config = s4vr::loadConfig(g_moduleDir + L"\\sims4vr.ini");
+    {
+        std::wstring ini = g_moduleDir + L"\\sims4vr.ini";
+        s4vr::log::setFilter(s4vr::readSetting(ini, "log", "tags", "all"), s4vr::readSetting(ini, "log", "mute", ""));
+        LOGT("session", "ini: log tags=%s mute=%s | mode=%d autostart=%d arm_ik=%d play_in_body=%d",
+             s4vr::readSetting(ini, "log", "tags", "all").c_str(), s4vr::readSetting(ini, "log", "mute", "").c_str(),
+             static_cast<int>(g_config.mode), g_config.autostart, g_config.armIk ? 1 : 0, g_config.playInBody ? 1 : 0);
+    }
     s4vr::framemap::init(g_config.frameMap);
     s4vr::gamefix::install(g_config.nearFade);
     s4vr::nodim::installSource(g_config.noDimming);

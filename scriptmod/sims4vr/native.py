@@ -43,7 +43,7 @@ def _log(message):
     try:
         if _log_file is None:
             _log_file = open(_log_path(), 'a')
-        _log_file.write(message + '\n')
+        _log_file.write('[{}.{:03d}] [py] {}\n'.format(time.strftime('%H:%M:%S'), int(time.time() * 1000) % 1000, message))
         _log_file.flush()
     except Exception:
         _log_file = None
