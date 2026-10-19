@@ -236,6 +236,7 @@ ID3D11SamplerState* g_sampler = nullptr;
 ID3D11SamplerState* g_screenSampler = nullptr;  // Sims 1 / Claude screens: anisotropic, a touch sharp
 ID3D11RasterizerState* g_raster = nullptr;
 ID3D11DepthStencilState* g_depthState[2] = {};  // normal, reversed
+ID3D11DepthStencilState* g_depthWrite[2] = {};  // the same, writing depth (the phone slab, for what is drawn after it)
 ID3D11BlendState* g_premultiplied = nullptr;    // clear panels over the world
 bool g_failed = false;
 std::atomic<ULONGLONG> g_drawnAt{0};
@@ -281,6 +282,8 @@ void releaseAll() {
     safeRelease(g_raster);
     safeRelease(g_depthState[0]);
     safeRelease(g_depthState[1]);
+    safeRelease(g_depthWrite[0]);
+    safeRelease(g_depthWrite[1]);
     safeRelease(g_premultiplied);
     g_vertexCount = 0;
     g_device = nullptr;
@@ -363,6 +366,8 @@ bool init(ID3D11Device* device) {
         dd.DepthFunc = i ? D3D11_COMPARISON_GREATER_EQUAL : D3D11_COMPARISON_LESS_EQUAL;
         dd.StencilEnable = FALSE;
         ok = SUCCEEDED(device->CreateDepthStencilState(&dd, &g_depthState[i]));
+        dd.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
+        ok = ok && SUCCEEDED(device->CreateDepthStencilState(&dd, &g_depthWrite[i]));
     }
     if (ok) {
         D3D11_DEPTH_STENCIL_DESC dd{};
@@ -1276,9 +1281,14 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
     context->OMSetDepthStencilState(g_depthState[reversed ? 1 : 0], 0);
     context->OMSetRenderTargets(1, &target, depth);
     if (showPhone) {
+        // The phone is solid: it writes its depth when floor footprints or
+        // bubbles come after it, so they don't show through it.
+        const bool solid = (printCount || bubbleCount) && g_depthWrite[reversed ? 1 : 0];
+        if (solid) context->OMSetDepthStencilState(g_depthWrite[reversed ? 1 : 0], 0);
         context->UpdateSubresource(g_constants, 0, nullptr, &k, 0, 0);
         context->IASetVertexBuffers(0, 1, &g_vertices, &stride, &offset);
         context->Draw(g_vertexCount, 0);
+        if (solid) context->OMSetDepthStencilState(g_depthState[reversed ? 1 : 0], 0);
     }
     if (showSims1) {
         context->PSSetShaderResources(0, 1, &sims1View);
