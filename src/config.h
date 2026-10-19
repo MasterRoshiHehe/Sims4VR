@@ -201,6 +201,9 @@ struct Config {
     // Audio (first person): the outdoor ambience fades in over this many metres either side
     // of the outside walls instead of switching at the doorway; 0 = the game's own switch
     float outdoorFade = 4.0f;
+    float mirrorInterior = 0;  // max metres a mirror in a room renders (0: the game's 15)
+    float mirrorExterior = 0;  // ... outdoors (0: the game's 100)
+    bool reflectionsOff = false;  // no mirror or water reflections at all
 
     // Phone (first person): close your right hand at your right hip and your
     // Sim holds its phone, with the game menu on its screen (game not paused)

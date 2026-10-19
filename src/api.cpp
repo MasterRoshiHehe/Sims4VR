@@ -21,6 +21,7 @@
 #include "framemap.h"
 #include "gamefix.h"
 #include "ambience.h"
+#include "mirrorcap.h"
 #include "eyelids.h"
 #include "facehide.h"
 #include "voice.h"
@@ -141,6 +142,7 @@ S4VR_API int s4vr_init() {
     s4vr::gamefix::install(g_config.nearFade);
     s4vr::nodim::installSource(g_config.noDimming);
     s4vr::ambience::install(g_config.outdoorFade);
+    s4vr::mirrorcap::install(g_config.mirrorInterior, g_config.mirrorExterior, g_config.reflectionsOff);
     s4vr::shadows::install(g_config.steadyShadows, g_config.shadowStep, g_config.shadowSharp, g_config.shadowMap);
     s4vr::armik::install(g_config.armIk, g_config.handPitch, g_config.headTracking);
     s4vr::armik::setSeatTorso(g_config.bodySeatTorso);

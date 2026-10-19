@@ -53,6 +53,7 @@ add_library(sims4vr SHARED
     src/crashlog.cpp
     src/gamefix.cpp
     src/ambience.cpp
+    src/mirrorcap.cpp
     src/shadows.cpp
     src/doorswing.cpp
     src/walkstop.cpp
