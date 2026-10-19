@@ -34,6 +34,11 @@ except Exception as e:
     native._log('far TVs/lights unavailable: {!r}'.format(e))
 
 try:
+    from sims4vr import nophone  # noqa: F401
+except Exception as e:
+    native._log('no game phone unavailable: {!r}'.format(e))
+
+try:
     from sims4vr import saving  # noqa: F401
 except Exception as e:
     native._log('save hook unavailable: {!r}'.format(e))
