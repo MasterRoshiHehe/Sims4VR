@@ -224,6 +224,7 @@ SeqLock<GrabPlace> g_grabPlace[2];
 // Debug menu ([physical] grab_curl, grab_drag): how far the fingers close on a
 // held body (0 open .. 1 a fist) and how far you can drag the held place.
 std::atomic<float> g_grabCurl{0.45f}, g_grabDrag{0.15f};
+bool handHoldsBody(int side);  // this hand holds a Sim's body place (touch grab), pulled by us or not
 float grabCurlFor(int side);  // grab_curl, or Claude Jiggle's own for a held breast or butt
 // Milliseconds since `t`, never negative: another thread may have stored a
 // tick later than the `now` read here.
@@ -1307,7 +1308,10 @@ void solveArm(void* pose, uint8_t* skeleton, Xf* locals, const Arm& arm, int sid
     float fingers = held ? weight : weight * (1 - side.hold);
     Side posed = side;
     posed.index = side.index * (1 - side.point);  // a pointing finger stays straight
-    if (grabbing) {
+    // A breast or butt held under Integrated Body Physics isn't pulled by us (no grab place), but the
+    // hand still holds it: its fingers close as far as that mod's breast_grab_curl / butt_grab_curl.
+    const bool holdingBody = !hand.tracked && handHoldsBody(sideIndex);
+    if (grabbing || holdingBody) {
         // Holding a body: the fingers close as far as grab_curl, whatever the buttons.
         float c = grabCurlFor(sideIndex);
         posed.index = posed.grip = posed.thumb = c;
@@ -1741,6 +1745,8 @@ std::atomic<void*> g_grabActor[2] = {nullptr, nullptr};
 std::atomic<int> g_grabRegion[2] = {0, 0};
 std::atomic<ULONGLONG> g_grabAt[2] = {0, 0};
 BodyGrab g_grab[2];  // written by whoever won g_grabActor; read by the thread posing that Sim
+
+bool handHoldsBody(int side) { return g_grabActor[side].load(std::memory_order_relaxed) != nullptr; }
 
 // A held breast or butt with Integrated Body Physics loaded: its breast_grab_curl / butt_grab_curl (user 2026-10-17
 // 14:21Z); anything else, or without it, grab_curl.
