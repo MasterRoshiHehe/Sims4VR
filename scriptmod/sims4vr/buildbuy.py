@@ -69,7 +69,15 @@ def _chosen_background(sim_id):
 
 def _send_wallpaper():
     sim = services.get_active_sim()
-    chosen = _chosen_background(sim.id) if sim is not None else None
+    chosen = None
+    if sim is not None:
+        try:
+            from sims4vr import phoneapp
+            chosen = phoneapp.chosen_background(sim.id)  # picked on the VR phone
+        except Exception:
+            chosen = None
+        if chosen is None:
+            chosen = _chosen_background(sim.id)
     choices = []
     try:
         from sims.phone_tuning import PhoneTuning
@@ -79,6 +87,12 @@ def _send_wallpaper():
                 choices.append((int(image.type), int(image.instance)))
     except Exception:
         pass
+    if not choices:
+        try:
+            from sims4vr import phoneapp
+            choices = [(phoneapp._IMAGE, image) for image, _ in phoneapp.COLORS]
+        except Exception:
+            pass
     # The list is exported to the game's client only (usually empty here), so a
     # Sim's choice is looked up by its instance as any picture (type 0).
     pick = next((c for c in choices if c[1] == chosen), None)
@@ -95,6 +109,11 @@ def _send_wallpaper():
     global _wallpaper_wanted
     if pick != _wallpaper_sent:
         _wallpaper_wanted = pick
+
+
+def want_wallpaper():
+    """The phone background for the first-person phone too (phoneapp.py)."""
+    _send_wallpaper()
 
 
 def poll():

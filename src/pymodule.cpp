@@ -13,6 +13,7 @@
 #include <cstring>
 #include <vector>
 
+#include "eyelids.h"
 #include "trail.h"
 
 extern "C" {
@@ -50,6 +51,10 @@ void s4vr_hud_items(int kind, const char* data, int size);
 void s4vr_hud_icon(unsigned long long instance, const char* data, int size);
 void s4vr_popup_content(const char* data, int size);
 void s4vr_picker_content(const char* data, int size);
+void s4vr_phone_content(const char* data, int size);
+void s4vr_phone_notes(const char* data, int size);
+void s4vr_phone_calendar(const char* data, int size);
+void s4vr_note_over(unsigned long long id, float x, float y, float z, int front);
 void s4vr_hud_texts(int kind, const char* data, int size);
 void s4vr_money_changed(long long amount);
 int s4vr_hud_missing_icons(unsigned long long* out, int max);
@@ -288,6 +293,12 @@ PyObject* setSleeping(PyObject*, PyObject* args) {
     s4vr_set_sleeping(sleeping);
     return none();
 }
+PyObject* setEyesCovered(PyObject*, PyObject* args) {
+    int covered = 0;
+    if (!py.PyArg_ParseTuple(args, "p", &covered)) return nullptr;
+    s4vr::eyelids::setCovered(covered != 0);
+    return none();
+}
 PyObject* setBodyView(PyObject*, PyObject* args) {
     int on = 0;
     if (!py.PyArg_ParseTuple(args, "p", &on)) return nullptr;
@@ -354,6 +365,35 @@ PyObject* pickerContent(PyObject*, PyObject* args) {
     int length = 0;
     if (!py.PyArg_ParseTuple(args, "y#", &data, &length)) return nullptr;
     s4vr_picker_content(data, length);
+    return none();
+}
+PyObject* phoneContent(PyObject*, PyObject* args) {
+    const char* data = nullptr;
+    int length = 0;
+    if (!py.PyArg_ParseTuple(args, "y#", &data, &length)) return nullptr;
+    s4vr_phone_content(data, length);
+    return none();
+}
+PyObject* phoneNotes(PyObject*, PyObject* args) {
+    const char* data = nullptr;
+    int length = 0;
+    if (!py.PyArg_ParseTuple(args, "y#", &data, &length)) return nullptr;
+    s4vr_phone_notes(data, length);
+    return none();
+}
+PyObject* phoneCalendar(PyObject*, PyObject* args) {
+    const char* data = nullptr;
+    int length = 0;
+    if (!py.PyArg_ParseTuple(args, "y#", &data, &length)) return nullptr;
+    s4vr_phone_calendar(data, length);
+    return none();
+}
+PyObject* noteOver(PyObject*, PyObject* args) {
+    unsigned long long id = 0;
+    float x = 0, y = 0, z = 0;
+    int front = 0;
+    if (!py.PyArg_ParseTuple(args, "Kfffi", &id, &x, &y, &z, &front)) return nullptr;
+    s4vr_note_over(id, x, y, z, front);
     return none();
 }
 PyObject* thumb(PyObject*, PyObject* args) {
@@ -704,6 +744,8 @@ PyMethodDef methods[] = {
     {"client_route", clientRoute, METH_VARARGS, "client_route(object_id): the route the client has active on it, 0 none"},
     {"set_held", setHeld, METH_VARARGS, "set_held(*ids): objects (up to 8) that may be in the Sim's hands"},
     {"set_sleeping", setSleeping, METH_VARARGS, "set_sleeping(bool): close the eyelids over the view (sleep, naps)"},
+    {"set_eyes_covered", setEyesCovered, METH_VARARGS,
+     "set_eyes_covered(bool): close the eyelids quickly while the game fades your Sim out"},
     {"set_body_view", setBodyView, METH_VARARGS, "set_body_view(bool): straight ahead lies the way the Sim's body does"},
     {"pie_menu", pieMenu, METH_VARARGS, "pie_menu(items): a pie menu opened for a world click (0: picked from it)"},
     {"set_testing_cheats", setTestingCheats, METH_VARARGS,
@@ -722,6 +764,10 @@ PyMethodDef methods[] = {
     {"money_changed", moneyChanged, METH_VARARGS, "money_changed(amount): the household's money went up or down"},
     {"popup_content", popupContent, METH_VARARGS, "popup_content(bytes): the popup's texts and buttons from the game's message (b'': gone)"},
     {"picker_content", pickerContent, METH_VARARGS, "picker_content(bytes): the picker on its object from the game's message (b'': gone)"},
+    {"phone_notes", phoneNotes, METH_VARARGS, "phone_notes(bytes): the game's notifications for the phone (notify.py)"},
+    {"phone_calendar", phoneCalendar, METH_VARARGS, "phone_calendar(bytes): the game's calendar for the phone (phonecal.py)"},
+    {"note_over", noteOver, METH_VARARGS, "note_over(id, x, y, z, front): a notification card over a Sim's head; 0: none"},
+    {"phone_content", phoneContent, METH_VARARGS, "phone_content(bytes): the game's phone menu for the phone in your hand (b'': gone)"},
     {"hud_missing_icons", hudMissingIcons, METH_NOARGS, "hud_missing_icons() -> packed u64 instances the HUD still needs"},
     {"thumb", thumb, METH_VARARGS, "thumb(id, path) -> 1 asked, 0 not: the game's thumbnail img://thumbs/<path> as HUD picture id"},
     {"set_build_buy", setBuildBuy, METH_VARARGS, "set_build_buy(bool): the lot is in build/buy mode"},

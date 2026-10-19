@@ -46,8 +46,9 @@ void setHands(const Hand hands[2]);
 
 // Camera copy hook, every frame: the player's actor in first person (null
 // otherwise), whether you move it freely, where app space sits in the world,
-// and the headset's orientation in app space. Head and hands follow you
-// either way, in the game's animations too.
+// the headset's orientation in app space and the middle between your eyes in
+// the world (`eye`, the same for both eyes). Head and hands follow you either
+// way, in the game's animations too.
 void setFrame(void* actor, bool free, const float anchor[3], const camera::Quat& heading, float scale,
               const camera::Quat& hmd, const float eye[3]);
 
@@ -151,6 +152,13 @@ bool holdingSim(int side);
 // Any thread: where the other Sims near you stand (world x, z), as of their
 // latest poses (under 300 ms old). Returns how many were written.
 int nearbySims(float (*xz)[2], int max);
+// Any thread: the other Sims near you as of their latest poses (under 300 ms
+// old): where each stands (its object's place) and the point between its eyes,
+// world positions. Returns how many were written.
+struct SimHead {
+    float root[3], eyes[3];
+};
+int nearbyHeads(SimHead* out, int max);
 // Your head against other Sims (player.cpp, [physical] head): how far a sphere
 // of `radius` (world units) at `eye` (world) must move sideways (push: x, z)
 // to be out of their head, torso, upper arms and thighs, as of their latest

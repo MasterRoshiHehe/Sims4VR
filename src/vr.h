@@ -62,6 +62,9 @@ void setBuildBuy(bool on);
 // screen (a TV: fitted inside it), 0 = off. v: centre xyz, outward normal xyz,
 // up xyz, width, height of the face (world units).
 void setObjectMenu(int kind, const float v[11]);
+// Any thread (notify.py): notification `id` as a card over a Sim's head at
+// `at` (world), or in front of you (front); id 0 = none.
+void setNoteOver(uint64_t id, const float at[3], bool front);
 // Any thread (phone.py): where our phone sits on the Sim's right hand joint,
 // in that joint's frame (world units): position xyz and rotation xyzw of the
 // phone's frame (x right, y up, z out of the screen). False until the rig is read.

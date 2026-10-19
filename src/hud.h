@@ -14,7 +14,7 @@
 // eyelids). Pointer input comes back in atlas pixels; buttons return actions.
 namespace s4vr::hud {
 
-constexpr int kWidth = 1024, kHeight = 3584;  // the atlas
+constexpr int kWidth = 1024, kHeight = 4608;  // the atlas
 struct Rect {
     float x, y, w, h;
 };
@@ -29,14 +29,20 @@ constexpr Rect kMoney{0, 864, 1024, 160};     // the money gained / lost, rising
 constexpr Rect kPopup{0, 1024, 1024, 1024};   // a game popup as a card (as tall as its content)
 constexpr Rect kTip{0, 2048, 1024, 512};      // the tooltip of the need or moodlet pointed at
 constexpr Rect kPicker{0, 2560, 1024, 1024};  // a game picker on its object (the fridge's recipes) as a card
+// The game's phone menu on our phone's screen: the game's PhonePanel screen
+// (230 x 400 Flash pixels) at 2.5 atlas pixels each.
+constexpr Rect kPhone{0, 3584, 575, 1000};
+constexpr Rect kNote{576, 3584, 448, 360};  // a notification card over a Sim's head (notify.py)
 
 // What the buttons ask for. kCancel: the queue item `index` (render's out);
 // kDismissWant: the want `index` (the game's X on a want: a new one comes).
 // kAnswer: the popup's button `index`. kPick: the picker's row, `index` =
 // row * 4 + 1 (use ingredients) + 2 (use prepped ingredients); kPickerClose:
-// its close button (the game's Cancel).
+// its close button (the game's Cancel). kPhonePick: the phone menu's entry
+// `index` (phoneapp.py's node); kPhoneSilence: the phone's silence button;
+// kPhoneOptions: the Options app (the game menu); kPhoneColor: wallpaper colour `index`.
 enum Action { kNone = 0, kPausePressed = 1, kSpeed1, kSpeed2, kSpeed3, kFullUi, kBuildPressed, kCancel, kDismissWant, kAnswer,
-              kPick, kPickerClose };
+              kPick, kPickerClose, kPhonePick, kPhoneSilence, kPhoneOptions, kPhoneColor, kNotesOpened, kNotesClear, kNoteDelete, kNoteDismiss, kCalendarOpened, kNoteAnswer };
 
 // Python (controls.py), whenever it changes: the game's clock. speed is
 // ClockSpeedMode (0 paused, 1..3, 4 loading, 5 super speed); day 0 = Sunday.
@@ -130,6 +136,23 @@ bool pickerPending();
 // caller shows the cut of the game's own picker instead).
 float pickerHeight();
 
+// Python (phoneapp.py), when the phone comes out (empty: put away): the game's
+// phone menu, records split by 0x1e, fields by 0x1f: first
+// "phone\x1f<silenced 0/1>\x1f<disabled tooltip json or empty>", then the
+// tree in order: "cat\x1f<node>\x1f<parent node, -1 home>\x1f<icon>\x1f<name
+// json>\x1f<priority>" and "item\x1f<node>\x1f<parent>\x1f<name json>\x1f<disabled
+// text json>\x1f<notification 0/1>\x1f<priority>".
+void setPhoneContent(const char* data, size_t size);
+// Any thread (notify.py): the game's notifications for the phone's bell and
+// list: "notes" <unread>, then "note" <id> <read> <picture> <title json> <text json> <time>.
+void setPhoneNotes(const char* data, size_t size);
+// The calendar app's days and entries (phonecal.py records).
+void setPhoneCalendar(const char* data, size_t size);
+// Present thread: the height of the notification card drawn in kNote (Frame.note), 0 while not drawn.
+float noteHeight();
+// Present thread: the phone shows its home screen again (taken out).
+void phoneHome();
+
 struct Frame {
     // Which elements are shown (others are not drawn).
     bool watch = false, pause = false, build = false, needs = false, moodlets = false, queue = false, wants = false;
@@ -138,6 +161,8 @@ struct Frame {
     bool popup = false;      // the popup card
     bool picker = false;     // the picker card (on its object)
     bool money = false;      // the money gained / lost
+    bool phone = false;      // the game's phone menu (kPhone)
+    uint64_t note = 0;       // the notification drawn as a card in kNote (notify.py), 0: none
     float px = -1, py = -1;  // the pointer in atlas pixels; < 0: none
     bool down = false;       // pressing
 };

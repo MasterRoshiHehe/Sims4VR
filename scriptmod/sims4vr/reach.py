@@ -233,6 +233,12 @@ def _verdict(sim, aop, quiet=False):
     target = aop.target
     d = _distance(sim, target)
     name = getattr(aop.affordance, '__name__', '?')
+    try:
+        from sims4vr import follow
+        if follow.is_ours(aop.affordance):
+            return None, d  # Follow me / Dismiss: from wherever you are
+    except Exception:
+        pass
     if d is not None and _is_computer(target):
         try:
             from sims4vr import claude

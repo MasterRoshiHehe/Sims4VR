@@ -25,8 +25,9 @@ constexpr int kMaxCapsules = 24;
 // Game thread (camera applyEye), first person, just before choose: your own
 // body, which the measurement leaves out (choose's body keeps what of it must
 // stay whole), and the view it is seen with (eye, axes, half-FOV tangents).
+// The frustum is centred on (centreX, centreY) at distance 1 (a lopsided eye's).
 void ownBody(const float eye[3], const float right[3], const float up[3], const float ahead[3], float tanX,
-             float tanY, const Capsule* capsules, int count);
+             float tanY, float centreX, float centreY, const Capsule* capsules, int count);
 
 // Game thread (camera applyEye), first person only: the near limit for this
 // frame. eye: the camera's world position; forward: its view direction;

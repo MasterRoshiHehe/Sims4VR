@@ -93,6 +93,16 @@ float g_mark[2] = {};  // last sane eye offset from the root, in the body's fram
 bool g_markValid = false;
 int g_markSkips = 0;
 LARGE_INTEGER g_last{}, g_freq{};
+std::atomic<int64_t> g_shownUs{0};  // microseconds the headset showed frames for since the last update
+// How the steps went while walking (logged every 10 s of it).
+struct StepStats {
+    float walked = 0;  // seconds
+    int steps = 0;
+    float pcMin = 1e9f, pcMax = 0, shownMin = 1e9f, shownMax = 0;
+};
+StepStats g_steps;
+int g_stepLogs = 0;
+constexpr int kStepMaxLogs = 30;
 
 bool finite3(const float* v) { return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]); }
 
@@ -495,6 +505,10 @@ void setSmoothSlide(bool on) {
 }
 
 void setRunning(bool on) { g_running.store(on, std::memory_order_relaxed); }
+void addShownTime(float seconds) {
+    if (seconds > 0 && seconds < 0.2f)
+        g_shownUs.fetch_add(static_cast<int64_t>(seconds * 1e6f), std::memory_order_relaxed);
+}
 bool running() { return g_running.load(std::memory_order_relaxed); }
 
 void reset() {
@@ -514,7 +528,18 @@ bool update(const Input& in, float viewYaw, float turn, Output& out) {
     QueryPerformanceCounter(&now);
     float dt = g_last.QuadPart ? float(now.QuadPart - g_last.QuadPart) / float(g_freq.QuadPart) : 0;
     g_last = now;
+    // The time the headset showed frames for since the last step (vr.cpp,
+    // as the stick turn): the PC clock here jitters with when the game gets
+    // to its camera, so steps went uneven while each pair of eye pictures is
+    // shown for the same two refreshes (user 2026-10-19 00:02Z: walking side
+    // to side very twitchy). After a gap (the first step, or none for a
+    // while) it is dropped.
+    const float shown = float(g_shownUs.exchange(0, std::memory_order_relaxed)) * 1e-6f;
+    const bool gap = !(dt > 0) || dt > 0.1f;
     if (!(dt > 0) || dt > 0.1f) dt = dt > 0.1f ? 0.1f : 0;
+    const float pcDt = dt;
+    const bool byShown = !gap && shown > 0;
+    if (byShown) dt = std::min(shown, 0.1f);
 
     if (in.actor != g_actor) {
         unpin();
@@ -680,6 +705,30 @@ bool update(const Input& in, float viewYaw, float turn, Output& out) {
     }
     g_base[0] += vx * dt;
     g_base[1] += vz * dt;
+    if (g_stepLogs < kStepMaxLogs && dt > 0 && vx * vx + vz * vz > 0.25f * s * s) {
+        StepStats& st = g_steps;
+        st.walked += dt;
+        ++st.steps;
+        st.pcMin = std::min(st.pcMin, pcDt * 1000);
+        st.pcMax = std::max(st.pcMax, pcDt * 1000);
+        if (shown > 0) {
+            st.shownMin = std::min(st.shownMin, shown * 1000);
+            st.shownMax = std::max(st.shownMax, shown * 1000);
+        }
+        if (st.walked >= 10) {
+            ++g_stepLogs;
+            if (st.shownMax > 0)
+                LOG("Walk steps: %d in %.0f s of walking; by the PC clock %.1f to %.1f ms a step, by the headset's "
+                    "refreshes %.1f to %.1f ms (%s)",
+                    st.steps, st.walked, st.pcMin, st.pcMax, st.shownMin, st.shownMax,
+                    byShown ? "moved by the headset's" : "moved by the PC clock");
+            else
+                LOG("Walk steps: %d in %.0f s of walking; by the PC clock %.1f to %.1f ms a step (the headset's "
+                    "clock off)",
+                    st.steps, st.walked, st.pcMin, st.pcMax);
+            st = StepStats{};
+        }
+    }
 
     // Where your head is over the floor.
     float hx, hz;

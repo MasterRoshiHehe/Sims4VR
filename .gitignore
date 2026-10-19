@@ -1,4 +1,15 @@
 build/
-build32/
+build-*/
 __pycache__/
 *.pyc
+release/
+# Public repo whitelist: code, build tools, default ini, README, LICENSE. Notes and RE stay local.
+re/
+docs/
+research/
+probes/
+stage_probe/
+handoffs/
+tools/localdumps
+src/linkdump.*
+tools/map_dx9.py

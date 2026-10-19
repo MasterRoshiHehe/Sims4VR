@@ -58,6 +58,8 @@ struct Row {
     const char* jiggle = nullptr;  // a setting of the separate Integrated Body Physics mod (its key), not saved here
     bool sound = false;            // with jiggle: the key belongs to the separate Extended Sound Control mod instead
     const wchar_t* tip = nullptr;  // what it does: shown in a box under the row while it's picked
+    const char* when = nullptr;       // another mod's Link row: it opens only while this key of the mod is not 0
+    const wchar_t* offTip = nullptr;  // with when: the tip while it can't be opened (greyed out)
 };
 
 // The menu's pages (structure: user 2026-10-15 18:25Z, v0.13.153). Rows sit on
@@ -332,6 +334,7 @@ std::vector<Row> makeRows() {
         toggle(front, L"HUD on (all of it)", "wrist", "hud", &Config::wristPieces),
         number(front, L"HUD size (all of it)", "wrist", "scale", &Config::wristScale, 0.3f, 3, 0.05f, 100, L"%.0f%%"),
         toggle(front, L"Phone at your hip", "phone", "phone", &Config::phone),
+        flag(front, L"Notifications about one Sim over their head (off: phone only)", "phone", "notes_overhead", true, kLive),  // notify.py
         toggle(front, L"Mic moves your Sim's mouth", "voice", "mic", &Config::voiceMic, kNextStart),
         link(front, L"Advanced settings", advanced),
         link(advanced, L"View", view),
@@ -380,8 +383,12 @@ std::vector<Row> makeRows() {
         number(L"View picture", L"Sharpness", "stereo", "sharpen", &Config::sharpen, 0, 1, 0.05f, 100, L"%.0f%%"),
         toggle(L"View picture", L"Card goes to the headset stream first", "stereo", "gpu_yield", &Config::gpuYield),
         toggle(L"View picture", L"Align the eyes (SteamVR)", "stereo", "align_eyes", &Config::alignEyes),
+        toggle(L"View picture", L"Lopsided eye view (draws less unseen picture)", "stereo", "exact_fov", &Config::exactFov,
+               kRenderScale),
         toggle(L"View motion", L"Smooth stick turning", "stereo", "turn_reprojection", &Config::turnReprojection),
         toggle(L"View motion", L"Stick turn on the headset's clock", "stereo", "turn_display_clock", &Config::turnDisplayClock),
+        toggle(L"View motion", L"Stick walk on the headset's clock", "stereo", "walk_display_clock", &Config::walkDisplayClock),
+        toggle(L"View motion", L"Draw ahead of the stick turn", "stereo", "turn_lead", &Config::turnLead),
         toggle(L"View motion", L"Both eyes drawn from one place (walking)", "stereo", "paired_eyes", &Config::pairedEyes),
         toggle(L"View motion", L"Hands match in both eyes (walking)", "stereo", "paired_hands", &Config::pairedHands),
         toggle(L"View motion", L"Own body steady while turning", "stereo", "body_layer", &Config::bodyLayer),
@@ -481,7 +488,7 @@ std::vector<Row> makeRows() {
         toggle(L"HUD needs", L"Needs inside your right forearm", "wrist", "needs", &Config::wristNeeds),
         toggle(L"HUD moodlets", L"Moodlets inside your right forearm", "wrist", "moodlets", &Config::wristMoodlets),
         toggle(L"HUD queue", L"Action queue on your left forearm", "wrist", "actions", &Config::wristQueue),
-        toggle(L"HUD build", L"Build button on your left wrist", "wrist", "build_button", &Config::wristBuild),
+        toggle(L"HUD build", L"Build button on your left wrist (off: phone only)", "wrist", "build_button", &Config::wristBuild),
         toggle(L"HUD wants", L"Wants above you", "wrist", "wants", &Config::wristWhims),
 
         // Bubbles over Sims as cards in the world; your own in front of you (first person).
@@ -657,6 +664,8 @@ std::vector<Row> makeRows() {
 std::wstring g_ini;
 float g_place[4] = {};  // where the panel opens after it was moved (setPlacement)
 bool g_hasPlace = false;
+float g_notePlace[3] = {};
+bool g_hasNotePlace = false;
 Config* g_live = nullptr;
 std::vector<Row> g_rows;
 std::vector<char> g_flags;    // script mod switches' values
@@ -669,6 +678,11 @@ bool g_renderScaleChanged = false;
 ULONGLONG g_lastChange = 0;  // unsaved changes since then (saved a second later, or when the menu closes)
 int g_selected = 0;
 ULONGLONG g_selectedAt = 0;  // when the picked row changed (its tip shows a moment later)
+// The Close button picked with the stick (up past the page's first row); A or
+// right on it closes the menu (user 2026-10-18 22:49Z: only B spam or the
+// laser reached it).
+constexpr int kCloseRow = -2;
+bool g_closeWanted = false;
 bool g_tipDrawn = false;
 constexpr ULONGLONG kTipDelay = 500;
 int g_top = 0;  // first line shown
@@ -864,6 +878,17 @@ bool jiggleApi(JiggleGetFn& get, JiggleSetFn& set, bool sound = false) {
     return othermods::api(sound ? othermods::kSoundControl : othermods::kBodyPhysics, get, set);
 }
 
+// A link of another mod's menu with when=<key> opens only while the mod's
+// value for that key is not 0 (Integrated Body Physics "Configure current
+// Sim" while a Sim is frozen); till then it is greyed out with its off tip.
+bool linkOpen(const Row& r) {
+    if (!r.when) return true;
+    JiggleGetFn get;
+    JiggleSetFn set;
+    float v = 0;
+    return jiggleApi(get, set, r.sound) && get(r.when, &v) && v != 0;
+}
+
 // Its rows show what the mod has now.
 void readJiggle() {
     JiggleGetFn get[2];
@@ -962,8 +987,39 @@ bool mergeMenu(othermods::Mod mod, const wchar_t* prefix) {
             g_pages.push_back(page);
             continue;
         }
+        // A row's flags: vr shows, novr or one we don't know leaves the row out;
+        // when=<key> (links only) is handed back in `when`.
+        auto flagsShow = [](const std::wstring& flags, std::wstring* when) {
+            bool show = true;
+            for (size_t a = 0; a <= flags.size();) {
+                size_t b = flags.find(L',', a);
+                std::wstring flag = flags.substr(a, b == std::wstring::npos ? std::wstring::npos : b - a);
+                flag.erase(0, flag.find_first_not_of(L' '));
+                flag.erase(flag.find_last_not_of(L' ') + 1);
+                if (when && flag.compare(0, 5, L"when=") == 0 && flag.size() > 5)
+                    *when = flag.substr(5);
+                else if (!flag.empty() && flag != L"vr")
+                    show = false;
+                if (b == std::wstring::npos) break;
+                a = b + 1;
+            }
+            return show;
+        };
         if (kind == L"link") {
-            rows.push_back(link(pageId(f[1]), keep(f[2]), pageId(f[3])));
+            // page, label, target[, flags, tip, off tip]
+            std::wstring when;
+            if (!flagsShow(f[4], &when)) {
+                ++skipped;
+                continue;
+            }
+            Row r = link(pageId(f[1]), keep(f[2]), pageId(f[3]));
+            r.tip = f[5].empty() ? nullptr : keep(f[5]);
+            if (!when.empty()) {
+                r.when = key(when);
+                r.offTip = f[6].empty() ? nullptr : keep(f[6]);
+            }
+            r.sound = mod == othermods::kSoundControl;
+            rows.push_back(r);
             continue;
         }
         const bool isNumber = kind == L"number";
@@ -971,17 +1027,7 @@ bool mergeMenu(othermods::Mod mod, const wchar_t* prefix) {
             ++skipped;  // key rows and kinds we don't know
             continue;
         }
-        bool show = true;
-        const std::wstring& flags = f[isNumber ? 9 : 4];
-        for (size_t a = 0; a <= flags.size();) {
-            size_t b = flags.find(L',', a);
-            std::wstring flag = flags.substr(a, b == std::wstring::npos ? std::wstring::npos : b - a);
-            flag.erase(0, flag.find_first_not_of(L' '));
-            flag.erase(flag.find_last_not_of(L' ') + 1);
-            if (!flag.empty() && flag != L"vr") show = false;  // novr, or a flag we don't know
-            if (b == std::wstring::npos) break;
-            a = b + 1;
-        }
+        const bool show = flagsShow(f[isNumber ? 9 : 4], nullptr);
         if (!show || f[3].empty()) {
             ++skipped;
             continue;
@@ -1164,6 +1210,10 @@ bool change(size_t i, int dir) {
         }
         case Kind::Link:
             if (dir < 0) return false;
+            if (!linkOpen(r)) {  // greyed out: its tip says why
+                g_redraw = true;
+                return true;
+            }
             openPage(r.linkPage, -1);
             return true;
         case Kind::Back:
@@ -1258,6 +1308,24 @@ int stepRow(int row, int by) {
     for (int j = line + by; j >= 0 && j < static_cast<int>(g_lines.size()); j += by)
         if (g_lines[j].row >= 0) return g_lines[j].row;
     return row;
+}
+
+// The page's top row (its Back row on other pages).
+int firstRow() {
+    for (const Line& line : g_lines)
+        if (line.row >= 0) return line.row;
+    return 0;
+}
+
+bool selectClose() {
+    if (g_selected == kCloseRow) return false;
+    g_selected = kCloseRow;
+    g_selectedAt = GetTickCount64();
+    g_tipDrawn = false;
+    g_resetArmed = 0;
+    g_top = 0;
+    g_redraw = true;
+    return true;
 }
 
 // Shows a page with selectRow picked (-1: its first setting, past Back).
@@ -1468,7 +1536,8 @@ void shownValue(size_t i, wchar_t* out, size_t size) {
 // once the row has stayed picked for a moment.
 void drawTip() {
     if (g_selected < 0 || g_selected >= static_cast<int>(g_rows.size())) return;
-    const wchar_t* tip = g_rows[g_selected].tip;
+    const Row& row = g_rows[g_selected];
+    const wchar_t* tip = row.kind == Kind::Link && !linkOpen(row) ? row.offTip : row.tip;
     if (!tip || GetTickCount64() - g_selectedAt < kTipDelay) return;
     int line = lineOf(g_selected);
     if (line < g_top || line >= g_top + kShown) return;
@@ -1497,7 +1566,7 @@ void draw() {
     const bool resetArmed = g_resetArmed && GetTickCount64() - g_resetArmed < 4000;
 
     // Shapes.
-    fillRounded(kCloseLeft, kCloseTop, kCloseRight, kCloseBottom, 12, kOff);
+    fillRounded(kCloseLeft, kCloseTop, kCloseRight, kCloseBottom, 12, g_selected == kCloseRow ? kSelected : kOff);
     fillRounded(24, kTitleHeight, kWidth - 24, kTitleHeight + 2, 1, kTrack);
     fillRounded(kWidth / 2 - 56, 9, kWidth / 2 + 56, 15, 3, kTrack);  // a handle: the title bar moves the menu
     for (int j = g_top; j < last; ++j) {
@@ -1552,7 +1621,8 @@ void draw() {
         }
         const Row& r = g_rows[line.row];
         int right = kValueLeft - 12;
-        text(r.label, g_canvas.row, kText, 48, y0, right, y1, DT_LEFT);
+        const bool closed = r.kind == Kind::Link && !linkOpen(r);  // greyed out till it can be opened
+        text(r.label, g_canvas.row, closed ? kDim : kText, 48, y0, right, y1, DT_LEFT);
         if (const wchar_t* note = noteOf(r)) {
             int after = 48 + textWidth(r.label, g_canvas.row) + 14;
             if (after + textWidth(note, g_canvas.small) <= right) text(note, g_canvas.small, kDim, after, y0 + 3, right, y1, DT_LEFT);
@@ -1577,7 +1647,7 @@ void draw() {
                 int n = pageSize(r.linkPage);
                 swprintf(count, 48, L"%d setting%ls", n, n == 1 ? L"" : L"s");
                 text(count, g_canvas.small, kDim, kValueLeft, y0 + 3, kValueRight - 40, y1, DT_RIGHT);
-                text(L"\u203a", g_canvas.title, kText, kValueRight - 30, y0 - 4, kValueRight, y1, DT_RIGHT);
+                text(L"\u203a", g_canvas.title, closed ? kDim : kText, kValueRight - 30, y0 - 4, kValueRight, y1, DT_RIGHT);
                 break;
             }
             case Kind::Back:
@@ -1721,6 +1791,12 @@ void init(const std::wstring& moduleDir, Config* live) {
         std::copy(place, place + 4, g_place);
         g_hasPlace = true;
     }
+    float note[3];
+    if (sscanf(readSetting(g_ini, "phone", "note_place", "").c_str(), "%f %f %f", &note[0], &note[1], &note[2]) == 3 &&
+        std::isfinite(note[0] + note[1] + note[2])) {
+        std::copy(note, note + 3, g_notePlace);
+        g_hasNotePlace = true;
+    }
     g_page = 0;
     buildLines();
     loadPage(readSetting(g_ini, "ui", "settings_page", ""));
@@ -1739,6 +1815,21 @@ void setPlacement(const float place[4]) {
     snprintf(text, sizeof(text), "%.3f %.3f %.3f %.1f", place[0], place[1], place[2], place[3]);
     LOG("Settings: moved; [ui] settings_place = %s (right, up, forward of your head, turn)", text);
     queueSave({{"ui", "settings_place", text, false}});
+}
+
+bool notePlacement(float place[3]) {
+    if (!g_hasNotePlace) return false;
+    std::copy(g_notePlace, g_notePlace + 3, place);
+    return true;
+}
+
+void setNotePlacement(const float place[3]) {
+    std::copy(place, place + 3, g_notePlace);
+    g_hasNotePlace = true;
+    char text[96];
+    snprintf(text, sizeof(text), "%.3f %.3f %.3f", place[0], place[1], place[2]);
+    LOG("Notification card moved; [phone] note_place = %s (right, up, forward of your head)", text);
+    queueSave({{"phone", "note_place", text, false}});
 }
 
 bool onTitleBar(float u, float v) {
@@ -1775,9 +1866,16 @@ bool back() {
 
 bool isOpen() { return g_open; }
 
+bool closeWanted() {
+    const bool wanted = g_open && g_closeWanted;
+    g_closeWanted = false;
+    return wanted;
+}
+
 void open() {
     if (g_open || !g_live) return;
     g_open = true;
+    g_closeWanted = false;
     g_dirX = g_dirY = 9;
     g_pressWas = true;
     g_resetArmed = 0;
@@ -1850,7 +1948,8 @@ bool close() {
     if (!g_open) return false;
     g_open = false;
     g_reopenPage = g_page;
-    g_reopenRow = g_selected;
+    g_reopenRow = g_selected == kCloseRow ? -1 : g_selected;
+    g_closeWanted = false;
     if (g_page == 0 && g_backing && g_backFrom > 0) {
         g_reopenPage = g_backFrom;
         g_reopenRow = g_backFromRow;
@@ -1871,9 +1970,20 @@ bool update(float stickX, float stickY, bool press) {
     bool vertical = std::fabs(stickY) >= std::fabs(stickX);
     int dy = stickStep(vertical ? stickY : 0, g_dirY, g_nextY, g_repeatsY, now);
     int dx = stickStep(vertical ? 0 : stickX, g_dirX, g_nextX, g_repeatsX, now);
-    if (dy) any |= select(stepRow(g_selected, -dy));  // up = the row above
-    if (dx) any |= change(g_selected, dx);
-    if (press && !g_pressWas) any |= change(g_selected, 0);
+    if (dy) {
+        if (g_selected == kCloseRow)
+            any |= dy < 0 && select(firstRow());  // down: back onto the list
+        else if (dy > 0 && stepRow(g_selected, -1) == g_selected)
+            any |= selectClose();  // up past the first row
+        else
+            any |= select(stepRow(g_selected, -dy));  // up = the row above
+    }
+    if (g_selected == kCloseRow) {
+        if (dx > 0 || (press && !g_pressWas)) g_closeWanted = any = true;
+    } else {
+        if (dx) any |= change(g_selected, dx);
+        if (press && !g_pressWas) any |= change(g_selected, 0);
+    }
     g_pressWas = press;
     // Saved a second after the last change, so a crash or a lost headset link
     // doesn't take your settings with it.

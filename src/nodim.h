@@ -14,6 +14,15 @@
 // dimming) only the bare dimming is cleared.
 namespace s4vr::nodim {
 
+// At the source, in every mode (user 2026-10-18: "completely disable the blue
+// overlay"): the game's gradient colour ramp gets the dimming's two stops fully
+// see-through. The modality sprite stays (clicks behind dialogs stay blocked)
+// but draws nothing. Hooked once at load; `on` counts for dimming pictures made
+// after it (the game makes one when the dimming is first drawn). The first-
+// person un-blend below stays as the fallback (it finds no dimming then).
+void installSource(bool on);
+void setSource(bool on);
+
 // Any thread: on (first person) or off, and the boxes of dialogs drawn over the
 // dimming (UI pixels: x, y, width, height; up to 4).
 void set(bool on, const int (*boxes)[4], int count);

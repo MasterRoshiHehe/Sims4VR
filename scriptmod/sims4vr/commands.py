@@ -50,6 +50,11 @@ except Exception:
     native._log(traceback.format_exc())
 
 try:
+    from sims4vr import notify  # noqa: F401  (the game's notifications on the phone)
+except Exception:
+    import traceback
+    native._log(traceback.format_exc())
+try:
     from sims4vr import objmenu  # noqa: F401
 except Exception as e:
     native._log('menus on objects unavailable: {!r}'.format(e))

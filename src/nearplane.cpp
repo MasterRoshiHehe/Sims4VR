@@ -56,6 +56,7 @@ cbuffer Params : register(b0) {
     float tanX, tanY, nearLow, nearHigh;  // the view; the near limits it may have been drawn with
     float farZ, considerZ;  // farther than considerZ: never your own body (it can't matter)
     uint count, pad;
+    float4 centres;  // the frustum centre of this eye (xy) and of the one before (zw): the depth is one of them
     float4 capA[24];  // your body: segment start, radius
     float4 capB[24];  // segment end
 };
@@ -81,7 +82,9 @@ bool ownBody(int2 p, float d) {
     float zh = viewZ(d, nearHigh);
     float2 uv = (float2(p) + 0.5) / float2(size);
     uv = float2(uv.x * 2 - 1, 1 - uv.y * 2) * float2(tanX, tanY);
-    return onBody(float3(uv * zl, zl)) || onBody(float3(uv * zh, zh));
+    float2 a = uv + centres.xy, b = uv + centres.zw;
+    if (onBody(float3(a * zl, zl)) || onBody(float3(a * zh, zh))) return true;
+    return any(centres.xy != centres.zw) && (onBody(float3(b * zl, zl)) || onBody(float3(b * zh, zh)));
 }
 
 [numthreads(16, 16, 1)]
@@ -119,6 +122,7 @@ struct Params {
     float tanX, tanY, nearLow, nearHigh;
     float farZ, considerZ;
     uint32_t count, pad;
+    float centres[4];
     float capA[kMaxCapsules][4];
     float capB[kMaxCapsules][4];
 };
@@ -156,6 +160,7 @@ std::mutex g_mutex;  // everything below
 Capsule g_body[kMaxCapsules];
 int g_bodyCount = 0;
 float g_bodyEye[3]{}, g_bodyOtherEye[3]{};  // this frame's eye and the one before (likely the other eye)
+float g_bodyCentre[2]{}, g_bodyOtherCentre[2]{};  // their frustum centres
 float g_bodyAxes[3][3]{};                    // right, up, ahead
 float g_bodyTan[2]{};
 ULONGLONG g_bodyTick = 0;
@@ -396,10 +401,13 @@ float viewDepth(float d, float n, float f, bool reversed) {
 }  // namespace
 
 void ownBody(const float eye[3], const float right[3], const float up[3], const float ahead[3], float tanX,
-             float tanY, const Capsule* capsules, int count) {
+             float tanY, float centreX, float centreY, const Capsule* capsules, int count) {
     std::lock_guard<std::mutex> lock(g_mutex);
     std::memcpy(g_bodyOtherEye, g_bodyEye, sizeof(g_bodyEye));
     std::memcpy(g_bodyEye, eye, sizeof(g_bodyEye));
+    std::memcpy(g_bodyOtherCentre, g_bodyCentre, sizeof(g_bodyCentre));
+    g_bodyCentre[0] = centreX;
+    g_bodyCentre[1] = centreY;
     std::memcpy(g_bodyAxes[0], right, sizeof(g_bodyAxes[0]));
     std::memcpy(g_bodyAxes[1], up, sizeof(g_bodyAxes[1]));
     std::memcpy(g_bodyAxes[2], ahead, sizeof(g_bodyAxes[2]));
@@ -540,6 +548,10 @@ void sense(ID3D11DeviceContext* context, ID3D11DepthStencilView* depth, bool rev
     params.reversed = reversed ? 1u : 0u;
     params.tanX = g_bodyTan[0];
     params.tanY = g_bodyTan[1];
+    params.centres[0] = g_bodyCentre[0];
+    params.centres[1] = g_bodyCentre[1];
+    params.centres[2] = g_bodyOtherCentre[0];
+    params.centres[3] = g_bodyOtherCentre[1];
     params.nearLow = nearLow;
     params.nearHigh = nearHigh;
     params.farZ = g_far;

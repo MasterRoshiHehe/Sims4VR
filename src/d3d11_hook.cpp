@@ -7,6 +7,8 @@
 
 #include <string>
 
+#include "framecost.h"
+#include "framemap.h"
 #include "log.h"
 
 namespace s4vr::d3d11_hook {
@@ -22,10 +24,16 @@ static thread_local bool t_inPresent = false;  // Present1 may call Present inte
 
 static HRESULT STDMETHODCALLTYPE hookedPresent(IDXGISwapChain* swapchain, UINT syncInterval, UINT flags) {
     // DXGI_PRESENT_TEST only queries occlusion; nothing is presented.
-    if (g_callback && !t_inPresent && !(flags & DXGI_PRESENT_TEST)) g_callback(swapchain);
+    const bool picture = !t_inPresent && !(flags & DXGI_PRESENT_TEST);
+    if (picture) {
+        framecost::presentStart();
+        framemap::mark(framemap::Present);
+    }
+    if (g_callback && picture) g_callback(swapchain);
     t_inPresent = true;
     HRESULT hr = g_originalPresent(swapchain, syncInterval, flags);
     t_inPresent = false;
+    if (picture) framecost::presentEnd();
     return hr;
 }
 
@@ -37,10 +45,16 @@ static HRESULT STDMETHODCALLTYPE hookedPresent1(IDXGISwapChain1* swapchain, UINT
         logged = true;
         LOG("Game presents with Present1");
     }
-    if (g_callback && !t_inPresent && !(flags & DXGI_PRESENT_TEST)) g_callback(swapchain);
+    const bool picture = !t_inPresent && !(flags & DXGI_PRESENT_TEST);
+    if (picture) {
+        framecost::presentStart();
+        framemap::mark(framemap::Present);
+    }
+    if (g_callback && picture) g_callback(swapchain);
     t_inPresent = true;
     HRESULT hr = g_originalPresent1(swapchain, syncInterval, flags, params);
     t_inPresent = false;
+    if (picture) framecost::presentEnd();
     return hr;
 }
 

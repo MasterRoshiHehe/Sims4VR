@@ -12,10 +12,13 @@
 // (User 2026-10-17 13:34Z: no more cuts of the game's UI; draw what it draws.)
 namespace s4vr::thumbs {
 
-// Python's thread (the game's main thread, where the game's UI asks too): the
-// picture "img://thumbs/<path>" as HUD picture `id`. Asked once per id; a
-// failed one is asked again after a while. False: not asked (game build not
-// recognised, or a bad path).
+// Any thread (Python's): the picture "img://thumbs/<path>" as HUD picture
+// `id`. Asked once per id; a failed one is asked again after a while. False:
+// not asked (game build not recognised, or a bad path).
 bool request(uint64_t id, const char* path);
+
+// The game's main thread (the camera hook), where the game's UI asks too:
+// sends the requests waiting to the game's thumbnail system.
+void pump();
 
 }  // namespace s4vr::thumbs

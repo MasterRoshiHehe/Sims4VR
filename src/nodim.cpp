@@ -9,10 +9,48 @@
 #include <cstring>
 #include <mutex>
 
+#include "MinHook.h"
+#include "gameaddr.h"
 #include "log.h"
 
 namespace s4vr::nodim {
 namespace {
+
+// At the source: the game's gradient colour ramp (Scaleform GradientRamp::Init,
+// 1.128 0x107c540, records of {ratio byte, pad, ARGB at +4}, 8 bytes each). It
+// runs when a gradient fill's picture is made, the first time the fill is drawn.
+constexpr uint32_t kRampRva = 0x107c540;
+constexpr uint8_t kRampBytes[16] = {0x40, 0x55, 0x56, 0x41, 0x56, 0x48, 0x8d, 0x6c,
+                                    0x24, 0xe0, 0x48, 0x81, 0xec, 0x20, 0x01, 0x00};
+using RampFn = void (*)(void* ramp, const uint8_t* records, unsigned count, float gamma);
+RampFn g_originalRamp = nullptr;
+std::atomic<bool> g_sourceOn{false};
+std::atomic<int> g_sourceLogs{0};
+
+// DrawModality's stops: alphas 0.55 and 0.85 (140, 216) at ratios 0 and 255, in
+// dark colours (#161D3A, #12152F; a UI mod may change those). No other gradient
+// in the game's UI uses those alphas.
+bool isDimming(const uint8_t* records, unsigned count) {
+    if (count != 2 || !records) return false;
+    if (records[0] != 0 || records[8] != 255 || records[7] != 140 || records[15] != 216) return false;
+    for (int i : {4, 5, 6, 12, 13, 14})
+        if (records[i] >= 0x60) return false;
+    return true;
+}
+
+void hookedRamp(void* ramp, const uint8_t* records, unsigned count, float gamma) {
+    if (g_sourceOn.load(std::memory_order_relaxed) && isDimming(records, count)) {
+        uint8_t clear[16];
+        std::memcpy(clear, records, sizeof(clear));
+        clear[7] = clear[15] = 0;
+        if (g_sourceLogs.fetch_add(1) < 5)
+            LOG("No dimming: the game's dimming (#%02X%02X%02X to #%02X%02X%02X) made see-through", records[6],
+                records[5], records[4], records[14], records[13], records[12]);
+        g_originalRamp(ramp, clear, count, gamma);
+        return;
+    }
+    g_originalRamp(ramp, records, count, gamma);
+}
 
 constexpr int kRows = 24;   // where the dimming is read (its gradient is linear down the screen)
 constexpr int kMaxBoxes = 4;
@@ -185,6 +223,24 @@ void readSamples(ID3D11DeviceContext* context, ID3D11Texture2D* staging, DXGI_FO
 }
 
 }  // namespace
+
+void installSource(bool on) {
+    g_sourceOn = on;
+    uint8_t* target = gameaddr::dx9() ? nullptr : gameaddr::function(kRampRva, kRampBytes);
+    if (!target) {
+        LOG("No dimming: gradient ramp not found for this game build; dimming only taken out of the VR UI");
+        return;
+    }
+    MH_STATUS status = MH_Initialize();
+    if (status == MH_OK || status == MH_ERROR_ALREADY_INITIALIZED)
+        status = MH_CreateHook(target, reinterpret_cast<void*>(&hookedRamp), reinterpret_cast<void**>(&g_originalRamp));
+    if (status == MH_OK) status = MH_EnableHook(target);
+    LOG("No dimming: gradient ramp hook %s (%s)", MH_StatusToString(status), on ? "on" : "off");
+}
+
+void setSource(bool on) {
+    if (g_sourceOn.exchange(on) != on) LOG("No dimming at the source: %s", on ? "on" : "off");
+}
 
 void set(bool on, const int (*boxes)[4], int count) {
     std::lock_guard<std::mutex> lock(g_mutex);

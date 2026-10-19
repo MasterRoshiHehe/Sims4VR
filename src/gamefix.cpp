@@ -10,6 +10,7 @@
 #include "MinHook.h"
 #include "camera.h"
 #include "gameaddr.h"
+#include "framemap.h"
 #include "log.h"
 #include "settings.h"
 
@@ -144,6 +145,7 @@ void holdRooms(uint8_t* rooms) {
 }
 
 void hookedCullRooms(void* rooms, void* view, uint8_t kind, char floor) {
+    framemap::mark(framemap::CullRooms, kind);
     auto* r = static_cast<uint8_t*>(rooms);
     if (!r[kRoomsLockOn] || r[kRoomsLockOff]) return g_cullRooms(rooms, view, kind, floor);  // returns at once
     auto* lock = reinterpret_cast<CRITICAL_SECTION*>(r + kRoomsLock);

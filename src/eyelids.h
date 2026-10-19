@@ -18,5 +18,10 @@ struct State {
 State advance();
 // Any thread: the Sim you are in sleeps (first person).
 bool sleeping();
+// Python: the game fades the Sim you are in out (true) or back in (false),
+// e.g. WickedWhims between positions, where the view would jump: the eyes
+// close quickly and open again once it is back (user 2026-10-18 22:10Z). Opens
+// by itself after a few seconds if the fade-in never comes.
+void setCovered(bool covered);
 
 }  // namespace s4vr::eyelids

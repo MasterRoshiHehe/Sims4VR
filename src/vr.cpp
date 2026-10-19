@@ -149,12 +149,37 @@ static float g_uiAlphaNearLaser = 0;          // the most opaque UI around that 
 static int g_renderingEye = -1;
 static XrPosef g_eyePose[2]{};
 static XrFovf g_eyeFov[2]{};
+static bool g_fovLogged = false;  // the eyes' FOV went to the log (once per game run)
 static bool g_eyeValid[2] = {false, false};
 static float g_eyeYaw[2] = {NAN, NAN};  // app space's heading in the world when each eye was rendered
 // What each eye's swapchain holds now: the image as rendered (the above), or
 // under SteamVR the older eye turned to the newest head pose (eyealign.h).
 static XrPosef g_shownPose[2]{};
 static float g_shownYaw[2] = {NAN, NAN};
+// The headset's frame period (xrWaitFrame), for the stick turn's steps.
+static XrDuration g_displayPeriod = 0;
+// Stick turn check: how evenly each frame turned while the right stick turns
+// (logged every 2 s of turning).
+struct TurnCheck {
+    ULONGLONG start = 0;
+    int frames = 0, missed = 0, pictures = 0;
+    double stepMin = 1e9, stepMax = 0, stepSum = 0;  // display clock steps, ms
+    int steps = 0;
+    double turnMin = 1e9, turnMax = -1e9, turnSum = 0;  // view heading turned per frame, degrees
+    int turns = 0;
+    float leadMax = 0;  // drawn ahead of the turn, degrees
+    float backMin = 1e9f, backMax = -1e9f;  // eyes turned back to the newest heading, degrees
+    float lastHeading = NAN;
+};
+static TurnCheck g_turnCheck;
+static bool g_turnChecking = false;  // the right stick turns this frame
+// Turn lead (camera::setTurnLead): the stick's turn rate now (radians of yaw a
+// second, 0 when still), how long a pair's heading is set before the headset
+// shows it (learned while turning), and the lead the shown right eye was drawn with.
+static float g_stickRate = 0;
+static float g_turnLatency = 0.05f;
+static float g_shownLead1 = 0;
+static int g_turnCheckLogs = 0;
 static int g_keepEye = -1;  // the eye copyIntoSwapchain is drawing, when its image is to be kept
 // Paired eyes (first person, camera.h): the right eye is drawn from where its
 // left eye was. A shown left eye from the pair before would be one pair
@@ -1167,6 +1192,16 @@ static bool projectNormalized(const XrVector3f& p, const XrPosef& pose, const Xr
     return nx >= 0 && ny >= 0 && nx < 1 && ny < 1;
 }
 
+// The frame the game picks in: a centred frustum as wide as the drawn one
+// (touch.cpp: its pick camera gets the pixel's centred direction). The same
+// as the picture with a centred eye view; with the lopsided one the mouse
+// went where the laser shows in the picture and picked about 18 degrees off.
+static XrFovf pickFov(const XrFovf& f) {
+    const float halfX = (std::tan(f.angleRight) - std::tan(f.angleLeft)) / 2,
+                halfY = (std::tan(f.angleUp) - std::tan(f.angleDown)) / 2;
+    return {-std::atan(halfX), std::atan(halfX), std::atan(halfY), -std::atan(halfY)};
+}
+
 static int g_captureSlot = -1;  // what copyIntoSwapchain is drawing, for a screenshot (screenshot::Slot)
 
 // The body swapchain beside the eye swapchain `eye` (g_splitSlot), whose new
@@ -1436,17 +1471,41 @@ static XrSwapchainSubImage subImage(const Swapchain& s);
 
 static float uiPanelHeight(const D3D11_TEXTURE2D_DESC& desc) { return g_config.uiWidth * desc.Height / desc.Width; }
 
-// Laser against the panel: true with the hit point and 0..1 coordinates.
+// A window the phone's Options app (the game's menu) opened shows in front of
+// you on its own (user 2026-10-19 01:08Z: the game's exact window, not the whole
+// UI and not on the phone): the panel shows only its box in the UI (fitMenu),
+// larger than on the whole panel. Off: the whole UI (a window filling the screen).
+static bool g_frontCropOn = false;
+static int32_t g_frontCrop[4] = {};  // x, y, width, height in the UI
+constexpr float kFrontCropScale = 1.8f;
+
+// The panel's size in metres (the window alone while g_frontCropOn).
+static void uiPanelSize(const D3D11_TEXTURE2D_DESC& desc, float& w, float& h) {
+    w = g_config.uiWidth;
+    h = uiPanelHeight(desc);
+    if (g_frontCropOn && g_frontCrop[2] > 0 && g_frontCrop[3] > 0 && desc.Width > 0) {
+        w = std::min(g_config.uiWidth, g_config.uiWidth * g_frontCrop[2] / desc.Width * kFrontCropScale);
+        h = w * g_frontCrop[3] / g_frontCrop[2];
+    }
+}
+
+// Laser against the panel: true with the hit point and 0..1 coordinates (of the whole UI).
 static bool hitPanel(const XrVector3f& o, const XrVector3f& d, const D3D11_TEXTURE2D_DESC& desc, XrVector3f& hit,
                      float& u, float& v) {
     if (d.z > -0.01f) return false;
     float t = (-g_config.uiDistance - o.z) / d.z;
     if (t <= 0) return false;
     hit = {o.x + d.x * t, o.y + d.y * t, -g_config.uiDistance};
-    float w = g_config.uiWidth, h = uiPanelHeight(desc);
+    float w, h;
+    uiPanelSize(desc, w, h);
     u = (hit.x + w / 2) / w;
     v = (g_config.uiHeight + h / 2 - hit.y) / h;
-    return u >= 0 && u <= 1 && v >= 0 && v <= 1;
+    const bool in = u >= 0 && u <= 1 && v >= 0 && v <= 1;
+    if (g_frontCropOn && desc.Width > 0 && desc.Height > 0) {
+        u = (g_frontCrop[0] + u * g_frontCrop[2]) / static_cast<float>(desc.Width);
+        v = (g_frontCrop[1] + v * g_frontCrop[3]) / static_cast<float>(desc.Height);
+    }
+    return in;
 }
 
 // Reads back the UI alpha under the laser, a couple of frames late, so the
@@ -1534,9 +1593,11 @@ static bool renderUiPanel(XrCompositionLayerQuad& layer) {
     layer.space = g_appSpace;
     layer.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
     layer.subImage = subImage(g_uiSwapchain);
+    if (g_frontCropOn && g_frontCrop[2] > 0 && g_frontCrop[3] > 0)
+        layer.subImage.imageRect = {{g_frontCrop[0], g_frontCrop[1]}, {g_frontCrop[2], g_frontCrop[3]}};
     layer.pose.orientation.w = 1.0f;
     layer.pose.position = {0.0f, g_config.uiHeight, -g_config.uiDistance};
-    layer.size = {g_config.uiWidth, uiPanelHeight(desc)};
+    uiPanelSize(desc, layer.size.width, layer.size.height);
     return true;
 }
 
@@ -2029,7 +2090,11 @@ static bool pieInWorld(bool show) {
 static PieMenu g_wrist;
 
 // The full panel in front of you: always outside first person, and in it with [ui] first_person = 2.
-static bool frontPanelShown() { return !camera::bodyActive() || g_config.uiFirstPerson >= 2; }
+// A window the phone's Options app opened (the game options, Save, Exit...):
+// too big for the phone, so the game's UI shows in front of you meanwhile and
+// the phone keeps its apps (user 2026-10-18 21:55Z).
+static bool g_optionsFront = false;
+static bool frontPanelShown() { return !camera::bodyActive() || g_config.uiFirstPerson >= 2 || g_optionsFront; }
 
 static void hideWrist() {
     g_wrist.active = false;
@@ -2455,6 +2520,8 @@ static bool shovePie(const armik::Hand hands[2]) {
 // Your Sim's phone (first person, [phone] phone = 1): close your right hand at
 // your right hip and your Sim takes its phone out into that hand (control 3 to
 // Python; our own phone is drawn in the hand, updatePhone). Its screen shows
+// the game's own phone menu (phoneapp.py, hud.cpp drawPhone; user 2026-10-18
+// 20:35Z), and its Options app the game menu as below. With Options open it shows
 // the game menu: Escape opens it, and
 // Python keeps the menu's pause from stopping the game. Poke the screen with
 // your left index finger or point the left laser at it. Open the hand and the
@@ -2463,6 +2530,8 @@ static PieMenu g_phone;
 static constexpr float kPhoneChin = 0.035f;  // the bands above and below the screen, x the phone's height
 static std::atomic<bool> g_gameMenuOpen{false}, g_gameMenuReported{false};
 static bool g_phoneOpenedMenu = false;   // our Escape opened the menu (for when Python can't say)
+static bool g_phoneOptions = false;      // the Options app is open: the game menu on the screen (else the game's phone menu)
+static bool g_phoneOptionsSeen = false;  // the game menu has been open since Options was pressed
 static ULONGLONG g_phoneMenuAt = 0;      // an Escape to open the menu, once the pie's own has gone
 static ULONGLONG g_phoneAwayAt = 0;      // tell Python the phone is away (after the menu's Escape)
 static ULONGLONG g_phoneMenuSince = 0;   // the menu open since
@@ -3383,7 +3452,7 @@ static bool updateObjectMenu(bool firstPerson, bool headOk, const XrPosef& head)
         }
     }
     bool want = r.kind > 0 && (r.kind >= 4 ? g_config.popups3d : g_config.objectMenus) && firstPerson && g_uiFrame &&
-                !g_pie.active && !g_phoneOut;
+                !g_pie.active && !(g_phoneOut && (g_tablet || g_phoneOptions));  // the phone's apps: popups stay in front of you
     camera::View view;
     if (!want || !camera::lastView(view)) {
         hideObjectMenu();
@@ -3713,12 +3782,13 @@ static bool updatePopupCard(const ObjectMenuRequest& r, bool firstPerson, bool h
 // the eye images). Poke with your right index finger or point the laser.
 
 enum { kHudWatch, kHudPause, kHudSleep, kHudBuild, kHudNeeds, kHudMoodlets, kHudQueue, kHudWants, kHudPopup, kHudTip, kHudMoney,
-       kHudPicker, kHudCount };
+       kHudPicker, kHudNote, kHudCount };
 struct HudSheet {
     PieMenu m;  // x0, y0, cw, ch: its part of the atlas; uiW, uiH: the atlas
     bool onTop = false;
 };
 static HudSheet g_hud[kHudCount];
+static HudSheet g_phoneSheet;  // the phone's screen with the game's phone menu (hud::kPhone), while it shows
 static bool g_fullUi = false;  // the full UI over your palm, shown with the watch's button
 static std::atomic<bool> g_paused{false};
 static hud::Frame g_hudInput;  // this frame's pointer on the atlas (a poke or the laser)
@@ -4049,11 +4119,155 @@ static phone3d::Panel hudPanel(const HudSheet& s, const camera::View& view) {
     return panel;
 }
 
-// All but the popup and picker cards (they show whatever the HUD setting).
+// A notification about one Sim as a card over their head (notify.py; [phone]
+// notes_overhead), or in front of you for your own Sim. Python follows the
+// head and ends it; a press dismisses it here.
+struct NoteOver {
+    uint64_t id = 0;
+    float at[3] = {};
+    bool front = false;
+};
+static std::mutex g_noteMutex;
+static NoteOver g_noteOver;               // g_noteMutex
+static std::atomic<uint64_t> g_noteDismissed{0};
+
+void setNoteOver(uint64_t id, const float at[3], bool front) {
+    if (id && id == g_noteDismissed.load()) return;
+    std::lock_guard<std::mutex> lock(g_noteMutex);
+    if (id != g_noteOver.id) {
+        static int logged = 0;
+        if (logged++ < 40) {
+            if (id)
+                LOG("Notification %llu: a card %s", static_cast<unsigned long long>(id),
+                    front ? "in front of you (your Sim)" : "over the Sim's head");
+            else
+                LOG("Notification card gone");
+        }
+    }
+    g_noteOver.id = id;
+    std::memcpy(g_noteOver.at, at, sizeof(g_noteOver.at));
+    g_noteOver.front = front;
+}
+
+// Moving the card in front of you (user 2026-10-18 23:52Z): close your hand on
+// it, or hold the laser's trigger on it a moment, and move it; let go and the
+// cards in front of you show there from then on, relative to your head (settings.cpp
+// saves it, [phone] note_place).
+struct NoteDrag {
+    int hand = -1;          // the hand moving it; -1 none
+    bool laser = false;     // by that hand's laser (else by the hand itself)
+    float distance = 0;     // laser: the held point's distance along it
+    XrVector3f offset{};    // the held point from the card's centre
+    XrVector3f held{};      // the held point now
+};
+static NoteDrag g_noteDrag;
+static ULONGLONG g_noteDragEnded = 0;  // a press let go after a move doesn't dismiss or answer
+// The card in front of you as last placed (render thread): centre, axes, size.
+static bool g_noteCardFront = false;
+static XrVector3f g_noteCardAt{}, g_noteCardX{}, g_noteCardY{};
+static float g_noteCardW = 0, g_noteCardH = 0;
+
+// Where on the front card (within `slack` metres of its rectangle) a point is, or false.
+static bool onNoteCard(const XrVector3f& p, float depth, float slack) {
+    if (!g_noteCardFront) return false;
+    const XrVector3f z = cross3(g_noteCardX, g_noteCardY), rel = sub3(p, g_noteCardAt);
+    return std::fabs(dot3(rel, z)) <= depth && std::fabs(dot3(rel, g_noteCardX)) <= g_noteCardW / 2 + slack &&
+           std::fabs(dot3(rel, g_noteCardY)) <= g_noteCardH / 2 + slack;
+}
+
+static bool laserOnNoteCard(const XrVector3f& o, const XrVector3f& d, XrVector3f& hit) {
+    if (!g_noteCardFront) return false;
+    const XrVector3f z = cross3(g_noteCardX, g_noteCardY);
+    const float den = dot3(d, z);
+    if (std::fabs(den) < 1e-4f) return false;
+    const float t = dot3(sub3(g_noteCardAt, o), z) / den;
+    if (!(t > 0.05f && t < 10)) return false;
+    hit = {o.x + d.x * t, o.y + d.y * t, o.z + d.z * t};
+    return onNoteCard(hit, 0.01f, 0);
+}
+
+static void startNoteDrag(int hand, bool laser, const XrVector3f& held) {
+    g_noteDrag.hand = hand;
+    g_noteDrag.laser = laser;
+    g_noteDrag.offset = sub3(held, g_noteCardAt);
+    g_noteDrag.held = held;
+    buzz(hand, 0.4f, 0.03f);
+    LOG("Notification card: moving it (%s, %s hand)", laser ? "laser" : "hand", hand ? "right" : "left");
+}
+
+static void endNoteDrag(const XrPosef& head, bool headOk) {
+    if (g_noteDrag.hand < 0) return;
+    buzz(g_noteDrag.hand, 0.25f, 0.02f);
+    g_noteDrag.hand = -1;
+    g_noteDragEnded = GetTickCount64();
+    if (!headOk) return;
+    XrVector3f f = rotate3(head.orientation, {0, 0, -1});
+    f.y = 0;
+    f = dot3(f, f) > 1e-4f ? normalize3(f) : XrVector3f{0, 0, -1};
+    const XrVector3f r = cross3(f, XrVector3f{0, 1, 0});
+    const XrVector3f delta = sub3(sub3(g_noteDrag.held, g_noteDrag.offset), head.position);
+    const float place[3] = {dot3(delta, r), delta.y, std::max(0.25f, dot3(delta, f))};
+    settings::setNotePlacement(place);
+}
+
+static uint64_t noteShown() {
+    std::lock_guard<std::mutex> lock(g_noteMutex);
+    return g_noteOver.id;
+}
+
+static void updateNoteCard(const camera::View& view, bool firstPerson, bool headOk, const XrPosef& head) {
+    HudSheet& s = g_hud[kHudNote];
+    NoteOver n;
+    {
+        std::lock_guard<std::mutex> lock(g_noteMutex);
+        n = g_noteOver;
+    }
+    const float used = hud::noteHeight();
+    if (!n.id || !firstPerson || !headOk || !(used > 0)) {
+        g_noteCardFront = false;
+        g_noteDrag.hand = -1;
+        hideHud(s);
+        return;
+    }
+    const XrVector3f eye = head.position;
+    XrVector3f at, x, y;
+    float w;
+    if (n.front) {
+        XrVector3f look = rotate3(head.orientation, {0, 0, -1});
+        XrVector3f flat = normalize3({look.x, 0, look.z});
+        if (!(dot3(flat, flat) > 0.5f)) flat = {0, 0, -1};
+        const XrVector3f right = cross3(flat, XrVector3f{0, 1, 0});
+        // Where you put it (right, up, forward of your head facing level), else 0.75 m ahead, a little low.
+        float place[3] = {0, -0.12f, 0.75f};
+        settings::notePlacement(place);
+        if (g_noteDrag.hand >= 0)
+            at = sub3(g_noteDrag.held, g_noteDrag.offset);
+        else
+            at = {eye.x + right.x * place[0] + flat.x * place[2], eye.y + place[1],
+                  eye.z + right.z * place[0] + flat.z * place[2]};
+        w = 0.42f;
+    } else {
+        XrVector3f headAt = worldToApp(view, n.at, false);
+        XrVector3f to = sub3(headAt, eye);
+        const float away = std::sqrt(dot3(to, to));
+        w = std::max(0.3f, std::min(1.2f, g_config.popupSize * 0.8f * std::max(away, 0.6f)));
+        const float h = w * used / hud::kNote.w;
+        at = {headAt.x, headAt.y + 0.28f + h / 2, headAt.z};
+    }
+    facingAxes(at, eye, x, y);
+    g_noteCardFront = n.front;
+    g_noteCardAt = at, g_noteCardX = x, g_noteCardY = y;
+    g_noteCardW = w, g_noteCardH = w * used / hud::kNote.w;
+    if (!n.front) g_noteDrag.hand = -1;
+    s.onTop = true;
+    placeHud(s, at, x, y, w, {hud::kNote.x, hud::kNote.y, hud::kNote.w, used});
+}
+
+// All but the popup, picker and notification cards (they show whatever the HUD setting).
 static void hideAllHud() {
     bool any = false;
     for (int i = 0; i < kHudCount; ++i) {
-        if (i == kHudPopup || i == kHudPicker) continue;
+        if (i == kHudPopup || i == kHudPicker || i == kHudNote) continue;
         any = any || g_hud[i].m.active;
         hideHud(g_hud[i]);
     }
@@ -4065,14 +4279,18 @@ static void updateHud(const armik::Hand hands[2], bool firstPerson, bool headOk,
     g_hudInput = hud::Frame{};
     camera::View view;
     const bool viewOk = camera::lastView(view);
+    if (viewOk)
+        updateNoteCard(view, firstPerson, headOk, head);
+    else
+        hideHud(g_hud[kHudNote]);
     if (!firstPerson || !headOk || !g_config.wristPieces || !viewOk) {
         hideAllHud();
-        // The popup and picker cards alone (taken away again once they are gone).
+        // The popup, picker and notification cards alone (taken away again once they are gone).
         static bool alone = false;
         ID3D11Texture2D* atlas = hud::texture();
-        phone3d::Panel panels[2];
+        phone3d::Panel panels[3];
         int count = 0;
-        for (int i : {kHudPopup, kHudPicker})
+        for (int i : {kHudPopup, kHudPicker, kHudNote})
             if (viewOk && atlas && g_hud[i].m.active) {
                 panels[count] = hudPanel(g_hud[i], view);
                 panels[count++].tag = i;
@@ -4316,6 +4534,7 @@ static bool pokeHud(HudSheet& s, const armik::Hand hands[2], const bool use[2]) 
 static bool pokeHuds(const armik::Hand hands[2]) {
     static const bool right[2] = {false, true}, both[2] = {true, true};
     return pokeHud(g_hud[kHudPopup], hands, both) || pokeHud(g_hud[kHudPicker], hands, both) ||
+           pokeHud(g_hud[kHudNote], hands, both) ||
            pokeHud(g_hud[kHudWatch], hands, right) ||
            pokeHud(g_hud[kHudBuild], hands, right) ||
            pokeHud(g_hud[kHudQueue], hands, right) || pokeHud(g_hud[kHudSleep], hands, both);
@@ -4324,8 +4543,20 @@ static bool pokeHuds(const armik::Hand hands[2]) {
 // The laser on the watch, the asleep watch, the build button, the queue or
 // the wants above you: true with the hit, and the pointer for the HUD (the
 // trigger presses).
+static bool laserPhone(const XrVector3f& o, const XrVector3f& d, bool trigger, XrVector3f& hit) {
+    const PieMenu& m = g_phoneSheet.m;
+    float u, v;
+    if (!m.active || !hitSheet(m, o, d, hit, u, v)) return false;
+    g_hudInput.px = u * hud::kWidth;
+    g_hudInput.py = v * hud::kHeight;
+    g_hudInput.down = trigger;
+    return true;
+}
+
 static bool laserHud(const XrVector3f& o, const XrVector3f& d, bool trigger, XrVector3f& hit) {
-    for (int i : {kHudPopup, kHudPicker, kHudSleep, kHudWatch, kHudBuild, kHudQueue, kHudWants, kHudNeeds, kHudMoodlets}) {
+    if (laserPhone(o, d, trigger, hit)) return true;  // the phone's screen first (in your hand, in front of the rest)
+    for (int i : {kHudPopup, kHudPicker, kHudNote, kHudSleep, kHudWatch, kHudBuild, kHudQueue, kHudWants, kHudNeeds,
+                  kHudMoodlets}) {
         const PieMenu& m = g_hud[i].m;
         float u, v;
         if (!m.active || !hitSheet(m, o, d, hit, u, v)) continue;
@@ -4353,8 +4584,10 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
     // The popup's texts are looked up and it is measured before its card shows.
     f.popup = hud::popupPending();
     f.picker = hud::pickerPending();
+    f.phone = g_phoneSheet.m.active;
+    f.note = noteShown();
     if (!f.watch && !f.pause && !f.build && !f.needs && !f.moodlets && !f.queue && !f.wants && !f.popup && !f.money &&
-        !f.picker)
+        !f.picker && !f.phone && !f.note)
         return;
     ID3D11Device* device = nullptr;
     ID3D11DeviceContext* context = nullptr;
@@ -4402,6 +4635,71 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
             // controls.py: 60 cancels the picker (the game's close button).
             grab::pushControl(60);
             LOG("HUD: picker closed");
+            break;
+        case hud::kPhonePick:
+            // controls.py: 100000 + n picks the phone menu's entry n (phoneapp.py, the game's interactions.select).
+            if (index >= 0) grab::pushControl(100000 + index);
+            buzz(1 - g_phoneHand, 0.2f, 0.015f);
+            LOG("Phone: picked entry %d of the game's phone menu", index);
+            break;
+        case hud::kNotesOpened:
+            grab::pushControl(78);  // notify.opened: all read
+            LOG("Phone: notifications opened");
+            break;
+        case hud::kNoteAnswer:
+            if (GetTickCount64() - g_noteDragEnded < 400) break;  // the press that moved the card
+            // notify.answer: the notification's button (index = its id * 8 + button).
+            if (index >= 0) grab::pushControl(10000000 + index);
+            if (const uint64_t shownId = noteShown(); index >= 0 && shownId == static_cast<uint64_t>(index / 8)) {
+                g_noteDismissed = shownId;  // answered on the card: it goes
+                const float none[3] = {};
+                setNoteOver(0, none, false);
+            }
+            LOG("Notification %d: button %d", index / 8, index % 8);
+            break;
+        case hud::kCalendarOpened:
+            grab::pushControl(81);  // phonecal.send
+            LOG("Phone: calendar opened");
+            break;
+        case hud::kNotesClear:
+            grab::pushControl(79);
+            LOG("Phone: notifications cleared");
+            break;
+        case hud::kNoteDelete:
+            if (index > 0 && index < 10000) grab::pushControl(80000 + index);
+            break;
+        case hud::kNoteDismiss: {
+            if (GetTickCount64() - g_noteDragEnded < 400) break;  // the press that moved the card
+            const uint64_t id = noteShown();
+            g_noteDismissed = id;
+            const float none[3] = {};
+            setNoteOver(0, none, false);
+            LOG("Notification %llu dismissed", static_cast<unsigned long long>(id));
+            break;
+        }
+        case hud::kPhoneColor:
+            if (index >= 0 && index < 100) grab::pushControl(90000 + index);  // phoneapp.set_color
+            LOG("Phone: wallpaper colour %d", index);
+            break;
+        case hud::kPhoneSilence:
+            grab::pushControl(77);  // controls.py: the phone's silence (ui.toggle_silence_phone)
+            LOG("Phone: silence button");
+            break;
+        case hud::kPhoneOptions:
+            // The Options app: the game menu (Escape) on the phone's screen, as before.
+            if (g_phoneOut && !g_tablet && g_popupOpen) {
+                LOG("Phone: Options while a popup is up: answer the popup first (it is in front of you)");
+            } else if (g_phoneOut && !g_tablet) {
+                g_phoneOptions = true;
+                g_phoneOptionsSeen = gameMenuOpen();
+                if (!gameMenuOpen() && !g_popupOpen) {
+                    g_escapeFrames = 3;
+                    g_phoneOpenedMenu = true;
+                }
+                g_phoneFitted = false;
+                g_phoneMenuSince = GetTickCount64();
+                LOG("Phone: Options (the game menu)%s", g_popupOpen ? ", a popup is up: no Escape" : "");
+            }
             break;
         case hud::kDismissWant:
             // controls.py: 40 + n dismisses the n-th want it sent.
@@ -4693,21 +4991,19 @@ static void phoneOpen(int hand) {
     }
     grab::pushControl(3);
     hideWrist();
-    if (g_pie.active) {
-        // The game's pie closes with Escape first; the menu's Escape follows.
-        dismissPie("phone out");
-        g_phoneMenuAt = GetTickCount64() + 300;
-    } else if (!gameMenuOpen() && !g_popupOpen) {
-        g_escapeFrames = 3;
-        g_phoneOpenedMenu = true;
-    }
+    if (g_pie.active) dismissPie("phone out");
+    // The game's phone menu shows (Python sends it); a game menu already open
+    // shows as the Options app. No Escape: the menu opens from Options.
+    g_phoneOptions = gameMenuOpen() && !g_popupOpen;
+    g_phoneOptionsSeen = g_phoneOptions;
+    hud::phoneHome();
     g_phoneFitted = false;
     g_phoneMenuSince = GetTickCount64();
     buzz(hand, 0.4f, 0.05f);
     static int logged = 0;
     if (logged++ < 30)
-        LOG("Phone: out in the %s hand (game menu %s)", hand ? "right" : "left",
-            gameMenuOpen() && !g_phoneOpenedMenu ? "already open" : "opening");
+        LOG("Phone: out in the %s hand (%s)", hand ? "right" : "left",
+            g_phoneOptions ? "the game menu was open: Options" : "the game's phone menu");
 }
 
 static void phoneClose(const char* why) {
@@ -4725,7 +5021,8 @@ static void phoneClose(const char* why) {
         if (logged++ < 30) LOG("Tablet: away (%s)", why);
         return;
     }
-    if (gameMenuOpen() && !g_popupOpen) {
+    hideHud(g_phoneSheet);
+    if (g_phoneOptions && gameMenuOpen() && !g_popupOpen) {
         // Close the menu first, so it doesn't pause the game for a moment.
         // (Not with a popup up: Escape would answer it for you.)
         g_escapeFrames = 3;
@@ -4734,6 +5031,7 @@ static void phoneClose(const char* why) {
         grab::pushControl(4);
     }
     g_phoneOpenedMenu = false;
+    g_phoneOptions = g_phoneOptionsSeen = false;
     g_phone.active = false;
     g_phone.armed[0] = g_phone.armed[1] = false;
     g_phone.pressing = -1;
@@ -4751,20 +5049,67 @@ static void phoneClose(const char* why) {
 // as large as fits without stretching.
 static XrPosef g_phoneBodyPose{};
 
+// The phone where phone3d draws it: in the Sim's hand (armik's latest pose),
+// the same frame and offsets as phone3d::draw, in app space. The controller's
+// frame (updatePhone's fallback) sits a few cm off the Sim's hand, so the
+// laser and pokes would miss what you see (user 2026-10-18 21:22Z).
+static bool simPhoneFrame(int side, const float o[3], float tilt, float yaw, float pitch, XrVector3f& centre,
+                          XrVector3f& x, XrVector3f& y, XrVector3f& z) {
+    camera::View view;
+    camera::Vec3 wrist;
+    camera::Quat q;
+    float handScale = 1;
+    if (!camera::lastView(view) || !armik::handPose(side, wrist, q, handScale)) return false;
+    const XrQuaternionf grip{q.x, q.y, q.z, q.w};
+    const float m = side ? 1.0f : -1.0f;
+    XrVector3f w = rotate3(grip, {(o[0] - 0.02f * m) * handScale, o[1] * handScale, (o[2] - 0.08f) * handScale});
+    const float c[3] = {wrist.x + w.x, wrist.y + w.y, wrist.z + w.z};
+    XrVector3f ax = rotate3(grip, {0, 0, m}), ay = rotate3(grip, {0, 1, 0}), az = rotate3(grip, {-m, 0, 0});
+    const float ct = std::cos(tilt), st = std::sin(tilt);
+    XrVector3f ay2{ay.x * ct - az.x * st, ay.y * ct - az.y * st, ay.z * ct - az.z * st};
+    XrVector3f az2{ay.x * st + az.x * ct, ay.y * st + az.y * ct, ay.z * st + az.z * ct};
+    const float cy = std::cos(yaw), sy = std::sin(yaw);
+    XrVector3f ax3{ax.x * cy - az2.x * sy, ax.y * cy - az2.y * sy, ax.z * cy - az2.z * sy};
+    XrVector3f az3{ax.x * sy + az2.x * cy, ax.y * sy + az2.y * cy, ax.z * sy + az2.z * cy};
+    const float cp = std::cos(pitch), sp = std::sin(pitch);
+    XrVector3f ay3{ay2.x * cp - az3.x * sp, ay2.y * cp - az3.y * sp, ay2.z * cp - az3.z * sp};
+    XrVector3f az4{ay2.x * sp + az3.x * cp, ay2.y * sp + az3.y * cp, ay2.z * sp + az3.z * cp};
+    const float dx[3] = {ax3.x, ax3.y, ax3.z}, dy[3] = {ay3.x, ay3.y, ay3.z}, dz[3] = {az4.x, az4.y, az4.z};
+    centre = worldToApp(view, c, false);
+    x = normalize3(worldToApp(view, dx, true));
+    y = normalize3(worldToApp(view, dy, true));
+    z = normalize3(worldToApp(view, dz, true));
+    return true;
+}
+
 static void updatePhone(const armik::Hand& hand, int side) {
-    if (!g_phoneOut || !hand.valid || !g_uiFrame) {
+    // The game's phone menu (drawn by hud.cpp), or the UI's game menu (Options) / the tablet.
+    const bool app = g_phoneOut && !g_tablet && (!g_phoneOptions || g_optionsFront);
+    if (!g_phoneOut || !hand.valid || (!app && !g_uiFrame)) {
         phone3d::setPhone(phone3d::Phone{}, nullptr);
         g_phone.active = false;
         g_phone.armed[0] = g_phone.armed[1] = false;
         g_phone.pressing = -1;
+        hideHud(g_phoneSheet);
         return;
     }
-    D3D11_TEXTURE2D_DESC ui;
-    g_uiFrame->GetDesc(&ui);
+    D3D11_TEXTURE2D_DESC ui{};
+    if (app) {
+        ui.Width = hud::kWidth;
+        ui.Height = hud::kHeight;
+    } else {
+        g_uiFrame->GetDesc(&ui);
+    }
     int32_t W = static_cast<int32_t>(ui.Width), H = static_cast<int32_t>(ui.Height);
     int32_t crop[4];
     defaultPhoneCrop(W, H, crop);
     if (g_phoneFound) std::memcpy(crop, g_phoneCrop, sizeof(crop));
+    if (app) {
+        crop[0] = static_cast<int32_t>(hud::kPhone.x);
+        crop[1] = static_cast<int32_t>(hud::kPhone.y);
+        crop[2] = static_cast<int32_t>(hud::kPhone.w);
+        crop[3] = static_cast<int32_t>(hud::kPhone.h);
+    }
     float tileDst[phone3d::kMaxTiles][4], tileSrc[phone3d::kMaxTiles][4];
     int tiles = 0;
     if (g_tablet) {  // the tablet: the build/buy UI's pieces packed together, or all of it
@@ -4808,6 +5153,24 @@ static void updatePhone(const armik::Hand& hand, int side) {
     XrVector3f centre{hand.position.x + gx.x * o[0] + gy.x * o[1] + gz.x * o[2],
                       hand.position.y + gx.y * o[0] + gy.y * o[1] + gz.y * o[2],
                       hand.position.z + gx.z * o[0] + gy.z * o[1] + gz.z * o[2]};
+    {
+        // Where it is drawn: in the Sim's hand (phone3d), so the laser and pokes hit what you see.
+        XrVector3f sc, sx, sy, sz;
+        static bool logged = false;
+        if (simPhoneFrame(side, o, tilt, m * g_config.phoneYaw * 0.0174533f, g_config.phonePitch * 0.0174533f, sc, sx, sy,
+                          sz)) {
+            if (!logged) {
+                logged = true;
+                XrVector3f off = sub3(sc, centre);
+                LOG("Phone: placed on the Sim's hand for the laser and pokes, %.1f cm from the controller's place",
+                    std::sqrt(dot3(off, off)) * 100);
+            }
+            centre = sc;
+            x = sx;
+            y2 = sy;
+            z2 = sz;
+        }
+    }
     XrQuaternionf facing = fromAxes(x, y2, z2);
     g_phoneBodyPose = {facing, centre};
 
@@ -4820,8 +5183,8 @@ static void updatePhone(const armik::Hand& hand, int side) {
         menuH = screenH;
         menuW = screenH * aspect;
     }
-    // A little above the middle of the screen, on the glass.
-    float up = g_tablet ? 0 : (screenH - menuH) * 0.25f, glass = depth / 2 + 0.001f;
+    // A little above the middle of the screen, on the glass (the game's phone menu: in the middle).
+    float up = g_tablet || app ? 0 : (screenH - menuH) * 0.25f, glass = depth / 2 + 0.001f;
     XrVector3f menuCentre{centre.x + y2.x * up + z2.x * glass, centre.y + y2.y * up + z2.y * glass,
                           centre.z + y2.z * up + z2.z * glass};
     // The same phone in 3D, in the game's view (phone3d), when it can be drawn there.
@@ -4861,7 +5224,7 @@ static void updatePhone(const armik::Hand& hand, int side) {
     p3.crop[2] = static_cast<float>(crop[0] + crop[2]) / W;
     p3.crop[3] = static_cast<float>(crop[1] + crop[3]) / H;
     p3.tiles = tiles;
-    p3.wallpaper = g_tablet;
+    p3.wallpaper = g_tablet || app;  // the Sim's phone background (buildbuy.py) behind the game's phone menu
     g_phone.tiles = tiles;
     for (int k = 0; k < tiles; ++k) {
         for (int i = 0; i < 4; ++i) {
@@ -4870,6 +5233,31 @@ static void updatePhone(const armik::Hand& hand, int side) {
             p3.tileSrc[k][i] = tileSrc[k][i] / static_cast<float>(i % 2 ? H : W);
         }
     }
+    if (app) {
+        // The game's phone menu: our HUD atlas on the glass; pokes and the laser
+        // go to its buttons (pokeHud / laserHud), not to the game's UI.
+        phone3d::setPhone(p3, hud::texture());
+        g_phone.active = false;
+        g_phone.armed[0] = g_phone.armed[1] = false;
+        g_phone.pressing = -1;
+        PieMenu& m = g_phoneSheet.m;
+        if (!m.active) m.opened = GetTickCount64();
+        m.active = true;
+        m.x = x;
+        m.y = y2;
+        m.z = z2;
+        m.pose = {facing, menuCentre};
+        m.width = menuW;
+        m.height = menuH;
+        m.x0 = crop[0];
+        m.y0 = crop[1];
+        m.cw = crop[2];
+        m.ch = crop[3];
+        m.uiW = hud::kWidth;
+        m.uiH = hud::kHeight;
+        return;
+    }
+    hideHud(g_phoneSheet);
     phone3d::setPhone(p3, g_uiFrame);
     if (!g_phone.active) g_phone.opened = GetTickCount64();
     g_phone.active = true;
@@ -5236,8 +5624,36 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
                                  head.position);
             }
         }
+        // The notification card in front of you held by a hand closing on it
+        // (within 12 cm of it): it moves with the hand until the hand opens.
+        {
+            static float gripWas[2] = {0, 0};
+            if (g_noteDrag.hand < 0 && g_noteCardFront && g_settingsDrag.hand < 0) {
+                for (int i = 0; i < 2; ++i) {
+                    if (!hands[i].valid || hands[i].grip <= 0.6f || gripWas[i] > 0.6f || grab::holding(i) ||
+                        (g_phoneOut && i == g_phoneHand))
+                        continue;
+                    const XrVector3f at{hands[i].position.x, hands[i].position.y, hands[i].position.z};
+                    if (!onNoteCard(at, 0.12f, 0.04f)) continue;
+                    startNoteDrag(i, false, at);
+                    break;
+                }
+            }
+            for (int i = 0; i < 2; ++i) gripWas[i] = hands[i].grip;
+            if (g_noteDrag.hand >= 0 && !g_noteDrag.laser) {
+                const armik::Hand& h = hands[g_noteDrag.hand];
+                if (h.grip < 0.35f || !g_noteCardFront) {
+                    XrPosef head;
+                    const bool headOk = locateHead(time, head);
+                    endNoteDrag(head, headOk);
+                } else if (h.valid) {
+                    g_noteDrag.held = {h.position.x, h.position.y, h.position.z};
+                }
+            }
+        }
         // The hand holding the phone (or the settings menu) picks nothing up.
         armik::Hand grabHands[2] = {hands[0], hands[1]};
+        if (g_noteDrag.hand >= 0 && !g_noteDrag.laser) grabHands[g_noteDrag.hand].grip = 0;
         if (g_phoneOut) grabHands[g_phoneHand].grip = 0;
         if (g_settingsDrag.hand >= 0 && !g_settingsDrag.laser) grabHands[g_settingsDrag.hand].grip = 0;
         grab::update(grabHands, trigger, indexOut, head, firstPerson, g_config.grab);
@@ -5411,6 +5827,7 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
     // zooming) and A (no right click), except A held with the grip for the laser.
     if (settings::isOpen()) {
         if (settings::update(right.x, right.y, boolState(g_primaryAction, 1) && !laserButton[1])) buzz(1, 0.15f, 0.015f);
+        if (settings::closeWanted()) closeSettings();
         right = {0, 0};
         c.rightButton = false;
     }
@@ -5459,6 +5876,7 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
         if (g_objMenu.active) box(g_objMenu.x0, g_objMenu.y0, g_objMenu.cw, g_objMenu.ch);
         if (g_phoneOut && g_phoneFound) box(g_phoneCrop[0], g_phoneCrop[1], g_phoneCrop[2], g_phoneCrop[3]);
         nodim::set(firstPerson && g_config.noDimming, boxes, count);
+        nodim::setSource(g_config.noDimming);
     }
     // The phone's screen follows the hand holding it; the menu is measured once it has opened.
     updatePhone(hands[g_phoneHand], g_phoneHand);
@@ -5477,8 +5895,8 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
             g_phoneMenuSince = now;
             g_phoneFitted = false;
         }
-        if (!popup && popupWas && g_phoneOut && !g_tablet && !gameMenuOpen())
-            g_phoneMenuAt = now + 300;  // answered on the phone: the menu comes back
+        if (!popup && popupWas && g_phoneOut && !g_tablet && g_phoneOptions && !gameMenuOpen())
+            g_phoneMenuAt = now + 300;  // answered on the phone in Options: the menu comes back
         popupWas = popup;
         // First person only: the game camera (god view) keeps the game's own behaviour.
         if (!popup || !g_config.phonePopupBuzz || !(mode() == Mode::Stereo && camera::bodyActive())) pulseAt = 0;
@@ -5509,6 +5927,71 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
             g_phoneFitted = false;
         }
         menuWas = menu;
+        // Options: once the game menu has closed (Resume, a choice in it), or
+        // never opened, the phone shows the game's phone menu again.
+        if (g_phoneOptions && g_phoneOut && !g_tablet) {
+            if (gameMenuOpen()) {
+                g_phoneOptionsSeen = true;
+            } else if (!g_popupOpen && (g_phoneOptionsSeen || now - g_phoneMenuSince > 3000) && !g_phoneMenuAt &&
+                       g_escapeFrames == 0) {
+                g_phoneOptions = g_phoneOptionsSeen = false;
+                hud::phoneHome();
+                LOG("Phone: the game menu closed, back to the phone's home screen");
+            }
+        }
+        {
+            // Options: the first fit is the game menu itself; a fit of another
+            // size later is a window it opened (game options, a Save or Exit
+            // question): that goes in front of you. Measured again every second.
+            static bool wasOptions = false;
+            static int32_t menuW = 0, menuH = 0;
+            static int seen = 0;
+            static ULONGLONG refitAt = 0;
+            const bool options = g_phoneOptions && g_phoneOut && !g_tablet && menu;
+            if (options && !wasOptions) menuW = menuH = 0, seen = g_menuFitDone;
+            wasOptions = options;
+            if (!options) {
+                if (g_optionsFront) LOG("Phone: Options' window gone, the game's UI leaves the front");
+                g_optionsFront = false;
+                g_frontCropOn = false;
+            } else {
+                if (g_menuFitDone != seen) {
+                    seen = g_menuFitDone;
+                    // Not found (the game options fill the screen: "too wide") is another window too.
+                    if (menuW || (g_menuFitOk && g_phoneFound)) {
+                        const int32_t w = g_menuFitOk ? g_phoneCrop[2] : 0, h = g_menuFitOk ? g_phoneCrop[3] : 0;
+                        if (!menuW) menuW = w, menuH = h;
+                        const bool other = !g_menuFitOk || std::abs(w - menuW) > menuW / 6 || std::abs(h - menuH) > menuH / 6;
+                        if (other != g_optionsFront)
+                            LOG("Phone: %s (%dx%d, the game menu %dx%d)",
+                                other ? "Options opened a window: the game's UI in front of you"
+                                      : "back to the game menu on the phone",
+                                w, h, menuW, menuH);
+                        g_optionsFront = other;
+                        // That window alone in front (fitMenu's box less its margin of the
+                        // game's dimming); a window it can't box (filling the screen): all the UI.
+                        const bool crop = other && g_menuFitOk && g_uiFrame;
+                        if (crop) {
+                            D3D11_TEXTURE2D_DESC ui;
+                            g_uiFrame->GetDesc(&ui);
+                            const int32_t m = static_cast<int32_t>(ui.Height) * 5 / 1000;
+                            std::memcpy(g_frontCrop, g_phoneCrop, sizeof(g_frontCrop));
+                            if (g_frontCrop[2] > 4 * m && g_frontCrop[3] > 4 * m) {
+                                g_frontCrop[0] += m, g_frontCrop[1] += m;
+                                g_frontCrop[2] -= 2 * m, g_frontCrop[3] -= 2 * m;
+                            }
+                        }
+                        if (crop != g_frontCropOn)
+                            LOG("Phone: %s", crop ? "the window alone in front of you" : "the whole UI in front of you");
+                        g_frontCropOn = crop;
+                    }
+                }
+                if (!g_phoneFitPending && now >= refitAt && now - g_phoneMenuSince >= 600) {
+                    refitAt = now + 1000;
+                    startPhoneFit();
+                }
+            }
+        }
         if (((g_phone.active && !g_tablet && menu) || (g_objMenuWanted && g_config.objectMenus && !g_phone.active) ||
              (g_popupCardWanted && g_config.popups3d && !g_phone.active)) &&
             !g_phoneFitted &&
@@ -5539,6 +6022,8 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
         }
     }
     touch::setPointing(pointing);
+    g_turnChecking = false;
+    g_stickRate = 0;
     if (!(mode() == Mode::Stereo && camera::bodyActive())) camera::holdBodyTurn(false);
     if (mode() == Mode::Stereo && camera::bodyActive()) {
         // First person: the left stick walks the Sim (Python reads walkInput),
@@ -5548,21 +6033,53 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
         // Right stick turns you (smooth turn): gentle near the centre, fast at the edge.
         // Timed by the frames' display times, so every frame you see is turned
         // by the same step; the PC clock here jitters with xrWaitFrame's return.
+        // In whole refreshes: Virtual Desktop's predicted display times wobble
+        // from frame to frame, the headset's refreshes don't.
         static LARGE_INTEGER freq{}, last{};
         static XrTime lastShown = 0;
+        static double refresh = 0;  // seconds between the headset's refreshes
+        static double slot = 0;     // the refresh (display clock, seconds) the last frame was turned for
         if (!freq.QuadPart) QueryPerformanceFrequency(&freq);
         LARGE_INTEGER t;
         QueryPerformanceCounter(&t);
         float dt = last.QuadPart ? float(t.QuadPart - last.QuadPart) / float(freq.QuadPart) : 0;
-        if (g_config.turnDisplayClock && lastShown > 0 && time > lastShown) dt = float(time - lastShown) * 1e-9f;
+        const double step = lastShown > 0 && time > lastShown ? double(time - lastShown) * 1e-9 : 0;
+        int refreshes = 1;
+        if (step > 0 && step < 0.1) {
+            // The period doubles while Virtual Desktop's frame smoothing runs;
+            // the refreshes stay as they were.
+            const double period = g_displayPeriod > 0 ? double(g_displayPeriod) * 1e-9 : step;
+            if (refresh <= 0 || std::fabs(period - 2 * refresh) > 0.05 * refresh) refresh = period;
+            // Whole refreshes since the last frame's, at least one: the predicted
+            // display times bunch up (two frames 1 ms apart, then 27 ms), so each
+            // frame is counted against the refresh the one before was turned for.
+            const double now = double(time) * 1e-9;
+            if (slot <= 0 || std::fabs(now - slot) > 0.1) slot = now - refresh;
+            refreshes = std::max(1, int(std::lround((now - slot) / refresh)));
+            slot += refreshes * refresh;
+            slot += (now - slot) * 0.05;  // follows the display clock, not its wobble
+            if (g_config.turnDisplayClock) dt = float(refreshes * refresh);
+            // Walking too: each step moves you by the time its pictures are shown.
+            if (g_config.walkDisplayClock) player::addShownTime(float(refreshes * refresh));
+        }
         last = t;
         lastShown = time;
         if (dt > 0.1f) dt = 0.1f;
         float a = std::fabs(right.x);
+        g_turnChecking = a > 0.15f;
+        if (g_turnChecking && step > 0 && step < 0.1) {
+            TurnCheck& c = g_turnCheck;
+            c.stepMin = std::min(c.stepMin, step * 1000);
+            c.stepMax = std::max(c.stepMax, step * 1000);
+            c.stepSum += step * 1000;
+            ++c.steps;
+            c.missed += refreshes - 1;
+        }
         if (a > 0.15f) {
             float shaped = (a - 0.15f) / 0.85f;
             shaped *= shaped;
-            camera::turnBody((right.x > 0 ? -1 : 1) * shaped * g_config.bodyTurnRate * 0.0174533f * dt);
+            g_stickRate = (right.x > 0 ? -1 : 1) * shaped * g_config.bodyTurnRate * 0.0174533f;
+            camera::turnBody(g_stickRate * dt);
         }
         // Up/down tilts the view, only while it lies with your Sim's body
         // (WickedWhims animations and the like); the camera drops it otherwise.
@@ -5610,6 +6127,7 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
     }
     bool poking = pokingSims1 || (laserHand < 0 && ((g_pie.active && pokeSheet(g_pie, hands, bothHands, triggerDown, pulled, c, camera::bodyActive())) ||
                                     (g_phone.active && pokeSheet(g_phone, hands, freeHand, triggerDown, pulled, c, true)) ||
+                                    (g_phoneSheet.m.active && pokeHud(g_phoneSheet, hands, freeHand)) ||
                                     (g_objMenu.active && pokeSheet(g_objMenu, hands, bothHands, triggerDown, pulled, c)) ||
                                     (g_wrist.active && pokeSheet(g_wrist, hands, rightHand, triggerDown, pulled, c)) ||
                                     pokeHuds(hands)));
@@ -5631,6 +6149,40 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
         XrVector3f panelHit;
         float pu = 0, pv = 0;
         bool onPanel = false, onTabletBlank = false;
+        // The notification card in front of you: the trigger held on it a moment takes it.
+        {
+            static ULONGLONG holdSince = 0;
+            XrVector3f hit{};
+            if (g_noteDrag.hand >= 0 && g_noteDrag.laser) {
+                if (g_noteDrag.hand == laserHand && triggerDown[laserHand] && g_noteCardFront) {
+                    g_noteDrag.held = {o.x + d.x * g_noteDrag.distance, o.y + d.y * g_noteDrag.distance,
+                                       o.z + d.z * g_noteDrag.distance};
+                    g_laserFrom = o;
+                    g_laserTo = g_noteDrag.held;
+                    g_laserValid = true;
+                    settingsDragged = true;  // nothing else takes the laser while it moves the card
+                } else {
+                    XrPosef head;
+                    const bool headOk = locateHead(time, head);
+                    endNoteDrag(head, headOk);
+                }
+                holdSince = 0;
+            } else if (g_noteDrag.hand < 0 && g_settingsDrag.hand < 0 && laserHand >= 0 && triggerDown[laserHand] &&
+                       laserOnNoteCard(o, d, hit)) {
+                const ULONGLONG now = GetTickCount64();
+                if (!holdSince) {
+                    holdSince = now;
+                } else if (now - holdSince > 350) {
+                    startNoteDrag(laserHand, true, hit);
+                    const XrVector3f along = sub3(hit, o);
+                    g_noteDrag.distance = std::sqrt(dot3(along, along));
+                    holdSince = 0;
+                    settingsDragged = true;
+                }
+            } else {
+                holdSince = 0;
+            }
+        }
         SettingsDrag& drag = g_settingsDrag;
         if (drag.hand >= 0 && drag.laser && drag.hand == laserHand && settings::isOpen() &&
             (drag.grip ? floatState(g_gripAction, laserHand) > 0.35f : triggerDown[laserHand])) {
@@ -5649,7 +6201,8 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
         // The laser on your other palm: the trigger opens your own pie menu.
         XrVector3f palmHit{};
         const bool onPalm = !settingsDragged && !onSettings && mode() == Mode::Stereo && camera::bodyActive() &&
-                            !g_phone.active && !g_objMenu.active && laserOnPalm(hands, laserHand, o, d, palmHit);
+                            !g_phone.active && !g_phoneSheet.m.active && !g_objMenu.active &&
+                            laserOnPalm(hands, laserHand, o, d, palmHit);
         const bool onScreen = !settingsDragged && !onSettings && !onPalm && !g_pie.active && !g_objMenu.active &&
                               hitSims1(o, d, panelHit, pu, pv);
         // A / X on Claude's screen is a click on the TV or computer itself, so its
@@ -5663,6 +6216,10 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
             c.rightButton = false;
         }
         if (settingsDragged || onSettings || onSims1 || onPalm) {
+        } else if (!g_pie.active && g_phoneSheet.m.active && laserPhone(o, d, c.leftButton, panelHit)) {
+            // The phone's screen in your hand, in front of a popup card behind it.
+            onPanel = onPie = true;
+            onTabletBlank = true;
         } else if (g_pie.active || g_phone.active || g_objMenu.active || g_wrist.active) {
             // The pie, the phone, a picker on its object or the wrist menus replace the panel;
             // transparent parts let the laser through.
@@ -5770,11 +6327,11 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
             g_laserTo = p;
             g_laserValid = true;
             // The game picks through the camera it last rendered with, so put
-            // the mouse where the laser end shows in the latest eye image.
+            // the mouse where the laser end sits in the latest eye's pick frame.
             float u, v;
             if (g_lastEye >= 0 && g_eyeValid[g_lastEye] &&
-                projectNormalized(p, g_eyePose[g_lastEye], g_eyeFov[g_lastEye], u, v) && u > 0.015f && u < 0.985f &&
-                v > 0.015f && v < 0.985f) {
+                projectNormalized(p, g_eyePose[g_lastEye], pickFov(g_eyeFov[g_lastEye]), u, v) && u > 0.015f &&
+                u < 0.985f && v > 0.015f && v < 0.985f) {
                 c.hasTarget = true;
                 c.u = u;
                 c.v = v;
@@ -6153,27 +6710,35 @@ static void steadyMirror(ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_DESC
 }
 
 // Game render size for the headset: the runtime's pixel density (recommended
-// size over the eye's FOV) across the symmetric frustum the game renders,
-// times render_scale. Computed once per session from the first located views.
+// size over the eye's FOV) across the frustum the game renders (the eye's own,
+// or with exact_fov off a centred one covering its wider side), times
+// render_scale. Computed once per session from the first located views, and
+// again when the settings menu closes after a change to these.
 static void computeRenderSize(const XrView (&views)[2]) {
     if (g_renderSize[0] || g_config.renderScale <= 0 || !g_recommended[0][0]) return;
-    float densityX = 0, densityY = 0, tanX = 0, tanY = 0;
+    const bool exact = g_config.fovOverride && g_config.exactFov;
+    float densityX = 0, densityY = 0, width = 0, height = 0;
     for (int eye = 0; eye < 2; ++eye) {
         const XrFovf& f = views[eye].fov;
         float l = std::tan(f.angleLeft), r = std::tan(f.angleRight), u = std::tan(f.angleUp), d = std::tan(f.angleDown);
         if (r - l < 0.1f || u - d < 0.1f) return;
         densityX = std::fmax(densityX, g_recommended[eye][0] / (r - l));
         densityY = std::fmax(densityY, g_recommended[eye][1] / (u - d));
-        tanX = std::fmax(tanX, std::fmax(-l, r));
-        tanY = std::fmax(tanY, std::fmax(-d, u));
+        width = std::fmax(width, exact ? r - l : 2 * std::fmax(-l, r));
+        height = std::fmax(height, exact ? u - d : 2 * std::fmax(-d, u));
+        if (!g_fovLogged)
+            LOG("Headset %s eye FOV: left %.1f, right %.1f, up %.1f, down %.1f degrees", eye ? "right" : "left",
+                f.angleLeft * 57.29578f, f.angleRight * 57.29578f, f.angleUp * 57.29578f, f.angleDown * 57.29578f);
     }
+    g_fovLogged = true;
     auto size = [](float pixels) {
         int n = static_cast<int>(pixels * g_config.renderScale / 8 + 0.5f) * 8;
         return n < 64 ? 64 : n > 4096 ? 4096 : n;
     };
-    g_renderSize[0] = size(densityX * 2 * tanX);
-    g_renderSize[1] = size(densityY * 2 * tanY);
-    LOG("Headset render size %dx%d (render_scale %.2f)", g_renderSize[0], g_renderSize[1], g_config.renderScale);
+    g_renderSize[0] = size(densityX * width);
+    g_renderSize[1] = size(densityY * height);
+    LOG("Headset render size %dx%d (render_scale %.2f, %s eye view)", g_renderSize[0], g_renderSize[1],
+        g_config.renderScale, exact ? "lopsided" : "centred");
 }
 
 // Ask the game for the headset size while stereo runs; its own size otherwise.
@@ -6286,6 +6851,53 @@ static void alignOlderEye(int fresh, const XrView (&located)[2]) {
     }
 }
 
+// The stick turn check: each frame while the right stick turns, how far the
+// view heading the eyes are corrected to moved on, and how far the eyes were
+// turned back; a line every 2 s of turning (and when you let go).
+static void turnCheck(float nowYaw, const float (&turned)[2], bool newPicture) {
+    TurnCheck& c = g_turnCheck;
+    auto flush = [&] {
+        if (c.frames >= 20 && g_turnCheckLogs < 60) {
+            ++g_turnCheckLogs;
+            const double seconds = double(GetTickCount64() - c.start) / 1000.0;
+            LOG("Turning check: %.1f s, %d frames (%d refreshes missed), %d new pictures; display clock steps %.2f to "
+                "%.2f ms (%.2f on average); the view turned %.2f to %.2f degrees a frame (%.2f on average); eyes "
+                "turned back %.2f to %.2f degrees; drawn up to %.1f degrees ahead (%.0f ms)",
+                seconds, c.frames, c.missed, c.pictures, c.steps ? c.stepMin : 0.0, c.steps ? c.stepMax : 0.0,
+                c.steps ? c.stepSum / c.steps : 0.0, c.turns ? c.turnMin : 0.0, c.turns ? c.turnMax : 0.0,
+                c.turns ? c.turnSum / c.turns : 0.0, c.frames && c.backMin < 1e8f ? c.backMin : 0.0f,
+                c.frames && c.backMax > -1e8f ? c.backMax : 0.0f, c.leadMax, g_turnLatency * 1000);
+        }
+        c = TurnCheck{};
+    };
+    if (!g_turnChecking || !std::isfinite(nowYaw)) {
+        flush();
+        return;
+    }
+    if (!c.start) c.start = GetTickCount64();
+    ++c.frames;
+    if (newPicture) ++c.pictures;
+    if (std::isfinite(c.lastHeading)) {
+        const double step = std::fabs(std::remainder(nowYaw - c.lastHeading, 6.2831853f)) * 57.29578;
+        c.turnMin = std::min(c.turnMin, step);
+        c.turnMax = std::max(c.turnMax, step);
+        c.turnSum += step;
+        ++c.turns;
+    }
+    c.lastHeading = nowYaw;
+    for (float back : turned) {
+        if (back == 0) continue;
+        c.backMin = std::min(c.backMin, std::fabs(back) * 57.29578f);
+        c.backMax = std::max(c.backMax, std::fabs(back) * 57.29578f);
+    }
+    if (GetTickCount64() - c.start >= 2000) {
+        const float heading = c.lastHeading;
+        flush();
+        c.start = GetTickCount64();
+        c.lastHeading = heading;
+    }
+}
+
 static bool renderStereo(ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_DESC& desc, XrTime time,
                          XrCompositionLayerProjection& layer, XrCompositionLayerProjectionView (&views)[2]) {
     XrViewLocateInfo locate{XR_TYPE_VIEW_LOCATE_INFO};
@@ -6297,6 +6909,7 @@ static bool renderStereo(ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_DESC
     uint32_t count = 0;
     if (!check(xrLocateViews(g_session, &locate, &viewState, 2, &count, located), "xrLocateViews")) return false;
     computeRenderSize(located);
+    bool newPicture = false;  // a new eye picture (or pair) shown from this frame on
 
     // Turning now, or about to? (kBodyLinger)
     if (bodyLayerOn()) {
@@ -6337,7 +6950,7 @@ static bool renderStereo(ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_DESC
         // Not with the phone or the pie drawn into the view at your hand: they
         // are drawn after the depth that finds your body, so only the pieces
         // in front of your hand would go with it.
-        const bool handUi = g_pie.active || (g_phone.active && phone3d::drawnRecently());
+        const bool handUi = g_pie.active || ((g_phone.active || g_phoneSheet.m.active) && phone3d::drawnRecently());
         g_splitSlot = bodyLayerOn() && !handUi ? slot : -1;
         g_splitWanted = turning;
         g_splitFrom = &rendered;
@@ -6367,11 +6980,13 @@ static bool renderStereo(ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_DESC
                 g_eyeValid[0] = true;
                 if (++g_pairsShown == 1) LOG("Paired eyes: the headset shows both eyes of a pair together");
             }
+            newPicture = true;
             g_eyePose[eye] = g_overlayPose;
             g_eyeFov[eye] = g_overlayFov;
             g_eyeYaw[eye] = rendered.yaw;
             g_shownPose[eye] = g_overlayPose;
             g_shownYaw[eye] = rendered.yaw;
+            if (eye == 1) g_shownLead1 = rendered.lead;
             g_eyeValid[eye] = true;
             g_lastEye = eye;
             if (alignEyes() && g_eyeValid[1 - eye]) alignOlderEye(eye, located);
@@ -6387,6 +7002,7 @@ static bool renderStereo(ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_DESC
                      (l.position.z + r.position.z) / 2},
                     {l.orientation.x, l.orientation.y, l.orientation.z, l.orientation.w});
     camera::setPairedEyes(g_config.pairedEyes && !alignEyes());
+    camera::setExactFov(g_config.exactFov);
     camera::setPairedHands(g_config.pairedHands);
     camera::setBodyLayer(bodyLayerOn());
     int next = g_renderingEye == 0 ? 1 : 0;
@@ -6407,6 +7023,21 @@ static bool renderStereo(ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_DESC
     // far the world has turned since it was rendered, about your head, so
     // the runtime reprojects that turn like a head turn, every refresh.
     float nowYaw = g_config.turnReprojection ? camera::viewYaw() : NAN;
+    // Turn lead: how long a pair's heading is set before it's shown, from how
+    // far the shown right eye trails the turn (its lead taken out), averaged
+    // while the stick turns; the next pair is drawn that far ahead.
+    {
+        const bool leadOn = g_config.turnLead && g_config.turnReprojection && !alignEyes();
+        if (leadOn && std::isfinite(nowYaw) && std::isfinite(g_shownYaw[1]) && g_eyeValid[1] &&
+            std::fabs(g_stickRate) > 0.3f) {
+            const float behind = g_shownLead1 - std::remainder(g_shownYaw[1] - nowYaw, 6.2831853f);
+            const float seconds = behind / g_stickRate;
+            if (seconds > 0 && seconds < 0.2f) g_turnLatency += (seconds - g_turnLatency) * 0.03f;
+        }
+        const float lead = leadOn ? std::clamp(g_stickRate * g_turnLatency, -0.3f, 0.3f) : 0.0f;
+        camera::setTurnLead(lead);
+        if (g_turnChecking) g_turnCheck.leadMax = std::max(g_turnCheck.leadMax, std::fabs(lead) * 57.29578f);
+    }
     const XrVector3f head{(l.position.x + r.position.x) / 2, (l.position.y + r.position.y) / 2,
                           (l.position.z + r.position.z) / 2};
     float turned[2] = {0, 0};
@@ -6451,6 +7082,7 @@ static bool renderStereo(ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_DESC
             g_bodyLayerReady = true;
         }
     }
+    turnCheck(nowYaw, turned, newPicture);
     static int turnLogs = 0;
     static ULONGLONG lastTurnLog = 0;
     if ((turned[0] != 0 || turned[1] != 0) && turnLogs < 20 && GetTickCount64() - lastTurnLog > 2000) {
@@ -6563,12 +7195,21 @@ int onFrame(ID3D11Texture2D* backbuffer, HWND window, bool ownMirror) {
         if (waited == XR_ERROR_SESSION_LOST) {
             destroySession();
         } else if (check(waited, "xrWaitFrame") && check(xrBeginFrame(g_session, &beginInfo), "xrBeginFrame")) {
-            static bool periodLogged = false;
-            if (!periodLogged && frame.predictedDisplayPeriod > 0) {
-                periodLogged = true;
-                LOG("Headset refresh: %.1f Hz (a frame every %.2f ms)", 1e9 / frame.predictedDisplayPeriod,
-                    frame.predictedDisplayPeriod / 1e6);
+            static XrDuration loggedPeriod = 0;
+            static int periodLogs = 0;
+            if (frame.predictedDisplayPeriod > 0 && frame.predictedDisplayPeriod != loggedPeriod && periodLogs < 20) {
+                // Virtual Desktop doubles the period while its frame smoothing
+                // (Synchronous Spacewarp) runs.
+                if (!loggedPeriod)
+                    LOG("Headset refresh: %.1f Hz (a frame every %.2f ms)", 1e9 / frame.predictedDisplayPeriod,
+                        frame.predictedDisplayPeriod / 1e6);
+                else
+                    LOG("Headset frame period now %.2f ms (was %.2f): frame smoothing %s", frame.predictedDisplayPeriod / 1e6,
+                        loggedPeriod / 1e6, frame.predictedDisplayPeriod > loggedPeriod ? "on" : "off");
+                ++periodLogs;
+                loggedPeriod = frame.predictedDisplayPeriod;
             }
+            g_displayPeriod = frame.predictedDisplayPeriod;
             linkSample(frame.predictedDisplayTime);
             if (g_recenterRequested.exchange(false) || !g_appSpace) recenter(frame.predictedDisplayTime);
 

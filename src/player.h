@@ -78,6 +78,11 @@ void setStopTime(float seconds);
 // goes at the run speed and Python gives the walk the Sim's run walkstyle.
 // Off again when first person ends.
 void setRunning(bool on);
+// Present thread, every headset frame in first person ([stereo]
+// walk_display_clock): the time the headset shows that frame for (its
+// refreshes since the frame before). The next update moves you by the time
+// gathered since the one before, instead of the PC clock.
+void addShownTime(float seconds);
 bool running();
 
 // Python, ten times a second: may the player move freely (the Sim stands and

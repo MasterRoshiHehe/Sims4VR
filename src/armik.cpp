@@ -200,7 +200,7 @@ struct Frame {
     void* actor;
     bool free;  // you move the Sim (not the game)
     float anchor[3];
-    float eye[3];  // your eye in the world
+    float eye[3];  // the middle between your eyes in the world
     Quat heading;
     Quat hmd;  // headset orientation in app space
     float scale;
@@ -1568,8 +1568,9 @@ struct SimRig {
     int lever[kParts];         // the end of what turns, which a push moves (-1 for the head: its eyes)
     int eyes[2] = {-1, -1};
     int head = -1, neck = -1, pelvis = -1;
-    bool headOk = false;
+    bool headOk = false, eyesOk = false;
     Vec3 headForward{0, 0, 1}, headUp{0, 1, 0};
+    Vec3 eyeForward[2];  // each eye's gaze in its joint's frame
     Arm arm[2];
 };
 constexpr int kMaxRigs = 32;
@@ -1631,6 +1632,12 @@ void resolveSim(uint8_t* rig, uint32_t count, SimRig& r) {
     if (r.headOk) {
         r.headForward = rotate(conj(q), {0, 0, 1});
         r.headUp = rotate(conj(q), {0, 1, 0});
+    }
+    // The bind pose looks along the model's +Z (as the player's RigCache).
+    r.eyesOk = bind && r.eyes[0] >= 0 && r.eyes[1] >= 0;
+    for (int i = 0; i < 2 && r.eyesOk; ++i) {
+        r.eyesOk = bindInFrame(skeleton, bind, -1, r.eyes[i], p, q);
+        if (r.eyesOk) r.eyeForward[i] = rotate(conj(q), {0, 0, 1});
     }
     for (int s = 0; s < 2; ++s) {
         resolveArm(rig, s, count, r.arm[s]);
@@ -1910,6 +1917,33 @@ void turnRecorded(BodyState& st, void* pose, uint8_t* skeleton, Xf* locals, int 
     }
     st.turned[w] = joint;
     std::memcpy(st.wrote[w], locals[joint].q, sizeof(st.wrote[w]));
+}
+
+// A Sim's eyes turn toward `you` (model space) from wherever its head points,
+// within the limits the player's eyes have (solveEyes), by `weight`.
+void lookWithEyes(BodyState& st, void* pose, uint8_t* skeleton, Xf* locals, const SimRig& r, Vec3 you,
+                  float weight) {
+    if (!finite(you)) return;
+    Quat headQ = quatOf(modelOf(pose, r.head).q);
+    Vec3 faceF = normalize(rotate(headQ, r.headForward)), faceU = normalize(rotate(headQ, r.headUp));
+    Vec3 faceS = normalize(cross(faceU, faceF));
+    for (int i = 0; i < 2; ++i) {
+        Xf now = modelOf(pose, r.eyes[i]);
+        Vec3 to = sub(you, vecOf(now.p));
+        float d = length(to);
+        if (!(d > 1e-3f)) continue;
+        to = mul(to, 1 / d);
+        float f = dot(to, faceF), u = dot(to, faceU), sd = dot(to, faceS);
+        float yaw = std::atan2(sd, f), pitch = std::atan2(u, std::sqrt(f * f + sd * sd));
+        yaw = yaw > kEyeSide ? kEyeSide : yaw < -kEyeSide ? -kEyeSide : yaw;
+        pitch = pitch > kEyeUp ? kEyeUp : pitch < -kEyeDown ? -kEyeDown : pitch;
+        Vec3 flat = add(mul(faceF, std::cos(yaw)), mul(faceS, std::sin(yaw)));
+        to = normalize(add(mul(flat, std::cos(pitch)), mul(faceU, std::sin(pitch))));
+        Vec3 gaze = normalize(rotate(quatOf(now.q), r.eyeForward[i]));
+        Quat turn = fromTo(gaze, to);
+        if (turn.w < 0) turn = {-turn.x, -turn.y, -turn.z, -turn.w};
+        turnRecorded(st, pose, skeleton, locals, r.eyes[i], slerp({0, 0, 0, 1}, turn, weight));
+    }
 }
 
 // The ends of a part's capsule in the Sim's model space (the head's far end is
@@ -2293,14 +2327,22 @@ void touchOther(uint8_t* actor, uint8_t* pose) {
         }
     }
 
-    // Lean in close in front of a Sim and it looks at you.
+    // Lean in close in front of a Sim, or talk with one that looks your way,
+    // and it looks you in the eyes. Aimed from its eyes, not its head joint:
+    // that sits below and behind them, so the face pointed over your eyes, at
+    // your hair (user 2026-10-19 01:29Z). Its eyes turn the rest of the way.
     if (r.headOk) {
         Xf hm = modelOf(pose, r.head);
-        Vec3 headW = p.toWorld(vecOf(hm.p));
-        Vec3 toYou = sub(eye, headW);
+        Vec3 fromM = vecOf(hm.p);
+        if (r.eyes[0] >= 0 && r.eyes[1] >= 0)
+            fromM = mul(add(vecOf(modelOf(pose, r.eyes[0]).p), vecOf(modelOf(pose, r.eyes[1]).p)), 0.5f);
+        Vec3 toYou = sub(eye, p.toWorld(fromM));
         float d = length(toYou);
         Vec3 face = rotate(quatOf(p.world.q), rotate(quatOf(hm.q), r.headForward));
-        bool want = g_lookAt && d < 1.0f * sc && d > 1e-3f && dot(face, mul(toYou, 1 / d)) > 0.2f;
+        float facing = d > 1e-3f ? dot(face, mul(toYou, 1 / d)) : 0;
+        constexpr float kLookTalk = 2.0f;  // metres: a Sim talking with you, already facing you
+        bool want = g_lookAt && d > 1e-3f &&
+                    ((d < 1.0f * sc && facing > 0.2f) || (d < kLookTalk * sc && facing > 0.6f));
         st.look += ((want ? 1.0f : 0.0f) - st.look) * ease(3.0f, dt);
         if (!want && st.look < 0.01f) st.look = 0;
         if (fresh && st.look > 0 && d > 1e-3f) {
@@ -2321,6 +2363,7 @@ void touchOther(uint8_t* actor, uint8_t* pose) {
             } else {
                 turnRecorded(st, pose, skeleton, locals, r.head, delta);
             }
+            if (r.eyesOk) lookWithEyes(st, pose, skeleton, locals, r, p.toModel(eye), st.look);
         }
     }
 
@@ -2873,6 +2916,24 @@ int nearbySims(float (*xz)[2], int max) {
         if (!slot.shape.read(b) || b.actor != actor || ageMs(now, b.tick) > 300) continue;
         xz[n][0] = b.root.x;
         xz[n][1] = b.root.z;
+        ++n;
+    }
+    return n;
+}
+
+int nearbyHeads(SimHead* out, int max) {
+    void* self = g_player.load(std::memory_order_relaxed);
+    ULONGLONG now = GetTickCount64();
+    int n = 0;
+    for (BodySlot& slot : g_bodies) {
+        if (n >= max) break;
+        void* actor = slot.actor.load(std::memory_order_relaxed);
+        if (!actor || actor == self) continue;
+        BodyShape b;
+        if (!slot.shape.read(b) || b.actor != actor || ageMs(now, b.tick) > 300 || !(b.valid & (1u << kHeadPart)))
+            continue;
+        const Vec3& eyes = b.part[kHeadPart].b;
+        out[n] = {{b.root.x, b.root.y, b.root.z}, {eyes.x, eyes.y, eyes.z}};
         ++n;
     }
     return n;

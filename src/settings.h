@@ -34,6 +34,9 @@ bool close();
 // Render thread, while open: a stick (x changes the row, y picks one) and A.
 // True when the row or a value changed (for a haptic tick).
 bool update(float stickX, float stickY, bool press);
+// True once after the stick picked Close (up past the first row) and A or
+// right pressed it: vr.cpp closes the menu as B would.
+bool closeWanted();
 
 // The laser on the panel at u, v (0..1 from its top left) picks the row under
 // it; a click acts on it.
@@ -47,6 +50,11 @@ int point(float u, float v, bool click);
 bool onTitleBar(float u, float v);
 bool placement(float place[4]);
 void setPlacement(const float place[4]);
+// Where notification cards in front of you show (vr.cpp, moved by hand or laser
+// grip, user 2026-10-18 23:52Z): metres right, up and forward of your head facing
+// level. Saved in sims4vr_user.ini, [phone] note_place.
+bool notePlacement(float place[3]);
+void setNotePlacement(const float place[3]);
 
 // The picture: premultiplied 0xAARRGGBB pixels, top-down. version changes
 // whenever the picture does.

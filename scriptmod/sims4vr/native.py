@@ -49,6 +49,12 @@ def _log(message):
         _log_file = None
 
 
+try:
+    from sims4vr import _build  # written by tools/build_scriptmod.py; absent in loose-source runs
+    _log('sims4vr script mod v{} (commit {})'.format(_build.VERSION, _build.COMMIT))
+except Exception:
+    _log('sims4vr script mod (no build info)')
+
 _slow_logs = 0
 _times = {}  # name -> [calls, total seconds, worst seconds, calls over the limit, the limit]
 _times_since = time.perf_counter()
@@ -308,6 +314,13 @@ def set_sleeping(sleeping):
         fn(bool(sleeping))
 
 
+def set_eyes_covered(covered):
+    """Close the eyelids quickly while the game fades your Sim out (fades.py)."""
+    fn = _optional('set_eyes_covered')  # absent in a DLL older than the script
+    if fn is not None:
+        fn(bool(covered))
+
+
 def set_body_view(on):
     """An animation in [body] body_view_anims plays: the view lies with the body."""
     fn = _optional('set_body_view')  # absent in a DLL older than the script
@@ -384,6 +397,34 @@ def popup_content(packed):
 def picker_content(packed):
     """The picker on its object from the game's message (objmenu.py); b'': gone."""
     fn = _optional('picker_content')
+    if fn is not None:
+        fn(bytes(packed))
+
+
+def phone_notes(packed):
+    """The game's notifications for the phone's bell and list (notify.py)."""
+    fn = _optional('phone_notes')
+    if fn is not None:
+        fn(bytes(packed))
+
+
+def phone_calendar(packed):
+    """The game's calendar for the phone's Calendar app (phonecal.py)."""
+    fn = _optional('phone_calendar')
+    if fn is not None:
+        fn(bytes(packed))
+
+
+def note_over(note_id, x, y, z, front):
+    """Notification `note_id` as a card over a Sim's head at x, y, z (world), or in front of you; 0: none."""
+    fn = _optional('note_over')
+    if fn is not None:
+        fn(int(note_id), float(x), float(y), float(z), int(front))
+
+
+def phone_content(packed):
+    """The game's phone menu for the phone in your hand (phoneapp.py); b'': gone."""
+    fn = _optional('phone_content')
     if fn is not None:
         fn(bytes(packed))
 

@@ -77,6 +77,7 @@ struct Rendered {
     Quat orientation;
     Fov fov;
     float yaw = NAN;  // radians: app space's heading in the world when this eye was rendered
+    float lead = 0;   // radians of yaw drawn ahead of the stick turn (setTurnLead)
     // First person, paired eyes: a left eye the next right eye is drawn from
     // the same place as (Present holds it back until that right eye arrives).
     bool pairFirst = false;
@@ -86,9 +87,14 @@ bool takeRendered(Rendered& out);
 // App space's heading in the world now: the newest rendered frame's, plus the
 // stick turn not rendered yet (NAN if unknown). Present thread.
 float viewYaw();
+// Turn lead: how far ahead of the stick turn the next pair's heading is drawn
+// (radians of yaw, free movement only), so it shows where the turn is by then.
+void setTurnLead(float radians);
 // Paired eyes (first person): each right eye drawn from where its left eye
 // was drawn (Config::pairedEyes); Present switches it off under SteamVR's eye align.
 void setPairedEyes(bool on);
+// Each eye drawn with its own lopsided field of view (Config::exactFov), live.
+void setExactFov(bool on);
 // Paired hands (Config::pairedHands): the right eye of a free-moving pair
 // already moves the player on for the next pair, so the game poses the body
 // and arms from where that pair is drawn from.
@@ -143,6 +149,7 @@ struct View {
     Vec3 right, up, back, position;  // the camera looks along -back
     float nearZ, farZ;               // clip distances (world units)
     float tanX, tanY;                // half-width and half-height of the frustum at distance 1
+    float centreX = 0, centreY = 0;  // its centre at distance 1 (a lopsided eye's frustum is off centre)
     Vec3 anchor;
     Quat heading;
     float scale;

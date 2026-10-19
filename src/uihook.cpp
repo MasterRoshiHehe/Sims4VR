@@ -10,6 +10,7 @@
 #include "bubbles.h"
 #include "camera.h"
 #include "facehide.h"
+#include "framemap.h"
 #include "gameaddr.h"
 #include "log.h"
 #include "nearplane.h"
@@ -199,6 +200,14 @@ void setTargets(SetTargetsFn original, ID3D11DeviceContext* context, UINT count,
                 ID3D11DepthStencilView* depth) {
     facehide::targets(context, sceneDepthBound(depth));
     if (!t_inRender && depth && views && count && views[0]) learnScene(views[0], depth);
+    if (!depth)
+        framemap::mark(framemap::ColourBind, static_cast<int>(count));
+    else if (!views || !count || !views[0])
+        framemap::mark(framemap::DepthOnlyBind, static_cast<int>(count));
+    else if (views[0] == g_sceneTarget.load(std::memory_order_relaxed))
+        framemap::mark(framemap::SceneBind, static_cast<int>(count));
+    else
+        framemap::mark(framemap::OtherBind, static_cast<int>(count));
     if (g_rendering.load(std::memory_order_relaxed) && context == t_context && t_ui && views && count) {
         ID3D11RenderTargetView* swapped[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT];
         if (count <= D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT && swapIn(count, views, swapped)) {
@@ -338,6 +347,7 @@ ID3D11RenderTargetView* uiViewFor(ID3D11Texture2D* main) {
 }
 
 void hookedRender(void* rm, void* movie) {
+    framemap::mark(framemap::UiRender);
     if (!g_enabled.load(std::memory_order_acquire) || t_inRender || !g_contextHooked.load() || !rm) {
         g_render(rm, movie);
         return;

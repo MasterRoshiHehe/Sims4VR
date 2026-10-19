@@ -19,8 +19,11 @@
 #include "doorswing.h"
 #include "gamefix.h"
 #include "ambience.h"
+#include "thumbs.h"
 #include "walkstop.h"
 #include "facehide.h"
+#include "framecost.h"
+#include "framemap.h"
 #include "gameaddr.h"
 #include "log.h"
 #include "nearplane.h"
@@ -36,6 +39,11 @@ constexpr char kManagerClass[] = ".?AVCameraControllerManager@ClientApp@Sims4@EA
 constexpr char kCameraClass[] = ".?AVCamera@Cameras@Sims3@@";
 constexpr size_t kManagerCameraOffset = 0x10;
 constexpr size_t kFrustumOffset = 0x14;
+// The frustum's centre at distance 1 (x right, y up; float2): the game's
+// projection (TS4_x64 1.128 0x1208640, from Camera update 0x1208eb0) builds
+// left/right = x -/+ width/2 and bottom/top = y -/+ height/2 from it, so a
+// lopsided eye needs no patch. The camera copy copies it from the live camera.
+constexpr size_t kCentreOffset = 0x1f0;
 constexpr size_t kNearOffset = 0x24;  // near clip distance; +0x28 is the far one
 constexpr size_t kRightOffset = 0x30, kUpOffset = 0x40, kBackOffset = 0x50, kPositionOffset = 0x60;
 
@@ -107,6 +115,17 @@ float g_bodyYaw = NAN;        // smoothed view heading in body mode
 float g_bodyYawOffset = 0;    // view heading minus Sim facing, kept from the last stick walk
 std::atomic<bool> g_holdTurn{false};
 std::atomic<float> g_turnRequest{0};
+// Turn lead (user 2026-10-18 15:07Z: with smooth turning the world is steady
+// but your Sim and other Sims wobble). Each pair was drawn 4 to 13 degrees of
+// turn before the headset showed it, and the turn correction (vr.cpp) can only
+// turn the picture back, not move near things the way your eyes move when the
+// world turns about your head. While the stick turns in free movement, each
+// pair is now drawn at the heading it will have when shown (vr.cpp works out
+// how far ahead), so the correction stays small. viewYaw() leaves the lead out.
+std::atomic<float> g_leadWanted{0};
+float g_turnLead = 0;    // the lead in the heading the view moves on with (game thread, g_poseMutex)
+float g_latestLead = 0;  // the lead in g_latestYaw (g_poseMutex)
+bool g_lastFree = false;  // free movement carried the last frame
 std::atomic<float> g_pitchRequest{0};  // right stick up/down, used only while the view lies with the body
 bool g_bodySmoothed = false;
 // Your head out of other Sims while the game moves your Sim (WickedWhims
@@ -155,6 +174,24 @@ Vec3 g_headCentre{0, 0, 0};  // headset centre (between the eyes) for the frame 
 Quat g_headOrientation{0, 0, 0, 1};
 // Frustum for the game camera; tanX = 0 leaves the game's own values.
 float g_tanX = 0, g_tanY = 0;
+// Its centre (kCentreOffset) when each eye gets its own lopsided frustum
+// (Config::exactFov), and the centred frustum that covers it (what a centred
+// test of what's in view needs).
+bool g_centred = true;
+float g_centreX = 0, g_centreY = 0, g_coverX = 0, g_coverY = 0;
+std::atomic<bool> g_exactFov{true};
+// The centre applyEye last wrote into the render camera (NAN: none, centred).
+// The projection build gets it again (hookedProjection): something between
+// the copy and the camera's update puts the live camera's 0,0 back (v0.13.239
+// log: the drawn projection had no shift, so the eyes looked crossed).
+std::atomic<float> g_appliedCentre[2] = {NAN, NAN};
+// The centre applyEye last wrote for each eye (NAN: none yet). The game's
+// cameras keep it once the eyes stop (CAS, god view's flat screen) or the
+// switch goes off: the camera copy carries +0x1f0 over from the live camera,
+// which had picked up an eye's centre, and CAS drew its Sim off to the side
+// with release() alone (user 2026-10-18 21:59Z, switch on and off).
+std::atomic<float> g_eyeCentre[2][2] = {{NAN, NAN}, {NAN, NAN}};
+int g_oldCentreLogs = 0;
 // Copies the hook changed and Present hasn't consumed yet.
 Rendered g_queue[4];
 size_t g_queueHead = 0, g_queueSize = 0;
@@ -175,6 +212,7 @@ struct PairBase {
     bool valid = false;
     bool freeMove = false;
     float yaw = 0;
+    float lead = 0;  // the turn lead in yaw
     Quat heading{0, 0, 0, 1};  // the view's base (level at yaw, or lying with the body)
     float ahead = NAN;  // the neck's reach ahead (body mode without free movement), NAN without
     float position[3] = {};
@@ -197,6 +235,7 @@ struct NextBase {
     bool valid = false;
     void* actor = nullptr;
     float yaw = 0;
+    float lead = 0;  // the turn lead in yaw
     float position[3] = {};
 };
 NextBase g_nextBase;
@@ -211,7 +250,10 @@ struct ListenerPose {
     Vec3 position, right, up, back;
     bool body = false;
     ULONGLONG tick = 0;
+    float root[3] = {};  // where your Sim stands (its object's place), when rooted
+    bool rooted = false;
 };
+constexpr size_t kActorPlace = 0x2e0;  // an actor's world position (armik kActorPosition)
 std::mutex g_listenerMutex;
 std::mutex g_viewMutex;
 View g_view{};
@@ -1132,6 +1174,13 @@ void applyEye(uint8_t* dst) {
     const bool goAhead = second && g_pairedHands.load(std::memory_order_relaxed) && g_pairBase.freeMove && actor &&
                        g_jointSpace == 1;
     float turn = (second && !goAhead) || useNext ? 0.0f : g_turnRequest.exchange(0);
+    const float oldLead = g_turnLead;
+    if (!((second && !goAhead) || useNext)) {
+        // The lead only in free movement; anything else turns it back out.
+        const float wanted = g_lastFree && body && actor ? g_leadWanted.load() : 0.0f;
+        turn += wanted - g_turnLead;
+        g_turnLead = wanted;
+    }
     float pitch = second || useNext ? 0.0f : g_pitchRequest.exchange(0);  // dropped unless lying with the body
     // Free movement: our own player carries the view, and the Sim is put
     // under the headset (player.cpp). Needs the joints in world space.
@@ -1155,7 +1204,11 @@ void applyEye(uint8_t* dst) {
         bool on = player::update(in, std::isfinite(g_bodyYaw) ? g_bodyYaw : yaw, turn, goAhead ? nextFree : free);
         (goAhead ? movedAhead : freeMove) = on;
     }
-    if (goAhead && !movedAhead && turn != 0) turnBody(turn);  // free movement ended: the next frame takes the turn
+    if (goAhead && !movedAhead && turn != 0) {
+        // Free movement ended: the next frame takes the turn (without the lead).
+        turnBody(turn - (g_turnLead - oldLead));
+        g_turnLead = oldLead;
+    }
     if (second) {
         freeMove = g_pairBase.freeMove;
         yaw = g_pairBase.yaw;
@@ -1167,6 +1220,7 @@ void applyEye(uint8_t* dst) {
             g_nextBase.valid = true;
             g_nextBase.actor = actor;
             g_nextBase.yaw = nextFree.viewYaw;
+            g_nextBase.lead = g_turnLead;
             std::memcpy(g_nextBase.position, nextFree.base, sizeof(g_nextBase.position));
         }
     } else if (useNext) {
@@ -1316,10 +1370,13 @@ void applyEye(uint8_t* dst) {
         }
     }
     // A left eye: its right eye comes from here.
+    const float yawLead = second ? g_pairBase.lead : useNext ? next.lead : g_turnLead;
+    g_lastFree = freeMove || movedAhead;
     g_pairBase.valid = paired && !second && eyeIndex == 0;
     if (g_pairBase.valid) {
         g_pairBase.freeMove = freeMove;
         g_pairBase.yaw = yaw;
+        g_pairBase.lead = yawLead;
         g_pairBase.heading = heading;
         g_pairBase.ahead = neckAhead;
         std::memcpy(g_pairBase.position, position, sizeof(g_pairBase.position));
@@ -1333,16 +1390,21 @@ void applyEye(uint8_t* dst) {
     // the game's own animations too (sitting, eating); the game keeps the
     // torso and legs.
     const float eyeWorld[3] = {position[0] + offset.x, position[1] + offset.y, position[2] + offset.z};
+    // Other Sims look at the middle between your eyes: each frame draws one
+    // eye, and looking at that eye turned their heads by the eyes' gap from
+    // frame to frame (user 2026-10-19 00:02Z: other Sims' heads twitchy).
+    const Vec3 mid = rotate(heading, {g_headCentre.x * s, g_headCentre.y * s, g_headCentre.z * s});
+    const float midWorld[3] = {position[0] + mid.x + neck.x, position[1] + mid.y + neck.y, position[2] + mid.z + neck.z};
     if (movedAhead) {
         // The game poses the body for the next pair before its left eye is
         // drawn: the arms reach from where that pair is drawn from.
         const float y = nextFree.viewYaw;
         const Quat nextHeading{0, std::sin(y / 2), 0, std::cos(y / 2)};
-        const Vec3 o = rotate(nextHeading, {eye.x * s, eye.y * s, eye.z * s});
-        const float nextEye[3] = {nextFree.base[0] + o.x, nextFree.base[1] + o.y, nextFree.base[2] + o.z};
-        armik::setFrame(actor, true, nextFree.base, nextHeading, s, g_headOrientation, nextEye);
+        const Vec3 o = rotate(nextHeading, {g_headCentre.x * s, g_headCentre.y * s, g_headCentre.z * s});
+        const float nextMid[3] = {nextFree.base[0] + o.x, nextFree.base[1] + o.y, nextFree.base[2] + o.z};
+        armik::setFrame(actor, true, nextFree.base, nextHeading, s, g_headOrientation, nextMid);
     } else {
-        armik::setFrame(body ? actor : nullptr, freeMove, position, heading, s, g_headOrientation, eyeWorld);
+        armik::setFrame(body ? actor : nullptr, freeMove, position, heading, s, g_headOrientation, midWorld);
     }
     if (body) {
         gamefix::keepTopFloor();
@@ -1367,8 +1429,9 @@ void applyEye(uint8_t* dst) {
             const Vec3 right = rotate(q, {1, 0, 0}), up = rotate(q, {0, 1, 0}), back = rotate(q, {0, 0, 1});
             const Vec3 ahead{-back.x, -back.y, -back.z};
             const float forward[3] = {ahead.x, ahead.y, ahead.z};
-            float tanX = g_tanX, tanY = g_tanY;
-            if (!(tanX > 0 && tanY > 0)) {
+            float tanX = g_coverX, tanY = g_coverY, centreX = g_centreX, centreY = g_centreY;
+            if (!(g_tanX > 0 && g_tanY > 0)) {
+                centreX = centreY = 0;
                 float frustum[2];
                 std::memcpy(frustum, dst + kFrustumOffset, sizeof(frustum));
                 tanX = frustum[0] / 2;
@@ -1382,7 +1445,10 @@ void applyEye(uint8_t* dst) {
             float own =
                 actor ? bodyNearest(actor, eyeWorld, right, up, ahead, tanX, tanY, capsules, count, headEnd) : 0;
             const float rightF[3] = {right.x, right.y, right.z}, upF[3] = {up.x, up.y, up.z};
-            nearplane::ownBody(eyeWorld, rightF, upF, forward, tanX, tanY, capsules, count);
+            // The depth check rebuilds each pixel's ray, so it gets the exact frustum.
+            const bool ours = g_tanX > 0 && g_tanY > 0;
+            nearplane::ownBody(eyeWorld, rightF, upF, forward, ours ? g_tanX : tanX, ours ? g_tanY : tanY, centreX,
+                               centreY, capsules, count);
             // With your face folded out of this view (facehide.h) nothing needs cutting past your head.
             if (facehide::hiding()) headEnd = 0;
             nearZ = nearplane::choose(eyeWorld, forward, own, headEnd, farZ, g_config.bodyNearClip,
@@ -1398,11 +1464,24 @@ void applyEye(uint8_t* dst) {
         g_listener.position = {position[0] + offset.x, position[1] + offset.y, position[2] + offset.z};
         g_listener.body = g_bodyId.load() != 0 && g_bodySmoothed;
         g_listener.tick = GetTickCount64();
+        g_listener.rooted = actor != nullptr;
+        if (actor) std::memcpy(g_listener.root, actor + kActorPlace, sizeof(g_listener.root));
     }
     if (g_tanX > 0) {
         // Same fields the game's own SetAspect fills in (see camera.h).
         float frustum[4] = {2 * g_tanX, 2 * g_tanY, 2 * std::atan(g_tanX), g_tanX / g_tanY};
         std::memcpy(dst + kFrustumOffset, frustum, sizeof(frustum));
+        if (!g_centred) {
+            const float centre[2] = {g_centreX, g_centreY};
+            std::memcpy(dst + kCentreOffset, centre, sizeof(centre));
+            const int slot = g_pending.eye == 1 ? 1 : 0;
+            g_eyeCentre[slot][0].store(g_centreX, std::memory_order_relaxed);
+            g_eyeCentre[slot][1].store(g_centreY, std::memory_order_relaxed);
+        }
+        g_appliedCentre[0].store(g_centred ? NAN : g_centreX, std::memory_order_relaxed);
+        g_appliedCentre[1].store(g_centred ? NAN : g_centreY, std::memory_order_relaxed);
+    } else {
+        g_appliedCentre[0].store(NAN, std::memory_order_relaxed);
     }
     {
         View v{};
@@ -1415,6 +1494,10 @@ void applyEye(uint8_t* dst) {
         std::memcpy(clip, dst + kNearOffset, sizeof(clip));
         v.tanX = frustum[0] / 2;
         v.tanY = frustum[1] / 2;
+        float centre[2] = {0, 0};
+        if (g_tanX > 0 && !g_centred) std::memcpy(centre, dst + kCentreOffset, sizeof(centre));
+        v.centreX = centre[0];
+        v.centreY = centre[1];
         v.nearZ = clip[0];
         v.farZ = clip[1];
         v.anchor = {position[0], position[1], position[2]};
@@ -1437,6 +1520,7 @@ void applyEye(uint8_t* dst) {
     }
     Rendered rendered = g_pending;
     rendered.yaw = yaw;
+    rendered.lead = yawLead;
     rendered.pairFirst = g_pairBase.valid;
     rendered.body.count = 0;
     // Free movement turns your body with the view (the stick turns both), so
@@ -1454,6 +1538,7 @@ void applyEye(uint8_t* dst) {
     g_queue[(g_queueHead + g_queueSize++) % 4] = rendered;
     // The newest heading: the next pair's once worked out (its turn is taken).
     g_latestYaw = movedAhead ? nextFree.viewYaw : yaw;
+    g_latestLead = movedAhead ? g_turnLead : yawLead;
     if (++g_applied == 1) LOG("Head pose reached the game camera");
 }
 
@@ -1480,18 +1565,66 @@ bool renderCamera(void* dst) {
     return false;
 }
 
+// exact_fov check (v0.13.239): the render camera's projection (+0x70, rows) as
+// the game left it since last frame's copy, i.e. what that frame drew with.
+// A lopsided eye shows its centre in row 2 x (-centre x / half width).
+void logDrawnProjection(const void* dst, void* caller) {
+    static ULONGLONG last = 0;
+    ULONGLONG now = GetTickCount64();
+    if (g_centred || now - last < 5000) return;
+    last = now;
+    float m[16], centre[2];
+    if (!safeRead(reinterpret_cast<uintptr_t>(dst) + 0x70, m, sizeof(m)) ||
+        !safeRead(reinterpret_cast<uintptr_t>(dst) + kCentreOffset, centre, sizeof(centre)))
+        return;
+    LOG("Lopsided eye check: drawn projection x %.3f, row2 %.3f %.3f, y %.3f; centre there %.3f %.3f; "
+        "written centre %.3f %.3f half %.3f %.3f; copy from game+0x%llx",
+        m[0], m[8], m[9], m[5], centre[0], centre[1], g_centreX, g_centreY, g_tanX, g_tanY,
+        static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(caller) -
+                                        reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr))));
+}
+
+// While no eye's centre is applied, an eye centre left in a game camera goes
+// back to the game's own 0,0 (exact matches only: the game sets other centres
+// itself, e.g. for picks).
+void clearOldCentre(void* camera, const char* where) {
+    if (!std::isnan(g_appliedCentre[0].load(std::memory_order_relaxed))) return;
+    float* at = reinterpret_cast<float*>(static_cast<uint8_t*>(camera) + kCentreOffset);
+    if (at[0] == 0 && at[1] == 0) return;
+    for (const auto& eye : g_eyeCentre) {
+        if (at[0] != eye[0].load(std::memory_order_relaxed) || at[1] != eye[1].load(std::memory_order_relaxed))
+            continue;
+        if (g_oldCentreLogs < 5) {
+            ++g_oldCentreLogs;
+            LOG("Lopsided eye: an eye's centre %.3f %.3f was still in game camera %p (%s); back to the game's 0 0",
+                at[0], at[1], camera, where);
+        }
+        at[0] = at[1] = 0;
+        return;
+    }
+}
+
 void* hookedCopy(void* dst, const void* src) {
     if (CopyObserver observer = g_observer.load()) observer(dst, src, __builtin_return_address(0));
+    if (dst != src && reinterpret_cast<uintptr_t>(dst) == g_writtenCamera.load(std::memory_order_relaxed))
+        logDrawnProjection(dst, __builtin_return_address(0));
     void* result = g_originalCopy(dst, src);
     uintptr_t manager = g_manager.load();
     if (manager && dst != src) {
         uintptr_t live = 0;
         safeRead(manager + kManagerCameraOffset, &live, sizeof(live));
         if (reinterpret_cast<uintptr_t>(src) == live && renderCamera(dst)) {
+            framecost::renderCamera();
+            framemap::mark(framemap::CameraCopy);
             applyEye(static_cast<uint8_t*>(dst));
             doorswing::pump();  // the game's main thread, where routes swing doors too
             walkstop::pump();
+            thumbs::pump();  // where the game's UI asks for its pictures
         }
+    }
+    if (dst != src) {
+        clearOldCentre(const_cast<void*>(src), "copied from");
+        clearOldCentre(dst, "copied into");
     }
     return result;
 }
@@ -1648,7 +1781,7 @@ void hookedListener(void* self, void* arg, void* audio, char flag) {
 // height in first person a near radius under 1 m makes that sound play partly
 // mid-head however far away it is (user 2026-10-17 14:45Z: "When I got closer
 // to the npcs in question the voices in my head stopped"). First person: the
-// cap is at least 1 m, so only what is within 1 m of you spreads.
+// cap is at least 1 m, and what is within 1 m of you is placed by placeClose.
 constexpr uint32_t kPanRva = 0x1a9fdf0;
 constexpr uint8_t kPanBytes[16] = {0x48, 0x8b, 0xc4, 0x57, 0x48, 0x81, 0xec, 0x80,
                                    0x00, 0x00, 0x00, 0x48, 0xc7, 0x40, 0x98, 0xfe};
@@ -1669,6 +1802,140 @@ struct PanStats {
 PanStats g_pan;
 int g_panLogs = 0;
 constexpr int kPanMaxLogs = 40;
+
+// Sounds close to you in first person (user 2026-10-18 23:19Z: in a
+// WickedWhims scene the other Sims' voices came from the middle of the head
+// while their mouths moved). Two things can put them there: Pan2D1 spreads
+// anything under 1 m across toward the middle (the cap above stops at the
+// sound's own distance), and a Sim's sound may sit where the Sim stands (its
+// object's place), which in an animation can be far from its head. A sound
+// where another Sim stands goes to that Sim's head; one 15 cm to 1 m across
+// from your head is moved out to the speaker circle along its own direction,
+// so it comes from there. What sits at your head, or where your own Sim
+// stands, keeps the game's spread (your own Sim's sounds). Not when another
+// Sim's eyes are nearer the sound than yours: its head is right by yours
+// (cuddling on a sofa, a kiss, a WickedWhims scene) and the voice is its own
+// (user 2026-10-19 01:29Z: flirty voices in the head). A sound where you and
+// another Sim both stand (a WickedWhims scene puts everyone on one spot) goes
+// to that Sim's head: beside you rather than inside your head either way.
+constexpr float kOwnHead = 0.15f;     // m across: at your head
+constexpr float kTheirHead = 0.2f;    // m: a sound this close to a Sim's eyes is that Sim's voice
+constexpr float kMinAcross = 0.01f;   // m: closer to straight above or below you has no direction
+constexpr float kAtRoot = 0.12f;      // m: a sound this close to where a Sim stands is that Sim's
+constexpr float kCloseSound = 2.0f;   // m: sounds counted for the log
+struct VoicePlaces {
+    ULONGLONG at = 0;
+    int count = 0;
+    armik::SimHead sims[16];
+    bool rooted = false;
+    float own[3] = {};
+};
+VoicePlaces g_places;  // audio thread only
+struct CloseStats {
+    ULONGLONG since = 0;
+    uint64_t close = 0, atHead = 0, theirs = 0, toHead = 0, shared = 0, ownRoot = 0, other = 0, opened = 0;
+    float example[3] = {};               // one of the "elsewhere" ones, from your head
+    float exampleEyes = -1, exampleRoot = -1;  // its distance to the nearest Sim's eyes / where one stands
+};
+CloseStats g_close;
+int g_closeLogs = 0;
+constexpr int kCloseMaxLogs = 90;
+
+float distance3(const float* a, const float* b) {
+    const float x = a[0] - b[0], y = a[1] - b[1], z = a[2] - b[2];
+    return std::sqrt(x * x + y * y + z * z);
+}
+
+// Across the listener's ground plane, the pan step's own measure (rows 0 and 2).
+float acrossOf(const float* d, const float* rows) {
+    const float x = rows[0] * d[0] + rows[4] * d[1] + rows[8] * d[2];
+    const float z = rows[2] * d[0] + rows[6] * d[1] + rows[10] * d[2];
+    return std::sqrt(x * x + z * z);
+}
+
+// Where the pan step places a sound close to you (placed: in and out).
+void placeClose(float* placed, const float* listener, const float* rows) {
+    const ULONGLONG now = GetTickCount64();
+    VoicePlaces& v = g_places;
+    if (now - v.at >= 50) {
+        v.at = now;
+        v.count = armik::nearbyHeads(v.sims, 16);
+        std::lock_guard<std::mutex> lock(g_listenerMutex);
+        v.rooted = g_listener.rooted;
+        std::memcpy(v.own, g_listener.root, sizeof(v.own));
+    }
+    float d[3] = {placed[0] - listener[0], placed[1] - listener[1], placed[2] - listener[2]};
+    const float away = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    if (!(away < kCloseSound)) return;
+    CloseStats& s = g_close;
+    if (!s.since) s.since = now;
+    ++s.close;
+    bool open = true;
+    if (acrossOf(d, rows) < kOwnHead) {
+        float nearestEyes = 1e9f;
+        for (int i = 0; i < v.count; ++i) nearestEyes = std::min(nearestEyes, distance3(placed, v.sims[i].eyes));
+        if (nearestEyes < kTheirHead && nearestEyes < away) {
+            ++s.theirs;  // at another Sim's head right by yours: from its direction
+        } else {
+            ++s.atHead;
+            open = false;
+        }
+    } else {
+        const bool atOwn = v.rooted && distance3(placed, v.own) < kAtRoot;
+        int sim = -1;
+        float nearestRoot = 1e9f, nearestEyes = 1e9f;
+        for (int i = 0; i < v.count; ++i) {
+            const float r = distance3(placed, v.sims[i].root);
+            if (r < nearestRoot) {
+                nearestRoot = r;
+                sim = r < kAtRoot ? i : -1;
+            }
+            nearestEyes = std::min(nearestEyes, distance3(placed, v.sims[i].eyes));
+        }
+        if (sim >= 0 && !atOwn) {
+            ++s.toHead;
+            std::memcpy(placed, v.sims[sim].eyes, sizeof(v.sims[sim].eyes));
+            for (int i = 0; i < 3; ++i) d[i] = placed[i] - listener[i];
+        } else if (sim >= 0) {
+            ++s.shared;  // yours or theirs: can't tell, so from their head beside you
+            std::memcpy(placed, v.sims[sim].eyes, sizeof(v.sims[sim].eyes));
+            for (int i = 0; i < 3; ++i) d[i] = placed[i] - listener[i];
+        } else if (atOwn) {
+            ++s.ownRoot;
+            open = false;
+        } else {
+            ++s.other;
+            std::memcpy(s.example, d, sizeof(s.example));
+            s.exampleEyes = v.count ? nearestEyes : -1;
+            s.exampleRoot = v.count ? nearestRoot : -1;
+        }
+    }
+    if (open) {
+        const float across = acrossOf(d, rows);
+        if (across >= kMinAcross && across < kPanCircle) {
+            const float k = kPanCircle * 1.02f / across;
+            for (int i = 0; i < 3; ++i) placed[i] = listener[i] + d[i] * k;
+            ++s.opened;
+        }
+    }
+    if (now - s.since < 10000) return;
+    if (g_closeLogs < kCloseMaxLogs) {
+        ++g_closeLogs;
+        LOG("Close sounds: %llu updates within 2 m in %.0f s: %llu at your head (kept in the middle), %llu at "
+            "another Sim's head right by yours (from its direction), %llu where another Sim stands (moved to its "
+            "head), %llu where you and another Sim both stand (moved to its head), %llu where "
+            "your Sim stands (left), %llu elsewhere (one %.2f %.2f %.2f m from your head, %.2f m from a Sim's eyes, "
+            "%.2f m from where one stands); %llu under 1 m across moved out to come from their direction",
+            static_cast<unsigned long long>(s.close), (now - s.since) / 1000.0,
+            static_cast<unsigned long long>(s.atHead), static_cast<unsigned long long>(s.theirs),
+            static_cast<unsigned long long>(s.toHead),
+            static_cast<unsigned long long>(s.shared), static_cast<unsigned long long>(s.ownRoot),
+            static_cast<unsigned long long>(s.other), s.example[0], s.example[1], s.example[2], s.exampleEyes,
+            s.exampleRoot, static_cast<unsigned long long>(s.opened));
+    }
+    s = CloseStats{};
+    s.since = now;
+}
 
 void hookedPan(void* sound, void* panner, const float* position, const float* listener, const float* rows,
                float nearRadius) {
@@ -1721,9 +1988,13 @@ void hookedPan(void* sound, void* panner, const float* position, const float* li
             g_pan.since = now;
         }
     }
-    if (firstPerson && nearRadius < kPanCircle && g_panAnyDistance.load(std::memory_order_relaxed))
-        nearRadius = kPanCircle;
-    g_originalPan(sound, panner, position, listener, rows, nearRadius);
+    alignas(16) float placed[4];
+    std::memcpy(placed, position, sizeof(placed));  // the pan step reads 16 bytes
+    if (firstPerson && g_panAnyDistance.load(std::memory_order_relaxed)) {
+        if (nearRadius < kPanCircle) nearRadius = kPanCircle;
+        placeClose(placed, listener, rows);
+    }
+    g_originalPan(sound, panner, placed, listener, rows, nearRadius);
 }
 
 void installPanHook() {
@@ -1741,6 +2012,115 @@ void installPanHook() {
     }
     LOG("Sound placement: in first person every sound 1 m or more away is placed where it is (%s)",
         g_panAnyDistance.load() ? "on" : "off: the game's own spread");
+}
+
+// Which sounds play loud or flat in first person (diagnostic, user 2026-10-18
+// 21:51Z: a Sim snoring in bed heard as if lying next to them while standing
+// outside; the pan lift above was working on every 3D sound then). The
+// game's per-sound distance update (0x1a9f530, audio thread) does nothing for
+// a sound without the 3D bit (+0xf8 bit 0): no fall-off and no pan step, so
+// it plays at full loudness in the middle of your head. For a 3D sound it
+// sets the fall-off level from the distance to listener 0 (0x1a9f930) into
+// the float its distance state (+0x510) points to first.
+constexpr uint32_t kDistanceUpdateRva = 0x1a9f530;
+constexpr uint8_t kDistanceUpdateBytes[16] = {0x40, 0x55, 0x56, 0x48, 0x8d, 0x6c, 0x24, 0xb1,
+                                              0x48, 0x81, 0xec, 0xb8, 0x00, 0x00, 0x00, 0xf6};
+constexpr size_t kSoundPosition = 0x30, kSoundFlags = 0xf8, kSoundPanner = 0x408, kSoundDistance = 0x510;
+using DistanceUpdateFn = void (*)(void* sound);
+DistanceUpdateFn g_originalDistanceUpdate = nullptr;
+struct HeardSound {
+    float away = -1, level = 0;
+    float at[3] = {};
+    uint32_t flags = 0;
+    bool panner = false, falloff = false;
+    uintptr_t vtable = 0;
+};
+struct LoudStats {
+    ULONGLONG since = 0, headAt = 0;
+    uint64_t updates = 0, flat = 0, flatAtOrigin = 0, flatAway = 0, loudAway = 0;
+    float head[3] = {};
+    HeardSound flatFarthest, loudest;
+};
+LoudStats g_loud;
+int g_loudLogs = 0;
+constexpr int kLoudMaxLogs = 60;
+constexpr float kLoudAway = 4.0f;  // m: a 3D sound this far off playing loud is worth a line
+
+void describe(const HeardSound& s, char* out, size_t size) {
+    const uintptr_t game = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+    snprintf(out, size, "%.1f m away at %.2f %.2f %.2f, level %.2f, flags 0x%x, panner %s, fall-off %s, vtable game+0x%llx",
+             s.away, s.at[0], s.at[1], s.at[2], s.level, s.flags, s.panner ? "yes" : "no", s.falloff ? "yes" : "no",
+             static_cast<unsigned long long>(s.vtable >= game ? s.vtable - game : s.vtable));
+}
+
+void hookedDistanceUpdate(void* sound) {
+    g_originalDistanceUpdate(sound);
+    if (!g_panFirstPerson.load(std::memory_order_relaxed) || g_loudLogs >= kLoudMaxLogs) return;
+    LoudStats& s = g_loud;
+    const ULONGLONG now = GetTickCount64();
+    if (!s.since) s.since = now;
+    if (now - s.headAt >= 100) {
+        std::lock_guard<std::mutex> lock(g_listenerMutex);
+        s.head[0] = g_listener.position.x;
+        s.head[1] = g_listener.position.y;
+        s.head[2] = g_listener.position.z;
+        s.headAt = now;
+    }
+    const uint8_t* base = static_cast<const uint8_t*>(sound);
+    HeardSound h;
+    std::memcpy(&h.flags, base + kSoundFlags, sizeof(h.flags));
+    std::memcpy(h.at, base + kSoundPosition, sizeof(h.at));
+    uintptr_t panner = 0, falloff = 0;
+    std::memcpy(&panner, base + kSoundPanner, sizeof(panner));
+    std::memcpy(&falloff, base + kSoundDistance, sizeof(falloff));
+    std::memcpy(&h.vtable, base, sizeof(h.vtable));
+    h.panner = panner != 0;
+    h.falloff = falloff != 0;
+    const float dx = h.at[0] - s.head[0], dy = h.at[1] - s.head[1], dz = h.at[2] - s.head[2];
+    h.away = std::sqrt(dx * dx + dy * dy + dz * dz);
+    ++s.updates;
+    if (!(h.flags & 1)) {
+        ++s.flat;
+        h.level = 1;  // no fall-off
+        if (std::fabs(h.at[0]) + std::fabs(h.at[1]) + std::fabs(h.at[2]) < 0.01f) {
+            ++s.flatAtOrigin;  // music, the UI: not placed anywhere
+        } else if (h.away >= 1.5f && h.away < 500) {
+            ++s.flatAway;
+            if (h.away > s.flatFarthest.away) s.flatFarthest = h;
+        }
+    } else if (falloff && h.away >= kLoudAway) {
+        uintptr_t levelAt = 0;
+        if (safeRead(falloff, &levelAt, sizeof(levelAt)) && levelAt && safeRead(levelAt, &h.level, sizeof(h.level)) &&
+            h.level >= 0.3f) {
+            ++s.loudAway;
+            if (h.level * h.away > s.loudest.level * s.loudest.away) s.loudest = h;
+        }
+    }
+    if (now - s.since < 10000) return;
+    ++g_loudLogs;
+    char flat[256] = "none", loud[256] = "none";
+    if (s.flatAway) describe(s.flatFarthest, flat, sizeof(flat));
+    if (s.loudAway) describe(s.loudest, loud, sizeof(loud));
+    LOG("Sound loudness: %llu updates in %.0f s; %llu flat (no fall-off, no direction: middle of your head), %llu of "
+        "them unplaced, %llu placed 1.5 m or more away (farthest: %s); %llu 3D updates %.0f m or more away at "
+        "level 0.3 or more (loudest for its distance: %s)",
+        static_cast<unsigned long long>(s.updates), (now - s.since) / 1000.0, static_cast<unsigned long long>(s.flat),
+        static_cast<unsigned long long>(s.flatAtOrigin), static_cast<unsigned long long>(s.flatAway), flat,
+        static_cast<unsigned long long>(s.loudAway), kLoudAway, loud);
+    s = LoudStats{};
+    s.since = now;
+}
+
+void installLoudnessLog() {
+    uint8_t* target = gameaddr::function(kDistanceUpdateRva, kDistanceUpdateBytes);
+    if (!target) {
+        LOG("Sound loudness log: game build not recognised");
+        return;
+    }
+    MH_STATUS status = MH_CreateHook(target, reinterpret_cast<void*>(&hookedDistanceUpdate),
+                                     reinterpret_cast<void**>(&g_originalDistanceUpdate));
+    if (status == MH_OK) status = MH_EnableHook(target);
+    if (status != MH_OK) LOG("Sound loudness log hook failed: %s", MH_StatusToString(status));
 }
 
 // Which hands hold something: an object from Python's list whose actor sits
@@ -1917,6 +2297,50 @@ bool installCopyHook() {
 
 void setCopyObserver(CopyObserver observer) { g_observer = observer; }
 
+// The game's projection build (1.128 0x1208640, Camera update calls it): for
+// the render camera with a lopsided eye, our centre goes back in first.
+constexpr uint32_t kProjectionRva = 0x1208640;
+constexpr uint8_t kProjectionBytes[16] = {0x48, 0x8b, 0xc4, 0x48, 0x81, 0xec, 0xa8, 0x00,
+                                          0x00, 0x00, 0x83, 0x79, 0x10, 0x00, 0x4c, 0x8b};
+using ProjectionFn = void (*)(void* camera);
+ProjectionFn g_originalProjection = nullptr;
+int g_projectionLogs = 0;
+
+void hookedProjection(void* camera) {
+    if (reinterpret_cast<uintptr_t>(camera) == g_writtenCamera.load(std::memory_order_relaxed)) {
+        const float cx = g_appliedCentre[0].load(std::memory_order_relaxed);
+        if (!std::isnan(cx)) {
+            float* at = reinterpret_cast<float*>(static_cast<uint8_t*>(camera) + kCentreOffset);
+            const float centre[2] = {cx, g_appliedCentre[1].load(std::memory_order_relaxed)};
+            if (g_projectionLogs < 3 && (at[0] != centre[0] || at[1] != centre[1])) {
+                ++g_projectionLogs;
+                LOG("Lopsided eye: centre was %.3f %.3f at the projection build, put back %.3f %.3f", at[0], at[1],
+                    centre[0], centre[1]);
+            }
+            std::memcpy(at, centre, sizeof(centre));
+        }
+    }
+    clearOldCentre(camera, "projection build");
+    g_originalProjection(camera);
+}
+
+void installProjectionHook() {
+    uint8_t* target = gameaddr::function(kProjectionRva, kProjectionBytes);
+    if (!target) {
+        LOG("Lopsided eye: projection build not found for this game build; the view stays centred");
+        return;
+    }
+    MH_STATUS status = MH_CreateHook(target, reinterpret_cast<void*>(&hookedProjection),
+                                     reinterpret_cast<void**>(&g_originalProjection));
+    if (status == MH_OK) status = MH_EnableHook(target);
+    if (status != MH_OK) {
+        g_originalProjection = nullptr;
+        LOG("Lopsided eye: projection hook failed: %s", MH_StatusToString(status));
+        return;
+    }
+    LOG("Lopsided eye: hooked the projection build");
+}
+
 bool installListenerHook() {
     HMODULE game = GetModuleHandleW(nullptr);
     uintptr_t hit = findMasked(game, kListenerPattern, sizeof(kListenerPattern) / sizeof(kListenerPattern[0]));
@@ -1956,10 +2380,16 @@ void init(const Config& config) {
     g_config = config;
     // The test host has no game camera; only look inside the game.
     if (!GetModuleHandleW(L"python37_x64.dll")) return;
-    if (installCopyHook()) searchManager();
+    if (installCopyHook()) {
+        searchManager();
+        installProjectionHook();
+    }
     findSkeletonApi();
     g_panAnyDistance.store(config.audioPanAnyDistance);
-    if (config.audioFollowsHead && installListenerHook()) installPanHook();
+    if (config.audioFollowsHead && installListenerHook()) {
+        installPanHook();
+        installLoudnessLog();
+    }
 }
 
 void setSeatFollow(bool on) { g_config.bodySeatFollow = on; }
@@ -2038,12 +2468,26 @@ void apply(int eye, const Vec3& eyePosition, const Quat& eyeOrientation, const F
     g_active = true;
     g_pending = {eye, eyePosition, eyeOrientation, fov};
     g_tanX = 0;
+    g_centred = true;
+    g_centreX = g_centreY = 0;
     if (g_config.fovOverride) {
-        // The game renders a symmetric frustum, so cover the eye's wider side.
-        float halfX = std::fmax(-fov.left, fov.right), halfY = std::fmax(-fov.down, fov.up);
-        g_tanX = std::tan(halfX);
-        g_tanY = std::tan(halfY);
-        g_pending.fov = {-halfX, halfX, halfY, -halfY};
+        const float l = std::tan(fov.left), r = std::tan(fov.right), u = std::tan(fov.up), d = std::tan(fov.down);
+        g_coverX = std::fmax(-l, r);
+        g_coverY = std::fmax(-d, u);
+        if (g_exactFov.load(std::memory_order_relaxed) && g_originalProjection && r > l && u > d) {
+            // The eye's own lopsided frustum, off centre (kCentreOffset).
+            g_tanX = (r - l) / 2;
+            g_tanY = (u - d) / 2;
+            g_centreX = (r + l) / 2;
+            g_centreY = (u + d) / 2;
+            g_centred = false;
+        } else {
+            // A centred frustum covering the eye's wider side.
+            g_tanX = g_coverX;
+            g_tanY = g_coverY;
+            const float halfX = std::atan(g_tanX), halfY = std::atan(g_tanY);
+            g_pending.fov = {-halfX, halfX, halfY, -halfY};
+        }
     }
 }
 
@@ -2202,6 +2646,11 @@ bool takeRendered(Rendered& out) {
 void release() {
     std::lock_guard<std::mutex> lock(g_poseMutex);
     g_active = false;
+    // No eye drawn any more (god view's flat screen, CAS): the projection build
+    // stops putting the last eye's lopsided centre back, or CAS's camera kept
+    // it and showed the Sim off to the side (user 2026-10-18 21:34Z).
+    g_appliedCentre[0].store(NAN, std::memory_order_relaxed);
+    g_appliedCentre[1].store(NAN, std::memory_order_relaxed);
     g_queueSize = 0;
     g_latestYaw = NAN;
     g_pairBase.valid = false;
@@ -2210,6 +2659,7 @@ void release() {
 }
 
 void setPairedEyes(bool on) { g_pairedEyes.store(on, std::memory_order_relaxed); }
+void setExactFov(bool on) { g_exactFov.store(on, std::memory_order_relaxed); }
 
 void setBodyLayer(bool on) { g_bodyLayer.store(on, std::memory_order_relaxed); }
 
@@ -2223,7 +2673,9 @@ float viewYaw() {
     // lock: read both together, never one frame's turn missing or counted twice.
     std::lock_guard<std::mutex> lock(g_poseMutex);
     float yaw = g_latestYaw.load();
-    return std::isfinite(yaw) ? std::remainder(yaw + g_turnRequest.load(), 6.2831853f) : NAN;
+    return std::isfinite(yaw) ? std::remainder(yaw + g_turnRequest.load() - g_latestLead, 6.2831853f) : NAN;
 }
+
+void setTurnLead(float radians) { g_leadWanted.store(radians, std::memory_order_relaxed); }
 
 }  // namespace s4vr::camera

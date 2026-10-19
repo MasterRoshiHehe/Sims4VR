@@ -61,6 +61,85 @@ PIECES = [
     ('kDialogButton', 'liveui/art/Dialog/241__DialogButtonIconInstance@down__DialogButtonIconInstance@out.png'),
     ('kDialogButtonOver', 'liveui/art/Dialog/247__DialogButtonIconInstance@over__DialogButtonInstance@over.png'),
     ('kDialogPanel', 'liveui/art/Dialog/200__DialogHeaderBackground_9@default.png'),
+    # The phone (SimInfoTray: PhonePanel and its screens, the game's own phone
+    # menu drawn on our phone, hud.cpp drawPhone): the dark band of the app
+    # list's carousel, the pill behind the tool buttons, the battery, the
+    # silence button (up / over, silenced up / over), an app's hover frame and
+    # notification glow, the carousel arrow, the back button, a list row
+    # (over / down), the page dots (other / over / this page), the list's
+    # slider; the game menu's three dots (GameTray EscapeMenuBtn) for Options.
+    ('kPhoneTint', 'liveui/art/SimInfoTray/56.png'),
+    ('kPhonePill', 'liveui/art/SimInfoTray/81.png'),
+    ('kPhoneBattery', 'liveui/art/SimInfoTray/78.png'),
+    ('kPhoneSilence', 'liveui/art/SimInfoTray/63__PhoneSilenceButton@controller_disabledOver__PhoneSilenceButton@disabled.png'),
+    ('kPhoneSilenceOver', 'liveui/art/SimInfoTray/66__PhoneSilenceButton@over.png'),
+    ('kPhoneSilenced', 'liveui/art/SimInfoTray/69__PhoneSilenceButton@selected_disabled__PhoneSilenceButton@selected_up.png'),
+    ('kPhoneSilencedOver', 'liveui/art/SimInfoTray/72__PhoneSilenceButton@controller_selected_over__PhoneSilenceButton@selected_over.png'),
+    ('kPhoneAppOver', 'liveui/art/SimInfoTray/59__PhoneCategoryCellView@over__PhoneCategoryCellView@selected_up.png'),
+    ('kPhoneBadgeGlow', 'liveui/art/SimInfoTray/7__MotivesVampireSunlightOverlay@intro__PhoneCategoryCellView@up.png'),
+    ('kPhoneArrow', 'liveui/art/SimInfoTray/20__PhoneArrowButton@out__PhoneArrowButton@release.png'),
+    ('kPhoneArrowOver', 'liveui/art/SimInfoTray/23__PhoneArrowButton@controller_over__PhoneArrowButton@over.png'),
+    ('kPhoneBack', 'liveui/art/SimInfoTray/33__PhoneBackButton@out__PhoneBackButton@release.png'),
+    ('kPhoneBackOver', 'liveui/art/SimInfoTray/36__PhoneBackButton@over__PhoneBackButton@selected_disabled.png'),
+    ('kPhoneRowOver', 'liveui/art/SimInfoTray/11__PhoneItemCellView@over.png'),
+    ('kPhoneRowDown', 'liveui/art/SimInfoTray/14__PhoneItemCellView@down.png'),
+    ('kPhonePage', 'liveui/art/SimInfoTray/85__PhoneMenu_Button_OtherPage_124@out__PhoneMenu_Button_OtherPage_124@release.png'),
+    ('kPhonePageOver', 'liveui/art/SimInfoTray/88__PhoneMenu_Button_OtherPage_124@over__PhonePageButton@over.png'),
+    ('kPhonePageOn', 'liveui/art/SimInfoTray/100__PhonePageButton@selected_disable__PhonePageButton@selected_up.png'),
+    ('kPhoneSlider', 'liveui/art/SimInfoTray/43__PhoneMenuScrollList.png'),
+    ('kPhoneColorBtn', 'liveui/art/SimInfoTray/113__PhoneBackgroundColorSelectorButton@controller_disabledOver__PhoneBackgroundColorSelectorButton@controller_selected_up.png'),
+    ('kPhoneColorBtnOver', 'liveui/art/SimInfoTray/116__PhoneBackgroundColorSelectorButton@controller_selected_over__PhoneBackgroundColorSelectorButton@over.png'),
+    ('kPhoneColorBtnDown', 'liveui/art/SimInfoTray/119__PhoneBackgroundColorSelectorButton@controller_selected_down__PhoneBackgroundColorSelectorButton@down.png'),
+    ('kPhoneSelectorArrow', 'liveui/art/SimInfoTray/47__PhoneBackgroundColorSelector__PhoneCaseSelector.png'),
+    ('kNoteDelete', 'liveui/art/NotificationWall/8__DeleteButton@disabled__DeleteButton@up.png'),
+    ('kNoteDeleteOver', 'liveui/art/NotificationWall/10__DeleteButton@over.png'),
+    # The notification backgrounds (Notifications SWF: QueuedEffectBackground_4's
+    # frames standard/player/critical/moment, each with its "_strip" frame).
+    ('kNoteStandard', 'liveui/art/Notifications/3__QueuedEffectBackground_4@standard.png'),
+    ('kNotePlayer', 'liveui/art/Notifications/7__QueuedEffectBackground_4@player.png'),
+    ('kNoteCritical', 'liveui/art/Notifications/11__QueuedEffectBackground_4@critical.png'),
+    ('kNoteStandardStrip', 'liveui/art/Notifications/5__QueuedEffectBackground_4@standard_strip.png'),
+    ('kNotePlayerStrip', 'liveui/art/Notifications/9__QueuedEffectBackground_4@player_strip.png'),
+    ('kNoteCriticalStrip', 'liveui/art/Notifications/13__QueuedEffectBackground_4@critical_strip.png'),
+    ('kNoteMomentStrip', 'liveui/art/Notifications/17__QueuedEffectBackground_4@moment_strip.png'),
+    # The calendar app (Calendar SWF: CalendarDayView, SchedulePane; the HUD's
+    # calendar button), drawn small on the phone: 1x pieces (third field).
+    ('kCalendarButton', 'liveui/art/SimInfoTray/404__CalendarButton@over.png'),
+    ('kCalSpring', 'liveui/art/Calendar/207__SeasonalBackgrounds_20@none.png', 1),
+    ('kCalSummer', 'liveui/art/Calendar/209__SeasonalBackgrounds_20@summer.png', 1),
+    ('kCalFall', 'liveui/art/Calendar/211__SeasonalBackgrounds_20@fall.png', 1),
+    ('kCalWinter', 'liveui/art/Calendar/213__SeasonalBackgrounds_20@winter.png', 1),
+    ('kCalDayPast', 'liveui/art/Calendar/270__CalendarDayView@past_up.png', 1),
+    ('kCalDaySelected', 'liveui/art/Calendar/267__CalendarDayView@over.png', 1),
+    ('kCalBgWedding', 'liveui/art/Calendar/26.png', 1),
+    ('kCalBgHoliday', 'liveui/art/Calendar/111.png', 1),
+    ('kCalBgGetaway', 'liveui/art/Calendar/128.png', 1),
+    ('kCalBgFuneral', 'liveui/art/Calendar/142.png', 1),
+    ('kCalBgFestival', 'liveui/art/Calendar/155.png', 1),
+    ('kCalBgEvent', 'liveui/art/Calendar/170.png', 1),
+    ('kCalBgWork', 'liveui/art/Calendar/184__ScheduleWorkEventEntry.png', 1),
+    ('kCalBgBirthday', 'liveui/art/Calendar/254.png', 1),
+    ('kCalIconWedding', 'liveui/art/Calendar/28__DayViewActivityIcon_30@wedding.png', 1),
+    ('kCalIconVacation', 'liveui/art/Calendar/63__DayViewActivityIcon_30@vacation.png', 1),
+    ('kCalIconStayover', 'liveui/art/Calendar/76.png', 1),
+    ('kCalIconHoliday', 'liveui/art/Calendar/113__CalendarHolidayTooltipEntry__DayViewActivityIcon_30@holiday.png', 1),
+    ('kCalIconGetaway', 'liveui/art/Calendar/126__DayViewActivityIcon_30@getaway.png', 1),
+    ('kCalIconFuneral', 'liveui/art/Calendar/144__DayViewActivityIcon_30@funeral.png', 1),
+    ('kCalIconFestival', 'liveui/art/Calendar/157__CalendarFestivalTooltipEntry__DayViewActivityIcon_30@festival.png', 1),
+    ('kCalIconEvent', 'liveui/art/Calendar/172__DayViewActivityIcon_30@event.png', 1),
+    ('kCalIconWork', 'liveui/art/Calendar/188__DayViewActivityIcon_30@work.png', 1),
+    ('kCalIconBirthday', 'liveui/art/Calendar/200__DayViewActivityIcon_30@birthday.png', 1),
+    ('kCalEntryBg', 'liveui/art/Calendar/1.png', 1),
+    ('kCalMoon0', 'liveui/art/Calendar/226__CalendarLunarPhaseIcon_29@new_moon.png', 1),
+    ('kCalMoon1', 'liveui/art/Calendar/228__CalendarLunarPhaseIcon_29@waxing_crescent.png', 1),
+    ('kCalMoon2', 'liveui/art/Calendar/230__CalendarLunarPhaseIcon_29@first_quarter.png', 1),
+    ('kCalMoon3', 'liveui/art/Calendar/232__CalendarLunarPhaseIcon_29@waxing_gibbous.png', 1),
+    ('kCalMoon4', 'liveui/art/Calendar/234__CalendarLunarPhaseIcon_29@full_moon.png', 1),
+    ('kCalMoon5', 'liveui/art/Calendar/236__CalendarLunarPhaseIcon_29@waning_gibbous.png', 1),
+    ('kCalMoon6', 'liveui/art/Calendar/238__CalendarLunarPhaseIcon_29@third_quarter.png', 1),
+    ('kCalMoon7', 'liveui/art/Calendar/240__CalendarLunarPhaseIcon_29@waning_crescent.png', 1),
+    ('kGameMenuDots', 'buildui/art/GameTray/235__EscapeMenuBtn@disabled__EscapeMenuBtn@selected_disabled.png'),
+    ('kGameMenuDotsOver', 'buildui/art/GameTray/238.png'),
 ]
 EXTRA = 'tools/hud_art_extra.txt'
 # Arrays of one piece per mood (MOODS order): the frames of a mood sprite,
@@ -95,11 +174,11 @@ def mood_tints():
         out.append(0xff000000 | (b << 16) | (g << 8) | r)  # ImGui IM_COL32 order (ABGR)
     return out  # more "name path" lines (needs, moodlets...)
 
-def load(path):
+def load(path, scale=SCALE):
     a = np.asarray(Image.open(path).convert('RGBA')).astype(np.float32) / 255
     a[:, :, :3] *= a[:, :, 3:4]  # premultiply
     h, w = a.shape[:2]
-    chans = [Image.fromarray(a[:, :, c], 'F').resize((w * SCALE, h * SCALE), Image.LANCZOS) for c in range(4)]
+    chans = [Image.fromarray(a[:, :, c], 'F').resize((w * scale, h * scale), Image.LANCZOS) for c in range(4)]
     out = np.stack([np.asarray(c) for c in chans], 2).clip(0, 1)
     out[:, :, :3] = np.minimum(out[:, :, :3], out[:, :, 3:4])
     return out
@@ -122,11 +201,11 @@ def main():
             if len(f) != 1:
                 raise SystemExit('%s: %d pictures for %s' % (name, len(f), frame))
             piece = '%s_%s' % (name, frame)
-            if piece not in [n for n, _ in pieces]:
+            if piece not in [t[0] for t in pieces]:
                 pieces.append((piece, os.path.relpath(f[0], ART)))
             names.append(piece)
         arrays.append((name, names))
-    imgs = [(n, load(os.path.join(ART, p))) for n, p in pieces]
+    imgs = [(t[0], load(os.path.join(ART, t[1]), *t[2:])) for t in pieces]
     W = 1024
     x = y = 0; row = 0; rects = []
     for n, im in sorted(imgs, key=lambda t: -t[1].shape[0]):

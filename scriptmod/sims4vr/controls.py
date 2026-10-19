@@ -72,6 +72,16 @@ def _build_buy():
         buildbuy.poll()
     except Exception as e:
         native._log('controls: build/buy check failed: {!r}'.format(e))
+    try:
+        from sims4vr import phoneapp
+        phoneapp.poll()  # the phone menu's tests, a slice a tick
+    except Exception as e:
+        native._log('controls: phone menu failed: {!r}'.format(e))
+    try:
+        from sims4vr import notify
+        notify.poll()  # a notification card over a Sim's head follows it
+    except Exception as e:
+        native._log('controls: notification card failed: {!r}'.format(e))
 
 
 def _report_voice_sim():
@@ -289,6 +299,27 @@ def _tick(_handle):
                 pie.open_self()
             elif 70 <= what <= 76:
                 _console(_PERF_COMMANDS[what - 70])  # the separate Claude Performance mod
+            elif what == 77:
+                from sims4vr import phoneapp
+                phoneapp.toggle_silence()
+            elif what in (78, 79):
+                from sims4vr import notify
+                notify.opened() if what == 78 else notify.clear()
+            elif what == 81:
+                from sims4vr import phonecal
+                phonecal.send()
+            elif 80000 <= what < 90000:
+                from sims4vr import notify
+                notify.delete(what - 80000)
+            elif 90000 <= what < 90100:
+                from sims4vr import phoneapp
+                phoneapp.set_color(what - 90000)
+            elif what >= 10000000:
+                from sims4vr import notify
+                notify.answer((what - 10000000) // 8, (what - 10000000) % 8)
+            elif what >= 100000:
+                from sims4vr import phoneapp
+                phoneapp.select(what - 100000)
             elif what >= 1000:
                 from sims4vr import objmenu
                 objmenu.answer_picker(what - 1000)

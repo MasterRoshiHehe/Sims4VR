@@ -503,7 +503,9 @@ def _follow(sim, group, others, px, py, pz, now, limit):
     # game's own test in SocialGroup._could_sim_route) doesn't follow; walking
     # away from them ends the conversation, as cancelling it does.
     # Not while you are seated yourself (a long dining table).
-    stay = [other for other in others if _set_in_place(other)]
+    from sims4vr import follow
+    # Followers (follow.py) aren't left behind: they stand up and come along.
+    stay = [other for other in others if _set_in_place(other) and not follow.is_follower(other)]
     if stay and len(stay) == len(others) and not _set_in_place(sim):
         _leave(sim, group, others, now, 'you walked away from {} ({})'.format(
             ', '.join(_name(other) for other in stay), ', '.join(_posture(other) for other in stay)))

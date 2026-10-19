@@ -71,15 +71,19 @@ Config loadConfig(const std::wstring& ini) {
     c.worldScale = readFloat(ini, "stereo", "world_scale", c.worldScale);
 
     c.fovOverride = readInt(ini, "stereo", "fov_override", 1) != 0;
+    c.exactFov = readBool(ini, "stereo", "exact_fov", c.exactFov);
     c.sharpen = readFloat(ini, "stereo", "sharpen", c.sharpen);
     if (!(c.sharpen >= 0 && c.sharpen <= 1)) c.sharpen = 0.6f;
     c.turnReprojection = readBool(ini, "stereo", "turn_reprojection", c.turnReprojection);
     c.turnDisplayClock = readBool(ini, "stereo", "turn_display_clock", c.turnDisplayClock);
+    c.walkDisplayClock = readBool(ini, "stereo", "walk_display_clock", c.walkDisplayClock);
+    c.turnLead = readBool(ini, "stereo", "turn_lead", c.turnLead);
     c.gpuYield = readBool(ini, "stereo", "gpu_yield", c.gpuYield);
     c.pairedEyes = readBool(ini, "stereo", "paired_eyes", c.pairedEyes);
     c.pairedHands = readBool(ini, "stereo", "paired_hands", c.pairedHands);
     c.bodyLayer = readBool(ini, "stereo", "body_layer", c.bodyLayer);
     c.alignEyes = readBool(ini, "stereo", "align_eyes", c.alignEyes);
+    c.frameMap = readBool(ini, "stereo", "frame_map", c.frameMap);
     c.renderScale = readFloat(ini, "stereo", "render_scale", c.renderScale);
     if (!(c.renderScale >= 0 && c.renderScale <= 1.5f)) c.renderScale = 0.8f;
     c.renderMsaa = static_cast<int>(readInt(ini, "stereo", "render_msaa", c.renderMsaa));

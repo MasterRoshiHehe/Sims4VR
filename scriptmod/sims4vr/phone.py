@@ -2,8 +2,9 @@
 
 Close your right hand at your right hip and your Sim holds its phone in that
 hand; open the hand and the phone goes away. While it is out the phone's
-screen shows the game menu (the Escape menu; the DLL opens it and draws it on
-the phone) and the game keeps running.
+screen shows the game's own phone menu (phoneapp.py; the DLL draws it), and
+its Options app the game menu (the Escape menu; the DLL opens it and shows it
+on the phone); the game keeps running.
 
 The DLL (vr.cpp) sees the gesture and sends control events 3 (out) and 4
 (away); controls.py passes them here. This module:
@@ -91,6 +92,11 @@ def take_out():
     _out = True
     _refresh_clock()
     _make_prop()
+    try:
+        from sims4vr import phoneapp
+        phoneapp.send()
+    except Exception as e:
+        _log('the phone menu failed: {!r}'.format(e))
 
 
 def _mul(a, b):
@@ -238,6 +244,11 @@ def put_away(why='hand opened'):
     _out = False
     _remove_prop()
     if was_out:
+        try:
+            from sims4vr import phoneapp
+            phoneapp.clear()
+        except Exception as e:
+            _log('clearing the phone menu failed: {!r}'.format(e))
         _refresh_clock()
         _log('away ({})'.format(why))
 

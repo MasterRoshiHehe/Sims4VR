@@ -42,7 +42,7 @@ import terrain
 
 from interactions.utils.interaction_liabilities import ANIMATION_CONTEXT_LIABILITY
 
-from sims4vr import carried, doors, halt, hint, native, outdoors, scripted, stairs, stride, trail
+from sims4vr import carried, doors, follow, halt, hint, native, outdoors, scripted, stairs, stride, trail
 from sims4vr import livedrag  # noqa: F401  (no live-mode pick-up in first person)
 
 TICK_SECONDS = 0.1
@@ -692,19 +692,24 @@ def _take_over(sim):
     way, cancel_user, could leave a walk running that belonged to another
     Sim's action, and a walk animation playing). A walk stops at once; a seat
     or a held thing plays its way out first (the camera follows), then you get
-    control."""
+    control. In a WickedWhims scene the eyes close first (fades.py: its end
+    moves your Sim at once) and the cancel waits until they are shut."""
     global _last_take_over
     now = time.monotonic()
     if now - _last_take_over < TAKE_OVER_EVERY:
         return
-    _last_take_over = now
     social = halt.social_running(sim)
     if social is not None:
+        _last_take_over = now
         global _social_logs
         _social_logs += 1
         if _social_logs <= 20:
             native._log('walk: stick while the game lines you up for {}: kept (cancel it on your wrist to leave)'.format(social))
         return
+    from sims4vr import fades
+    if not fades.stick_ready(sim):
+        return
+    _last_take_over = now
     try:
         for interaction in halt.everything(sim, 'VR: you walked away (stick)'):
             _cancelled.append((interaction, now))
@@ -787,6 +792,8 @@ def _tick(_handle):
         if sim is None:
             return
         _sleep_state(sim)
+        from sims4vr import fades
+        fades.scene_tick(sim)  # eyes closed while a WickedWhims scene switches animations
         _held_candidates(sim)
         stick = native.walk_input()
         pushing = stick is not None and stick[2] >= DEAD_ZONE
@@ -829,6 +836,7 @@ def _tick(_handle):
         if on_stairs:
             _log_stairs(sim, px, py, pz, on, ramp)
         hint.update(sim, px, py, pz)
+        follow.update(sim, px, py, pz)
         halt.update(sim, free and not game)
         outdoors.update(px, py, pz, _surface_of(sim))
         _was_moving = moving

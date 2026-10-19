@@ -29,6 +29,11 @@ using RequestPickFn = void (*)(void* manager, int x, int y);
 // Camera fields (Sims3::Cameras::Camera): 2 tan(half fov) across and up,
 // then the right, up and back axes and the position.
 constexpr size_t kTanX2 = 0x14, kTanY2 = 0x18, kRight = 0x30, kUp = 0x40, kBack = 0x50, kPosition = 0x60;
+// No frustum centre (camera.cpp kCentreOffset): the pick setup (0x12105f2)
+// copies the camera and sets the copy's centre to the pixel's direction in a
+// centred frustum of the drawn size (0x1209d20), and the answer's ray
+// (0x1211f80) is made the same way. With the lopsided eye view a pixel asked
+// with the centre picked about 18 degrees off what the laser points at.
 
 // Clickable pick types: objects, Sims, misc. Not floors, walls, terrain, stairs, roofs.
 bool clickable(int type) { return type == 2 || type == 3 || type == 9; }
@@ -246,8 +251,8 @@ void update(const uint8_t* camera, uint64_t self, bool haveTip, const camera::Ve
     float rel[3] = {at.x - position[0], at.y - position[1], at.z - position[2]};
     float depth = -dot(rel, back);
     if (!(depth > 0.05f) || !(tanX2 > 0) || !(tanY2 > 0)) return;
-    float fx = (dot(rel, right) / (depth * tanX2) + 0.5f) * W - 0.5f;
-    float fy = (0.5f - dot(rel, up) / (depth * tanY2)) * H - 0.5f;
+    float fx = (dot(rel, right) / depth / tanX2 + 0.5f) * W - 0.5f;
+    float fy = (0.5f - dot(rel, up) / depth / tanY2) * H - 0.5f;
     if (!(fx >= 0 && fx < W && fy >= 0 && fy < H)) return;
     Request& r = g_requests[g_nextRequest];
     g_nextRequest = (g_nextRequest + 1) % 8;

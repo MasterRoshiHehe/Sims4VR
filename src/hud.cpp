@@ -124,6 +124,94 @@ bool g_pickerFresh = false, g_pickerPrepped = false;
 std::vector<uint64_t> g_pickerIcons;  // the icons it shows (g_itemMutex)
 std::vector<uint64_t> g_popupIcons;   // the popup's pictures (g_itemMutex)
 
+// The game's phone menu (phoneapp.py; user 2026-10-18 20:35Z: the game's own
+// phone on our phone), drawn as the game's PhonePanel draws it.
+struct PhoneNode {
+    bool category = false;
+    int parent = -1;  // the node above (-1: the home screen)
+    uint64_t icon = 0;
+    std::string nameJson, disabledJson, name, disabled;
+    bool notification = false;  // an item's own badge, or (a category) any of its items'
+    int priority = 0;
+    std::vector<int> children;  // sorted as the game sorts them, once the texts are found
+};
+struct PhoneContent {
+    bool silenced = false;
+    int color = -1;                // the wallpaper colour chosen (index into colors)
+    std::vector<uint64_t> colors;  // the wallpaper colours' swatch icons (PhoneBackgroundColorSelector)
+    std::string disabledJson, disabled;  // the phone can't be used now: why (the game's fly-away text)
+    std::vector<PhoneNode> nodes;
+    std::vector<int> home;  // the home screen's apps (categories under -1)
+    bool resolved = false, valid = false;
+};
+std::mutex g_phoneMutex;
+PhoneContent g_phoneIn;     // set by Python (g_phoneMutex)
+bool g_phoneNew = false;    // g_phoneIn changed (g_phoneMutex)
+PhoneContent g_phone;       // present thread
+bool g_phoneOn = false;     // present thread: there is one
+std::vector<uint64_t> g_phoneIcons;  // its apps' icons (g_itemMutex)
+// What you did on it (present thread): the screen (the home screen, or the
+// list of the app `g_phoneApp`, opened from the home screen's app
+// g_phoneRoot), the home screen's page, the list's first row shown.
+std::atomic<bool> g_phoneHomeAsked{false};
+bool g_phoneColorsOpen = false;  // the wallpaper colour selector is up (present thread)
+// The game's notifications (notify.py): the phone's bell and list, a card over a Sim's head.
+struct Note {
+    uint64_t id = 0, picture = 0;
+    bool read = false;
+    int style = 0;  // notify.py: 0 standard, 1 player, 2 critical, 3 moment; +4 strip
+    std::string titleJson, textJson, time;
+    std::vector<std::string> buttons;  // its answers' texts (json) while the game waits for one
+};
+struct NotesContent {
+    int unread = 0;
+    std::vector<Note> notes;  // newest first
+};
+std::mutex g_notesMutex;
+NotesContent g_notesIn;  // g_notesMutex
+bool g_notesNew = false;  // g_notesMutex
+NotesContent g_notes;     // present thread
+std::vector<uint64_t> g_noteIcons;  // their pictures (g_itemMutex)
+bool g_phoneNotesOpen = false;  // the phone shows the notification list (present thread)
+int g_notesScroll = 0;
+float g_noteHeight = 0;
+// The game's calendar as a phone app (phonecal.py, the game's Calendar widget):
+// the days of the year's weeks from this week's first, their entries.
+struct CalDay {
+    int season = -1, moon = -1, main = 0;  // main: the entry kind its big picture shows
+    uint64_t weather = 0, mainPicture = 0;
+    std::vector<int> small;  // the small activity icons (0: more)
+    std::string forecastJson;
+};
+struct CalItem {
+    int day = 0, kind = 0;
+    uint64_t picture = 0;
+    std::string nameJson, timeJson;
+};
+struct CalendarContent {
+    bool valid = false;
+    int today = 0, count = 0;
+    std::string titleJson, emptyJson;
+    std::vector<CalDay> days;
+    std::vector<CalItem> items;
+};
+std::mutex g_calMutex;
+CalendarContent g_calIn;  // g_calMutex
+bool g_calNew = false;    // g_calMutex
+CalendarContent g_cal;    // present thread
+bool g_phoneCalOpen = false;  // the phone shows the calendar (present thread)
+// A press held and moved on the phone (laser or finger, user 2026-10-18 23:43Z):
+// a swipe. Pages and lists follow it while held; a swipe presses no button.
+struct PhoneDrag {
+    bool on = false, moved = false, horizontal = false;
+    ImVec2 start{};
+    float startY = 0;  // game pixels down the screen where it began
+    int page = 0, scroll = 0, notes = 0, cal = 0, week = 0;
+};
+PhoneDrag g_drag;  // present thread
+int g_calWeek = 0, g_calSel = -1, g_calScroll = 0;
+int g_phoneApp = -1, g_phoneRoot = -1, g_phonePage = 0, g_phoneScroll = 0;
+
 // The tooltips of the needs and moodlets (hudinfo.py), and their texts once found.
 struct Tip {
     std::string json[3];  // title, text, reason
@@ -1238,6 +1326,814 @@ Action drawPicker(int* index) {
 }
 
 // The round build/buy button: the game's GameTray icon on a light disc.
+// The phone's texts from the game's string tables, then its entries sorted as
+// the game sorts them (InteractionMenuData.OptionsSortingFunction: higher
+// priority first, then by name; a category's list again by priority,
+// PhoneInteractionScreen.PopulateItems).
+void resolvePhone() {
+    {
+        std::lock_guard<std::mutex> lock(g_notesMutex);
+        if (g_notesNew) {
+            g_notes = g_notesIn;
+            g_notesNew = false;
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_calMutex);
+        if (g_calNew) {
+            g_cal = g_calIn;
+            g_calNew = false;
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_phoneMutex);
+        if (g_phoneNew) {
+            g_phone = g_phoneIn;
+            g_phoneOn = !g_phoneIn.nodes.empty() || !g_phoneIn.disabledJson.empty() || g_phoneIn.valid;
+            g_phoneNew = false;
+            const int n = static_cast<int>(g_phone.nodes.size());
+            if (g_phoneApp >= n || g_phoneRoot >= n) g_phoneApp = g_phoneRoot = -1;
+        }
+    }
+    if (!g_phoneOn || g_phone.resolved || !strings::ready()) return;
+    PhoneContent& p = g_phone;
+    if (!p.disabledJson.empty()) p.disabled = strings::resolve(p.disabledJson);
+    for (PhoneNode& node : p.nodes) {
+        if (!node.nameJson.empty()) node.name = strings::resolve(node.nameJson);
+        if (!node.disabledJson.empty()) node.disabled = strings::resolve(node.disabledJson);
+    }
+    // A category is badged when any entry in it is (InteractionCategory.ShouldDisplayNotification).
+    for (int i = static_cast<int>(p.nodes.size()) - 1; i >= 0; --i)
+        if (p.nodes[i].notification && p.nodes[i].parent >= 0) p.nodes[p.nodes[i].parent].notification = true;
+    auto byPriorityThenName = [&](int a, int b) {
+        const PhoneNode &x = p.nodes[a], &y = p.nodes[b];
+        if (x.priority != y.priority) return x.priority > y.priority;
+        return x.name < y.name;
+    };
+    std::stable_sort(p.home.begin(), p.home.end(), byPriorityThenName);
+    for (PhoneNode& node : p.nodes) {
+        std::stable_sort(node.children.begin(), node.children.end(), byPriorityThenName);
+        std::stable_sort(node.children.begin(), node.children.end(),
+                         [&](int a, int b) { return p.nodes[a].priority < p.nodes[b].priority; });
+    }
+    p.resolved = true;
+}
+
+// A notification's background as the game's (NotificationView.SetBackgroundFrame:
+// standard blue, player green, critical orange, special moment purple; the
+// "_strip" frames when it has a secondary icon), corners kept, its gradient stretched.
+void noteBackground(ImDrawList* d, int style, ImVec2 a, ImVec2 b, float k) {
+    static const art::Piece* kFrames[8] = {&art::kNoteStandard, &art::kNotePlayer, &art::kNoteCritical,
+                                           &art::kNoteMomentStrip, &art::kNoteStandardStrip, &art::kNotePlayerStrip,
+                                           &art::kNoteCriticalStrip, &art::kNoteMomentStrip};
+    nine(d, *kFrames[style & 7], a, b, 18, 18, 18, 18, k);
+}
+
+// The calendar's art per entry kind (CalendarDayView.GetLabelForType: its
+// main picture's background and its activity icon; vacations and stayovers
+// have no main picture of their own).
+const art::Piece* calendarBackground(int kind) {
+    switch (kind) {
+        case 1: case 5: case 9: return &art::kCalBgEvent;
+        case 2: case 3: return &art::kCalBgHoliday;
+        case 6: return &art::kCalBgFestival;
+        case 7: return &art::kCalBgWedding;
+        case 8: case 21: return &art::kCalBgWork;
+        case 10: return &art::kCalBgFuneral;
+        case 11: return &art::kCalBgGetaway;
+        case 20: return &art::kCalBgBirthday;
+        default: return nullptr;
+    }
+}
+const art::Piece* calendarIcon(int kind) {
+    switch (kind) {
+        case 1: return &art::kCalIconEvent;
+        case 2: case 3: return &art::kCalIconHoliday;
+        case 5: return &art::kCalIconVacation;
+        case 6: return &art::kCalIconFestival;
+        case 7: return &art::kCalIconWedding;
+        case 8: case 21: return &art::kCalIconWork;
+        case 9: return &art::kCalIconStayover;
+        case 10: return &art::kCalIconFuneral;
+        case 11: return &art::kCalIconGetaway;
+        case 20: return &art::kCalIconBirthday;
+        default: return nullptr;
+    }
+}
+
+// The calendar app (the game's Calendar widget on the phone's narrow screen):
+// the family's title; a week of day cells (CalendarDayView: the season's
+// background, the weather forecast and moon phase, the main entry's picture
+// on its kind's background, the other activities' icons; past days dimmed,
+// today outlined, the selected day in the green frame) with arrows through
+// the year's weeks; under it the selected day's schedule (SchedulePane: the
+// weekday, the forecast, each entry with its picture, name and time).
+template <class Button>
+void drawCalendar(ImDrawList* d, const Rect& r, Button& button, std::vector<uint64_t>& shown, Action& action) {
+    constexpr float S = 2.5f;
+    auto at = [&](float x, float y) { return ImVec2{r.x + x * S, r.y + y * S}; };
+    const CalendarContent& c = g_cal;
+    static const char* kShort[7] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
+    static const char* kLong[7] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
+    pieceIn(d, art::kPhoneTint, at(0, 0), at(230, 44));
+    {
+        std::string title = found(c.titleJson);
+        if (title.empty()) title = "Calendar";
+        ImVec2 ts = g_title->CalcTextSizeA(34, FLT_MAX, 0, title.c_str());
+        const float k = std::min(1.0f, 210 * S / std::max(1.0f, ts.x));
+        shadowText(d, g_title, 34 * k, {at(115, 22).x - ts.x * k / 2, at(115, 22).y - ts.y * k / 2}, kWhite, title.c_str());
+    }
+    if (!c.valid || c.count <= 0) {
+        const char* wait = "...";
+        ImVec2 ws = g_text->CalcTextSizeA(30, FLT_MAX, 0, wait);
+        shadowText(d, g_text, 30, {at(115, 180).x - ws.x / 2, at(115, 180).y - ws.y / 2}, kWhite, wait);
+        return;
+    }
+    const int weeks = (c.count + 6) / 7;
+    if (g_calSel < 0 || g_calSel >= c.count) g_calSel = c.today, g_calWeek = c.today / 7, g_calScroll = 0;
+    {
+        // Swipes: sideways turns the week, up and down scrolls the day's schedule.
+        const PhoneDrag& drag = g_drag;
+        const ImGuiIO& io = ImGui::GetIO();
+        const float dx = (io.MousePos.x - drag.start.x) / S, dy = (io.MousePos.y - drag.start.y) / S;
+        if (drag.on && drag.moved && drag.horizontal && !io.MouseDown[0]) {
+            if (dx < -40) g_calWeek = drag.week + 1;
+            if (dx > 40) g_calWeek = drag.week - 1;
+        }
+        if (drag.on && drag.moved && !drag.horizontal && drag.startY > 120)
+            g_calScroll = drag.cal - static_cast<int>(std::lround(dy / 37));
+    }
+    g_calWeek = std::max(0, std::min(weeks - 1, g_calWeek));
+    for (int col = 0; col < 7; ++col) {
+        ImVec2 ns = g_small->CalcTextSizeA(20, FLT_MAX, 0, kShort[col]);
+        const ImVec2 m = at(4 + col * 32 + 15, 51);
+        shadowText(d, g_small, 20, {m.x - ns.x / 2, m.y - ns.y / 2}, kWhite, kShort[col]);
+    }
+    for (int col = 0; col < 7; ++col) {
+        const int i = g_calWeek * 7 + col;
+        if (i >= c.count) break;
+        const CalDay& day = c.days[i];
+        const float x = 4 + col * 32, y = 58, w = 30, h = 41;
+        const ImVec2 a = at(x, y), b = at(x + w, y + h);
+        const art::Piece& season = day.season == 0   ? art::kCalSummer
+                                   : day.season == 1 ? art::kCalFall
+                                   : day.season == 2 ? art::kCalWinter
+                                                     : art::kCalSpring;
+        pieceIn(d, season, a, b);
+        if (const art::Piece* bg = calendarBackground(day.main)) {
+            const ImVec2 ma = at(x + 1.5f, y + 11), mb = at(x + w - 1.5f, y + 32);
+            pieceIn(d, *bg, ma, mb);
+            if (day.mainPicture) {
+                shown.push_back(day.mainPicture);
+                icon(d, day.mainPicture, {(ma.x + mb.x) / 2, (ma.y + mb.y) / 2}, 19 * S);
+            }
+            if (const art::Piece* ic = calendarIcon(day.main)) pieceIn(d, *ic, at(x + 1, y + 9), at(x + 9, y + 17));
+        }
+        if (day.weather) {
+            shown.push_back(day.weather);
+            icon(d, day.weather, at(x + 6, y + 6), 10 * S);
+        }
+        if (day.moon >= 0 && day.moon < 8) {
+            static const art::Piece* kMoons[8] = {&art::kCalMoon0, &art::kCalMoon1, &art::kCalMoon2, &art::kCalMoon3,
+                                                  &art::kCalMoon4, &art::kCalMoon5, &art::kCalMoon6, &art::kCalMoon7};
+            pieceIn(d, *kMoons[day.moon], at(x + w - 9, y + 1.5f), at(x + w - 1.5f, y + 9));
+        }
+        float ix = x + w - 1.5f;
+        for (int kind : day.small) {
+            const ImVec2 ia = at(ix - 8, y + h - 9), ib = at(ix, y + h - 1);
+            if (const art::Piece* ic = calendarIcon(kind)) {
+                pieceIn(d, *ic, ia, ib);
+            } else {  // more
+                ImVec2 ms = g_small->CalcTextSizeA(18, FLT_MAX, 0, "+");
+                shadowText(d, g_small, 18, {(ia.x + ib.x - ms.x) / 2, (ia.y + ib.y - ms.y) / 2}, kWhite, "+");
+            }
+            ix -= 9;
+        }
+        if (i < c.today) pieceIn(d, art::kCalDayPast, a, b, IM_COL32(255, 255, 255, 170));
+        if (i == c.today) d->AddRect(a, b, IM_COL32(255, 255, 255, 230), 2 * S, 0, 1.2f * S);
+        bool over = false;
+        if (i >= c.today && button(a, b, &over)) g_calSel = i, g_calScroll = 0;
+        if (i == g_calSel) {
+            pieceIn(d, art::kCalDaySelected, a, b);
+        } else if (over) {
+            d->AddRectFilled(a, b, IM_COL32(255, 255, 255, 40), 2 * S);
+        }
+    }
+    // The weeks: back and on.
+    {
+        auto arrow = [&](float cx, bool left, bool enabled) {
+            bool over = false;
+            const bool pressed = button(at(cx - 12, 102), at(cx + 12, 120), &over) && enabled;
+            const ImU32 ink = !enabled ? IM_COL32(255, 255, 255, 60) : over ? IM_COL32(186, 240, 120, 255) : kWhite;
+            const ImVec2 m = at(cx, 111);
+            const float u = 5 * S;
+            if (left)
+                d->AddTriangleFilled({m.x - u, m.y}, {m.x + u * 0.7f, m.y - u}, {m.x + u * 0.7f, m.y + u}, ink);
+            else
+                d->AddTriangleFilled({m.x + u, m.y}, {m.x - u * 0.7f, m.y - u}, {m.x - u * 0.7f, m.y + u}, ink);
+            return pressed;
+        };
+        if (arrow(18, true, g_calWeek > 0)) --g_calWeek;
+        if (arrow(212, false, g_calWeek + 1 < weeks)) ++g_calWeek;
+        char label[32];
+        const int ahead = g_calWeek - c.today / 7;
+        if (ahead == 0) std::snprintf(label, sizeof label, "This week");
+        else if (ahead == 1) std::snprintf(label, sizeof label, "Next week");
+        else std::snprintf(label, sizeof label, "In %d weeks", ahead);
+        ImVec2 ls = g_small->CalcTextSizeA(24, FLT_MAX, 0, label);
+        shadowText(d, g_small, 24, {at(115, 111).x - ls.x / 2, at(115, 111).y - ls.y / 2}, kWhite, label);
+    }
+    // The selected day's schedule.
+    const CalDay& sel = c.days[g_calSel];
+    pieceIn(d, art::kPhoneTint, at(0, 123), at(230, 149));
+    {
+        std::string head = kLong[g_calSel % 7];
+        if (g_calSel == c.today) head += "  (Today)";
+        ImVec2 hs = g_title->CalcTextSizeA(28, FLT_MAX, 0, head.c_str());
+        shadowText(d, g_title, 28, {at(8, 136).x, at(8, 136).y - hs.y / 2}, kWhite, head.c_str());
+        if (sel.weather) {
+            const std::string& fname = found(sel.forecastJson);
+            ImVec2 fs = g_text->CalcTextSizeA(22, FLT_MAX, 0, fname.c_str());
+            const float room = 222 * S - (at(8, 0).x - r.x) - hs.x - 30 * S;
+            const float k = fs.x > 0 ? std::min(1.0f, std::max(0.5f, room / fs.x)) : 1;
+            const float right = at(224, 0).x;
+            shadowText(d, g_text, 22 * k, {right - fs.x * k, at(0, 136).y - fs.y * k / 2}, kWhite, fname.c_str());
+            shown.push_back(sel.weather);
+            icon(d, sel.weather, {right - fs.x * k - 10 * S, at(0, 136).y}, 16 * S);
+        }
+    }
+    std::vector<const CalItem*> list;
+    for (const CalItem& it : c.items)
+        if (it.day == g_calSel) list.push_back(&it);
+    const float top = 152, bottom = 356, left = 6, right = 210, rowH = 34;
+    const int fit = static_cast<int>((bottom - top) / (rowH + 3)), total = static_cast<int>(list.size());
+    g_calScroll = std::max(0, std::min(std::max(0, total - fit), g_calScroll));
+    const ImU32 kName = IM_COL32(29, 58, 102, 255), kTime = IM_COL32(80, 92, 110, 255);
+    for (int k = 0; k < fit && g_calScroll + k < total; ++k) {
+        const CalItem& it = *list[g_calScroll + k];
+        const float y = top + k * (rowH + 3);
+        nine(d, art::kDialogPanel, at(left, y), at(right, y + rowH), 36, 36, 36, 36, 0.5f, IM_COL32(246, 249, 253, 250));
+        const ImVec2 pa = at(left + 3, y + 3), pb = at(left + 3 + 36, y + rowH - 3);
+        if (const art::Piece* bg = calendarBackground(it.kind)) pieceIn(d, *bg, pa, pb);
+        if (it.picture) {
+            shown.push_back(it.picture);
+            icon(d, it.picture, {(pa.x + pb.x) / 2, (pa.y + pb.y) / 2}, 26 * S);
+        }
+        if (const art::Piece* ic = calendarIcon(it.kind)) pieceIn(d, *ic, at(right - 15, y + 3), at(right - 3, y + 15));
+        const float tx = at(left + 44, 0).x, wrap = (right - left - 44 - 18) * S;
+        const std::string &name = found(it.nameJson), &time = found(it.timeJson);
+        ImVec2 ns = g_title->CalcTextSizeA(24, FLT_MAX, 0, name.c_str());
+        const float nk = ns.x > wrap ? std::max(0.6f, wrap / ns.x) : 1;
+        d->PushClipRect(at(left, y), at(right - 16, y + rowH), true);
+        d->AddText(g_title, 24 * nk, {tx, at(0, y + 5).y}, kName, name.c_str());
+        if (!time.empty()) d->AddText(g_text, 21, {tx, at(0, y + 19).y}, kTime, time.c_str());
+        d->PopClipRect();
+    }
+    if (list.empty()) {
+        std::string none = found(c.emptyJson);
+        if (none.empty()) none = "Nothing scheduled.";
+        const float wrap = 200 * S;
+        ImVec2 ns = g_text->CalcTextSizeA(26, FLT_MAX, wrap, none.c_str());
+        const ImVec2 m = at(115, 200);
+        d->AddText(g_text, 26, {m.x - ns.x / 2 + 2, m.y - ns.y / 2 + 2}, kShadow, none.c_str(), nullptr, wrap);
+        d->AddText(g_text, 26, {m.x - ns.x / 2, m.y - ns.y / 2}, kWhite, none.c_str(), nullptr, wrap);
+    }
+    if (total > fit) {
+        const float trackH = bottom - top, thumbH = std::max(24.0f, trackH * fit / total);
+        const float thumbY = top + (trackH - thumbH) * g_calScroll / std::max(1, total - fit);
+        d->AddRectFilled(at(218, top), at(222, bottom), IM_COL32(255, 255, 255, 60), 2 * S);
+        pieceIn(d, art::kPhoneSlider, at(214, thumbY), at(226, thumbY + thumbH));
+        bool o = false;
+        if (button(at(212, top), at(230, thumbY), &o)) g_calScroll -= fit;
+        if (button(at(212, thumbY + thumbH), at(230, bottom), &o)) g_calScroll += fit;
+    }
+    (void)action;
+}
+
+// The game's phone screen (SimInfoTray: PhonePanel's PhoneCategoryScreen and
+// PhoneInteractionScreen, their places from the SWF), 2.5 atlas pixels to the
+// game's one. The background picture is the phone's glass (phone3d), not drawn here.
+Action drawPhone(int* index) {
+    ImDrawList* d = ImGui::GetBackgroundDrawList();
+    const PhoneContent& p = g_phone;
+    const Rect r = kPhone;
+    constexpr float S = 2.5f, A = S / art::kScale;  // atlas pixels per game pixel; art scale
+    auto at = [&](float x, float y) { return ImVec2{r.x + x * S, r.y + y * S}; };
+    const ImU32 kBlue = IM_COL32(9, 73, 171, 255), kGrey = IM_COL32(120, 128, 140, 255);
+    Action action = kNone;
+    int id = 0;
+    // Swipes: a press that moves 6 game pixels is a swipe (along its main
+    // direction), followed while held; its release presses nothing.
+    const ImGuiIO& io = ImGui::GetIO();
+    const ImVec2 mouse = io.MousePos;
+    PhoneDrag& drag = g_drag;
+    if (ImGui::IsMouseClicked(0) && mouse.x >= r.x && mouse.x <= r.x + r.w && mouse.y >= r.y && mouse.y <= r.y + r.h) {
+        drag = PhoneDrag{};
+        drag.on = true;
+        drag.start = mouse;
+        drag.startY = (mouse.y - r.y) / S;
+        drag.page = g_phonePage, drag.scroll = g_phoneScroll, drag.notes = g_notesScroll, drag.cal = g_calScroll,
+        drag.week = g_calWeek;
+    }
+    const float dx = drag.on ? (mouse.x - drag.start.x) / S : 0, dy = drag.on ? (mouse.y - drag.start.y) / S : 0;
+    if (drag.on && !drag.moved && std::max(std::fabs(dx), std::fabs(dy)) > 6) {
+        drag.moved = true;
+        drag.horizontal = std::fabs(dx) > std::fabs(dy);
+    }
+    const bool swiping = drag.on && drag.moved, swipeEnded = swiping && !io.MouseDown[0];
+    const bool swipeX = swiping && drag.horizontal, swipeY = swiping && !drag.horizontal;
+    auto button = [&](ImVec2 a, ImVec2 b, bool* hover, bool* held = nullptr) {
+        ImGui::SetCursorScreenPos(a);
+        ImGui::PushID(3000 + id++);
+        bool pressed = ImGui::InvisibleButton("phone", {std::max(1.0f, b.x - a.x), std::max(1.0f, b.y - a.y)});
+        if (swiping) pressed = false;
+        if (hover) *hover = ImGui::IsItemHovered();
+        if (held) *held = ImGui::IsItemActive();
+        ImGui::PopID();
+        return pressed;
+    };
+    std::vector<uint64_t> shown;
+    // An app's picture: its category icon, 64 game pixels (mcImage at 0.64).
+    auto appIcon = [&](int node, ImVec2 c, ImU32 tint = kWhite) {
+        if (node < 0) {
+            // Options (the game menu): the game menu button's dots on a dark tile;
+            // Calendar (-2): the HUD's calendar button on one.
+            const float h = 30 * S;
+            nine(d, art::kPhonePill, {c.x - h, c.y - h}, {c.x + h, c.y + h}, 37, 37, 37, 37, A * 0.8f,
+                 IM_COL32(255, 255, 255, (tint >> 24) & 0xff));
+            if (node == -2) {
+                const float b = 21 * S;
+                pieceIn(d, art::kCalendarButton, {c.x - b, c.y - b}, {c.x + b, c.y + b}, tint);
+            } else if (node == -3) {
+                // Build Mode (-3): the wrist's build button, the game's build icon on its disc.
+                piece(d, art::kQueueDisc[0], c, 50 * S / art::kQueueDisc[0].w, IM_COL32(205, 210, 215, (tint >> 24) & 0xff));
+                piece(d, art::kBuildIcon, c, 31 * S / art::kBuildIcon.w, tint);
+            } else {
+                piece(d, art::kGameMenuDots, c, A * 1.6f, tint);
+            }
+            return;
+        }
+        shown.push_back(p.nodes[node].icon);
+        icon(d, p.nodes[node].icon, c, 64 * S, tint);
+    };
+    auto badge = [&](ImVec2 c) {  // mcNotificationBadge: the red glow and its white dot
+        piece(d, art::kPhoneBadgeGlow, c, A * 1.08f);
+        d->AddCircleFilled(c, 2.5f * S, kWhite);
+    };
+    if (g_phoneHomeAsked.exchange(false))
+        g_phoneApp = g_phoneRoot = -1, g_phonePage = 0, g_phoneScroll = 0, g_phoneColorsOpen = false, g_phoneNotesOpen = false,
+        g_phoneCalOpen = false;
+    if (g_phoneApp >= 0) g_phoneNotesOpen = g_phoneCalOpen = false;
+    if (g_phoneApp >= 0 || p.colors.empty()) g_phoneColorsOpen = false;
+
+    if (!p.disabled.empty() || (p.nodes.empty() && !p.disabledJson.empty())) {
+        // The phone can't be used now (PhoneTuning.DISABLE_PHONE_TESTS, a full queue): the game's reason.
+        const std::string& why = p.disabled.empty() ? std::string("...") : p.disabled;
+        const float wrap = 200 * S;
+        ImVec2 size = g_text->CalcTextSizeA(30, FLT_MAX, wrap, why.c_str());
+        ImVec2 a = at(115, 200);
+        d->AddText(g_text, 30, {a.x - size.x / 2 + 2, a.y - size.y / 2 + 2}, kShadow, why.c_str(), nullptr, wrap);
+        d->AddText(g_text, 30, {a.x - size.x / 2, a.y - size.y / 2}, kWhite, why.c_str(), nullptr, wrap);
+    } else if (g_phoneNotesOpen) {
+        // The notification list (the game's NotificationWall, newest first):
+        // each one a light card with its picture, title, text and time, the
+        // wall's delete button; Clear all at the top; back at the bottom.
+        const std::vector<Note>& notes = g_notes.notes;
+        pieceIn(d, art::kPhoneTint, at(0, 0), at(230, 44));
+        {
+            const char* head = "Notifications";
+            ImVec2 hs = g_title->CalcTextSizeA(34, FLT_MAX, 0, head);
+            shadowText(d, g_title, 34, {at(14, 22).x, at(14, 22).y - hs.y / 2}, kWhite, head);
+            if (!notes.empty()) {
+                const char* clear = "Clear all";
+                ImVec2 cs2 = g_text->CalcTextSizeA(26, FLT_MAX, 0, clear);
+                const ImVec2 b1 = at(222, 34), a1{b1.x - cs2.x - 24, at(0, 10).y};
+                bool over = false;
+                if (button(a1, b1, &over)) action = kNotesClear;
+                if (over) d->AddRectFilled(a1, b1, IM_COL32(255, 255, 255, 50), 10);
+                d->AddText(g_text, 26, {a1.x + 12, (a1.y + b1.y - cs2.y) / 2}, kWhite, clear);
+            }
+        }
+        const float top = 48, bottom = 352, left = 6, right = 206;
+        const float pic = 30, pad = 4, wrap = (right - left - pic - 3 * pad - 14) * S;
+        const ImU32 kTitle = kWhite, kBody = kWhite;
+        const int total = static_cast<int>(notes.size());
+        if (swipeY) g_notesScroll = drag.notes - static_cast<int>(std::lround(dy / 45));  // follows the swipe, a card a step
+        g_notesScroll = std::max(0, std::min(std::max(0, total - 1), g_notesScroll));
+        float y = top;
+        int shownCount = 0;
+        for (int i = g_notesScroll; i < total; ++i) {
+            const Note& n = notes[i];
+            const std::string &title = found(n.titleJson), &text = found(n.textJson);
+            ImVec2 ts = title.empty() ? ImVec2{0, 0} : g_title->CalcTextSizeA(26, FLT_MAX, wrap, title.c_str());
+            ImVec2 xs = text.empty() ? ImVec2{0, 0} : g_text->CalcTextSizeA(24, FLT_MAX, wrap, text.c_str());
+            const int nb = static_cast<int>(n.buttons.size()), perRow = nb > 2 ? 2 : std::max(1, nb);
+            const float bh = 22, bgap = 3, brows = nb ? static_cast<float>((nb + perRow - 1) / perRow) : 0;
+            const float textH = std::max(pic + 2 * pad, (ts.y + xs.y + 30) / S + 2 * pad + 4);
+            const float h = textH + brows * (bh + bgap);
+            if (y + h > bottom && shownCount > 0) break;
+            const ImVec2 a = at(left, y), b = at(right, y + h);
+            noteBackground(d, n.style, a, b, 0.8f);
+            if (!n.read) d->AddCircleFilled(at(left + 3.5f, y + 5), 1.6f * S, kWhite);  // unread
+            if (n.picture) {
+                shown.push_back(n.picture);
+                icon(d, n.picture, at(left + pad + pic / 2, y + pad + pic / 2), pic * S);
+            }
+            float ty = (y + pad + 1) * S + r.y;
+            const float tx = at(left + 2 * pad + pic, 0).x;
+            if (ts.y > 0) {
+                d->AddText(g_title, 26, {tx + 2, ty + 2}, kShadow, title.c_str(), nullptr, wrap);
+                d->AddText(g_title, 26, {tx, ty}, kTitle, title.c_str(), nullptr, wrap);
+                ty += ts.y + 2;
+            }
+            if (xs.y > 0) {
+                d->AddText(g_text, 24, {tx + 2, ty + 2}, kShadow, text.c_str(), nullptr, wrap);
+                d->AddText(g_text, 24, {tx, ty}, kBody, text.c_str(), nullptr, wrap);
+                ty += xs.y + 2;
+            }
+            if (!n.time.empty()) d->AddText(g_text, 20, {tx, ty}, IM_COL32(255, 255, 255, 200), n.time.c_str());
+            bool over = false;
+            const ImVec2 da = at(right - 14, y + 2), db = at(right - 2, y + 14);
+            if (button(da, db, &over)) {
+                action = kNoteDelete;
+                if (index) *index = static_cast<int>(n.id);
+            }
+            pieceIn(d, over ? art::kNoteDeleteOver : art::kNoteDelete, da, db);
+            // Its answers (the game still waits for one): the dialog's buttons.
+            const float bw = (right - left - 2 * pad - (perRow - 1) * bgap) / perRow;
+            for (int k = 0; k < nb; ++k) {
+                const float bx = left + pad + (k % perRow) * (bw + bgap), by = y + textH + (k / perRow) * (bh + bgap);
+                const ImVec2 ba = at(bx, by), bb = at(bx + bw, by + bh);
+                bool bo = false;
+                if (button(ba, bb, &bo)) {
+                    action = kNoteAnswer;
+                    if (index) *index = static_cast<int>(n.id * 8 + k);
+                }
+                if (bo)
+                    nine(d, art::kDialogButtonOver, {ba.x - 2, ba.y - 3}, {bb.x + 2, bb.y + 6}, 48, 36, 48, 54, 0.6f);
+                else
+                    nine(d, art::kDialogButton, ba, bb, 48, 36, 48, 42, 0.6f);
+                std::string label = found(n.buttons[k]);
+                if (label.empty()) label = "OK";
+                const float bwrap = bb.x - ba.x - 24;
+                ImVec2 ls = g_text->CalcTextSizeA(24, FLT_MAX, 0, label.c_str());
+                const float lk = ls.x > bwrap ? std::max(0.6f, bwrap / ls.x) : 1;
+                d->PushClipRect(ba, bb, true);
+                d->AddText(g_text, 24 * lk, {(ba.x + bb.x - ls.x * lk) / 2, (ba.y + bb.y - ls.y * lk) / 2 - 2}, IM_COL32(30, 70, 128, 255),
+                           label.c_str());
+                d->PopClipRect();
+            }
+            y += h + 4;
+            ++shownCount;
+        }
+        if (notes.empty()) {
+            const char* none = "No notifications";
+            ImVec2 ns = g_text->CalcTextSizeA(28, FLT_MAX, 0, none);
+            const ImVec2 c = at(115, 180);
+            shadowText(d, g_text, 28, {c.x - ns.x / 2, c.y - ns.y / 2}, kWhite, none);
+        }
+        if (total > shownCount) {
+            // The slider: one notification a step; a press above or below the thumb scrolls.
+            const float trackH = bottom - top, thumbH = std::max(24.0f, trackH * shownCount / total);
+            const float thumbY = top + (trackH - thumbH) * g_notesScroll / std::max(1, total - shownCount);
+            d->AddRectFilled(at(214, top), at(218, bottom), IM_COL32(255, 255, 255, 60), 2 * S);
+            pieceIn(d, art::kPhoneSlider, at(210, thumbY), at(222, thumbY + thumbH));
+            bool o = false;
+            if (button(at(206, top), at(228, thumbY), &o)) g_notesScroll -= std::max(1, shownCount);
+            if (button(at(206, thumbY + thumbH), at(228, bottom), &o)) g_notesScroll += std::max(1, shownCount);
+        }
+        bool over = false;
+        if (button(at(96, 361), at(129, 392), &over)) g_phoneNotesOpen = false;
+        piece(d, over ? art::kPhoneBackOver : art::kPhoneBack, at(96 + 16.5f, 361 + 15.5f), A);
+    } else if (g_phoneCalOpen) {
+        drawCalendar(d, r, button, shown, action);
+        bool over = false;
+        if (button(at(96, 361), at(129, 392), &over)) g_phoneCalOpen = false;
+        piece(d, over ? art::kPhoneBackOver : art::kPhoneBack, at(96 + 16.5f, 361 + 15.5f), A);
+    } else if (g_phoneApp < 0) {
+        // PhoneCategoryScreen: the tool buttons on their pill, the battery,
+        // the apps 3 x 3 a page (the Options app first), the page dots.
+        const bool colors = !p.colors.empty();
+        const bool open = g_phoneColorsOpen;  // the selector takes the presses while it is up
+        nine(d, art::kPhonePill, at(8, 8), at(93, 33), 37, 37, 37, 37, A);
+        bool hover = false;
+        if (button(at(9, 9), at(31, 31), &hover) && !open) action = kPhoneSilence;
+        const art::Piece& silence = p.silenced ? (hover ? art::kPhoneSilencedOver : art::kPhoneSilenced)
+                                               : (hover ? art::kPhoneSilenceOver : art::kPhoneSilence);
+        piece(d, silence, at(20, 20), A);
+        // btnBackgroundColorSelector (39, 10, 0.96): a toggle showing the colour selector.
+        const float cs = 22 * 0.96f;
+        bool colorHover = false;
+        if (colors && button(at(39, 10), at(39 + cs, 10 + cs), &colorHover)) g_phoneColorsOpen = !g_phoneColorsOpen;
+        if (colors)
+            pieceIn(d, g_phoneColorsOpen ? art::kPhoneColorBtnDown : colorHover ? art::kPhoneColorBtnOver : art::kPhoneColorBtn,
+                    at(39, 10), at(39 + cs, 10 + cs));
+        {
+            // The notifications: a bell (where the game's case button sits), the
+            // number unread on its lower right (the game's red badge).
+            bool bellHover = false;
+            if (button(at(69, 9), at(91, 31), &bellHover) && !open) {
+                g_phoneNotesOpen = true;
+                g_notesScroll = 0;
+                action = kNotesOpened;
+            }
+            const ImU32 ink = bellHover ? IM_COL32(186, 240, 120, 255) : IM_COL32(240, 244, 248, 255);
+            const ImVec2 c = at(80, 19);
+            const float u = S;  // one game pixel
+            // The bell: a dome over a flaring skirt, its rim, the clapper.
+            d->PathArcTo({c.x, c.y - 2 * u}, 4.6f * u, 3.14159f, 2 * 3.14159f, 14);
+            d->PathLineTo({c.x + 5.4f * u, c.y + 4.2f * u});
+            d->PathLineTo({c.x + 7.2f * u, c.y + 5.6f * u});
+            d->PathLineTo({c.x - 7.2f * u, c.y + 5.6f * u});
+            d->PathLineTo({c.x - 5.4f * u, c.y + 4.2f * u});
+            d->PathFillConvex(ink);
+            d->AddRectFilled({c.x - 4.6f * u, c.y - 2.2f * u}, {c.x + 4.6f * u, c.y + 4.4f * u}, ink);
+            d->AddCircleFilled({c.x, c.y - 7.2f * u}, 1.1f * u, ink);
+            d->AddCircleFilled({c.x, c.y + 7.0f * u}, 1.5f * u, ink);
+            if (g_notes.unread > 0) {
+                char count[8];
+                std::snprintf(count, sizeof count, "%d", std::min(99, g_notes.unread));
+                const ImVec2 b = at(87, 27);
+                ImVec2 ns = g_small->CalcTextSizeA(22, FLT_MAX, 0, count);
+                const float rad = std::max(6.0f * u, ns.x / 2 + 3 * u);
+                d->AddCircleFilled(b, rad + 1.2f * u, IM_COL32(255, 255, 255, 255));
+                d->AddCircleFilled(b, rad, IM_COL32(214, 34, 34, 255));
+                d->AddText(g_small, 22, {b.x - ns.x / 2, b.y - ns.y / 2}, kWhite, count);
+            }
+        }
+        pieceIn(d, art::kPhoneBattery, at(198, 15), at(215, 25));
+        std::vector<int> apps;
+        apps.push_back(-1);  // Options
+        apps.push_back(-2);  // Calendar
+        apps.push_back(-3);  // Build Mode (as the wrist's build button: F2)
+        apps.insert(apps.end(), p.home.begin(), p.home.end());
+        const int perPage = 9, pages = static_cast<int>((apps.size() + perPage - 1) / perPage);
+        g_phonePage = std::max(0, std::min(pages - 1, g_phonePage));
+        int hovered = -100;
+        // A sideways swipe slides the pages with it (held back past the ends);
+        // let go past a quarter of a page and it turns.
+        float slide = swipeX && !open ? dx : 0;
+        if ((g_phonePage == 0 && slide > 0) || (g_phonePage == pages - 1 && slide < 0)) slide *= 0.3f;
+        if (swipeEnded && swipeX && !open) {
+            if (dx < -55 && g_phonePage + 1 < pages) ++g_phonePage;
+            if (dx > 55 && g_phonePage > 0) --g_phonePage;
+            slide = 0;
+        }
+        if (slide != 0) d->PushClipRect(at(0, 95), at(230, 320), true);
+        for (int pg = g_phonePage - 1; pg <= g_phonePage + 1; ++pg)
+        for (int k = 0; k < perPage; ++k) {
+            if (pg < 0 || pg >= pages || (pg != g_phonePage && slide == 0)) break;
+            const int i = pg * perPage + k;
+            if (i >= static_cast<int>(apps.size())) break;
+            const int node = apps[i];
+            const float x = 13 + (k % 3) * 68 + 4 + slide + (pg - g_phonePage) * 230, y = 101 + (k / 3) * 70 + 6;
+            const ImVec2 c = at(x + 32, y + 32);
+            bool over = false;
+            if (!open && button(at(x, y), at(x + 64, y + 64), &over)) {
+                if (node == -3) {
+                    action = kBuildPressed;
+                } else if (node == -2) {
+                    g_phoneCalOpen = true;
+                    g_calWeek = g_calScroll = 0;
+                    g_calSel = -1;
+                    action = kCalendarOpened;
+                } else if (node < 0) {
+                    action = kPhoneOptions;
+                } else {
+                    g_phoneApp = g_phoneRoot = node;
+                    g_phoneScroll = 0;
+                }
+            }
+            if (over) {
+                hovered = node;
+                piece(d, art::kPhoneAppOver, c, A);
+            }
+            appIcon(node, c);
+            if (node >= 0 && p.nodes[node].notification) badge(at(x + 55, y + 8));
+        }
+        if (slide != 0) d->PopClipRect();
+        // mcCategoryName: the app pointed at.
+        if (hovered != -100) {
+            std::string name = hovered == -2 ? found("{\"hash\": 1444123214}") : hovered < 0 ? std::string("Options") : p.nodes[hovered].name;
+            if (hovered == -2 && name.empty()) name = "Calendar";
+            if (hovered == -3) name = "Build Mode";
+            ImVec2 size = g_small->CalcTextSizeA(34, FLT_MAX, 0, name.c_str());
+            float scale = std::min(1.0f, 206 * S / std::max(1.0f, size.x));
+            ImVec2 a = at(12 + 103, 46 + 10);
+            shadowText(d, g_small, 34 * scale, {a.x - size.x * scale / 2, a.y - size.y * scale / 2}, kWhite, name.c_str());
+        }
+        if (pages > 1) {
+            const float start = (230 - pages * 28.0f) / 2;
+            for (int i = 0; i < pages; ++i) {
+                const float x = start + i * 28;
+                bool over = false;
+                if (!open && button(at(x, 364), at(x + 28, 392), &over)) g_phonePage = i;
+                piece(d, i == g_phonePage ? art::kPhonePageOn : over ? art::kPhonePageOver : art::kPhonePage,
+                      at(x + 14, 378), A);
+            }
+        }
+        if (g_phoneColorsOpen) {
+            // PhoneBackgroundColorSelector: its panel (mcBg), the arrow to its
+            // button (mcArrow) and the swatches (VariationGrid, 8 a row, margins
+            // 1,1,2,2 and 3,3,5,2). The game puts it above the phone; on our
+            // screen it opens under the button, its arrow pointing up at it.
+            const int n = static_cast<int>(p.colors.size()), cols = 8, rows = (n + cols - 1) / cols;
+            const float sw = 24, cell = sw + 3, gw = cols * cell + 5, gh = rows * cell + 8;
+            const float px = (230 - gw) / 2, py = 44;
+            nine(d, art::kPhonePill, at(px, py), at(px + gw, py + gh), 37, 37, 37, 37, A * 0.6f);
+            {
+                const art::Piece& a = art::kPhoneSelectorArrow;  // drawn pointing down: flipped
+                const ImVec2 c = at(39 + cs / 2, py - 5);
+                const float w = 22 * 0.727f * S, h = 17 * 0.706f * S;
+                d->AddImage(reinterpret_cast<ImTextureID>(g_art), {c.x - w / 2, c.y - h / 2}, {c.x + w / 2, c.y + h / 2},
+                            {static_cast<float>(a.x) / art::kAtlasW, static_cast<float>(a.y + a.h) / art::kAtlasH},
+                            {static_cast<float>(a.x + a.w) / art::kAtlasW, static_cast<float>(a.y) / art::kAtlasH});
+            }
+            for (int i = 0; i < n; ++i) {
+                const float x = px + 2 + (i % cols) * cell + 2, y = py + 3 + (i / cols) * cell + 1;
+                bool over = false;
+                if (button(at(x, y), at(x + sw, y + sw), &over)) {
+                    action = kPhoneColor;
+                    if (index) *index = i;
+                    g_phoneColorsOpen = false;  // OnPhoneColorVariationSelected: Hide
+                }
+                const ImVec2 c = at(x + sw / 2, y + sw / 2);
+                shown.push_back(p.colors[i]);
+                icon(d, p.colors[i], c, sw * S);
+                if (i == p.color || over)
+                    d->AddRect(at(x - 1, y - 1), at(x + sw + 1, y + sw + 1),
+                               i == p.color ? IM_COL32(120, 200, 40, 255) : IM_COL32(255, 255, 255, 200), 3 * S, 0,
+                               (i == p.color ? 2.0f : 1.2f) * S);
+            }
+            // A press anywhere else hides it (PhoneColorSelector.OnFocusChange).
+            const ImVec2 m = ImGui::GetIO().MousePos, a0 = at(px, py), b0 = at(px + gw, py + gh), ba = at(39, 10),
+                         bb = at(39 + cs, 10 + cs);
+            const bool inside = (m.x >= a0.x && m.x <= b0.x && m.y >= a0.y && m.y <= b0.y) ||
+                                (m.x >= ba.x && m.x <= bb.x && m.y >= ba.y && m.y <= bb.y);
+            if (ImGui::IsMouseClicked(0) && !inside && m.x >= r.x && m.x <= r.x + r.w && m.y >= r.y && m.y <= r.y + r.h)
+                g_phoneColorsOpen = false;
+        }
+    } else {
+        // PhoneInteractionScreen: the app carousel on its dark band (the apps
+        // before and after under it, arrows over), the list, the back button.
+        const PhoneNode& app = p.nodes[g_phoneApp];
+        const std::vector<int>& line = g_phoneRoot == g_phoneApp ? p.home : app.children;  // (a sub-list: no neighbours)
+        int at0 = -1;
+        if (g_phoneRoot == g_phoneApp)
+            for (size_t i = 0; i < line.size(); ++i)
+                if (line[i] == g_phoneApp) at0 = static_cast<int>(i);
+        const int prev = at0 > 0 ? line[at0 - 1] : -2, next = at0 >= 0 && at0 + 1 < static_cast<int>(line.size()) ? line[at0 + 1] : -2;
+        if (prev >= 0) appIcon(prev, at(41, 44));
+        if (next >= 0) appIcon(next, at(190, 44));
+        pieceIn(d, art::kPhoneTint, at(0, 0), at(230, 84));
+        bool over = false;
+        if (prev >= 0) {
+            if (button(at(25, 29), at(53, 57), &over)) g_phoneApp = g_phoneRoot = prev, g_phoneScroll = 0;
+            piece(d, over ? art::kPhoneArrowOver : art::kPhoneArrow, at(39, 42.9f), A);
+        }
+        if (next >= 0) {
+            if (button(at(179, 29), at(207, 57), &over)) g_phoneApp = g_phoneRoot = next, g_phoneScroll = 0;
+            const art::Piece& a = over ? art::kPhoneArrowOver : art::kPhoneArrow;  // the same arrow, mirrored
+            ImVec2 c = at(193, 42.9f);
+            const float w = a.w * A, h = a.h * A;
+            d->AddImage(reinterpret_cast<ImTextureID>(g_art), {c.x - w / 2, c.y - h / 2}, {c.x + w / 2, c.y + h / 2},
+                        {static_cast<float>(a.x + a.w) / art::kAtlasW, static_cast<float>(a.y) / art::kAtlasH},
+                        {static_cast<float>(a.x) / art::kAtlasW, static_cast<float>(a.y + a.h) / art::kAtlasH});
+        }
+        // A sideways swipe goes to the app before or after (the carousel's arrows).
+        if (swipeEnded && swipeX && dx < -55 && next >= 0) g_phoneApp = g_phoneRoot = next, g_phoneScroll = 0;
+        else if (swipeEnded && swipeX && dx > 55 && prev >= 0) g_phoneApp = g_phoneRoot = prev, g_phoneScroll = 0;
+        pieceIn(d, art::kPhoneAppOver, at(79, 7), at(79 + 74 * 0.97f, 7 + 74 * 0.97f));
+        appIcon(g_phoneApp, at(115, 44));
+        if (app.notification) badge(at(115 - 32 + 55, 44 - 32 + 8));
+        // The list (PhoneMenuScrollList at y 84, margins 6, 27, 50, 8), rows of PhoneItemCellView.
+        const float top = 90, bottom = 350, rowH = 58, left = 8, right = 203;
+        const int rows = static_cast<int>((bottom - top) / rowH), total = static_cast<int>(app.children.size());
+        if (swipeY) g_phoneScroll = drag.scroll - static_cast<int>(std::lround(dy / rowH));  // follows the swipe, a row a step
+        g_phoneScroll = std::max(0, std::min(std::max(0, total - rows), g_phoneScroll));
+        for (int k = 0; k < rows; ++k) {
+            const int i = g_phoneScroll + k;
+            if (i >= total) break;
+            const int node = app.children[i];
+            const PhoneNode& e = p.nodes[node];
+            const float y = top + k * rowH;
+            bool rowOver = false, held = false;
+            const bool enabled = e.disabled.empty();
+            if (button(at(left, y), at(right, y + rowH), &rowOver, &held) && enabled) {
+                if (e.category) {
+                    g_phoneApp = node;
+                    g_phoneScroll = 0;
+                } else {
+                    action = kPhonePick;
+                    if (index) *index = node;
+                    g_phoneApp = g_phoneRoot = -1;  // the game's panel hides once something is picked
+                }
+            }
+            if (enabled && (rowOver || held)) pieceIn(d, held ? art::kPhoneRowDown : art::kPhoneRowOver, at(left, y + 12), at(right - 3, y + 46));
+            if (i + 1 < total) d->AddLine(at(left + 2, y + rowH - 0.5f), at(left + 194, y + rowH - 0.5f), IM_COL32(255, 255, 255, 120), S);
+            const std::string& text = e.name;
+            const float wrap = 180 * S, size = 30;
+            ImVec2 ts = g_text->CalcTextSizeA(size, FLT_MAX, wrap, text.c_str());
+            ImFont* font = e.notification ? g_title : g_text;  // the .notif style: bold
+            const ImU32 colour = enabled ? kBlue : kGrey;
+            const ImVec2 a = at(left + 8, y + 5 + 24.5f);
+            d->AddText(font, size, {a.x, a.y - ts.y / 2}, colour, text.c_str(), nullptr, wrap);
+            if (!enabled && (rowOver || held) && !e.disabled.empty()) {
+                // The disabled reason (its tooltip), under the name.
+                d->AddText(g_text, 24, {a.x, a.y + ts.y / 2}, kGrey, e.disabled.c_str(), nullptr, wrap);
+            }
+        }
+        if (total > rows) {
+            // The list's slider (always visible): its thumb along the track; a press above or below it pages.
+            const float trackTop = top, trackH = bottom - top, thumbH = std::max(24.0f, trackH * rows / total);
+            const float thumbY = trackTop + (trackH - thumbH) * g_phoneScroll / std::max(1, total - rows);
+            d->AddRectFilled(at(214, trackTop), at(218, trackTop + trackH), IM_COL32(255, 255, 255, 60), 2 * S);
+            pieceIn(d, art::kPhoneSlider, at(210, thumbY), at(222, thumbY + thumbH));
+            bool o = false;
+            if (button(at(206, trackTop), at(228, thumbY), &o)) g_phoneScroll -= rows;
+            if (button(at(206, thumbY + thumbH), at(228, trackTop + trackH), &o)) g_phoneScroll += rows;
+        }
+        if (button(at(96, 361), at(129, 392), &over)) {
+            // Back: up a level, or home.
+            g_phoneApp = g_phoneApp == g_phoneRoot ? -1 : p.nodes[g_phoneApp].parent;
+            if (g_phoneApp < 0) g_phoneRoot = -1;
+            g_phoneScroll = 0;
+        }
+        piece(d, over ? art::kPhoneBackOver : art::kPhoneBack, at(96 + 16.5f, 361 + 15.5f), A);
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_itemMutex);
+        g_phoneIcons.swap(shown);
+    }
+    if (drag.on && !io.MouseDown[0]) drag.on = false;
+    return action;
+}
+
+// A notification as a card over a Sim's head (notify.py): the dialog panel,
+// its picture on the left, the title, text and time, its answers as the
+// dialog's buttons under them (kNoteAnswer, `index` = id * 8 + button); a
+// press anywhere else dismisses it.
+Action drawNote(uint64_t id, int* index) {
+    const Note* n = nullptr;
+    for (const Note& k : g_notes.notes)
+        if (k.id == id) n = &k;
+    g_noteHeight = 0;
+    if (!n) return kNone;
+    const std::string &title = found(n->titleJson), &text = found(n->textJson);
+    if (title.empty() && text.empty()) return kNone;
+    ImDrawList* d = ImGui::GetBackgroundDrawList();
+    const Rect r = kNote;
+    const float pad = 22, pic = 96, x0 = r.x + 4, x1 = r.x + r.w - 4, wrap = x1 - x0 - 3 * pad - pic;
+    const ImU32 kTitle = kWhite, kBody = kWhite;
+    ImVec2 ts = title.empty() ? ImVec2{0, 0} : g_title->CalcTextSizeA(30, FLT_MAX, wrap, title.c_str());
+    ImVec2 xs = text.empty() ? ImVec2{0, 0} : g_text->CalcTextSizeA(26, FLT_MAX, wrap, text.c_str());
+    const int nb = static_cast<int>(n->buttons.size()), perRow = nb > 2 ? 2 : std::max(1, nb);
+    const float btnH = 52, btnGap = 6;
+    const float btnRows = nb ? static_cast<float>((nb + perRow - 1) / perRow) : 0;
+    const float body = std::max(pic + 2 * pad, ts.y + xs.y + 8 + 2 * pad);
+    const float h = std::min(r.h - 8, body + (nb ? btnRows * (btnH + btnGap) + pad / 2 : 0));
+    noteBackground(d, n->style, {x0, r.y + 4}, {x1, r.y + 4 + h}, 1.0f);
+    if (n->picture) {
+        std::lock_guard<std::mutex> lock(g_itemMutex);
+        if (std::find(g_noteIcons.begin(), g_noteIcons.end(), n->picture) == g_noteIcons.end()) {
+            if (g_noteIcons.size() > 8) g_noteIcons.erase(g_noteIcons.begin());
+            g_noteIcons.push_back(n->picture);
+        }
+    }
+    icon(d, n->picture, {x0 + pad + pic / 2, r.y + 4 + pad + pic / 2}, pic);
+    const ImVec4 clip{x0, r.y, x1, r.y + 4 + h};
+    float y = r.y + 4 + pad;
+    const float tx = x0 + 2 * pad + pic;
+    if (ts.y > 0) {
+        d->AddText(g_title, 30, {tx + 2, y + 2}, kShadow, title.c_str(), nullptr, wrap, &clip);
+        d->AddText(g_title, 30, {tx, y}, kTitle, title.c_str(), nullptr, wrap, &clip);
+        y += ts.y + 8;
+    }
+    if (xs.y > 0) {
+        d->AddText(g_text, 26, {tx + 2, y + 2}, kShadow, text.c_str(), nullptr, wrap, &clip);
+        d->AddText(g_text, 26, {tx, y}, kBody, text.c_str(), nullptr, wrap, &clip);
+    }
+    // The answers first (the card's own press only covers what is above them).
+    Action action = kNone;
+    const float bx0 = x0 + pad, bw = (x1 - x0 - 2 * pad - (perRow - 1) * btnGap) / perRow;
+    const float by0 = r.y + 4 + std::min(body, h - btnRows * (btnH + btnGap) - pad / 2);
+    for (int i = 0; i < nb; ++i) {
+        const float bx = bx0 + (i % perRow) * (bw + btnGap), by = by0 + (i / perRow) * (btnH + btnGap);
+        if (by + btnH > r.y + 4 + h) break;
+        std::string label = found(n->buttons[i]);
+        if (label.empty()) label = "OK";
+        if (dialogButton(d, 400 + i, label, {bx, by}, {bx + bw, by + btnH})) {
+            action = kNoteAnswer;
+            if (index) *index = static_cast<int>(n->id * 8 + i);
+        }
+    }
+    ImGui::SetCursorScreenPos({x0, r.y + 4});
+    bool pressed = ImGui::InvisibleButton("note", {x1 - x0, nb ? by0 - (r.y + 4) : h});
+    g_noteHeight = h + 8;
+    if (action != kNone) return action;
+    return pressed ? kNoteDismiss : kNone;
+}
+
 Action drawBuild() {
     ImDrawList* d = ImGui::GetBackgroundDrawList();
     const Rect r = kBuild;
@@ -1362,7 +2258,147 @@ int missingIcons(uint64_t* out, int max) {
         for (int i = 0; i < g_counts[k]; ++i) want(g_items[k][i].icon);
     for (uint64_t id : g_pickerIcons) want(id);
     for (uint64_t id : g_popupIcons) want(id);
+    for (uint64_t id : g_phoneIcons) want(id);
+    for (uint64_t id : g_noteIcons) want(id);
     return n;
+}
+
+void setPhoneContent(const char* data, size_t size) {
+    PhoneContent c;
+    std::string all(data ? data : "", data ? size : 0);
+    size_t at = 0;
+    while (!all.empty() && at <= all.size()) {
+        size_t end = all.find('\x1e', at);
+        std::vector<std::string> f = fieldsOf(all.substr(at, end == std::string::npos ? std::string::npos : end - at));
+        if (f[0] == "phone" && f.size() >= 3) {
+            c.valid = true;
+            c.silenced = f[1] == "1";
+            c.disabledJson = f[2];
+        } else if (f[0] == "colors" && f.size() >= 3) {
+            c.color = std::atoi(f[1].c_str());
+            size_t p = 0;
+            while (p < f[2].size()) {
+                size_t comma = f[2].find(',', p);
+                c.colors.push_back(std::strtoull(f[2].substr(p, comma == std::string::npos ? std::string::npos : comma - p).c_str(), nullptr, 10));
+                if (comma == std::string::npos) break;
+                p = comma + 1;
+            }
+        } else if ((f[0] == "cat" && f.size() >= 6) || (f[0] == "item" && f.size() >= 7)) {
+            const int node = std::atoi(f[1].c_str()), parent = std::atoi(f[2].c_str());
+            if (node != static_cast<int>(c.nodes.size()) || parent >= node) break;  // in order, parents first
+            PhoneNode n;
+            n.parent = parent;
+            if (f[0] == "cat") {
+                n.category = true;
+                n.icon = std::strtoull(f[3].c_str(), nullptr, 10);
+                n.nameJson = f[4];
+                n.priority = std::atoi(f[5].c_str());
+            } else {
+                n.nameJson = f[3];
+                n.disabledJson = f[4];
+                n.notification = f[5] == "1";
+                n.priority = std::atoi(f[6].c_str());
+            }
+            c.nodes.push_back(n);
+            if (parent >= 0) c.nodes[parent].children.push_back(node);
+            else if (n.category) c.home.push_back(node);  // loose entries on the home screen: the game shows none
+        }
+        if (end == std::string::npos) break;
+        at = end + 1;
+    }
+    std::lock_guard<std::mutex> lock(g_phoneMutex);
+    g_phoneIn = c;
+    g_phoneNew = true;
+    static int logged = 0;
+    if (logged++ < 30) LOG("Phone: the game's phone menu, %zu entries, %zu apps%s", c.nodes.size(), c.home.size(),
+                           c.disabledJson.empty() ? "" : " (disabled now)");
+}
+
+void phoneHome() { g_phoneHomeAsked = true; }
+
+void setPhoneNotes(const char* data, size_t size) {
+    NotesContent c;
+    std::string all(data ? data : "", data ? size : 0);
+    size_t at = 0;
+    while (!all.empty() && at <= all.size()) {
+        size_t end = all.find('\x1e', at);
+        std::vector<std::string> f = fieldsOf(all.substr(at, end == std::string::npos ? std::string::npos : end - at));
+        if (f[0] == "notes" && f.size() >= 2) {
+            c.unread = std::atoi(f[1].c_str());
+        } else if (f[0] == "note" && f.size() >= 7) {
+            Note n;
+            n.id = std::strtoull(f[1].c_str(), nullptr, 10);
+            n.read = f[2] == "1";
+            n.picture = std::strtoull(f[3].c_str(), nullptr, 10);
+            n.titleJson = f[4];
+            n.textJson = f[5];
+            n.time = f[6];
+            if (f.size() >= 8) n.style = std::atoi(f[7].c_str());
+            if (f.size() >= 9 && !f[8].empty()) {
+                size_t b = 0;
+                while (n.buttons.size() < 8) {
+                    const size_t e = f[8].find('\x1d', b);
+                    n.buttons.push_back(f[8].substr(b, e == std::string::npos ? std::string::npos : e - b));
+                    if (e == std::string::npos) break;
+                    b = e + 1;
+                }
+            }
+            c.notes.push_back(n);
+        }
+        if (end == std::string::npos) break;
+        at = end + 1;
+    }
+    std::lock_guard<std::mutex> lock(g_notesMutex);
+    g_notesIn = c;
+    g_notesNew = true;
+}
+
+float noteHeight() { return g_noteHeight; }
+
+void setPhoneCalendar(const char* data, size_t size) {
+    CalendarContent c;
+    std::string all(data ? data : "", data ? size : 0);
+    size_t at = 0;
+    while (!all.empty() && at <= all.size()) {
+        size_t end = all.find('\x1e', at);
+        std::vector<std::string> f = fieldsOf(all.substr(at, end == std::string::npos ? std::string::npos : end - at));
+        if (f[0] == "cal" && f.size() >= 5) {
+            c.valid = true;
+            c.titleJson = f[1];
+            c.today = std::atoi(f[2].c_str());
+            c.count = std::max(0, std::min(7 * 53, std::atoi(f[3].c_str())));
+            c.emptyJson = f[4];
+            c.days.assign(static_cast<size_t>(c.count), CalDay{});
+        } else if (f[0] == "day" && f.size() >= 9 && c.valid && c.count > 0) {
+            const int i = std::max(0, std::min(c.count - 1, std::atoi(f[1].c_str())));  // (count >= 1 here: days were sent)
+            CalDay& d = c.days[i];
+            d.season = std::atoi(f[2].c_str());
+            d.weather = std::strtoull(f[3].c_str(), nullptr, 10);
+            d.moon = std::atoi(f[4].c_str());
+            d.main = std::atoi(f[5].c_str());
+            d.mainPicture = std::strtoull(f[6].c_str(), nullptr, 10);
+            for (size_t k = 0; k < f[7].size();) {
+                size_t e = f[7].find(',', k);
+                if (e == std::string::npos) e = f[7].size();
+                if (e > k) d.small.push_back(std::atoi(f[7].substr(k, e - k).c_str()));
+                k = e + 1;
+            }
+            d.forecastJson = f[8];
+        } else if (f[0] == "item" && f.size() >= 6) {
+            CalItem it;
+            it.day = std::atoi(f[1].c_str());
+            it.kind = std::atoi(f[2].c_str());
+            it.picture = std::strtoull(f[3].c_str(), nullptr, 10);
+            it.nameJson = f[4];
+            it.timeJson = f[5];
+            c.items.push_back(it);
+        }
+        if (end == std::string::npos) break;
+        at = end + 1;
+    }
+    std::lock_guard<std::mutex> lock(g_calMutex);
+    g_calIn = c;
+    g_calNew = true;
 }
 
 void setPickerContent(const char* data, size_t size) {
@@ -1597,6 +2633,10 @@ Action render(ID3D11Device* device, ID3D11DeviceContext* context, const Frame& f
     if (f.popup && g_popupOn && g_popup.resolved && g_popup.valid) take(drawPopup(index));
     resolvePicker();
     if (f.picker && g_pickerOn && g_picker.resolved && g_picker.valid) take(drawPicker(index));
+    resolvePhone();
+    if (f.phone && g_phoneOn && g_phone.resolved) take(drawPhone(index));
+    if (f.note) take(drawNote(f.note, index));
+    else g_noteHeight = 0;
     ImGui::End();
     ImGui::Render();
     // Into the atlas, cleared to nothing; the game's targets put back after.

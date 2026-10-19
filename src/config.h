@@ -26,6 +26,12 @@ struct Config {
     float worldScale = 1.0f;  // game units per metre of head movement
     // Also give the game camera the headset's field of view.
     bool fovOverride = true;
+    // With fov_override: each eye drawn with its own lopsided field of view (the
+    // headset's, wider on the outer side) through the game's off-centre frustum
+    // (camera +0x1f0), instead of a centred one wide enough for the wider side,
+    // whose extra part the headset never shows (about a third of the picture
+    // with Quest 3 under Virtual Desktop). camera.cpp apply, vr.cpp computeRenderSize.
+    bool exactFov = true;
     // Contrast-adaptive sharpening of the eye images, 0 (off) .. 1
     float sharpen = 0.6f;
     // Stick turns reach the headset like head turns: each eye's pose is turned
@@ -34,6 +40,11 @@ struct Config {
     // Stick turns step by the headset's display clock (each shown frame turns
     // by the same amount) instead of when the game happened to hand over a frame.
     bool turnDisplayClock = true;
+    bool walkDisplayClock = true;  // [stereo] walk_display_clock: stick walking timed by the headset's refreshes
+    // With turnReprojection, in free movement: each pair is drawn at the heading
+    // the stick turn will have reached when the headset shows it, so the turn
+    // correction stays small and near things (Sims) don't wobble.
+    bool turnLead = true;
     // While the headset is on: the game's graphics work goes below normal
     // priority on the card, so Virtual Desktop's streamer (which needs the 3D
     // engine to prepare each frame for the video encoder) is never starved by
@@ -53,6 +64,7 @@ struct Config {
     // turning). Where your body was, the world is filled in from around it
     // (vr.cpp renderStereo, bodylayer.cpp).
     bool bodyLayer = true;
+    bool frameMap = false;  // [stereo] frame_map: log the render frame's order and call stacks (framemap.cpp)
     bool alignEyes = true;  // SteamVR: the older eye turned to the newest head pose each frame (eyealign.h)
     // Game render resolution as a fraction of the headset's (0 = the game's own, the monitor's)
     float renderScale = 0.8f;
@@ -98,7 +110,7 @@ struct Config {
     float popupSize = 0.55f;       // card width per metre away (beside a Sim it scales with distance)
     // Pieces of the game's UI on your arms and around you (first person, [wrist]).
     bool wristPieces = true;
-    bool noDimming = true;  // [wrist] no_dimming: the game's blue modal dimming taken out in first person
+    bool noDimming = true;  // [wrist] no_dimming: the game's blue modal dimming off everywhere (at the source)
     // Where each element sits ([wrist] <name>_pos "x y z", <name>_turn "yaw pitch roll", <name>_size).
     // On an arm (watch, build_button, actions, needs, moodlets), from your Sim's
     // wrist joint on its real forearm bones: x metres toward the elbow, y metres

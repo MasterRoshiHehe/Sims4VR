@@ -653,12 +653,60 @@ def _loc(value):
     return json.dumps(plain(value), ensure_ascii=False)
 
 
-def _others_decide(dialog):
+# Drama nodes whose yes travels your household (npc_invite_situation_drama_node,
+# player_planned_drama_node travel_seed, player_planned_stayover_drama_node
+# travel_to_destination).
+_TRAVEL_NODES = {'NPCInviteSituationDramaNode', 'PlayerPlannedDramaNode',
+                 'PlayerPlannedStayoverDramaNode'}
+
+
+def _travel_popup(dialog, zone_id):
+    """Why this popup's yes would travel (an invitation to another lot), or
+    None: the game's NPC invitation dialog (NPCHostedSituationDialog, also its
+    "bring others" answers), a popup showing another lot (zone_id), or one
+    answered by a drama node that travels on yes (SituationDramaNode with a lot)."""
+    import services
+    from situations.npc_hosted_situations import NPCHostedSituationDialog
+    if isinstance(dialog, NPCHostedSituationDialog):
+        return 'invitation'
+    here = services.current_zone_id()
+    if zone_id and zone_id != here:
+        return 'shows another lot'
+    for listener in list(getattr(dialog, '_listeners', None) or ()):
+        owners = [getattr(listener, '__self__', None)]
+        for cell in getattr(listener, '__closure__', None) or ():
+            try:
+                owners.append(cell.cell_contents)
+            except ValueError:
+                pass
+        for owner in owners:
+            if owner is None:
+                continue
+            names = {c.__name__ for c in type(owner).__mro__}
+            if names & _TRAVEL_NODES:
+                return type(owner).__name__
+            lot = getattr(owner, 'lot', None) if 'SituationDramaNode' in names else None
+            if lot is not None:
+                try:
+                    from world import get_lot_id_from_instance_id
+                    zone = services.get_persistence_service().resolve_lot_id_into_zone_id(
+                        get_lot_id_from_instance_id(lot), ignore_neighborhood_id=True)
+                except Exception:
+                    zone = None
+                if zone != here:
+                    return type(owner).__name__
+    return None
+
+
+def _others_decide(dialog, zone_id=None):
     """First person, [ui] others_decide (debug menu): a decision popup about
     Sims that don't include yours is answered by the game at once with one of
     its answers picked at random, never shown (user 2026-10-17 11:53Z). The
     answer to give, or None to show it as usual. A popup about no Sim (saving,
-    lot events) or with a button that opens part of the game's UI shows."""
+    lot events) or with a button that opens part of the game's UI shows. An
+    invitation to travel is always answered no (Cancel), never at random
+    (user 2026-10-19 00:47Z: a yes travelled the household with no warning);
+    one with no Cancel shows."""
     if not native.setting_flag('ui', 'others_decide', True) or _is_picker(dialog):
         return None
     you = _first_person_sim()
@@ -683,6 +731,15 @@ def _others_decide(dialog):
             answers.append(rid)
     if len(answers) < 2:
         return None  # nothing to decide (an OK)
+    travel = _travel_popup(dialog, zone_id)
+    if travel is not None:
+        if ButtonType.DIALOG_RESPONSE_CANCEL not in answers:
+            _log('travel popup about other Sims ({}) shown: no Cancel ({}, {})'.format(
+                ', '.join(str(i) for i in ids), travel, type(dialog).__name__))
+            return None
+        _log('travel popup about other Sims ({}) answered no ({}, {})'.format(
+            ', '.join(str(i) for i in ids), travel, type(dialog).__name__))
+        return ButtonType.DIALOG_RESPONSE_CANCEL
     import random
     answer = random.choice(answers)
     _log('popup about other Sims ({}) answered at random: {} of {} answers ({})'.format(
@@ -1023,7 +1080,7 @@ def _wrap():
         except Exception as e:
             _log('map view check failed: {!r}'.format(e))
         try:
-            answer = _others_decide(dialog)
+            answer = _others_decide(dialog, kwargs.get('zone_id'))
         except Exception as e:
             answer = None
             _log('other Sims\' decision check failed: {!r}'.format(e))

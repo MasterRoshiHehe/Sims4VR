@@ -18,6 +18,7 @@
 #include "crashlog.h"
 #include "doorswing.h"
 #include "walkstop.h"
+#include "framemap.h"
 #include "gamefix.h"
 #include "ambience.h"
 #include "eyelids.h"
@@ -36,6 +37,7 @@
 #include "uihook.h"
 #include "log.h"
 #include "modelbox.h"
+#include "nodim.h"
 #include "pointer.h"
 #include "vr.h"
 #include "rtti.h"
@@ -66,43 +68,52 @@ static std::wstring moduleDirectory() {
     return dir.substr(0, dir.find_last_of(L"\\/"));
 }
 
+#ifndef S4VR_BUILD_VERSION
+#define S4VR_BUILD_VERSION "dev"
+#endif
+#ifndef S4VR_BUILD_COMMIT
+#define S4VR_BUILD_COMMIT "none"
+#endif
+
 S4VR_API int s4vr_version() { return 1; }
 
 // Reads sims4vr.ini and the OpenXR loader; starts VR now (autostart = 2) or at the main menu (1).
 // Returns 0 on success, negative on failure (see sims4vr.log).
 S4VR_API int s4vr_start();
 
-// autostart = 1: VR starts once the main menu builds, so the long first loading
-// screen stays on the desktop view. The main menu's navigation asks the game
-// MainMenu_GetIsNewGame in its ConfigUI (GameEntry/Launcher/controls/
-// LauncherNavigation.as); we hook that service's native handler.
-using MenuServiceFn = uintptr_t (*)(void*, void*, void*, void*);
-static MenuServiceFn g_originalIsNewGame = nullptr;
+// autostart = 1: VR starts once the first loading screen has gone, so it stays
+// on the desktop view. The loading screen (TransitionScreen widget) sends the game
+// "TransitionScreenHidden" when its fade-out ends (TransitionScreenMoleculeMain.as,
+// OnTransitionAnimationOutComplete); we hook the main menu's native listener for it
+// (registered with the MainMenu_* services). MainMenu_GetIsNewGame was too early:
+// the menu builds behind the loading screen.
+using UiHandlerFn = uintptr_t (*)(void*, void*, void*, void*);
+static UiHandlerFn g_originalScreenHidden = nullptr;
 
-static uintptr_t hookedIsNewGame(void* service, void* args, void* r8, void* r9) {
-    uintptr_t result = g_originalIsNewGame(service, args, r8, r9);
+static uintptr_t hookedScreenHidden(void* listener, void* args, void* r8, void* r9) {
+    uintptr_t result = g_originalScreenHidden(listener, args, r8, r9);
     if (!g_started) {
-        LOG("Main menu: starting VR");
+        LOG("Main menu: the loading screen has gone, starting VR");
         s4vr_start();
     }
     return result;
 }
 
-// False if the handler isn't there (another game build, DX9): VR then starts at once.
+// False if the listener isn't there (another game build, DX9): VR then starts at once.
 static bool startAtMainMenu() {
-    static const uint8_t kIsNewGame[16] = {0x48, 0x83, 0xec, 0x28, 0x0f, 0xb6, 0x52, 0x39,
-                                           0x48, 0x8b, 0x49, 0x10, 0xe8, 0x5f, 0xc6, 0xba};
-    uint8_t* target = s4vr::gameaddr::dx9() ? nullptr : s4vr::gameaddr::function(0x1fa140, kIsNewGame);
+    static const uint8_t kScreenHidden[16] = {0x40, 0x53, 0x48, 0x83, 0xec, 0x30, 0xe8, 0x35,
+                                              0xcf, 0x43, 0x01, 0x48, 0x8b, 0xd8, 0x48, 0x85};
+    uint8_t* target = s4vr::gameaddr::dx9() ? nullptr : s4vr::gameaddr::function(0x1fa850, kScreenHidden);
     if (!target) {
-        LOG("Main menu: service handler not recognised; VR starts now");
+        LOG("Main menu: loading screen listener not recognised; VR starts now");
         return false;
     }
     MH_STATUS status = MH_Initialize();
     if (status == MH_OK || status == MH_ERROR_ALREADY_INITIALIZED)
-        status = MH_CreateHook(target, reinterpret_cast<void*>(&hookedIsNewGame),
-                               reinterpret_cast<void**>(&g_originalIsNewGame));
+        status = MH_CreateHook(target, reinterpret_cast<void*>(&hookedScreenHidden),
+                               reinterpret_cast<void**>(&g_originalScreenHidden));
     if (status == MH_OK) status = MH_EnableHook(target);
-    LOG("Main menu: VR starts when it appears (hook %s)", MH_StatusToString(status));
+    LOG("Main menu: VR starts when the loading screen has gone (hook %s)", MH_StatusToString(status));
     return status == MH_OK;
 }
 
@@ -110,11 +121,13 @@ S4VR_API int s4vr_init() {
     if (g_initialized.exchange(true)) return 0;
     g_moduleDir = moduleDirectory();
     s4vr::log::init(g_moduleDir + L"\\sims4vr.log");
-    LOG("Sims4VR v1 loading from %ls", g_moduleDir.c_str());
+    LOG("sims4vr v%s (commit %s) loading from %ls", S4VR_BUILD_VERSION, S4VR_BUILD_COMMIT, g_moduleDir.c_str());
     s4vr::crashlog::install(g_moduleDir);
     s4vr::screenshot::init(g_moduleDir);
     g_config = s4vr::loadConfig(g_moduleDir + L"\\sims4vr.ini");
+    s4vr::framemap::init(g_config.frameMap);
     s4vr::gamefix::install(g_config.nearFade);
+    s4vr::nodim::installSource(g_config.noDimming);
     s4vr::ambience::install(g_config.outdoorFade);
     s4vr::shadows::install(g_config.steadyShadows, g_config.shadowStep, g_config.shadowSharp, g_config.shadowMap);
     s4vr::armik::install(g_config.armIk, g_config.handPitch, g_config.headTracking);
@@ -266,6 +279,23 @@ S4VR_API void s4vr_popup_content(const char* data, int size) {
 S4VR_API void s4vr_picker_content(const char* data, int size) {
     s4vr::strings::start();
     s4vr::hud::setPickerContent(data, size > 0 ? static_cast<size_t>(size) : 0);
+}
+// The game's phone menu for the phone in your hand (hud::setPhoneContent); empty: gone.
+S4VR_API void s4vr_phone_content(const char* data, int size) {
+    s4vr::strings::start();
+    s4vr::hud::setPhoneContent(data, size > 0 ? static_cast<size_t>(size) : 0);
+}
+S4VR_API void s4vr_phone_notes(const char* data, int size) {
+    s4vr::strings::start();
+    s4vr::hud::setPhoneNotes(data, size > 0 ? static_cast<size_t>(size) : 0);
+}
+S4VR_API void s4vr_phone_calendar(const char* data, int size) {
+    s4vr::strings::start();
+    s4vr::hud::setPhoneCalendar(data, size > 0 ? static_cast<size_t>(size) : 0);
+}
+S4VR_API void s4vr_note_over(unsigned long long id, float x, float y, float z, int front) {
+    const float at[3] = {x, y, z};
+    s4vr::vr::setNoteOver(id, at, front != 0);
 }
 // A picture from the game's thumbnail system ("img://thumbs/<path>", as the
 // game's UI builds them) as HUD picture `id` (thumbs.h); 0: not asked.

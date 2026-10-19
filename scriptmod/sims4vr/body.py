@@ -110,6 +110,11 @@ def _tv(what):
         getattr(simsforever, what)()
     except Exception as e:
         native._log('simsforever {} failed: {!r}'.format(what, e))
+    try:  # Follow me / Dismiss on other Sims (follow.py): paused outside first person
+        from sims4vr import follow
+        getattr(follow, what)()
+    except Exception as e:
+        native._log('follow {} failed: {!r}'.format(what, e))
 
 
 def enable():
@@ -125,6 +130,11 @@ def enable():
         soundlog.install()
     except Exception as e:
         native._log('sound log failed to start: {!r}'.format(e))
+    try:  # eyes closed while the game fades your Sim out (fades.py)
+        from sims4vr import fades
+        fades.install()
+    except Exception as e:
+        native._log('fades failed to start: {!r}'.format(e))
     sim = _active_sim()
     if sim is None:
         return None
@@ -142,6 +152,11 @@ def disable():
     native.set_body(0)
     walk.stop()
     walk.reset_sleep()
+    try:
+        from sims4vr import fades
+        fades.reset()
+    except Exception as e:
+        native._log('fades reset failed: {!r}'.format(e))
     _keep_still(None)
     if was_enabled:
         _walls_up(False)

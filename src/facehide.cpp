@@ -10,6 +10,8 @@
 
 #include "MinHook.h"
 #include "camera.h"
+#include "framecost.h"
+#include "framemap.h"
 #include "gameaddr.h"
 #include "log.h"
 #include "player.h"
@@ -499,6 +501,8 @@ void hookedSceneDraw(void* model, uint32_t lod, uint8_t* view) {
         bool eyes = camera::yourEyeCamera(*reinterpret_cast<void**>(view + kViewCamera));
         t_eyePass = eyes ? 1 : 0;
         (eyes ? g_passEyes : g_passOther).fetch_add(1, std::memory_order_relaxed);
+        framecost::simDraw(eyes);
+        framemap::mark(framemap::SceneDraw, eyes ? 1 : 0);
     }
     if (t_eyePass == 1 && model && model == g_ourModel.load(std::memory_order_relaxed)) {
         float pin[7];

@@ -424,6 +424,12 @@ def _picked_on_sim(interaction, source):
     from interactions.context import InteractionSource
     sim = getattr(interaction, 'sim', None)
     target = getattr(interaction, 'target', None)
+    try:
+        from sims4vr import follow
+        if follow.is_ours(getattr(interaction, 'affordance', None)):
+            return  # Follow me / Dismiss: nobody walks
+    except Exception:
+        pass
     if not getattr(target, 'is_sim', False) or target is sim or not getattr(interaction, 'is_super', False) \
             or _is_social(interaction) or you_walk(interaction) or not _first_person(sim) \
             or source not in (InteractionSource.PIE_MENU, InteractionSource.SCRIPT_WITH_USER_INTENT):

@@ -1114,8 +1114,8 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
         row(view.up, ry);
         row(forward, rd);
         for (int i = 0; i < 4; ++i) {
-            k.clip[0][i] = rx[i] / view.tanX;
-            k.clip[1][i] = ry[i] / view.tanY;
+            k.clip[0][i] = (rx[i] - view.centreX * rd[i]) / view.tanX;  // w = rd; an off-centre frustum shifts x/w
+            k.clip[1][i] = (ry[i] - view.centreY * rd[i]) / view.tanY;
             k.clip[2][i] = A * rd[i] + (i == 3 ? B : 0);
             k.clip[3][i] = rd[i];
             k.view[0][i] = rx[i];
