@@ -7,6 +7,7 @@
 #include <mutex>
 #include <vector>
 
+#include "addrs.h"
 #include "gameaddr.h"
 #include "log.h"
 #include "player.h"
@@ -15,23 +16,12 @@ namespace s4vr::walkstop {
 
 namespace {
 
-struct Known {
-    uint32_t rva;
-    uint8_t bytes[16];
-};
 // Game 1.128.90.1030 (DX11); 1.112.519.1020 rvas in the RE notes.
 // Object by id, then its routing component (as 0x9a4b80 does).
-const Known kFindObject{0x162030, {0x48, 0x89, 0x5c, 0x24, 0x08, 0x57, 0x48, 0x83, 0xec, 0x20, 0x48, 0x8b, 0xf9, 0x48, 0x8b, 0xda}};
-const Known kComponent{0x9b0430, {0x8b, 0x41, 0x10, 0x4c, 0x8b, 0xc1, 0x85, 0xc2, 0x74, 0x3e, 0xff, 0xca, 0x23, 0xd0, 0x8b, 0xc2}};
 // Fallbacks if the path outlives the controller: fire route_complete, free the
 // op channel, clear the route.
-const Known kFireComplete{0x2f1a80, {0x48, 0x8b, 0x81, 0xc8, 0x01, 0x00, 0x00, 0x4c, 0x8b, 0xc2, 0x48, 0xc7, 0x81, 0xc8, 0x01, 0x00}};
-const Known kReleaseBlocker{0x2f1a40, {0x48, 0x8b, 0x81, 0xc0, 0x01, 0x00, 0x00, 0x45, 0x33, 0xc9, 0x4c, 0x8b, 0x81, 0xe0, 0x01, 0x00}};
-const Known kClearRoute{0x9c4c00, {0x48, 0x83, 0xec, 0x28, 0x48, 0x85, 0xc9, 0x74, 0x20, 0x8b, 0x15, 0x19, 0x1d, 0xf9, 0x01, 0xe8}};
-constexpr uint32_t kRoutingMaskGlobal = 0x2956928;  // set at runtime
-constexpr uint32_t kPathVTable = 0x1e6bfa8;         // written by the path ctor 0x2d4af0
 // Locomotion controllers' Stop (vtable slot 57): walk, simple, drift, master, proxy.
-constexpr uint32_t kStops[] = {0x1b45c40, 0x1b45910, 0x1b45660, 0x1b45760, 0x1b4c300};
+constexpr const char* kStops[] = {"StopWalk", "StopSimple", "StopDrift", "StopMaster", "StopProxy"};
 constexpr size_t kStopSlot = 0x1c8 / 8;
 
 // Unchanged in 1.121 (ClearRoute, ClearPath 0x2c36e0, SetPath 0x2c3810, the
@@ -85,7 +75,6 @@ constexpr size_t kCtlState = 0x290, kCtlStartDistance = 0x298, kCtlStartMin = 0x
                  kCtlStartAngle = 0x2cc, kCtlRemaining = 0x2dc, kCtlStopEveryFrame = 0x32a;
 // The body's controller (+0x1a8) is always the master (v0.13.194 never found
 // a WalkLogic there); it, or a proxy, holds the active logic at +0x70.
-constexpr uint32_t kWalkLogicVTable = 0x22ea6b8, kMasterVTable = 0x22eb968, kProxyVTable = 0x22e9c30;
 constexpr size_t kActiveLogic = 0x70;
 uintptr_t g_walkLogicVt = 0, g_masterVt = 0, g_proxyVt = 0;
 std::atomic<bool> g_clips{true};
@@ -101,27 +90,27 @@ const char* const kOtherRoute = "another route is active";
 
 bool ready() {
     if (g_ready) return g_ready > 0;
-    for (const Known* k : {&kFindObject, &kComponent, &kFireComplete, &kReleaseBlocker, &kClearRoute}) {
-        if (!gameaddr::function(k->rva, k->bytes)) {
-            LOG("Walk stop: game build not recognised (no match for rva 0x%x); off", k->rva);
+    for (const char* k : {"FindObject", "Component", "FireComplete", "ReleaseBlocker", "ClearRoute"}) {
+        if (!addrs::fn(k)) {
+            LOG("Walk stop: game build not recognised (no match for %s); off", k);
             g_ready = -1;
             return false;
         }
     }
-    g_maskGlobal = gameaddr::global(kRoutingMaskGlobal);
-    g_pathVTable = reinterpret_cast<uintptr_t>(gameaddr::global(kPathVTable));
-    for (int i = 0; i < 5; ++i) g_stops[i] = reinterpret_cast<uintptr_t>(gameaddr::global(kStops[i]));
+    g_maskGlobal = addrs::global("RoutingMaskGlobal");
+    g_pathVTable = reinterpret_cast<uintptr_t>(addrs::global("PathVTable"));
+    for (int i = 0; i < 5; ++i) g_stops[i] = reinterpret_cast<uintptr_t>(addrs::global(kStops[i]));
     if (!g_maskGlobal || !g_pathVTable) {
         LOG("Walk stop: game build not recognised (routing globals); off");
         g_ready = -1;
         return false;
     }
-    g_findObject = reinterpret_cast<FindObjectFn>(gameaddr::function(kFindObject.rva, kFindObject.bytes));
-    g_component = reinterpret_cast<ComponentFn>(gameaddr::function(kComponent.rva, kComponent.bytes));
-    g_fireComplete = reinterpret_cast<FireCompleteFn>(gameaddr::function(kFireComplete.rva, kFireComplete.bytes));
+    g_findObject = reinterpret_cast<FindObjectFn>(addrs::fn("FindObject"));
+    g_component = reinterpret_cast<ComponentFn>(addrs::fn("Component"));
+    g_fireComplete = reinterpret_cast<FireCompleteFn>(addrs::fn("FireComplete"));
     g_releaseBlocker =
-        reinterpret_cast<ReleaseBlockerFn>(gameaddr::function(kReleaseBlocker.rva, kReleaseBlocker.bytes));
-    g_clearRoute = reinterpret_cast<ClearRouteFn>(gameaddr::function(kClearRoute.rva, kClearRoute.bytes));
+        reinterpret_cast<ReleaseBlockerFn>(addrs::fn("ReleaseBlocker"));
+    g_clearRoute = reinterpret_cast<ClearRouteFn>(addrs::fn("ClearRoute"));
     g_ready = 1;
     return true;
 }
@@ -203,9 +192,9 @@ void readController(uint64_t objectId) {
     auto* body = entity ? at<uint8_t*>(entity, kEntityBody) : nullptr;
     auto* controller = body ? at<uint8_t*>(body, kBodyController) : nullptr;
     if (!g_walkLogicVt) {
-        g_walkLogicVt = reinterpret_cast<uintptr_t>(gameaddr::global(kWalkLogicVTable));
-        g_masterVt = reinterpret_cast<uintptr_t>(gameaddr::global(kMasterVTable));
-        g_proxyVt = reinterpret_cast<uintptr_t>(gameaddr::global(kProxyVTable));
+        g_walkLogicVt = reinterpret_cast<uintptr_t>(addrs::global("WalkLogicVTable"));
+        g_masterVt = reinterpret_cast<uintptr_t>(addrs::global("MasterVTable"));
+        g_proxyVt = reinterpret_cast<uintptr_t>(addrs::global("ProxyVTable"));
     }
     bool walk = false;
     for (int depth = 0; controller && depth < 4; ++depth) {

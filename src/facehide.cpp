@@ -12,6 +12,7 @@
 #include "camera.h"
 #include "framecost.h"
 #include "framemap.h"
+#include "addrs.h"
 #include "gameaddr.h"
 #include "log.h"
 #include "player.h"
@@ -26,18 +27,12 @@ namespace {
 // (+0x1cb bit 2), its bone matrices go into the buffer's palette, then
 // game+0x1285010 skins its vertices into the locked vertex buffer.
 using SkinUpdateFn = void (*)(uint8_t* mesh, void* pose);
-constexpr uint32_t kSkinUpdateRva = 0x1220550;
-constexpr uint8_t kSkinUpdateBytes[16] = {0x48, 0x89, 0x74, 0x24, 0x10, 0x57, 0x48, 0x83,
-                                          0xec, 0x30, 0x48, 0x8b, 0x81, 0x50, 0x01, 0x00};
 // The caller: a SceneModel's skinning of all its meshes. Its RenderState
 // (+0x438) gives the pose (vt+0x28, game+0x9b5eb0: the RenderState's +0x20
 // actor's +0xf0). v0.13.188 matched your Sim by that pose pointer and never
 // matched once (log 2026-10-17 03:23-03:37 local: no mesh classified), so now
 // the actor itself is compared too.
 using SceneSkinFn = void (*)(uint8_t* sceneModel);
-constexpr uint32_t kSceneSkinRva = 0x11d32e0;
-constexpr uint8_t kSceneSkinBytes[16] = {0x48, 0x89, 0x6c, 0x24, 0x20, 0x57, 0x48, 0x83,
-                                         0xec, 0x20, 0x48, 0x8b, 0xe9, 0x48, 0x81, 0xc1};
 constexpr size_t kSceneRenderState = 0x438, kRenderStateActor = 0x20;
 // Game 1.128 DX11 skins Sims on the graphics card (v0.13.198; v0.13.194 log:
 // the CPU skinning above ran 0 times in minutes). Each mesh's draw
@@ -51,22 +46,13 @@ constexpr size_t kSceneRenderState = 0x438, kRenderStateActor = 0x20;
 // (eyes, teeth, lashes; one-bone meshes skip the palette) isn't drawn there.
 // Mirrors, water and shadows draw into other targets and keep the face.
 using PaletteFn = void (*)(uint8_t* mesh, uint8_t* out, uint8_t* pose, void* inverseBinds, uint64_t rows);
-constexpr uint32_t kPaletteRva = 0x121d850;
-constexpr uint8_t kPaletteBytes[16] = {0x48, 0x8b, 0xc4, 0x48, 0x89, 0x58, 0x08, 0x57,
-                                       0x48, 0x83, 0xec, 0x70, 0x0f, 0x29, 0x70, 0xe8};
 using MeshDrawFn = void (*)(uint8_t* mesh, uint8_t* params);
-constexpr uint32_t kMeshDrawRva = 0x121dcf0;
-constexpr uint8_t kMeshDrawBytes[16] = {0x40, 0x55, 0x57, 0x48, 0x81, 0xec, 0xf8, 0x01,
-                                        0x00, 0x00, 0xf6, 0x81, 0xcb, 0x01, 0x00, 0x00};
 constexpr size_t kDrawPose = 0x38, kPoseJointSize = 0x30;
 // SceneModel vtable slot 5 (game+0x11d0160, model, lod, view) draws one Sim
 // for one pass; view+0x30 is that pass's camera (eye position at +0x60).
 // Mirrors and shadows draw into the scene's depth too, so the camera is what
 // tells your eyes' passes apart.
 using SceneDrawFn = void (*)(void* model, uint32_t lod, uint8_t* view);
-constexpr uint32_t kSceneDrawRva = 0x11d0160;
-constexpr uint8_t kSceneDrawBytes[16] = {0x48, 0x8b, 0xc4, 0x48, 0x89, 0x58, 0x08, 0x55,
-                                         0x56, 0x57, 0x41, 0x54, 0x41, 0x55, 0x41, 0x56};
 constexpr size_t kViewCamera = 0x30;
 constexpr size_t kModelCentre = 0xb0;  // the model's world bounds centre (slot 5 measures LOD from it)
 // Skins `count` vertex records (0x50 bytes each: position, normal, four
@@ -74,14 +60,8 @@ constexpr size_t kModelCentre = 0xb0;  // the model's world bounds centre (slot 
 // position xyz + the record's w, then the normal as 4 bytes) and `positions`
 // (8 bytes a vertex: the position again, the game's CPU copy).
 using SkinVertsFn = void (*)(void* out, void* positions, const void* records, int count);
-constexpr uint32_t kSkinVertsRva = 0x1296ee0;
-constexpr uint8_t kSkinVertsBytes[16] = {0x55, 0x48, 0x83, 0xec, 0x40, 0x48, 0x8d, 0x6c,
-                                         0x24, 0x20, 0x0f, 0x29, 0x75, 0xe0, 0x0f, 0x29};
 // The joint index lookup (by name hash) of a skeleton's joint table.
 using JointIndexFn = uint32_t (*)(void* joints, uint32_t hash);
-constexpr uint32_t kJointIndexRva = 0x9119e0;
-constexpr uint8_t kJointIndexBytes[16] = {0x48, 0x83, 0xec, 0x18, 0x44, 0x8b, 0xc2, 0x48,
-                                          0xb8, 0xc5, 0x4e, 0xec, 0xc4, 0x4e, 0xec, 0xc4};
 
 // The mesh (game+0x121c340 builds it).
 constexpr size_t kMeshSlots = 0x138;      // uint32: bones in its palette
@@ -628,9 +608,9 @@ void install(bool on) {
     g_enabled.store(on);
     if (g_installed) return;
     g_installed = true;
-    uint8_t* update = gameaddr::function(kSkinUpdateRva, kSkinUpdateBytes);
-    g_skinVerts = reinterpret_cast<SkinVertsFn>(gameaddr::function(kSkinVertsRva, kSkinVertsBytes));
-    g_jointIndex = reinterpret_cast<JointIndexFn>(gameaddr::function(kJointIndexRva, kJointIndexBytes));
+    uint8_t* update = addrs::fn("SkinUpdate");
+    g_skinVerts = reinterpret_cast<SkinVertsFn>(addrs::fn("SkinVerts"));
+    g_jointIndex = reinterpret_cast<JointIndexFn>(addrs::fn("JointIndex"));
     if (!update || !g_skinVerts || !g_jointIndex) {
         LOG("Face hiding: the game's skinning not found (game build not recognised); your face shows from inside");
         return;
@@ -639,15 +619,15 @@ void install(bool on) {
                                      reinterpret_cast<void**>(&g_skinUpdate));
     if (status == MH_OK) status = MH_EnableHook(update);
     LOG("Face hiding: hooked the game's skinning (hide_face %d): %s", on ? 1 : 0, MH_StatusToString(status));
-    if (uint8_t* scene = gameaddr::function(kSceneSkinRva, kSceneSkinBytes)) {
+    if (uint8_t* scene = addrs::fn("SceneSkin")) {
         MH_STATUS s2 = MH_CreateHook(scene, reinterpret_cast<void*>(&hookedSceneSkin),
                                      reinterpret_cast<void**>(&g_sceneSkin));
         if (s2 == MH_OK) s2 = MH_EnableHook(scene);
         if (s2 != MH_OK) g_sceneSkin = nullptr;
         LOG("Face hiding: hooked the scene models' skinning: %s", MH_StatusToString(s2));
     }
-    uint8_t* palette = gameaddr::function(kPaletteRva, kPaletteBytes);
-    uint8_t* draw = gameaddr::function(kMeshDrawRva, kMeshDrawBytes);
+    uint8_t* palette = addrs::fn("Palette");
+    uint8_t* draw = addrs::fn("MeshDraw");
     if (palette && draw) {
         MH_STATUS a = MH_CreateHook(palette, reinterpret_cast<void*>(&hookedPalette), reinterpret_cast<void**>(&g_palette));
         if (a == MH_OK) a = MH_EnableHook(palette);
@@ -658,7 +638,7 @@ void install(bool on) {
     } else {
         LOG("Face hiding: the graphics-card skinning not found (game build not recognised)");
     }
-    if (uint8_t* scene = gameaddr::function(kSceneDrawRva, kSceneDrawBytes)) {
+    if (uint8_t* scene = addrs::fn("SceneDraw")) {
         MH_STATUS c = MH_CreateHook(scene, reinterpret_cast<void*>(&hookedSceneDraw),
                                     reinterpret_cast<void**>(&g_sceneDraw));
         if (c == MH_OK) c = MH_EnableHook(scene);

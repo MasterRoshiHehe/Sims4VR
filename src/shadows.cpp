@@ -10,6 +10,7 @@
 
 #include "MinHook.h"
 #include "camera.h"
+#include "addrs.h"
 #include "gameaddr.h"
 #include "log.h"
 #include "renderscale.h"
@@ -19,9 +20,6 @@ namespace s4vr::shadows {
 namespace {
 
 // fit(sun, view camera, light camera, settings, cascade, map size); 0x1212bc0 in DX9.
-constexpr uint32_t kFitRva = 0x126b820;
-const uint8_t kFitBytes[16] = {0x48, 0x8b, 0xc4, 0x48, 0x89, 0x58, 0x18, 0x4c,
-                               0x89, 0x48, 0x20, 0x48, 0x89, 0x48, 0x08, 0x55};
 using FitFn = void (*)(const float* sun, const uint8_t* camera, uint8_t* light, float* settings, uint64_t cascade,
                        uint64_t mapSize);
 
@@ -42,9 +40,6 @@ constexpr size_t kLightWidth = 0x14;
 // GraphicsRules.sgr. The shadow map is made (and ShadowMapSize read) at start
 // and again whenever the display is reset, which our render resolution does
 // when the headset view starts or stops.
-constexpr uint32_t kConfigIntRva = 0x117e590;
-const uint8_t kConfigIntBytes[16] = {0x48, 0x89, 0x5c, 0x24, 0x08, 0x48, 0x89, 0x74,
-                                     0x24, 0x10, 0x57, 0x48, 0x83, 0xec, 0x20, 0x41};
 using ConfigIntFn = int32_t (*)(void* config, const char* name, int32_t fallback);
 // One map holds the cascades side by side, mapSize x (mapSize * cascades):
 // 4096 x 12288 at most, under the 16384 a texture can be (the game halves
@@ -257,7 +252,7 @@ void install(bool on, float stepDegrees, float sharpRange, int mapSize) {
         for (size = 1024; size * 2 <= std::min(mapSize, kMaxMapSize);) size *= 2;
     g_mapSize = size;
     if (g_mapSize) {
-        uint8_t* get = gameaddr::function(kConfigIntRva, kConfigIntBytes);
+        uint8_t* get = addrs::fn("ConfigInt");
         MH_STATUS status = MH_Initialize();
         if (get && (status == MH_OK || status == MH_ERROR_ALREADY_INITIALIZED)) {
             status = MH_CreateHook(get, reinterpret_cast<void*>(&sizedConfig), reinterpret_cast<void**>(&g_configInt));
@@ -267,7 +262,7 @@ void install(bool on, float stepDegrees, float sharpRange, int mapSize) {
             LOG("Shadows: game build not recognised; the game's own shadow map size");
         }
     }
-    uint8_t* fit = gameaddr::function(kFitRva, kFitBytes);
+    uint8_t* fit = addrs::fn("Fit");
     if (!fit) {
         LOG("Shadows: game build not recognised; the game's own in first person too");
         return;

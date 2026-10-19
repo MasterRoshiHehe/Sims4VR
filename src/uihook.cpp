@@ -11,6 +11,7 @@
 #include "camera.h"
 #include "facehide.h"
 #include "framemap.h"
+#include "addrs.h"
 #include "gameaddr.h"
 #include "log.h"
 #include "nearplane.h"
@@ -21,22 +22,13 @@ namespace s4vr::uihook {
 
 namespace {
 
-// Game functions (DX11 rva, game 1.128.90.1030), checked against their first bytes.
-struct Known {
-    uint32_t rva;
-    uint8_t bytes[16];
-};
 // RenderManager::Render(rm, movie or null): every UI movie, once a frame.
-const Known kRender{0xdaed30, {0x40, 0x55, 0x56, 0x57, 0x41, 0x54, 0x41, 0x55, 0x41, 0x56, 0x41, 0x57, 0x48, 0x81, 0xec, 0x80}};
 // Scaleform::Render::Sims4::HAL::applyBlendModeImpl(hal, mode, sourceAc, forceAc).
-const Known kApplyBlend{0x189f690, {0x4c, 0x8b, 0xdc, 0x56, 0x57, 0x41, 0x54, 0x41, 0x56, 0x41, 0x57, 0x48, 0x83, 0xec, 0x40, 0x49}};
 // The render threading manager (its first byte: threading on), and the game's
 // D3D11 wrapper ("gfx") by index: Render draws with gfx 9 (a job's) with
 // threading on, gfx 0 (the main one) otherwise. Since 1.121 every gfx,
 // gfx 0 too, records into a deferred context; the game's submission thread
 // executes the command lists, then presents (the Present hook runs there).
-const Known kThreading{0x136fcd0, {0x48, 0x8b, 0x05, 0x61, 0x2d, 0x61, 0x01, 0xc3, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc}};
-const Known kGfxByIndex{0x129c370, {0x40, 0x53, 0x48, 0x83, 0xec, 0x20, 0x8b, 0xd9, 0xe8, 0x53, 0x39, 0x0d, 0x00, 0x48, 0x85, 0xc0}};
 
 // RenderManager +0x18 its HAL; HAL +0xc180 the gfx the HAL draws with (set
 // when the UI starts; the getters above give the same one).
@@ -560,10 +552,10 @@ bool install() {
         LOG("UI layer: not available in the DX9 game yet; the UI stays in the 3D view");
         return false;
     }
-    void* render = gameaddr::function(kRender.rva, kRender.bytes);
-    void* blend = gameaddr::function(kApplyBlend.rva, kApplyBlend.bytes);
-    g_threading = reinterpret_cast<ThreadingFn>(gameaddr::function(kThreading.rva, kThreading.bytes));
-    g_gfxByIndex = reinterpret_cast<GfxByIndexFn>(gameaddr::function(kGfxByIndex.rva, kGfxByIndex.bytes));
+    void* render = addrs::fn("Render");
+    void* blend = addrs::fn("ApplyBlend");
+    g_threading = reinterpret_cast<ThreadingFn>(addrs::fn("Threading"));
+    g_gfxByIndex = reinterpret_cast<GfxByIndexFn>(addrs::fn("GfxByIndex"));
     if (!render || !blend || !g_threading || !g_gfxByIndex) {
         LOG("UI layer: game build not recognised (Render %p, blend %p, threading %p, gfx %p); the UI stays in the 3D "
             "view", render, blend, reinterpret_cast<void*>(g_threading), reinterpret_cast<void*>(g_gfxByIndex));

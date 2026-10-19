@@ -25,6 +25,7 @@
 #include "facehide.h"
 #include "voice.h"
 #include "d3d9_hook.h"
+#include "addrs.h"
 #include "gameaddr.h"
 #include "d3d11_hook.h"
 #include "gamepad.h"
@@ -101,9 +102,7 @@ static uintptr_t hookedScreenHidden(void* listener, void* args, void* r8, void* 
 
 // False if the listener isn't there (another game build, DX9): VR then starts at once.
 static bool startAtMainMenu() {
-    static const uint8_t kScreenHidden[16] = {0x40, 0x53, 0x48, 0x83, 0xec, 0x30, 0xe8, 0x35,
-                                              0xcf, 0x43, 0x01, 0x48, 0x8b, 0xd8, 0x48, 0x85};
-    uint8_t* target = s4vr::gameaddr::dx9() ? nullptr : s4vr::gameaddr::function(0x1fa850, kScreenHidden);
+    uint8_t* target = s4vr::gameaddr::dx9() ? nullptr : s4vr::addrs::fn("ScreenHidden");
     if (!target) {
         LOG("Main menu: loading screen listener not recognised; VR starts now");
         return false;

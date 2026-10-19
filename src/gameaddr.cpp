@@ -4,6 +4,7 @@
 #include <cstring>
 #include <cwchar>
 
+#include "addrs.h"
 #include "log.h"
 
 namespace s4vr::gameaddr {
@@ -78,7 +79,7 @@ const Entry kDx9[] = {
 // could have moved even where a function's first bytes still match.
 // Game 1.128.90.1030 (DX11). DX9 is paused: its table below is still the
 // 1.121.361.1020 one, so no DX9 stamp matches and the DX9 build gets no addresses.
-constexpr uint32_t kDx11Stamp = 0x6aa08454, kDx9Stamp = 0;
+constexpr uint32_t kDx9Stamp = 0;
 
 int g_dx9 = -1;
 int g_known = -1;
@@ -95,9 +96,9 @@ uint32_t stamp() {
 bool known() {
     if (g_known < 0) {
         uint32_t s = stamp();
-        g_known = s == (dx9() ? kDx9Stamp : kDx11Stamp) ? 1 : 0;
+        g_known = s == (dx9() ? kDx9Stamp : addrs::tableStamp()) ? 1 : 0;
         if (g_known)
-            LOG("Game build 1.128.90.1030 recognised");
+            LOG("Game build %s recognised", addrs::gameVersion());
         else
             LOG("Game build not recognised (exe stamp %08x): hands, touch, menus layer, render scale and the game "
                 "fixes stay off until the mod is updated for it",
@@ -113,6 +114,8 @@ const Entry* find(uint32_t dx11) {
 }
 
 }  // namespace
+
+bool recognised() { return known(); }
 
 bool dx9() {
     if (g_dx9 < 0) {

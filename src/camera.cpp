@@ -24,6 +24,7 @@
 #include "facehide.h"
 #include "framecost.h"
 #include "framemap.h"
+#include "addrs.h"
 #include "gameaddr.h"
 #include "log.h"
 #include "nearplane.h"
@@ -1782,9 +1783,6 @@ void hookedListener(void* self, void* arg, void* audio, char flag) {
 // mid-head however far away it is (user 2026-10-17 14:45Z: "When I got closer
 // to the npcs in question the voices in my head stopped"). First person: the
 // cap is at least 1 m, and what is within 1 m of you is placed by placeClose.
-constexpr uint32_t kPanRva = 0x1a9fdf0;
-constexpr uint8_t kPanBytes[16] = {0x48, 0x8b, 0xc4, 0x57, 0x48, 0x81, 0xec, 0x80,
-                                   0x00, 0x00, 0x00, 0x48, 0xc7, 0x40, 0x98, 0xfe};
 constexpr float kPanCircle = 1.0f;  // Pan2D1's speaker circle
 // (sound, its panner, the sound's position, the pan listener's position, its
 // rows (3 x 4 floats, row 0 right, row 2 back), the sound's near radius)
@@ -1998,7 +1996,7 @@ void hookedPan(void* sound, void* panner, const float* position, const float* li
 }
 
 void installPanHook() {
-    uint8_t* target = gameaddr::function(kPanRva, kPanBytes);
+    uint8_t* target = addrs::fn("Pan");
     if (!target) {
         LOG("Sound placement: game build not recognised; far sounds keep the game's own spread");
         return;
@@ -2022,9 +2020,6 @@ void installPanHook() {
 // it plays at full loudness in the middle of your head. For a 3D sound it
 // sets the fall-off level from the distance to listener 0 (0x1a9f930) into
 // the float its distance state (+0x510) points to first.
-constexpr uint32_t kDistanceUpdateRva = 0x1a9f530;
-constexpr uint8_t kDistanceUpdateBytes[16] = {0x40, 0x55, 0x56, 0x48, 0x8d, 0x6c, 0x24, 0xb1,
-                                              0x48, 0x81, 0xec, 0xb8, 0x00, 0x00, 0x00, 0xf6};
 constexpr size_t kSoundPosition = 0x30, kSoundFlags = 0xf8, kSoundPanner = 0x408, kSoundDistance = 0x510;
 using DistanceUpdateFn = void (*)(void* sound);
 DistanceUpdateFn g_originalDistanceUpdate = nullptr;
@@ -2112,7 +2107,7 @@ void hookedDistanceUpdate(void* sound) {
 }
 
 void installLoudnessLog() {
-    uint8_t* target = gameaddr::function(kDistanceUpdateRva, kDistanceUpdateBytes);
+    uint8_t* target = addrs::fn("DistanceUpdate");
     if (!target) {
         LOG("Sound loudness log: game build not recognised");
         return;
@@ -2299,9 +2294,6 @@ void setCopyObserver(CopyObserver observer) { g_observer = observer; }
 
 // The game's projection build (1.128 0x1208640, Camera update calls it): for
 // the render camera with a lopsided eye, our centre goes back in first.
-constexpr uint32_t kProjectionRva = 0x1208640;
-constexpr uint8_t kProjectionBytes[16] = {0x48, 0x8b, 0xc4, 0x48, 0x81, 0xec, 0xa8, 0x00,
-                                          0x00, 0x00, 0x83, 0x79, 0x10, 0x00, 0x4c, 0x8b};
 using ProjectionFn = void (*)(void* camera);
 ProjectionFn g_originalProjection = nullptr;
 int g_projectionLogs = 0;
@@ -2325,7 +2317,7 @@ void hookedProjection(void* camera) {
 }
 
 void installProjectionHook() {
-    uint8_t* target = gameaddr::function(kProjectionRva, kProjectionBytes);
+    uint8_t* target = addrs::fn("Projection");
     if (!target) {
         LOG("Lopsided eye: projection build not found for this game build; the view stays centred");
         return;

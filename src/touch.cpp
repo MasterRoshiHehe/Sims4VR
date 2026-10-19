@@ -7,6 +7,7 @@
 #include <cstring>
 #include <mutex>
 
+#include "addrs.h"
 #include "gameaddr.h"
 #include "log.h"
 
@@ -17,11 +18,6 @@ namespace {
 // Globals and functions of 1.128.90.1030 (DX11), see touch.h. The offsets
 // below are unchanged from 1.112 (dispatcher made at 0x1333f20, its pick code
 // 0x135f710 / 0x135f900, the pick manager 0x11cb440 / 0x11cc760).
-constexpr uintptr_t kRenderSystemGlobal = 0x2982de8;  // RenderSystem*; +0x138 the pick dispatcher
-constexpr uintptr_t kSceneGlobal = 0x2965ce8;         // render scene; +0x80 the RenderPickManager
-constexpr uint32_t kRequestPickRva = 0x1211d90;
-constexpr uint8_t kRequestPickBytes[16] = {0x80, 0xb9, 0xa8, 0x00, 0x00, 0x00, 0x00, 0x4c,
-                                           0x8b, 0xc9, 0x74, 0x72, 0x44, 0x8b, 0x91, 0xec};
 // void RequestPick(RenderPickManager*, int x, int y): pick at that render
 // pixel with the camera of the frame that renders it.
 using RequestPickFn = void (*)(void* manager, int x, int y);
@@ -134,9 +130,9 @@ void answerLaser(const Request& r, const uint8_t* d, uint64_t self, ULONGLONG no
 }  // namespace
 
 bool install() {
-    uint8_t* request = gameaddr::function(kRequestPickRva, kRequestPickBytes);
-    g_renderSystemGlobal = reinterpret_cast<uintptr_t>(gameaddr::global(kRenderSystemGlobal));
-    g_sceneGlobal = reinterpret_cast<uintptr_t>(gameaddr::global(kSceneGlobal));
+    uint8_t* request = addrs::fn("RequestPick");
+    g_renderSystemGlobal = reinterpret_cast<uintptr_t>(addrs::global("RenderSystemGlobal"));
+    g_sceneGlobal = reinterpret_cast<uintptr_t>(addrs::global("SceneGlobal"));
     if (!request || !g_renderSystemGlobal || !g_sceneGlobal) {
         LOG("Touch: the game's pick request was not found (other game version); touching objects is off");
         return false;

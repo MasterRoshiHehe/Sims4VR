@@ -9,6 +9,7 @@
 
 #include "MinHook.h"
 #include "camera.h"
+#include "addrs.h"
 #include "gameaddr.h"
 #include "framemap.h"
 #include "log.h"
@@ -19,9 +20,6 @@ namespace s4vr::gamefix {
 namespace {
 
 // Game 1.128.90.1030 (DX11); 1.112.519.1020 rvas and layouts in the RE notes.
-constexpr uint32_t kCullRoomsRva = 0xa6bdc0;
-constexpr uint8_t kCullRoomsBytes[16] = {0x48, 0x8b, 0xc4, 0x44, 0x88, 0x48, 0x20, 0x44,
-                                         0x88, 0x40, 0x18, 0x48, 0x89, 0x50, 0x10, 0x55};
 
 // (lot room data, view, view kind, floor)
 using CullRoomsFn = void (*)(void* rooms, void* view, uint8_t kind, char floor);
@@ -168,16 +166,12 @@ void hookedCullRooms(void* rooms, void* view, uint8_t kind, char floor) {
 // when your head is in it. In first person it always answers "shown"; in god
 // view the game's own check runs. The thunk touches no argument register, so
 // the game's call goes on to it unchanged.
-constexpr uint32_t kNearFadeRva = 0x120a130;
-constexpr uint8_t kNearFadeBytes[16] = {0x40, 0x53, 0x48, 0x81, 0xec, 0x80, 0x00, 0x00,
-                                        0x00, 0x48, 0x8b, 0x9c, 0x24, 0xc8, 0x00, 0x00};
 
 // Camera fades (Renderer.TunableFadeValues, loaded into a global at rva
 // 0x249bb60; DX9 0x2390b30): objects, walls and Sims fade out when the camera
 // gets within these distances (object 0.5 m, building 2 m, Sim 0.6 to 0.4 m).
 // In first person they are close to 0: your hands and the counter in front of
 // you never fade. The game's values go back for god view.
-constexpr uint32_t kFadeValuesGlobal = 0x280ccf0;
 constexpr int kFadeFields = 6;  // object start, building start, object end, building end, Sim start, Sim end
 constexpr float kNoFade[kFadeFields] = {0.001f, 0.001f, 0.0f, 0.0f, 0.001f, 0.0f};
 float* g_fade = nullptr;
@@ -212,7 +206,7 @@ namespace s4vr::gamefix {
 namespace {
 
 void hookNearFade() {
-    uint8_t* target = gameaddr::function(kNearFadeRva, kNearFadeBytes);
+    uint8_t* target = addrs::fn("NearFade");
     if (!target) {
         LOG("Near fading: game build not recognised; left on");
         return;
@@ -256,16 +250,6 @@ void applyFades(bool firstPerson) {
 // lot+0xec + i*0x14 (+0 on, +2 top level, +4 wall mode; slot 0 wins);
 // lot+0x14c is the level shown, lot+0x150 the wall mode in effect (2 = up).
 // (All unchanged in 1.121: SetOverride is the same code, and the apply
-// functions 0x9fc530 / 0x9fc7d0 use the same fields.)
-struct Known {
-    uint32_t rva;
-    uint8_t bytes[16];
-};
-constexpr Known kLotById{0x9e1a20, {0x48, 0x83, 0xec, 0x18, 0x44, 0x8b, 0x49, 0x20, 0x4c, 0x8b, 0x51, 0x18, 0x44, 0x8b, 0xc2, 0x8b}};
-constexpr Known kTopLevel{0xa178a0, {0x40, 0x56, 0x48, 0x83, 0xec, 0x40, 0x48, 0x8b, 0xf1, 0x84, 0xd2, 0x74, 0x2a, 0x32, 0xc0, 0x90}};
-constexpr Known kSetOverride{0xa1aae0, {0x40, 0x53, 0x48, 0x83, 0xec, 0x20, 0x48, 0x63, 0x44, 0x24, 0x58, 0x48, 0x8b, 0xd9, 0x4c, 0x8d}};
-constexpr uint32_t kLotManagerGlobal = 0x2956f28;  // FUN_1409c1a70 returns it
-constexpr uint32_t kZoneGlobal = 0x2956c30;        // the zone
 // The zone's active lot id (FUN_1409b0f90): +0x160 since 1.121 (+0x168 before).
 constexpr size_t kZoneLotId = 0x160;
 using LotByIdFn = void* (*)(void* manager, uint32_t id);
@@ -289,8 +273,6 @@ int g_fights = 0;
 // walls_up False). Putting the slot back after each clear rebuilt the walls
 // every half second: the walls flickered. In first person the clear is now
 // refused, except from the op (leaving first person turns it off that way).
-constexpr Known kClearOverride{0xa15970, {0x48, 0x63, 0xc2, 0x48, 0x8d, 0x14, 0x80, 0x80, 0xbc, 0x91, 0xec, 0x00, 0x00, 0x00, 0x00, 0x74}};
-constexpr Known kWallsUpOp{0x21c390, {0x40, 0x57, 0x48, 0x83, 0xec, 0x70, 0x48, 0xc7, 0x44, 0x24, 0x40, 0xfe, 0xff, 0xff, 0xff, 0x48}};
 constexpr uint32_t kWallsUpOpSize = 0x118;  // same code in 1.121
 using ClearOverrideFn = void (*)(void* lot, int slot, uint8_t reapply);
 ClearOverrideFn g_clearOverride = nullptr;
@@ -404,14 +386,14 @@ void setFirstPerson(bool on) {
 
 void install(bool nearFade) {
     bool lotOk = true;
-    for (const Known* k : {&kLotById, &kTopLevel, &kSetOverride}) lotOk = lotOk && gameaddr::function(k->rva, k->bytes);
-    g_zoneGlobal = gameaddr::global(kZoneGlobal);
-    g_lotManagerGlobal = gameaddr::global(kLotManagerGlobal);
+    for (const char* k : {"LotById", "TopLevel", "SetOverride"}) lotOk = lotOk && addrs::fn(k);
+    g_zoneGlobal = addrs::global("ZoneGlobal");
+    g_lotManagerGlobal = addrs::global("LotManagerGlobal");
     lotOk = lotOk && g_zoneGlobal && g_lotManagerGlobal;
     if (lotOk) {
-        g_lotById = reinterpret_cast<LotByIdFn>(gameaddr::function(kLotById.rva, kLotById.bytes));
-        g_topLevel = reinterpret_cast<TopLevelFn>(gameaddr::function(kTopLevel.rva, kTopLevel.bytes));
-        g_setOverride = reinterpret_cast<SetOverrideFn>(gameaddr::function(kSetOverride.rva, kSetOverride.bytes));
+        g_lotById = reinterpret_cast<LotByIdFn>(addrs::fn("LotById"));
+        g_topLevel = reinterpret_cast<TopLevelFn>(addrs::fn("TopLevel"));
+        g_setOverride = reinterpret_cast<SetOverrideFn>(addrs::fn("SetOverride"));
     } else {
         LOG("Top floor keeper: game build not recognised; off");
     }
@@ -419,11 +401,11 @@ void install(bool nearFade) {
     if (init != MH_OK && init != MH_ERROR_ALREADY_INITIALIZED) return;
     g_nearFadeWanted = !nearFade;
     if (!nearFade) hookNearFade();
-    g_fade = reinterpret_cast<float*>(gameaddr::global(kFadeValuesGlobal));
+    g_fade = reinterpret_cast<float*>(addrs::global("FadeValuesGlobal"));
     if (!g_fade) LOG("Camera fades: game build not recognised; the game's own in first person too");
     if (lotOk) {
-        void* clear = gameaddr::function(kClearOverride.rva, kClearOverride.bytes);
-        g_wallsUpOp = gameaddr::function(kWallsUpOp.rva, kWallsUpOp.bytes);
+        void* clear = addrs::fn("ClearOverride");
+        g_wallsUpOp = addrs::fn("WallsUpOp");
         if (clear && g_wallsUpOp &&
             MH_CreateHook(clear, reinterpret_cast<void*>(&hookedClearOverride),
                           reinterpret_cast<void**>(&g_clearOverride)) == MH_OK &&
@@ -434,7 +416,7 @@ void install(bool nearFade) {
             LOG("Walls up keeper: game build not recognised; off");
         }
     }
-    void* target = gameaddr::function(kCullRoomsRva, kCullRoomsBytes);
+    void* target = addrs::fn("CullRooms");
     if (!target) {
         LOG("Room culling fix: game build not recognised; off");
         return;

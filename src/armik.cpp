@@ -9,6 +9,7 @@
 #include <string>
 
 #include "MinHook.h"
+#include "addrs.h"
 #include "gameaddr.h"
 #include "handshape.h"
 #include "log.h"
@@ -27,15 +28,6 @@ using camera::Vec3;
 // (in 1.112.519.1020: 0x982530, 0x9b55f0, 0x988b80, 0x988cd0, 0x988d00; the
 // code of all five is unchanged, only moved).
 
-struct Known {
-    uint32_t rva;
-    uint8_t bytes[16];
-};
-const Known kPoseToJoints{0x90b370, {0x48, 0x85, 0xd2, 0x0f, 0x84, 0xc8, 0x00, 0x00, 0x00, 0x48, 0x89, 0x5c, 0x24, 0x10, 0x57, 0x48}};
-const Known kModelTransform{0x93e540, {0x48, 0x89, 0x5c, 0x24, 0x10, 0x48, 0x89, 0x74, 0x24, 0x18, 0x57, 0x48, 0x81, 0xec, 0x90, 0x00}};
-const Known kJointIndex{0x9119e0, {0x48, 0x83, 0xec, 0x18, 0x44, 0x8b, 0xc2, 0x48, 0xb8, 0xc5, 0x4e, 0xec, 0xc4, 0x4e, 0xec, 0xc4}};
-const Known kJointCount{0x911b30, {0x48, 0x8b, 0xc1, 0x48, 0x8b, 0x49, 0x10, 0x48, 0x2b, 0x48, 0x08, 0x48, 0xb8, 0x25, 0x49, 0x92}};
-const Known kParent{0x911b60, {0x8b, 0xc2, 0x48, 0x6b, 0xd0, 0x70, 0x48, 0x8b, 0x41, 0x08, 0x8b, 0x44, 0x02, 0x58, 0xc3, 0xcc}};
 
 // One joint: position, rotation, scale (16-byte aligned, as the game keeps them).
 struct alignas(16) Xf {
@@ -2590,17 +2582,17 @@ void install(bool enabled, float handPitchDegrees, bool headTracking) {
         LOG("Arm IK: off in sims4vr.ini");
         return;
     }
-    for (const Known* k : {&kPoseToJoints, &kModelTransform, &kJointIndex, &kJointCount, &kParent}) {
-        if (!gameaddr::function(k->rva, k->bytes)) {
-            LOG("Arm IK: game build not recognised (no match for rva 0x%x); off", k->rva);
+    for (const char* k : {"PoseToJoints", "ModelTransform", "JointIndex", "JointCount", "Parent"}) {
+        if (!addrs::fn(k)) {
+            LOG("Arm IK: game build not recognised (no match for %s); off", k);
             return;
         }
     }
-    g_model = reinterpret_cast<ModelTransformFn>(gameaddr::function(kModelTransform.rva, kModelTransform.bytes));
-    g_jointIndex = reinterpret_cast<JointIndexFn>(gameaddr::function(kJointIndex.rva, kJointIndex.bytes));
-    g_jointCount = reinterpret_cast<JointCountFn>(gameaddr::function(kJointCount.rva, kJointCount.bytes));
-    g_parent = reinterpret_cast<ParentFn>(gameaddr::function(kParent.rva, kParent.bytes));
-    void* target = gameaddr::function(kPoseToJoints.rva, kPoseToJoints.bytes);
+    g_model = reinterpret_cast<ModelTransformFn>(addrs::fn("ModelTransform"));
+    g_jointIndex = reinterpret_cast<JointIndexFn>(addrs::fn("JointIndex"));
+    g_jointCount = reinterpret_cast<JointCountFn>(addrs::fn("JointCount"));
+    g_parent = reinterpret_cast<ParentFn>(addrs::fn("Parent"));
+    void* target = addrs::fn("PoseToJoints");
     MH_STATUS init = MH_Initialize();
     if (init != MH_OK && init != MH_ERROR_ALREADY_INITIALIZED) return;
     if (MH_CreateHook(target, reinterpret_cast<void*>(&hookedPoseToJoints), reinterpret_cast<void**>(&g_original)) !=

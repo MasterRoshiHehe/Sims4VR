@@ -10,6 +10,7 @@
 #include "MinHook.h"
 #include "armik.h"
 #include "crashlog.h"
+#include "addrs.h"
 #include "gameaddr.h"
 #include "log.h"
 #include "rtti.h"
@@ -273,9 +274,6 @@ void pinnedSetTransform(void* actor, const float* t) {
 // routing location of its own (where a Sim will stand, a walk stop) is left to
 // the game too.
 using FloorSnapFn = bool (*)(uint8_t* component, float* transform, char noConform, void* routing);
-constexpr uint32_t kFloorSnapRva = 0x9b41f0;
-constexpr uint8_t kFloorSnapBytes[16] = {0x48, 0x89, 0x5c, 0x24, 0x20, 0x55, 0x56, 0x57,
-                                         0x41, 0x55, 0x41, 0x56, 0x48, 0x8d, 0x6c, 0x24};
 constexpr size_t kComponentActor = 0x68;  // the animation component's actor (its listener's +0x58)
 constexpr size_t kTransformY = 5;         // rotation xyzw, then position xyzw
 FloorSnapFn g_floorSnap = nullptr;  // the game's, behind our hook
@@ -343,7 +341,7 @@ bool keptFloorSnap(uint8_t* component, float* t, char noConform, void* routing) 
 }
 
 void installFloorSnap() {
-    void* target = gameaddr::function(kFloorSnapRva, kFloorSnapBytes);
+    void* target = addrs::fn("FloorSnap");
     if (!target) {
         LOG("Player: the game's floor snap not found (game build not recognised); on stairs the body is drawn on "
             "a level's floor");

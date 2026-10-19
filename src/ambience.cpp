@@ -7,6 +7,7 @@
 #include <mutex>
 
 #include "MinHook.h"
+#include "addrs.h"
 #include "gameaddr.h"
 #include "log.h"
 
@@ -17,19 +18,9 @@ namespace {
 // FUN_14185bbf0: distance from a spot (tile coordinates x, z, level) to the
 // nearest wall with inside on one side and outside on the other, looking at
 // most `radius` tiles around; false if there is none that close.
-constexpr uint32_t kWallDistanceRva = 0x1a779e0;
-constexpr uint8_t kWallDistanceBytes[16] = {0x48, 0x8b, 0xc4, 0x4c, 0x89, 0x48, 0x20, 0x48,
-                                            0x89, 0x50, 0x10, 0x48, 0x89, 0x48, 0x08, 0x55};
 // FUN_141868e80: AmbienceInsideOutsideGC's value (vtable 0x200b798 slot 5).
-constexpr uint32_t kValueRva = 0x1a84c70;
-constexpr uint8_t kValueBytes[16] = {0x40, 0x53, 0x48, 0x83, 0xec, 0x30, 0x0f, 0x29,
-                                     0x74, 0x24, 0x20, 0x48, 0x8b, 0xd9, 0x0f, 0x57};
 // FUN_14188ff10: a GC's curve at x (piecewise linear, held flat past its ends).
-constexpr uint32_t kCurveRva = 0x1aabdc0;
-constexpr uint8_t kCurveBytes[16] = {0x48, 0x89, 0x5c, 0x24, 0x08, 0x48, 0x8b, 0x59,
-                                     0x08, 0x48, 0xb8, 0x67, 0x66, 0x66, 0x66, 0x66};
 // The audio manager the GCs read (DAT_1425dcc48).
-constexpr uint32_t kManagerGlobal = 0x29b0918;
 constexpr size_t kManagerDistance = 0x3350;  // float: the distance, negative inside
 constexpr size_t kManagerOverride = 0x3391;  // char: negative = the game turns the control off (value -2)
 constexpr size_t kGcCurve = 0x28;            // the GC's curve
@@ -170,10 +161,10 @@ void install(float fadeMetres) {
         LOG("Ambience: the game's own inside/outside switch (outdoor_fade 0)");
         return;
     }
-    uint8_t* wall = gameaddr::function(kWallDistanceRva, kWallDistanceBytes);
-    uint8_t* value = gameaddr::function(kValueRva, kValueBytes);
-    g_curve = reinterpret_cast<CurveFn>(gameaddr::function(kCurveRva, kCurveBytes));
-    g_manager = gameaddr::global(kManagerGlobal);
+    uint8_t* wall = addrs::fn("WallDistance");
+    uint8_t* value = addrs::fn("Value");
+    g_curve = reinterpret_cast<CurveFn>(addrs::fn("Curve"));
+    g_manager = addrs::global("AudioManagerGlobal");
     if (!wall || !value || !g_curve || !g_manager) {
         LOG("Ambience: game build not recognised; the game's own inside/outside switch");
         return;

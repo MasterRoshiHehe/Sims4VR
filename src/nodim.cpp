@@ -10,6 +10,7 @@
 #include <mutex>
 
 #include "MinHook.h"
+#include "addrs.h"
 #include "gameaddr.h"
 #include "log.h"
 
@@ -19,9 +20,6 @@ namespace {
 // At the source: the game's gradient colour ramp (Scaleform GradientRamp::Init,
 // 1.128 0x107c540, records of {ratio byte, pad, ARGB at +4}, 8 bytes each). It
 // runs when a gradient fill's picture is made, the first time the fill is drawn.
-constexpr uint32_t kRampRva = 0x107c540;
-constexpr uint8_t kRampBytes[16] = {0x40, 0x55, 0x56, 0x41, 0x56, 0x48, 0x8d, 0x6c,
-                                    0x24, 0xe0, 0x48, 0x81, 0xec, 0x20, 0x01, 0x00};
 using RampFn = void (*)(void* ramp, const uint8_t* records, unsigned count, float gamma);
 RampFn g_originalRamp = nullptr;
 std::atomic<bool> g_sourceOn{false};
@@ -226,7 +224,7 @@ void readSamples(ID3D11DeviceContext* context, ID3D11Texture2D* staging, DXGI_FO
 
 void installSource(bool on) {
     g_sourceOn = on;
-    uint8_t* target = gameaddr::dx9() ? nullptr : gameaddr::function(kRampRva, kRampBytes);
+    uint8_t* target = gameaddr::dx9() ? nullptr : addrs::fn("Ramp");
     if (!target) {
         LOG("No dimming: gradient ramp not found for this game build; dimming only taken out of the VR UI");
         return;

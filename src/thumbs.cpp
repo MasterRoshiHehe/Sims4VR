@@ -12,6 +12,7 @@
 #include <utility>
 #include <vector>
 
+#include "addrs.h"
 #include "gameaddr.h"
 #include "hud.h"
 #include "log.h"
@@ -26,9 +27,6 @@ namespace {
 // "img://thumbs/", a callback, its context). It parses the URL (0xdec540),
 // asks the ThumbnailSystem (0x18b2210) and returns the ThumbnailImage with a
 // reference for the caller, or null.
-constexpr uint32_t kFetchRva = 0xe0f250;
-constexpr uint8_t kFetchBytes[16] = {0x48, 0x8b, 0xc4, 0x55, 0x41, 0x56, 0x41, 0x57,
-                                     0x48, 0x8d, 0x68, 0xa9, 0x48, 0x81, 0xec, 0xc0};
 // The callback, once the picture is there (status 0) or not (1): (image,
 // request, status); the request holds the context at +0x20 (the loader's own
 // callback 0xe15860 reads it there). It may come at once, inside the fetch.
@@ -121,7 +119,7 @@ bool request(uint64_t id, const char* path) {
         std::lock_guard<std::mutex> lock(g_mutex);
         if (!g_looked) {
             g_looked = true;
-            g_fetch = reinterpret_cast<FetchFn>(gameaddr::function(kFetchRva, kFetchBytes));
+            g_fetch = reinterpret_cast<FetchFn>(addrs::fn("Fetch"));
             LOG("Thumbnails: %s", g_fetch ? "the game's thumbnail fetch found" : "game build not recognised; no pictures");
         }
         if (!g_fetch) return false;

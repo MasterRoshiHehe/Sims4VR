@@ -42,6 +42,7 @@ if(NOT EXISTS ${LOADER_DIR}/x64/bin/openxr_loader.dll)
 endif()
 
 add_library(sims4vr SHARED
+    src/addrs.cpp
     src/api.cpp
     src/armik.cpp
     src/handshape.cpp

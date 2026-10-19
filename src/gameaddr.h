@@ -10,6 +10,9 @@
 // between the two and has no DX9 entries (render resolution, the UI HAL).
 namespace s4vr::gameaddr {
 
+// The running exe is the build the address table (addrs.h) is for.
+bool recognised();
+
 // Running in TS4_DX9_x64.exe.
 bool dx9();
 

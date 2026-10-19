@@ -7,6 +7,7 @@
 
 #include "MinHook.h"
 #include "crashlog.h"
+#include "addrs.h"
 #include "gameaddr.h"
 #include "log.h"
 #include "rtti.h"
@@ -15,19 +16,6 @@ namespace s4vr::renderscale {
 
 namespace {
 
-// Game functions and globals (DX11 rva, game 1.128.90.1030), checked against their first bytes.
-struct Known {
-    uint32_t rva;
-    uint8_t bytes[16];
-};
-const Known kApplySettings{0xdaf810, {0x44, 0x88, 0x4c, 0x24, 0x20, 0x55, 0x53, 0x56, 0x57, 0x41, 0x55, 0x41, 0x57, 0x48, 0x8d, 0x6c}};
-const Known kSetLetterbox{0x137aff0, {0x8b, 0x44, 0x24, 0x28, 0x89, 0x41, 0x4c, 0x8b, 0x44, 0x24, 0x30, 0x89, 0x41, 0x50, 0x8b, 0x44}};
-const Known kSetMsaa{0x12a4240, {0x48, 0x89, 0x5c, 0x24, 0x08, 0x57, 0x48, 0x83, 0xec, 0x20, 0x8b, 0xfa, 0x48, 0x8b, 0xd9, 0x39}};
-const Known kReset{0x12a0000, {0x48, 0x89, 0x5c, 0x24, 0x08, 0x57, 0x48, 0x83, 0xec, 0x20, 0x80, 0x79, 0x2c, 0x00, 0x0f, 0xb6}};
-const Known kGfx{0x129c3a0, {0x8b, 0x0d, 0x3a, 0xf9, 0x6e, 0x01, 0x65, 0x48, 0x8b, 0x04, 0x25, 0x58, 0x00, 0x00, 0x00, 0xba}};
-const Known kRenderSystem{0x13785c0, {0x48, 0x8b, 0x05, 0x21, 0xa8, 0x60, 0x01, 0xc3, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc}};
-const Known kCanvas{0xbb6590, {0x48, 0x8b, 0x05, 0xf9, 0x2b, 0xda, 0x01, 0xc3, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc}};
-constexpr uint32_t kDisplayManagerGlobal = 0x295b790;
 constexpr char kDisplayManagerClass[] = ".?AVDisplayManager@UI@Sims4@EA@@";
 
 // DisplayManager fields
@@ -140,15 +128,15 @@ ULONGLONG g_nextTry = 0;
 bool tryInstall() {
     if (g_original) return true;
     if (g_unsupported) return false;
-    for (const Known* k : {&kApplySettings, &kSetLetterbox, &kSetMsaa, &kReset, &kGfx, &kRenderSystem, &kCanvas}) {
-        if (!gameaddr::function(k->rva, k->bytes)) {
-            LOG("Render scale: game build not recognised (no match for rva 0x%x); off", k->rva);
+    for (const char* k : {"ApplySettings", "SetLetterbox", "SetMsaa", "Reset", "Gfx", "RenderSystem", "Canvas"}) {
+        if (!addrs::fn(k)) {
+            LOG("Render scale: game build not recognised (no match for %s); off", k);
             g_unsupported = true;
             return false;
         }
     }
     uint8_t* dm = nullptr;
-    uint8_t* dmGlobal = gameaddr::global(kDisplayManagerGlobal);
+    uint8_t* dmGlobal = addrs::global("DisplayManagerGlobal");
     if (!dmGlobal) {
         g_unsupported = true;
         return false;
@@ -164,17 +152,17 @@ bool tryInstall() {
     }
     g_dm = dm;
     g_f = gameaddr::dx9() ? kGfxDx9 : kGfxDx11;
-    auto fn =[](const Known& k) { return gameaddr::function(k.rva, k.bytes); };
-    g_gfx = reinterpret_cast<GetterFn>(fn(kGfx));
-    g_renderSystem = reinterpret_cast<GetterFn>(fn(kRenderSystem));
-    g_canvas = reinterpret_cast<GetterFn>(fn(kCanvas));
-    g_setLetterbox = reinterpret_cast<SetLetterboxFn>(fn(kSetLetterbox));
-    g_setMsaa = reinterpret_cast<SetMsaaFn>(fn(kSetMsaa));
-    g_reset = reinterpret_cast<ResetFn>(fn(kReset));
+    auto fn = [](const char* name) { return addrs::fn(name); };
+    g_gfx = reinterpret_cast<GetterFn>(fn("Gfx"));
+    g_renderSystem = reinterpret_cast<GetterFn>(fn("RenderSystem"));
+    g_canvas = reinterpret_cast<GetterFn>(fn("Canvas"));
+    g_setLetterbox = reinterpret_cast<SetLetterboxFn>(fn("SetLetterbox"));
+    g_setMsaa = reinterpret_cast<SetMsaaFn>(fn("SetMsaa"));
+    g_reset = reinterpret_cast<ResetFn>(fn("Reset"));
 
     MH_STATUS init = MH_Initialize();
     if (init != MH_OK && init != MH_ERROR_ALREADY_INITIALIZED) return false;
-    void* target = fn(kApplySettings);
+    void* target = fn("ApplySettings");
     if (MH_CreateHook(target, reinterpret_cast<void*>(&hookedApplySettings), reinterpret_cast<void**>(&g_original)) !=
             MH_OK ||
         MH_EnableHook(target) != MH_OK) {

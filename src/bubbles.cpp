@@ -9,6 +9,7 @@
 
 #include "MinHook.h"
 #include "config.h"
+#include "addrs.h"
 #include "gameaddr.h"
 #include "log.h"
 
@@ -16,23 +17,11 @@ namespace s4vr::bubbles {
 
 namespace {
 
-// Game functions (DX11 rva, game 1.128.90.1030), checked against their first bytes.
-struct Known {
-    uint32_t rva;
-    uint8_t bytes[16];
-};
 // The bound-element updater (manager): projects every bound UI piece, once a frame (game thread).
-const Known kUpdater{0xe55120, {0x48, 0x8b, 0xc4, 0x48, 0x89, 0x48, 0x08, 0x55, 0x53, 0x56, 0x57, 0x41, 0x54, 0x41, 0x55, 0x41}};
 // A bound piece's anchor in the world (manager, float4 out, record) -> false if its object is gone.
-const Known kAnchor{0xe53140, {0x48, 0x89, 0x5c, 0x24, 0x08, 0x48, 0x89, 0x74, 0x24, 0x10, 0x48, 0x89, 0x7c, 0x24, 0x18, 0x55}};
 // Scaleform display object: GetDisplayInfo / SetDisplayInfo (value, handle, DisplayInfo*).
-const Known kGetInfo{0xec80d0, {0x40, 0x55, 0x53, 0x57, 0x48, 0x8d, 0x6c, 0x24, 0xa0, 0x48, 0x81, 0xec, 0x60, 0x01, 0x00, 0x00}};
-const Known kSetInfo{0xee37e0, {0x4c, 0x8b, 0xdc, 0x55, 0x57, 0x49, 0x8d, 0x6b, 0xa8, 0x48, 0x81, 0xec, 0x48, 0x01, 0x00, 0x00}};
 // The UI object (its vtable +200: UI scale) and the render system with the screen size, as the
 // updater uses them: stage = (0..1 across the screen) * scale * screen pixels.
-const Known kUiObject{0xd9f100, {0x48, 0x8b, 0x05, 0x09, 0xc4, 0xbb, 0x01, 0xc3, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc}};
-const Known kRenderSystem{0x13785c0, {0x48, 0x8b, 0x05, 0x21, 0xa8, 0x60, 0x01, 0xc3, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc}};
-const Known kScreenSize{0x1378650, {0x8b, 0x41, 0x38, 0x89, 0x02, 0x8b, 0x41, 0x3c, 0x41, 0x89, 0x00, 0xc3, 0xcc, 0xcc, 0xcc, 0xcc}};
 
 // The manager's list of bound records (circular, next pointer first), and in a record
 // (BindDisplayObject 0xe14f70): +0x30 screenOffset, +0x7c shown this frame, +0x80 object id,
@@ -290,13 +279,13 @@ void hookedUpdater(void* manager) {
 
 bool install() {
     if (gameaddr::dx9()) return false;
-    void* updater = gameaddr::function(kUpdater.rva, kUpdater.bytes);
-    g_anchor = reinterpret_cast<AnchorFn>(gameaddr::function(kAnchor.rva, kAnchor.bytes));
-    g_getInfo = reinterpret_cast<InfoFn>(gameaddr::function(kGetInfo.rva, kGetInfo.bytes));
-    g_setInfo = reinterpret_cast<InfoFn>(gameaddr::function(kSetInfo.rva, kSetInfo.bytes));
-    g_uiObject = reinterpret_cast<GetFn>(gameaddr::function(kUiObject.rva, kUiObject.bytes));
-    g_renderSystem = reinterpret_cast<GetFn>(gameaddr::function(kRenderSystem.rva, kRenderSystem.bytes));
-    g_screenSize = reinterpret_cast<ScreenFn>(gameaddr::function(kScreenSize.rva, kScreenSize.bytes));
+    void* updater = addrs::fn("Updater");
+    g_anchor = reinterpret_cast<AnchorFn>(addrs::fn("Anchor"));
+    g_getInfo = reinterpret_cast<InfoFn>(addrs::fn("GetInfo"));
+    g_setInfo = reinterpret_cast<InfoFn>(addrs::fn("SetInfo"));
+    g_uiObject = reinterpret_cast<GetFn>(addrs::fn("UiObject"));
+    g_renderSystem = reinterpret_cast<GetFn>(addrs::fn("RenderSystem"));
+    g_screenSize = reinterpret_cast<ScreenFn>(addrs::fn("ScreenSize"));
     if (!updater || !g_anchor || !g_getInfo || !g_setInfo || !g_uiObject || !g_renderSystem || !g_screenSize) {
         LOG("Bubbles: game build not recognised; bubbles stay on the flat UI");
         return false;
