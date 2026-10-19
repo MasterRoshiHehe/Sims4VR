@@ -242,6 +242,20 @@ void hookedUpdater(void* manager) {
         }
         if (at<int>(rec, kRecKind) != 1) continue;
         const int type = classify(rec);
+        if (type == kHeadline) {  // diagnostics: when a nameplate is up, and what the game says about it
+            static uint64_t s_plateKey[16] = {};
+            static int s_plateLogs = 0;
+            const uint64_t key = reinterpret_cast<uintptr_t>(rec) ^ (static_cast<uint64_t>(at<uint8_t>(rec, kRecShown)) << 62) ^
+                                 (static_cast<uint64_t>(at<uint8_t>(rec, 0xae)) << 61);
+            uint64_t& slot = s_plateKey[(reinterpret_cast<uintptr_t>(rec) >> 4) & 15];
+            if (slot != key && s_plateLogs < 40) {
+                slot = key;
+                ++s_plateLogs;
+                LOG("Bubbles: nameplate %p of %llu%s shown %d enabled %d scaled %d occluded %d slots %d", static_cast<void*>(rec),
+                    static_cast<unsigned long long>(object), mine ? " (yours)" : "", at<uint8_t>(rec, kRecShown),
+                    at<uint8_t>(rec, 0xae), at<uint8_t>(rec, kRecScaled), at<uint8_t>(rec, kRecOccluded), slots ? 1 : 0);
+            }
+        }
         if (type < 0 || (type != kHeadline && !at<uint8_t>(rec, kRecScaled))) continue;
         if (type == kBalloon && (mine ? hideOwn : hideNpc)) {
             setInfo(rec, kSetVisible, 0, 0, 0, false, 0);
