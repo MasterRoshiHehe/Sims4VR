@@ -1763,7 +1763,13 @@ float grabCurlFor(int side) {
         get.store(fn, std::memory_order_relaxed);
     }
     float v;
-    if (!fn(region == kRegionChest ? "breast_grab_curl" : "butt_grab_curl", &v) || !std::isfinite(v)) return c;
+    static std::atomic<int> logged{0};  // what the API gave, once per change (Touch/curl diagnostics)
+    const bool ok = fn(region == kRegionChest ? "breast_grab_curl" : "butt_grab_curl", &v) && std::isfinite(v);
+    const int key = (region << 8) | (ok ? 1 + static_cast<int>(v * 100) : 0);
+    if (logged.exchange(key) != key)
+        LOG("Touch: finger bend for a held %s: %s%.2f (grab_curl %.2f)", region == kRegionChest ? "breast" : "butt",
+            ok ? "Integrated Body Physics says " : "no value from Integrated Body Physics, using ", ok ? v : c, c);
+    if (!ok) return c;
     return v < 0 ? 0 : v > 1 ? 1 : v;
 }
 std::atomic<void*> g_restricted[16] = {};

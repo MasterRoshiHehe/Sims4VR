@@ -807,13 +807,14 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
     // The laser let go of the settings menu (its button opened, or the laser went off).
     if (g_settingsDrag.hand >= 0 && g_settingsDrag.laser && !settingsDragged) endSettingsDrag(time);
     if (laserClick) {
-        static int logged = 0;
-        if (logged++ < 60)
-            LOG("Laser: click %s (pie %s, UI alpha %.2f, near %.2f%s%s)",
+        static int logged = 0, loggedPhone = 0;  // the phone-out clicks count apart (A7 diagnostics)
+        if (g_phoneOut ? loggedPhone++ < 60 : logged++ < 60)
+            LOG("Laser: click %s (pie %s, UI alpha %.2f, near %.2f%s%s%s)",
                 poking ? "taken by a finger poke" : pointing >= 0 ? "ignored: the other hand points"
                 : onPie ? "on a menu" : onWorld ? "into the world" : c.hasTarget ? "on the UI" : "on nothing",
                 g_pie.active ? "open" : "closed", g_uiAlphaUnderLaser, g_uiAlphaNearLaser,
-                gameMenuOpen() ? ", game menu open" : "", g_pieDismissHold ? ", held after a pie close" : "");
+                gameMenuOpen() ? ", game menu open" : "", g_pieDismissHold ? ", held after a pie close" : "",
+                g_phoneOut ? (g_phoneSheet.m.active ? ", phone out (its screen up)" : ", phone out") : "");
     }
     // A touch clicks once, where the game picked through the fingertip; the
     // finger has to come away before it clicks again.
