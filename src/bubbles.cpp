@@ -56,14 +56,16 @@ Config g_options;
 // Their content around the element's origin, in its own units at scale 1 (y down), padded: the
 // SWF timeline bounds (union of all bubble types, show and hide; the bar with its mood clip and
 // level-up glow, not the far-reaching level-up VFX). The balloon's tail is its origin.
-enum Type { kBalloon, kBar, kFlyaway };
+enum Type { kBalloon, kBar, kFlyaway, kHeadline };
 struct Box {
     float l, t, r, b;
     float ax, ay;  // where the anchor is (the element's origin minus screenOffset)
 };
 // The stat flyaway (SimFlyaway, screenOffset -150,-50: the +/- icons that float up over a Sim, a relationship
 // change among them): its text field [127.8,-45,611.8,62.6] and the 70 px it rises.
-const Box kBoxes[3] = {{-210, -230, 40, 28, 0, 0}, {-22, -405, 220, 50, 100, 50}, {127, -115, 612, 64, 150, 50}};
+// The Sim nameplate (SimHeadline, screenOffset -210,-240, not scaled by the camera): name, headline and the
+// relationship bars with their +/- on a change; its size is a generous guess around the card.
+const Box kBoxes[4] = {{-210, -230, 40, 28, 0, 0}, {-22, -405, 220, 50, 100, 50}, {127, -115, 612, 64, 150, 50}, {0, 0, 430, 260, 210, 240}};
 constexpr float kBalloonWidth = 245;  // the size settings are a bubble's width
 // Lifted pieces are drawn at this scale into slots along the top of the UI.
 constexpr float kSlotScale = 0.6f;
@@ -72,13 +74,13 @@ constexpr float kSlotScale = 0.6f;
 // slot the card is cut from is the slot the piece is drawn into even when the UI texture lags the game
 // thread by a frame, or other pieces come and go (before: slots followed the list order, so cards
 // flickered and showed another Sim's piece). One pool per type, laid out in the top middle of the UI.
-constexpr int kSlotCols[3] = {7, 7, 3}, kSlotRows[3] = {2, 1, 3};
+constexpr int kSlotCols[4] = {7, 7, 3, 3}, kSlotRows[4] = {2, 1, 3, 1};
 constexpr int kSlotMax = 21;
 struct SlotOwner {
     uintptr_t rec = 0;
     ULONGLONG seen = 0;
 };
-SlotOwner g_slotOwner[3][kSlotMax];
+SlotOwner g_slotOwner[4][kSlotMax];
 constexpr ULONGLONG kSlotHoldMs = 400;
 
 // The slot of `rec` in its type's pool (-1: the pool is full).
@@ -137,6 +139,7 @@ int classify(const uint8_t* rec) {
     if (about(so[0], 0) && about(so[1], 0) && std::fabs(so[2] + 0.1f) < 0.02f) return kBalloon;
     if (about(so[0], -100) && about(so[1], -50)) return kBar;
     if (about(so[0], -150) && about(so[1], -50)) return kFlyaway;
+    if (about(so[0], -210) && about(so[1], -240)) return kHeadline;
     return -1;
 }
 
@@ -237,9 +240,9 @@ void hookedUpdater(void* manager) {
                     front ? 1 : 0, hideOwn ? 1 : 0);
             }
         }
-        if (at<int>(rec, kRecKind) != 1 || !at<uint8_t>(rec, kRecScaled)) continue;
+        if (at<int>(rec, kRecKind) != 1) continue;
         const int type = classify(rec);
-        if (type < 0) continue;
+        if (type < 0 || (type != kHeadline && !at<uint8_t>(rec, kRecScaled))) continue;
         if (type == kBalloon && (mine ? hideOwn : hideNpc)) {
             setInfo(rec, kSetVisible, 0, 0, 0, false, 0);
             ++hidden;
@@ -251,7 +254,7 @@ void hookedUpdater(void* manager) {
         }
         const bool inFront = mine && front;
         if (mine && !inFront) continue;  // in your head: left as the game has it
-        if (mine && type == kFlyaway) continue;  // your own stat changes stay on the flat UI
+        if (mine && (type == kFlyaway || type == kHeadline)) continue;  // your own stat changes and nameplate stay on the flat UI
         if (!inFront && !at<uint8_t>(rec, kRecShown)) continue;
         if (count >= kMaxPieces) continue;
         float p[4] = {};
