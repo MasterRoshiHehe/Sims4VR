@@ -20,6 +20,7 @@ IDLE_WORDS = ('browse', 'playonphone', 'fanatic', 'sitphone', 'usephone', 'tend_
 _logs = 0
 _hidden = set()
 _seen = 0
+_props = {}  # phone props hidden for you; the animation's show events hide them again (below)
 
 
 def _log(message):
@@ -74,6 +75,9 @@ def _wrap_get_prop():
                 if prop is not getattr(phone, '_phone', None):
                     from objects import VisibilityState
                     prop.visibility = VisibilityState(False)
+                    _props[id(prop)] = prop
+                    if len(_props) > 40:
+                        _props.pop(next(iter(_props)))
                     if prop_name not in _hidden:
                         _hidden.add(prop_name)
                         _log('the game\'s phone prop "{}" hidden for {}'.format(prop_name, interaction))
@@ -82,6 +86,26 @@ def _wrap_get_prop():
         return prop
 
     hooks.hook('nophone', animation.AnimationContext, '_get_prop', _get_prop, first_person_only=True)
+
+
+def _wrap_visibility_event():
+    """The animation's own show/hide events (ClipEventType.Visibility) switched the hidden prop
+    back on (v0.13.272: the phone still showed in the hand): hide the tracked ones again after."""
+    from animation.arb_element import ArbElement
+
+    def _event_handler_visibility(original, self, event_data):
+        result = original(self, event_data)
+        try:
+            if _props:
+                from objects import VisibilityState
+                for prop in list(_props.values()):
+                    if getattr(prop, 'visibility', None) is None or prop.visibility.visibility:
+                        prop.visibility = VisibilityState(False)
+        except Exception as e:
+            _log('visibility event check failed: {!r}'.format(e))
+        return result
+
+    hooks.hook('nophone', ArbElement, '_event_handler_visibility', _event_handler_visibility)
 
 
 def _phone_idle(interaction):
@@ -120,6 +144,10 @@ try:
     _wrap_get_prop()
 except Exception as _e:
     native._log('nophone: wrapping the animation props failed: {!r}'.format(_e))
+try:
+    _wrap_visibility_event()
+except Exception as _e:
+    native._log('nophone: wrapping the visibility events failed: {!r}'.format(_e))
 try:
     _wrap_queue_append()
 except Exception as _e:
