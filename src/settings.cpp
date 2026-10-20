@@ -421,6 +421,8 @@ std::vector<Row> makeRows() {
                &Config::flatWorld),
         toggle(L"View motion", L"Both real eyes every frame (real depth; test)", "stereo", "both_eyes",
                &Config::bothEyes),
+        toggle(L"View motion", L"Headset frames on their own clock (smooth turning)", "stereo", "frame_clock",
+               &Config::frameClock),
         choice(L"View motion", L"Right eye reuses a scene part (test)", "stereo", "both_eyes_skip", &Config::bothEyesSkip,
                {L"Off", L"Part 3", L"Part 4", L"Part 8"}),
         choice(L"View motion", L"Depth eye test view", "stereo", "depth_eye_debug", &Config::depthEyeDebug,

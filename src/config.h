@@ -85,6 +85,10 @@ struct Config {
     // 0 = none) and reuses the left eye's: a test of which part is the shadows (v0.13.307).
     int bothEyesSkip = 0;
     bool bothEyes = true;  // the one mode to make work (user 2026-10-20 18:32Z)
+    // [stereo] frame_clock: headset frames go out on their own thread at the headset's rate, each with
+    // the newest pictures turned on by the stick turn since they were drawn, so turning stays smooth
+    // when the game draws fewer frames than the headset shows (v0.13.307). 0 = the Present sends them.
+    bool frameClock = true;
     bool depthEyeAlternate = false;  // took turns: edges shook (v0.13.297-298)
     bool depthEyePresentDepth = true;  // [stereo] depth_eye_present_depth (deptheye::setPresentDepth)
     // [stereo] made_eye_*: the made eye's alignment, set by hand from the menu (Advanced › View ›

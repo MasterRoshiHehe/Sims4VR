@@ -22,8 +22,10 @@ static void resetStereo() {
 
 
 static void releaseBeam();
+static void stopFrameClock();  // 18b_frame_clock.inc
 
 static void destroySession() {
+    stopFrameClock();
     gpuload::yieldToStreamer(false);
     releaseBeam();
     sharpen::release();
@@ -245,6 +247,7 @@ static void pollEvents() {
                 // The runtime follows with IDLE and then EXITING if we asked
                 // it to end (Virtual Desktop queues both at once); the session
                 // is destroyed at EXITING, below, so neither is left behind.
+                stopFrameClock();
                 check(xrEndSession(g_session), "xrEndSession");
                 g_sessionRunning = false;
             } else if (g_sessionState == XR_SESSION_STATE_EXITING && g_exitRequested) {

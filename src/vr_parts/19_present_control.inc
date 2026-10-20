@@ -43,7 +43,11 @@ int onFrame(ID3D11Texture2D* backbuffer, HWND window, bool ownMirror) {
     g_ownMirror = ownMirror;
     g_frameEye = -1;
     // Both eyes: the frame's left eye only waits for its right eye (no UI, no headset frame).
-    if (g_session && g_sessionRunning && mode() == Mode::Stereo && holdBothFirst(backbuffer)) return g_frameEye;
+    if (g_session && g_sessionRunning && mode() == Mode::Stereo) {
+        std::unique_lock<std::mutex> clockLock(g_clockMutex, std::defer_lock);
+        if (g_clockRunning) clockLock.lock();
+        if (holdBothFirst(backbuffer)) return g_frameEye;
+    }
     // The UI drawn this frame went to the panel texture if redirection was on.
     const bool uiOwnLayer = g_config.uiPanel && g_session && g_sessionRunning && mode() == Mode::Stereo && camera::available();
     bubbles::setOptions(g_config);
@@ -82,11 +86,18 @@ int onFrame(ID3D11Texture2D* backbuffer, HWND window, bool ownMirror) {
     double gameMs = lastPresent.QuadPart ? ms(lastPresent, frameStart) : 0, waitMs = 0, renderMs = 0, endMs = 0;
 
     bool stereoFrame = false;
+    // Headset frames on their own clock (18b_frame_clock.inc): this frame's layers go to the clock
+    // thread instead of the runtime.
+    if (g_session && g_sessionRunning) followFrameClock(device);
     if (g_session && g_sessionRunning) {
         XrFrameWaitInfo waitInfo{XR_TYPE_FRAME_WAIT_INFO};
         XrFrameState frame{XR_TYPE_FRAME_STATE};
         XrResult waited;
-        {
+        std::unique_lock<std::mutex> clockLock;
+        const bool clocked = g_clockRunning;
+        if (clocked) {
+            waited = clockFrame(clockLock, frame);
+        } else {
             XrCallTimer timer("xrWaitFrame");
             waited = xrWaitFrame(g_session, &waitInfo, &frame);
         }
@@ -95,7 +106,8 @@ int onFrame(ID3D11Texture2D* backbuffer, HWND window, bool ownMirror) {
         XrFrameBeginInfo beginInfo{XR_TYPE_FRAME_BEGIN_INFO};
         if (waited == XR_ERROR_SESSION_LOST) {
             destroySession();
-        } else if (check(waited, "xrWaitFrame") && check(xrBeginFrame(g_session, &beginInfo), "xrBeginFrame")) {
+        } else if (check(waited, "xrWaitFrame") && (clocked ? frame.predictedDisplayTime > 0
+                                                            : check(xrBeginFrame(g_session, &beginInfo), "xrBeginFrame"))) {
             static XrDuration loggedPeriod = 0;
             static int periodLogs = 0;
             if (frame.predictedDisplayPeriod > 0 && frame.predictedDisplayPeriod != loggedPeriod && periodLogs < 20) {
@@ -226,19 +238,26 @@ int onFrame(ID3D11Texture2D* backbuffer, HWND window, bool ownMirror) {
 
             LARGE_INTEGER beforeEnd = now();
             renderMs = ms(afterWait, beforeEnd);
+            if (clocked) {
+                clockPublish(layers, layerCount, stereo ? &projection : nullptr, frame.predictedDisplayTime);
+                endMs = clockTakeEndMs();
+            }
             XrFrameEndInfo endInfo{XR_TYPE_FRAME_END_INFO};
             endInfo.displayTime = frame.predictedDisplayTime;
             endInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
             endInfo.layerCount = layerCount;
             endInfo.layers = layerCount ? layers : nullptr;
-            XrResult ended;
-            {
-                XrCallTimer timer("xrEndFrame");
-                ended = xrEndFrame(g_session, &endInfo);
+            if (!clocked) {
+                XrResult ended;
+                {
+                    XrCallTimer timer("xrEndFrame");
+                    ended = xrEndFrame(g_session, &endInfo);
+                }
+                check(ended, "xrEndFrame");
+                endMs = ms(beforeEnd, now());
             }
-            check(ended, "xrEndFrame");
-            endMs = ms(beforeEnd, now());
         }
+        if (clockLock.owns_lock()) clockLock.unlock();
         // A runtime that blocks every frame: the link to the headset is
         // struggling (Wi-Fi, the stream backing up) or gone (the headset app
         // died). Short stalls pass on their own, so they are ridden out; one
@@ -300,6 +319,7 @@ int onFrame(ID3D11Texture2D* backbuffer, HWND window, bool ownMirror) {
     if (g_exitRequested && GetTickCount64() > g_exitDeadline) {
         LOG("The runtime didn't stop the session in time; closing it anyway");
         ULONGLONG delay = g_restartDelay;
+        stopFrameClock();
         if (g_sessionRunning) xrEndSession(g_session);
         destroySession();
         g_nextSessionAttempt = GetTickCount64() + delay;
@@ -365,6 +385,7 @@ void shutdown() {
             pollEvents();
             if (g_session && g_sessionRunning) Sleep(10);
         }
+        stopFrameClock();
         if (g_session && g_sessionRunning) xrEndSession(g_session);
     }
     // Runtimes keep threads that touch the session; leaving it alive until the

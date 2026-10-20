@@ -490,6 +490,9 @@ static bool holdBothFirst(ID3D11Texture2D* backbuffer) {
     return true;
 }
 
+// The head point the shown eyes were turned about (the frame clock turns them on about it).
+static XrVector3f g_shownHead{};
+
 static bool renderStereo(ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_DESC& desc, XrTime time,
                          XrCompositionLayerProjection& layer, XrCompositionLayerProjectionView (&views)[2]) {
     XrViewLocateInfo locate{XR_TYPE_VIEW_LOCATE_INFO};
@@ -659,6 +662,7 @@ static bool renderStereo(ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_DESC
     }
     const XrVector3f head{(l.position.x + r.position.x) / 2, (l.position.y + r.position.y) / 2,
                           (l.position.z + r.position.z) / 2};
+    g_shownHead = head;
     float turned[2] = {0, 0};
     for (int eye = 0; eye < 2; ++eye) {
         views[eye] = {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW};

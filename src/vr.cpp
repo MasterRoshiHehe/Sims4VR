@@ -5,11 +5,14 @@
 #define XR_NO_PROTOTYPES
 #include <windows.h>
 #include <d3d11.h>
+#include <d3d11_4.h>
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <cmath>
 #include <cstring>
@@ -68,5 +71,6 @@ namespace s4vr::vr {
 #include "vr_parts/16_controls.inc"
 #include "vr_parts/17_render.inc"
 #include "vr_parts/18_stereo.inc"
+#include "vr_parts/18b_frame_clock.inc"
 #include "vr_parts/19_present_control.inc"
 }  // namespace s4vr::vr
