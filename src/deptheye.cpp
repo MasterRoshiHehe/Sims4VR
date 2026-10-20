@@ -93,9 +93,9 @@ float3 seen(float2 uv) {
 // with that surface between this step and the last, is what this eye sees:
 // refined by halving, and that spot of the fresh picture is its colour. The
 // first hit is the nearest one, so a near thing's edge is never replaced by
-// the wall behind it. A ray that only passes behind near things sees
-// something the fresh eye can't: it takes the farthest surface met on the
-// way, stepped clear of the near thing's edge.
+// the wall behind it. A ray that passes behind a near thing without meeting
+// a surface sees something the fresh eye can't: it takes the surface just
+// before that near thing's edge (the far side), stepped clear of the edge.
 #define STEPS 64
 float4 psMain(VsOut i) : SV_Target {
     float3 ray = float3(lerp(dstTan.x, dstTan.y, i.uv.x), lerp(dstTan.z, dstTan.w, i.uv.y), 1);
@@ -118,40 +118,62 @@ float4 psMain(VsOut i) : SV_Target {
     }
     float wNear = 1.0 / max(nearZ, 0.08), wFar = 1.0 / farZ;
     float zPrev = 1.0 / wNear;
-    bool hit = false;
-    float zHit = farZ;
-    float farthest = -1, zFill = farZ;
+    float2 uPrev = project(apply(inv0, inv1, inv2, ray * zPrev), srcTan);
+    float dPrev = viewZ(DEPTH(texel(saturate(uPrev))));
+    bool hit = false, hidden = false;
+    float zHit = farZ, zFill = farZ;
+    float2 uFill = flat, uBehind = flat;
     [loop] for (uint k = 1; k <= STEPS; ++k) {
         float z = 1.0 / lerp(wNear, wFar, k / float(STEPS));
         float2 u = project(apply(inv0, inv1, inv2, ray * z), srcTan);
         float d = viewZ(DEPTH(texel(saturate(u))));
-        if (d > farthest) {
-            farthest = d;
-            zFill = z;
-        }
-        if (z >= d && d >= zPrev * 0.97) {
-            // Crossed the surface between zPrev and z: halve onto it.
-            float lo = zPrev, hi = z;
-            [unroll] for (uint h = 0; h < 5; ++h) {
-                float m = 0.5 * (lo + hi);
-                float2 um = project(apply(inv0, inv1, inv2, ray * m), srcTan);
-                if (m >= viewZ(DEPTH(texel(saturate(um))))) hi = m; else lo = m;
+        if (z >= d) {
+            if (d >= zPrev * 0.97) {
+                // Crossed the surface between zPrev and z: halve onto it.
+                float lo = zPrev, hi = z;
+                [unroll] for (uint h = 0; h < 5; ++h) {
+                    float m = 0.5 * (lo + hi);
+                    float2 um = project(apply(inv0, inv1, inv2, ray * m), srcTan);
+                    if (m >= viewZ(DEPTH(texel(saturate(um))))) hi = m; else lo = m;
+                }
+                zHit = hi;
+                hit = true;
+                break;
             }
-            zHit = hi;
-            hit = true;
-            break;
+            if (!hidden) {
+                // The ray went behind something near without meeting a
+                // surface: this eye sees what the fresh eye can't, just past
+                // that near thing's edge. Remember the last surface before
+                // it (the far side next to the edge) to fill from.
+                hidden = true;
+                uFill = uPrev;
+                zFill = dPrev;
+                uBehind = u;
+            }
         }
         zPrev = z;
+        uPrev = u;
+        dPrev = d;
     }
     float2 us;
     if (hit) {
         us = project(apply(inv0, inv1, inv2, ray * zHit), srcTan);
     } else {
-        us = project(apply(inv0, inv1, inv2, ray * zFill), srcTan);
-        float2 nearSide = project(apply(inv0, inv1, inv2, ray * (1.0 / wNear)), srcTan);
-        float2 away = us - nearSide;
-        float len = length(away * float2(width, height));
-        if (len > 1e-3) us += away / len * 2.0;
+        // Hidden from the fresh eye: the far side next to the near thing's
+        // edge, mirrored out from under it (where this ray meets the far
+        // side's distance lies under the near thing; the same distance the
+        // other way from the edge is far side the fresh eye saw), two pixels
+        // clear of the edge's blended pixels. Never anything farther along
+        // the ray (that pulled the sky and other far things in).
+        us = uFill;
+        float2 away = (uFill - uBehind) * float2(width, height);
+        float len = length(away);
+        if (hidden && len > 1e-3) {
+            float2 dir = away / len;
+            float2 under = (project(apply(inv0, inv1, inv2, ray * zFill), srcTan) - uFill) * float2(width, height);
+            float inside = clamp(-dot(under, dir), 0.0, 400.0);  // pixels under the near thing
+            us += dir * (2.0 + inside) / float2(width, height);
+        }
     }
     if (debugView == 1) {
         // Test view 1: how far each pixel's surface is, 0.1 m white to 50 m
