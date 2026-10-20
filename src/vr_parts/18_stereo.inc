@@ -165,14 +165,23 @@ static void depthOtherEye(int fresh, const XrView (&located)[2], const D3D11_TEX
     source->Release();
     XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
     if (!check(xrReleaseSwapchainImage(s.handle, &release), "xrReleaseSwapchainImage")) return;
+    static int misses = 0;  // frames in a row without the other eye
     if (!drawn) {
         // The image shown now holds whatever it held before: leave the eye out
-        // until it is drawn again; the game goes back to alternate eyes.
+        // (that frame isn't submitted) and try again next frame. Off only when
+        // the pass can't be made at all, or nothing was made for 2 s.
         g_eyeValid[old] = false;
-        g_depthEyeBroken = true;
-        LOG("Depth eye: couldn't make the other eye; off (alternate eyes again)");
+        static uint64_t missed = 0;
+        if (++missed <= 5 || missed % 1000 == 0)
+            LOG("Depth eye: other eye not made this frame (%s; %llu so far)", deptheye::failure(),
+                static_cast<unsigned long long>(missed));
+        if (deptheye::broken() || ++misses >= 144) {
+            g_depthEyeBroken = true;
+            LOG("Depth eye: couldn't make the other eye (%s); off (alternate eyes again)", deptheye::failure());
+        }
         return;
     }
+    misses = 0;
     g_eyePose[old] = g_shownPose[old] = target;
     g_eyeFov[old] = g;
     g_eyeYaw[old] = g_shownYaw[old] = g_eyeYaw[fresh];

@@ -122,6 +122,7 @@ struct Params {
 static_assert(sizeof(Params) % 16 == 0, "constant buffer size");
 
 bool g_failed = false;
+const char* g_failure = nullptr;  // why the last draw made nothing
 ID3D11Device* g_device = nullptr;
 ID3D11VertexShader* g_vs = nullptr;
 ID3D11PixelShader* g_ps[2] = {};  // single-sampled depth, MSAA depth
@@ -363,11 +364,22 @@ void logNow() {
 
 bool draw(ID3D11ShaderResourceView* source, ID3D11Texture2D* target, DXGI_FORMAT format, UINT width, UINT height,
           const float rows[12], const float srcTan[4], const float dstTan[4], float nearZ, float farZ) {
-    if (!source || !target || width < 2 || height < 2 || !(nearZ > 0) || !(farZ > nearZ)) return false;
+    g_failure = nullptr;
+    if (!source || !target || width < 2 || height < 2) {
+        g_failure = "no fresh picture";
+        return false;
+    }
+    if (!(nearZ > 0) || !(farZ > nearZ)) {
+        g_failure = "the frame's near/far planes unknown";
+        return false;
+    }
     ID3D11Device* device = nullptr;
     target->GetDevice(&device);
     device->Release();  // g_device is only compared, never used after the device goes away
-    if (!ready(device)) return false;
+    if (!ready(device)) {
+        g_failure = "the pass couldn't be set up";
+        return false;
+    }
     logNow();
 
     UINT samples = 0, depthWidth = 0, depthHeight = 0;
@@ -377,6 +389,7 @@ bool draw(ID3D11ShaderResourceView* source, ID3D11Texture2D* target, DXGI_FORMAT
     if (!depth) depth = nearplane::latestDepth(samples, depthWidth, depthHeight, reversed);
     if (!depth) {
         ++g_noDepth;
+        g_failure = "no scene depth from this frame";
         return false;
     }
     if (depthWidth != width || depthHeight != height || samples < 1 || samples > 8) {
@@ -388,6 +401,7 @@ bool draw(ID3D11ShaderResourceView* source, ID3D11Texture2D* target, DXGI_FORMAT
                 samples, width, height);
         }
         depth->Release();
+        g_failure = "the scene depth is another size";
         return false;
     }
     ID3D11DeviceContext* context = nullptr;
@@ -457,12 +471,16 @@ bool draw(ID3D11ShaderResourceView* source, ID3D11Texture2D* target, DXGI_FORMAT
             LOG("Depth eye: the other eye made from the fresh one (%ux%u, depth x%u%s, %u steps a pixel)", width, height,
                 samples, reversed ? ", reversed" : "", kIterations);
     }
+    if (!done) g_failure = !context1 ? "no D3D11.1 context" : !g_depthView ? "no depth buffer" : "no view of the eye image";
     safeRelease(targetRtv);
     safeRelease(context1);
     context->Release();
     depth->Release();
     return done;
 }
+
+const char* failure() { return g_failure ? g_failure : "unknown"; }
+bool broken() { return g_failed; }
 
 void forgetTargets() {
     for (TargetView& t : g_targets) {

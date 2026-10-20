@@ -26,6 +26,11 @@ namespace s4vr::deptheye {
 bool draw(ID3D11ShaderResourceView* source, ID3D11Texture2D* target, DXGI_FORMAT format, UINT width, UINT height,
           const float rows[12], const float srcTan[4], const float dstTan[4], float nearZ, float farZ);
 
+// Why the last draw returned false, and whether the pass can never be made
+// this session (anything else may work next frame).
+const char* failure();
+bool broken();
+
 // Drops the views of swapchain images (call before the runtime destroys them).
 void forgetTargets();
 // Frees everything (session end).
