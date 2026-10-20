@@ -57,4 +57,11 @@ ID3D11ShaderResourceView* sceneDepth(UINT& samples);
 // when none was made lately (the near limit isn't measuring).
 ID3D11ShaderResourceView* latestDepth(UINT& samples, UINT& width, UINT& height, bool& reversed);
 
+// The UI's render thread, after our own 3D pieces (phone, menus, pie) were
+// drawn into the view with their depth (phone3d::setWriteDepth): a second copy
+// of the scene depth, for the depth eye (deptheye.h). Only after sense copied.
+void senseLate(ID3D11DeviceContext* context, ID3D11DepthStencilView* depth);
+// Present thread: that copy, as latestDepth.
+ID3D11ShaderResourceView* lateDepth(UINT& samples, UINT& width, UINT& height, bool& reversed);
+
 }  // namespace s4vr::nearplane

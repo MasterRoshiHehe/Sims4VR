@@ -63,6 +63,12 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
 // Any thread: drawn within the last 200 ms (else vr.cpp shows the flat phone).
 bool drawnRecently();
 
+// Depth eye (deptheye.h): every piece drawn writes its depth into the scene's
+// (after the near limit's copy), and the depth is copied again after them
+// (nearplane::senseLate). Any thread.
+void setWriteDepth(bool on);
+bool writesDepth();
+
 // A flat menu panel fixed in the world (menus on objects: a picker on a fridge
 // door or a TV screen), drawn the same way so your hands and anything nearer
 // stay in front of it. World units: its centre, its right and up axes (unit

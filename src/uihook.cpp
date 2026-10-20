@@ -248,6 +248,19 @@ void senseNear(ID3D11DeviceContext* context) {
     depth->Release();
 }
 
+// The depth eye's copy of the scene depth, our own pieces in it.
+void senseLate(ID3D11DeviceContext* context) {
+    ID3D11DepthStencilView* depth = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_sceneMutex);
+        depth = g_sceneDepth.load();
+        if (!depth) return;
+        depth->AddRef();
+    }
+    nearplane::senseLate(context, depth);
+    depth->Release();
+}
+
 // Our phone into the finished 3D view, before the UI goes on top (or elsewhere).
 void drawPhone(ID3D11DeviceContext* context) {
     ID3D11RenderTargetView* view = nullptr;
@@ -373,6 +386,7 @@ void hookedRender(void* rm, void* movie) {
     if (g_phonePending.exchange(false)) {
         senseNear(context);
         drawPhone(context);
+        if (phone3d::writesDepth()) senseLate(context);
     }
     g_rendering.fetch_add(1, std::memory_order_relaxed);
     t_inRender = true;

@@ -81,19 +81,32 @@ float3 seen(float2 uv) {
 
 // Each target pixel looks back into the fresh picture (iterative warp): start
 // where its ray lands at infinity, then step to where the ray lands at the depth
-// found there. Pixels that don't settle on a surface (behind near things, past
-// the fresh view's edge) keep what the target held (its own picture, turned).
+// found there. A pixel that doesn't settle on a surface sees something the fresh
+// eye can't (beside a near thing): it takes the farthest surface along its
+// ray's path in the fresh picture, i.e. what lies behind. Past the fresh
+// picture's edge, its edge is stretched.
 float4 psMain(VsOut i) : SV_Target {
     float3 ray = float3(lerp(dstTan.x, dstTan.y, i.uv.x), lerp(dstTan.z, dstTan.w, i.uv.y), 1);
     float2 us = project(float3(dot(inv0.xyz, ray), dot(inv1.xyz, ray), dot(inv2.xyz, ray)), srcTan);
     [loop] for (uint k = 0; k < iterations; ++k) {
-        float z = max(seen(us).z, 1e-3);
+        float z = max(seen(saturate(us)).z, 1e-3);
         us = project(apply(inv0, inv1, inv2, ray * z), srcTan);
     }
-    if (any(us < 0) || any(us > 1)) discard;
-    float2 back = project(seen(us), dstTan);
-    if (any(abs(back - i.uv) * float2(width, height) > 1.5)) discard;
-    return float4(source.SampleLevel(linearClamp, us, 0).rgb, 1);
+    float2 back = project(seen(saturate(us)), dstTan);
+    if (any(abs(back - i.uv) * float2(width, height) > 1.5)) {
+        float farthest = -1;
+        float2 pick = us;
+        [unroll] for (uint c = 0; c < 8; ++c) {
+            float2 u = project(apply(inv0, inv1, inv2, ray * (0.25 * exp2(c))), srcTan);
+            float z = seen(saturate(u)).z;
+            if (z > farthest) {
+                farthest = z;
+                pick = u;
+            }
+        }
+        us = pick;
+    }
+    return float4(source.SampleLevel(linearClamp, saturate(us), 0).rgb, 1);
 }
 )HLSL";
 
@@ -359,7 +372,9 @@ bool draw(ID3D11ShaderResourceView* source, ID3D11Texture2D* target, DXGI_FORMAT
 
     UINT samples = 0, depthWidth = 0, depthHeight = 0;
     bool reversed = false;
-    ID3D11ShaderResourceView* depth = nearplane::latestDepth(samples, depthWidth, depthHeight, reversed);
+    // The copy with our own 3D pieces in it (phone3d::setWriteDepth), else the plain one.
+    ID3D11ShaderResourceView* depth = nearplane::lateDepth(samples, depthWidth, depthHeight, reversed);
+    if (!depth) depth = nearplane::latestDepth(samples, depthWidth, depthHeight, reversed);
     if (!depth) {
         ++g_noDepth;
         return false;

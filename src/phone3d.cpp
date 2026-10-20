@@ -226,6 +226,8 @@ ID3D11VertexShader* g_vs = nullptr;
 ID3D11PixelShader* g_ps = nullptr;
 ID3D11PixelShader* g_psPie[2] = {};  // the pie over the world: single sample, multisample scene depth
 ID3D11DepthStencilState* g_noDepth = nullptr;
+ID3D11DepthStencilState* g_alwaysWrite = nullptr;  // over everything, writing depth (setWriteDepth)
+std::atomic<bool> g_writeDepth{false};
 // Your arms and hands (camera.cpp, game thread): world segments and radii.
 HandCapsule g_hands[kHandCapsules];
 int g_handCount = 0;
@@ -278,6 +280,7 @@ void releaseAll() {
     safeRelease(g_psPie[0]);
     safeRelease(g_psPie[1]);
     safeRelease(g_noDepth);
+    safeRelease(g_alwaysWrite);
     safeRelease(g_layout);
     safeRelease(g_constants);
     safeRelease(g_vertices);
@@ -380,6 +383,9 @@ bool init(ID3D11Device* device) {
         dd.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
         dd.DepthFunc = D3D11_COMPARISON_ALWAYS;
         ok = SUCCEEDED(device->CreateDepthStencilState(&dd, &g_noDepth));
+        dd.DepthEnable = TRUE;
+        dd.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
+        ok = ok && SUCCEEDED(device->CreateDepthStencilState(&dd, &g_alwaysWrite));
     }
     if (ok) {
         D3D11_BLEND_DESC bd{};
@@ -1286,7 +1292,13 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
     D3D11_VIEWPORT vp{0, 0, static_cast<float>(td.Width), static_cast<float>(td.Height), 0, 1};
     context->RSSetViewports(1, &vp);
     context->OMSetBlendState(nullptr, nullptr, 0xffffffff);
-    context->OMSetDepthStencilState(g_depthState[reversed ? 1 : 0], 0);
+    // Depth eye (deptheye.h): every piece writes its depth, so the other eye
+    // made from this picture puts it where it is, not where the wall behind it is.
+    const bool writeDepth = g_writeDepth.load(std::memory_order_relaxed) && g_alwaysWrite && g_depthWrite[reversed ? 1 : 0];
+    ID3D11DepthStencilState* tested = writeDepth ? g_depthWrite[reversed ? 1 : 0] : g_depthState[reversed ? 1 : 0];
+    ID3D11DepthStencilState* over = writeDepth ? g_alwaysWrite : g_noDepth;
+    ID3D11DepthStencilView* overDepth = writeDepth ? depth : nullptr;
+    context->OMSetDepthStencilState(tested, 0);
     context->OMSetRenderTargets(1, &target, depth);
     if (showPhone) {
         // The phone is solid: it writes its depth when floor footprints or
@@ -1296,7 +1308,7 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
         context->UpdateSubresource(g_constants, 0, nullptr, &k, 0, 0);
         context->IASetVertexBuffers(0, 1, &g_vertices, &stride, &offset);
         context->Draw(g_vertexCount, 0);
-        if (solid) context->OMSetDepthStencilState(g_depthState[reversed ? 1 : 0], 0);
+        if (solid) context->OMSetDepthStencilState(tested, 0);
     }
     if (showSims1) {
         context->PSSetShaderResources(0, 1, &sims1View);
@@ -1314,9 +1326,9 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
             if (piePsForPanel) {
                 context->PSSetShader(piePs, nullptr, 0);
                 context->PSSetShaderResources(1, 1, &sceneDepth);
-                context->OMSetRenderTargets(1, &target, nullptr);  // the depth is read, so it can't be bound
+                context->OMSetRenderTargets(1, &target, overDepth);  // the depth copy is read, the scene's bound only to be written
             }
-            context->OMSetDepthStencilState(g_noDepth, 0);
+            context->OMSetDepthStencilState(over, 0);
         }
         context->PSSetShaderResources(0, 1, &panelView);
         context->UpdateSubresource(g_constants, 0, nullptr, &kPanel, 0, 0);
@@ -1325,7 +1337,7 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
         context->PSSetShaderResources(0, 1, &uiView);
         if (panelTop) {
             context->PSSetShader(g_ps, nullptr, 0);
-            context->OMSetDepthStencilState(g_depthState[reversed ? 1 : 0], 0);
+            context->OMSetDepthStencilState(tested, 0);
             context->OMSetRenderTargets(1, &target, depth);
         }
         context->OMSetBlendState(nullptr, nullptr, 0xffffffff);
@@ -1382,11 +1394,11 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
         for (int j = 0; j < pieceCount; ++j) {
             Constants kPiece{};
             panelConstants(pieces[j], kPiece, pieceView);
-            context->OMSetDepthStencilState(pieces[j].onTop ? g_noDepth : g_depthState[reversed ? 1 : 0], 0);
+            context->OMSetDepthStencilState(pieces[j].onTop ? over : tested, 0);
             context->UpdateSubresource(g_constants, 0, nullptr, &kPiece, 0, 0);
             context->Draw(6, 0);
         }
-        context->OMSetDepthStencilState(g_depthState[reversed ? 1 : 0], 0);
+        context->OMSetDepthStencilState(tested, 0);
         context->OMSetBlendState(nullptr, nullptr, 0xffffffff);
         context->PSSetShaderResources(0, 1, &uiView);
         static int logged = 0;
@@ -1399,8 +1411,8 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
         if (piePsForPie) {
             context->PSSetShader(piePs, nullptr, 0);
             context->PSSetShaderResources(1, 1, &sceneDepth);
-            context->OMSetDepthStencilState(g_noDepth, 0);
-            context->OMSetRenderTargets(1, &target, nullptr);  // the depth is read, so it can't be bound
+            context->OMSetDepthStencilState(over, 0);
+            context->OMSetRenderTargets(1, &target, overDepth);  // the depth copy is read, the scene's bound only to be written
         }
         context->PSSetShaderResources(0, 1, &pieView);
         context->UpdateSubresource(g_constants, 0, nullptr, &kPie, 0, 0);
@@ -1429,5 +1441,9 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
 }
 
 bool drawnRecently() { return GetTickCount64() - g_drawnAt.load(std::memory_order_relaxed) < 200; }
+
+void setWriteDepth(bool on) { g_writeDepth.store(on, std::memory_order_relaxed); }
+
+bool writesDepth() { return g_writeDepth.load(std::memory_order_relaxed); }
 
 }  // namespace s4vr::phone3d

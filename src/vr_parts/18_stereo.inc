@@ -112,22 +112,31 @@ static void alignOlderEye(int fresh, const XrView (&located)[2]) {
 }
 
 // Depth eye (deptheye.h): `fresh` was just copied; the other eye's picture is
-// made new for this frame: its own last picture turned to now, then the fresh
-// picture moved by its depth to where that eye sees it, on top. Both views
+// made from it for this frame, moved by its depth to where that eye is now
+// (this frame's located views, relative to the fresh render pose). Both views
 // then carry the fresh render's head pose and heading.
-static void depthOtherEye(int fresh, const XrView (&located)[2], float nearZ, float farZ) {
+static void depthOtherEye(int fresh, const XrView (&located)[2], const D3D11_TEXTURE2D_DESC& desc,
+                          const camera::Rendered& rendered) {
     const int old = 1 - fresh;
-    if (!eyealign::has(old) || !shownChain(old).handle) return;
+    Swapchain& s = shownChain(old);
+    bool recreated = false;
+    if (!ensureSwapchain(s, desc, recreated)) return;
+    if (recreated) eyealign::forget(old);
     UINT width = 0, height = 0;
     ID3D11ShaderResourceView* source = eyealign::keptView(fresh, width, height);
     if (!source) return;
+
+    const XrPosef& from = g_eyePose[fresh];
+    const XrPosef &lf = located[fresh].pose, &lo = located[old].pose;
     XrPosef target;
-    float rotation[9], tangents[4];
-    olderEyeTarget(fresh, located, target, rotation, tangents);
+    target.orientation = qnorm(qmul(from.orientation, qmul(qconj(lf.orientation), lo.orientation)));
+    const XrVector3f apart = qrot(qconj(lf.orientation), {lo.position.x - lf.position.x, lo.position.y - lf.position.y,
+                                                          lo.position.z - lf.position.z});
+    const XrVector3f offset = qrot(from.orientation, apart);
+    target.position = {from.position.x + offset.x, from.position.y + offset.y, from.position.z + offset.z};
 
     // A point in the fresh view to the other eye's view (x right, y up, z
     // ahead: OpenXR's view axes with z flipped).
-    const XrPosef& from = g_eyePose[fresh];
     float r[9];
     qmatrix(qnorm(qmul(qconj(target.orientation), from.orientation)), r);
     const XrVector3f t = qrot(qconj(target.orientation), {from.position.x - target.position.x,
@@ -143,37 +152,36 @@ static void depthOtherEye(int fresh, const XrView (&located)[2], float nearZ, fl
     rows[11] = -t.z;
     const XrFovf& f = g_eyeFov[fresh];
     const float srcTan[4] = {std::tan(f.angleLeft), std::tan(f.angleRight), std::tan(f.angleUp), std::tan(f.angleDown)};
+    const XrFovf& g = located[old].fov;
+    const float dstTan[4] = {std::tan(g.angleLeft), std::tan(g.angleRight), std::tan(g.angleUp), std::tan(g.angleDown)};
 
-    Swapchain& s = shownChain(old);
     uint32_t index = 0;
     if (!acquireImage(s, index)) {
         source->Release();
         return;
     }
-    const bool background = eyealign::draw(old, s.images[index].texture, s.format, rotation, tangents);
-    const bool moved = background && deptheye::draw(source, s.images[index].texture, s.format, width, height, rows,
-                                                    srcTan, tangents, nearZ, farZ);
+    const bool drawn = deptheye::draw(source, s.images[index].texture, s.format, width, height, rows, srcTan, dstTan,
+                                      rendered.nearZ, rendered.farZ);
     source->Release();
     XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
     if (!check(xrReleaseSwapchainImage(s.handle, &release), "xrReleaseSwapchainImage")) return;
-    if (!background) {
+    if (!drawn) {
         // The image shown now holds whatever it held before: leave the eye out
-        // until it is drawn again, and stop for this session.
+        // until it is drawn again; the game goes back to alternate eyes.
         g_eyeValid[old] = false;
-        eyealign::forget(old);
         g_depthEyeBroken = true;
-        LOG("Depth eye: couldn't draw the other eye; off");
+        LOG("Depth eye: couldn't make the other eye; off (alternate eyes again)");
         return;
     }
-    // Without this frame's depth the turned picture stands alone (as SteamVR's eye align).
-    g_shownPose[old] = target;
-    g_shownYaw[old] = g_eyeYaw[fresh];
-    static uint64_t frames = 0, movedFrames = 0;
-    ++frames;
-    if (moved) ++movedFrames;
-    if (frames == 1 || frames == 1000 || frames % 100000 == 0)
-        LOG("Depth eye: %llu frames, %llu with the other eye moved by depth", static_cast<unsigned long long>(frames),
-            static_cast<unsigned long long>(movedFrames));
+    g_eyePose[old] = g_shownPose[old] = target;
+    g_eyeFov[old] = g;
+    g_eyeYaw[old] = g_shownYaw[old] = g_eyeYaw[fresh];
+    if (old == 1) g_shownLead1 = rendered.lead;
+    g_eyeValid[old] = true;
+    static uint64_t frames = 0;
+    if (++frames == 1 || frames == 1000 || frames % 100000 == 0)
+        LOG("Depth eye: %llu frames made from the %s eye", static_cast<unsigned long long>(frames),
+            fresh ? "right" : "left");
 }
 
 // The stick turn check: each frame while the right stick turns, how far the
@@ -316,7 +324,7 @@ static bool renderStereo(ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_DESC
             g_eyeValid[eye] = true;
             g_lastEye = eye;
             if (alignEyes() && g_eyeValid[1 - eye]) alignOlderEye(eye, located);
-            else if (depthEyeOn() && g_eyeValid[1 - eye]) depthOtherEye(eye, located, rendered.nearZ, rendered.farZ);
+            else if (depthEyeOn()) depthOtherEye(eye, located, desc, rendered);
         }
         g_frameEye = eye;
         if (!g_ownMirror) steadyMirror(backbuffer, desc, eye);
@@ -333,9 +341,18 @@ static bool renderStereo(ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_DESC
     camera::setPairedHands(g_config.pairedHands);
     singleview::setProbe(g_config.probeDouble);
     camera::setBodyLayer(bodyLayerOn());
-    int next = g_renderingEye == 0 ? 1 : 0;
+    phone3d::setWriteDepth(depthEyeOn());
+    // Depth eye: the left eye every frame, its view widened to hold the right
+    // eye's too (the right eye is made from it).
+    const bool depthEye = depthEyeOn();
+    int next = depthEye ? 0 : g_renderingEye == 0 ? 1 : 0;
     const XrPosef& p = located[next].pose;
-    const XrFovf& f = located[next].fov;
+    XrFovf f = located[next].fov;
+    if (depthEye) {
+        const XrFovf& o = located[1].fov;
+        f = {std::min(f.angleLeft, o.angleLeft), std::max(f.angleRight, o.angleRight), std::max(f.angleUp, o.angleUp),
+             std::min(f.angleDown, o.angleDown)};
+    }
     camera::apply(next, {p.position.x, p.position.y, p.position.z},
                   {p.orientation.x, p.orientation.y, p.orientation.z, p.orientation.w},
                   {f.angleLeft, f.angleRight, f.angleUp, f.angleDown});

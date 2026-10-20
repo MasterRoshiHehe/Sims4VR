@@ -192,6 +192,10 @@ ID3D11ShaderResourceView* g_copyView = nullptr;
 D3D11_TEXTURE2D_DESC g_copyDesc{};
 ULONGLONG g_copiedAt = 0;  // when sense last copied the scene depth
 bool g_copyReversed = false;  // that copy clears to 0 (near is 1)
+// A second copy taken after our own 3D pieces (phone, menus) went in (senseLate).
+ID3D11Texture2D* g_late = nullptr;
+ID3D11ShaderResourceView* g_lateView = nullptr;
+ULONGLONG g_lateAt = 0;
 Slot g_slots[kSlots];
 int g_nextSlot = 0;
 uint32_t g_tag = 0;
@@ -234,6 +238,8 @@ void nearRange(ULONGLONG now, float& low, float& high) {
 }
 
 void releaseCopy() {
+    safeRelease(g_lateView);
+    safeRelease(g_late);
     safeRelease(g_copyView);
     safeRelease(g_copy);
     g_copyDesc = {};
@@ -381,7 +387,9 @@ bool prepareCopy(ID3D11Device* device, const D3D11_TEXTURE2D_DESC& scene) {
         sv.Texture2D.MipLevels = 1;
     }
     if (FAILED(device->CreateTexture2D(&desc, nullptr, &g_copy)) ||
-        FAILED(device->CreateShaderResourceView(g_copy, &sv, &g_copyView))) {
+        FAILED(device->CreateShaderResourceView(g_copy, &sv, &g_copyView)) ||
+        FAILED(device->CreateTexture2D(&desc, nullptr, &g_late)) ||
+        FAILED(device->CreateShaderResourceView(g_late, &sv, &g_lateView))) {
         LOG("Near limit: could not copy the scene depth; the near limit stays at near_clip");
         releaseCopy();
         g_failed = true;
@@ -631,6 +639,35 @@ ID3D11ShaderResourceView* latestDepth(UINT& samples, UINT& width, UINT& height, 
     reversed = g_copyReversed;
     g_copyView->AddRef();
     return g_copyView;
+}
+
+void senseLate(ID3D11DeviceContext* context, ID3D11DepthStencilView* depth) {
+    if (!context || !depth) return;
+    std::lock_guard<std::mutex> lock(g_mutex);
+    ULONGLONG now = GetTickCount64();
+    if (!g_late || now - g_copiedAt > 30) return;  // sense made no copy this frame
+    ID3D11Resource* resource = nullptr;
+    depth->GetResource(&resource);
+    if (!resource) return;
+    D3D11_TEXTURE2D_DESC desc{};
+    static_cast<ID3D11Texture2D*>(resource)->GetDesc(&desc);
+    if (desc.Width == g_copyDesc.Width && desc.Height == g_copyDesc.Height &&
+        desc.SampleDesc.Count == g_copyDesc.SampleDesc.Count) {
+        context->CopyResource(g_late, resource);
+        g_lateAt = now;
+    }
+    resource->Release();
+}
+
+ID3D11ShaderResourceView* lateDepth(UINT& samples, UINT& width, UINT& height, bool& reversed) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (!g_lateView || GetTickCount64() - g_lateAt > 100) return nullptr;
+    samples = g_copyDesc.SampleDesc.Count;
+    width = g_copyDesc.Width;
+    height = g_copyDesc.Height;
+    reversed = g_copyReversed;
+    g_lateView->AddRef();
+    return g_lateView;
 }
 
 void collect(ID3D11DeviceContext* immediate) {
