@@ -194,6 +194,8 @@ Config loadConfig(const std::wstring& ini) {
     if (!(c.pieWidth >= 0.1f && c.pieWidth <= 1.5f)) c.pieWidth = 0.96f;
     if (!(c.pieDistance >= 0.2f && c.pieDistance <= 3.0f)) c.pieDistance = 0.45f;
     c.gamepad = readInt(ini, "controls", "gamepad", 0) != 0;
+    c.snapTurn = readBool(ini, "controls", "snap_turn", c.snapTurn);
+    c.snapAngle = readFloat(ini, "controls", "snap_angle", c.snapAngle);
     c.turnSpeed = readFloat(ini, "controls", "turn_speed", c.turnSpeed);
     c.audioFollowsHead = readInt(ini, "audio", "follow_head", 1) != 0;
     c.audioPanAnyDistance = readInt(ini, "audio", "pan_any_distance", 1) != 0;

@@ -543,7 +543,19 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
             c.missed += refreshes - 1;
             benchmark::missedRefreshes(refreshes - 1);
         }
-        if (a > 0.15f) {
+        static bool snapArmed = true;
+        if (g_config.snapTurn) {
+            // Snap turning: one fixed step per push past 0.6, re-armed when the stick comes back under 0.3.
+            // No smooth turning, so the world never slides under you.
+            if (a < 0.3f) snapArmed = true;
+            if (snapArmed && a > 0.6f) {
+                snapArmed = false;
+                const float step = std::clamp(g_config.snapAngle, 5.f, 180.f) * 0.0174533f * (right.x > 0 ? -1 : 1);
+                camera::turnBody(step);
+                benchmark::turned(step);
+            }
+            g_stickRate = 0;
+        } else if (a > 0.15f) {
             float shaped = (a - 0.15f) / 0.85f;
             shaped *= shaped;
             g_stickRate = (right.x > 0 ? -1 : 1) * shaped * g_config.bodyTurnRate * 0.0174533f;

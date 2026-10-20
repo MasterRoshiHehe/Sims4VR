@@ -346,6 +346,8 @@ std::vector<Row> makeRows() {
                L"%.0f%%", kRenderScale),
         number(front, L"Walk speed", "body", "walk_speed", &Config::walkSpeed, 0.5f, 5, 0.1f, 1, L"%.1f m/s", kWalk),
         number(front, L"Turn speed", "body", "turn_rate", &Config::bodyTurnRate, 30, 360, 10, 1, L"%.0f°/s"),
+        toggle(front, L"Snap turning (off: smooth turning)", "controls", "snap_turn", &Config::snapTurn),
+        number(front, L"Snap turn angle", "controls", "snap_angle", &Config::snapAngle, 15, 90, 15, 1, L"%.0f°"),
         flag(front, L"Walk there yourself (footprint trail)", "body", "trail", true, kLive),  // trail.py
         toggle(front, L"Pick things up", "hands", "grab", &Config::grab, kNextStart),
         toggle(front, L"Touch to click", "body", "touch", &Config::touch, kNextStart),

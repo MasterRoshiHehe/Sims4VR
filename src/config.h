@@ -67,7 +67,7 @@ struct Config {
     bool frameMap = false;  // [stereo] frame_map: log the render frame's order and call stacks (framemap.cpp)
     // First person: every frame the eye the game didn't draw is made from the
     // one it did, moved by its depth (deptheye.h), so both eyes show the same moment.
-    bool depthEye = true;  // the smoothest setup (user 2026-10-20 16:45Z)
+    bool depthEye = false;  // off: the game alternates the eyes itself (clean-alternation candidate, user 2026-10-20 18:28Z)
     // [stereo] depth_eye_debug: what the made eye shows, to check it (deptheye.h
     // setDebugView): 0 the picture, 1 its depth, 2 no depth shift, 3 depth edges.
     int depthEyeDebug = 0;
@@ -100,6 +100,8 @@ struct Config {
 
     // Controllers: 1 = feed the sticks to the game as a virtual Xbox controller
     bool gamepad = false;
+    bool snapTurn = true;   // [controls] snap_turn: right stick turns in fixed steps instead of smoothly (first person)
+    float snapAngle = 30;   // [controls] snap_angle: degrees per snap
     float turnSpeed = 900;  // right stick: mouse pixels per second at full deflection
 
     // UI panel (stereo): the game's UI on a floating panel, in metres from the recentered head
