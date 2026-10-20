@@ -44,6 +44,7 @@
 #include "simsforever.h"
 #include "claudescreen.h"
 #include "voice.h"
+#include "singleview.h"
 
 namespace s4vr::vr {
 

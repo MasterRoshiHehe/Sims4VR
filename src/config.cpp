@@ -84,6 +84,7 @@ Config loadConfig(const std::wstring& ini) {
     c.bodyLayer = readBool(ini, "stereo", "body_layer", c.bodyLayer);
     c.alignEyes = readBool(ini, "stereo", "align_eyes", c.alignEyes);
     c.frameMap = readBool(ini, "stereo", "frame_map", c.frameMap);
+    c.probeDouble = readBool(ini, "stereo", "probe_double", c.probeDouble);
     c.renderScale = readFloat(ini, "stereo", "render_scale", c.renderScale);
     if (!(c.renderScale >= 0 && c.renderScale <= 1.5f)) c.renderScale = 0.8f;
     c.renderMsaa = static_cast<int>(readInt(ini, "stereo", "render_msaa", c.renderMsaa));

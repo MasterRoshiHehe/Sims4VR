@@ -25,6 +25,7 @@ constexpr Row kRows[] = {
     {"TopLevel", 'f', 0xa178a0, "40 56 48 83 ec 40 48 8b f1 84 d2 74 2a 32 c0 90", "", 0, 0},
     {"SetOverride", 'f', 0xa1aae0, "40 53 48 83 ec 20 48 63 44 24 58 48 8b d9", "", 0, 0},
     {"CullRooms", 'f', 0xa6bdc0, "48 8b c4 44 88 48 20 44 88 40 18 48 89 50 10 55", "", 0, 0},
+    {"SceneRender", 'f', 0x137a710, "48 8b c4 55 57 41 54 41 56 41 57", "", 0, 0},
     {"Canvas", 'f', 0xbb6590, "48 8b 05 ?? ?? ?? ?? c3 cc cc cc cc cc cc cc cc", "", 0, 0},
     {"UiObject", 'f', 0xd9f100, "48 8b 05 ?? ?? ?? ?? c3 cc cc cc cc cc cc cc cc", "", 0, 0},
     {"Render", 'f', 0xdaed30, "40 55 56 57 41 54 41 55 41 56 41 57", "", 0, 0},

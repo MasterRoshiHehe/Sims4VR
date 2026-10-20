@@ -9,6 +9,7 @@
 
 #include "framecost.h"
 #include "framemap.h"
+#include "singleview.h"
 #include "log.h"
 
 namespace s4vr::d3d11_hook {
@@ -28,6 +29,7 @@ static HRESULT STDMETHODCALLTYPE hookedPresent(IDXGISwapChain* swapchain, UINT s
     if (picture) {
         framecost::presentStart();
         framemap::mark(framemap::Present);
+        singleview::presented();
     }
     if (g_callback && picture) g_callback(swapchain);
     t_inPresent = true;
@@ -49,6 +51,7 @@ static HRESULT STDMETHODCALLTYPE hookedPresent1(IDXGISwapChain1* swapchain, UINT
     if (picture) {
         framecost::presentStart();
         framemap::mark(framemap::Present);
+        singleview::presented();
     }
     if (g_callback && picture) g_callback(swapchain);
     t_inPresent = true;

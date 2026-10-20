@@ -248,6 +248,7 @@ static bool renderStereo(ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_DESC
     camera::setPairedEyes(g_config.pairedEyes && !alignEyes());
     camera::setExactFov(g_config.exactFov);
     camera::setPairedHands(g_config.pairedHands);
+    singleview::setProbe(g_config.probeDouble);
     camera::setBodyLayer(bodyLayerOn());
     int next = g_renderingEye == 0 ? 1 : 0;
     const XrPosef& p = located[next].pose;

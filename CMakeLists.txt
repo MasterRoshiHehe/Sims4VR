@@ -61,6 +61,7 @@ add_library(sims4vr SHARED
     src/facehide.cpp
     src/framecost.cpp
     src/framemap.cpp
+    src/singleview.cpp
     src/touch.cpp
     src/grab.cpp
     src/d3d9_hook.cpp
