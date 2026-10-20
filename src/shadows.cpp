@@ -9,6 +9,7 @@
 #include <cstring>
 
 #include "MinHook.h"
+#include "simcache.h"
 #include "camera.h"
 #include "addrs.h"
 #include "gameaddr.h"
@@ -219,7 +220,7 @@ void steadyFit(const float* sun, const uint8_t* camera, uint8_t* light, float* s
 
 // The game asks its config for ShadowMapSize when it makes the shadow map.
 int32_t sizedConfig(void* config, const char* name, int32_t fallback) {
-    int32_t value = g_configInt(config, name, fallback);
+    int32_t value = simcache::intValue(name, g_configInt(config, name, fallback));
     if (name && name[0] == 'S' && g_ssaoOff.load(std::memory_order_relaxed) && value && !std::strcmp(name, "SsaoEnabled")) {
         LOG("Shadows: SsaoEnabled read as an int, forced off");
         return 0;
@@ -257,7 +258,7 @@ void install(bool on, float stepDegrees, float sharpRange, int mapSize, bool ssa
     if (mapSize > 0)
         for (size = 1024; size * 2 <= std::min(mapSize, kMaxMapSize);) size *= 2;
     g_mapSize = size;
-    if (g_mapSize || ssaoOff) {
+    {
         uint8_t* get = addrs::fn("ConfigInt");
         MH_STATUS status = MH_Initialize();
         if (get && (status == MH_OK || status == MH_ERROR_ALREADY_INITIALIZED)) {

@@ -61,6 +61,7 @@ add_library(sims4vr SHARED
     src/facehide.cpp
     src/framecost.cpp
     src/hitch.cpp
+    src/simcache.cpp
     src/texprobe.cpp
     src/benchmark.cpp
     src/framemap.cpp

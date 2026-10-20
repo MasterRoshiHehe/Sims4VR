@@ -176,6 +176,9 @@ Config loadConfig(const std::wstring& ini) {
     c.ambientOcclusion = readBool(ini, "stereo", "ambient_occlusion", c.ambientOcclusion);
     if (readBool(ini, "stereo", "ssao_off", false)) c.ambientOcclusion = false;  // the key of v0.13.279
     c.textureProbe = readBool(ini, "perf", "texture_probe", c.textureProbe);
+    c.simCacheBoost = readBool(ini, "perf", "sim_cache_boost", c.simCacheBoost);
+    c.simCacheMb = static_cast<int>(readFloat(ini, "perf", "sim_cache_mb", static_cast<float>(c.simCacheMb)));
+    c.simLodScale = readFloat(ini, "perf", "sim_lod_scale", c.simLodScale);
     c.hitchCatcher = readBool(ini, "perf", "hitch_catcher", c.hitchCatcher);
     c.outdoorFade = readFloat(ini, "audio", "outdoor_fade", c.outdoorFade);
     if (!(c.outdoorFade >= 0 && c.outdoorFade <= 20)) c.outdoorFade = 4.0f;
