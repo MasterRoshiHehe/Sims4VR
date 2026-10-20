@@ -92,7 +92,7 @@ struct Config {
     // [stereo] headset_width: the game draws its 3D view only as wide as the headset needs, even when
     // that is narrower than the game window (2560 -> ~1464 wide at render_scale 0.65), v0.13.309.
     bool headsetWidth = true;
-    // [stereo] texture_bias: mip bias added to the game's material samplers made after the mod starts
+    // [stereo] texture_bias: mip bias added to the game's material samplers in the headset view
     // (texbias.h): sharper textures a few metres out at render_scale under 1. 0 = off. Needs a restart.
     float textureBias = -0.6f;
     bool depthEyeAlternate = false;  // took turns: edges shook (v0.13.297-298)

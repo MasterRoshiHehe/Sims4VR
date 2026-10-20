@@ -326,6 +326,7 @@ int onFrame(ID3D11Texture2D* backbuffer, HWND window, bool ownMirror) {
         g_nextSessionAttempt = GetTickCount64() + delay;
     }
     updateRenderSize(stereoFrame);
+    texbias::setActive(stereoFrame);
     lastPresent = now();
     // Frame pacing: frames that took far longer than the ones before them are
     // what you notice as a stutter. Counted, with the worst, every 3000 frames.

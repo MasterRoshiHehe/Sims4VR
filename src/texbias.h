@@ -7,8 +7,11 @@
 // mipmapped, not comparison) picks the sharper level, as VR runtimes' upscalers do.
 namespace s4vr::texbias {
 
-// Present thread, once: hooks ID3D11Device::CreateSamplerState. Samplers made from then on get
-// `bias` added to their MipLODBias (0: unchanged). The game makes most while loading a world.
+// Present thread, once: hooks PSSetSamplers on the game's contexts. While active, each material
+// sampler the game binds is swapped for a copy with `bias` added to its MipLODBias (0: off).
 void install(ID3D11Device* device, float bias);
+
+// Present thread: on while the headset shows the stereo view (the game's own size otherwise).
+void setActive(bool on);
 
 }  // namespace s4vr::texbias
