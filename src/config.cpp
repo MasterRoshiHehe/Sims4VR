@@ -109,6 +109,8 @@ Config loadConfig(const std::wstring& ini) {
     c.bothEyesSkip = static_cast<int>(readInt(ini, "stereo", "both_eyes_skip", c.bothEyesSkip));
     c.frameClock = readBool(ini, "stereo", "frame_clock", c.frameClock);
     c.headsetWidth = readBool(ini, "stereo", "headset_width", c.headsetWidth);
+    c.textureBias = readFloat(ini, "stereo", "texture_bias", c.textureBias);
+    if (!(c.textureBias >= -3 && c.textureBias <= 0)) c.textureBias = -0.6f;
     c.depthEyePresentDepth = readBool(ini, "stereo", "depth_eye_present_depth", c.depthEyePresentDepth);
     c.madeEyeShiftX = readFloat(ini, "stereo", "made_eye_shift_x", c.madeEyeShiftX);
     c.madeEyeShiftY = readFloat(ini, "stereo", "made_eye_shift_y", c.madeEyeShiftY);
@@ -118,7 +120,7 @@ Config loadConfig(const std::wstring& ini) {
     c.madeEyeSubmitYaw = readFloat(ini, "stereo", "made_eye_submit_yaw", c.madeEyeSubmitYaw);
     c.madeEyeSubmitPitch = readFloat(ini, "stereo", "made_eye_submit_pitch", c.madeEyeSubmitPitch);
     c.renderScale = readFloat(ini, "stereo", "render_scale", c.renderScale);
-    if (!(c.renderScale >= 0 && c.renderScale <= 1.5f)) c.renderScale = 0.65f;
+    if (!(c.renderScale >= 0 && c.renderScale <= 1.5f)) c.renderScale = 0.75f;
     c.renderMsaa = static_cast<int>(readInt(ini, "stereo", "render_msaa", c.renderMsaa));
     c.nearFade = readInt(ini, "stereo", "near_fade", 0) != 0;
 

@@ -59,6 +59,7 @@ int onFrame(ID3D11Texture2D* backbuffer, HWND window, bool ownMirror) {
         ID3D11DeviceContext* context = nullptr;
         device->GetImmediateContext(&context);
         gpuload::onFrame(device, context);
+        texbias::install(device, g_config.textureBias);
         nearplane::collect(context);
         context->Release();
         watchVideoMemory();

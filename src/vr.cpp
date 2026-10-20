@@ -50,6 +50,7 @@
 #include "singleview.h"
 #include "deptheye.h"
 #include "benchmark.h"
+#include "texbias.h"
 
 namespace s4vr::vr {
 

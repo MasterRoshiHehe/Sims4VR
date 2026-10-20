@@ -92,6 +92,9 @@ struct Config {
     // [stereo] headset_width: the game draws its 3D view only as wide as the headset needs, even when
     // that is narrower than the game window (2560 -> ~1464 wide at render_scale 0.65), v0.13.309.
     bool headsetWidth = true;
+    // [stereo] texture_bias: mip bias added to the game's material samplers made after the mod starts
+    // (texbias.h): sharper textures a few metres out at render_scale under 1. 0 = off. Needs a restart.
+    float textureBias = -0.6f;
     bool depthEyeAlternate = false;  // took turns: edges shook (v0.13.297-298)
     bool depthEyePresentDepth = true;  // [stereo] depth_eye_present_depth (deptheye::setPresentDepth)
     // [stereo] made_eye_*: the made eye's alignment, set by hand from the menu (Advanced › View ›
@@ -104,7 +107,7 @@ struct Config {
     bool probeDouble = false;  // [stereo] probe_double: draw the scene twice a frame and time it (singleview.cpp)
     bool alignEyes = true;  // SteamVR: the older eye turned to the newest head pose each frame (eyealign.h)
     // Game render resolution as a fraction of the headset's (0 = the game's own, the monitor's)
-    float renderScale = 0.65f;  // both real eyes every frame needs the room (v0.13.304: 0.8 gave ~62 fps)
+    float renderScale = 0.75f;  // both real eyes every frame needs the room (v0.13.304: 0.8 gave ~62 fps)
     int renderMsaa = 2;  // most edge-smoothing samples at that resolution (never more than in-game)
     bool nearFade = false;  // the game's "see-through when the camera is close" (off: never)
 
