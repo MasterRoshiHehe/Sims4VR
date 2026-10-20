@@ -252,7 +252,8 @@ static void depthOtherEye(int fresh, const XrView (&located)[2], const D3D11_TEX
     }
     // The depth is in game units, the eyes' places in metres.
     const float scale = camera::worldScale() > 0 ? camera::worldScale() : 1.0f;
-    deptheye::setDebugView(g_config.depthEyeDebug);
+    // Flat world: the right eye is the left picture turned (test view 2 as the mode).
+    deptheye::setDebugView(g_config.flatWorld && g_config.depthEyeDebug == 0 ? 2 : g_config.depthEyeDebug);
     deptheye::setPresentDepth(g_config.depthEyePresentDepth);
     deptheye::noteDrawnProjection(rendered.drawnNear / scale, rendered.drawnFar / scale);
     logMadeEyeAlignment();

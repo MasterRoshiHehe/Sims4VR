@@ -74,6 +74,10 @@ struct Config {
     // [stereo] depth_eye_alternate: with depth_eye the game draws the eyes in turn again, and each frame
     // the other eye is made from the fresh one, where it can't see behind near things from that eye's
     // own last picture (1); 0: the left eye every frame, those spots filled from beside.
+    // [stereo] flat_world: with depth_eye, the made (right) eye is the left picture only turned, no depth
+    // shift (test view 2 as the mode): no ghost edges, 72 fps, but the world and your hands have no stereo
+    // depth (user 2026-10-20 17:57Z: "the best of both worlds when it comes to looks and performance").
+    bool flatWorld = true;
     bool depthEyeAlternate = false;  // took turns: edges shook (v0.13.297-298)
     bool depthEyePresentDepth = true;  // [stereo] depth_eye_present_depth (deptheye::setPresentDepth)
     // [stereo] made_eye_*: the made eye's alignment, set by hand from the menu (Advanced › View ›

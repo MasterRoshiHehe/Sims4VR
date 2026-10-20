@@ -66,12 +66,12 @@ Config loadConfig(const std::wstring& ini) {
         const std::wstring user = userIniPath(ini);
         std::string path(user.begin(), user.end());
         std::string done;
-        if (!readFrom(user, "stereo", "smooth_defaults", done) || atoi(done.c_str()) < 1) {
+        if (!readFrom(user, "stereo", "smooth_defaults", done) || atoi(done.c_str()) < 2) {
             for (const char* key : {"depth_eye", "depth_eye_alternate", "depth_eye_debug", "depth_eye_present_depth",
-                                    "made_eye_shift_x", "made_eye_shift_y", "made_eye_distance", "made_eye_depth",
+                                    "flat_world", "made_eye_shift_x", "made_eye_shift_y", "made_eye_distance", "made_eye_depth",
                                     "made_eye_submit_x", "made_eye_submit_yaw", "made_eye_submit_pitch"})
                 WritePrivateProfileStringA("stereo", key, nullptr, path.c_str());
-            WritePrivateProfileStringA("stereo", "smooth_defaults", "1", path.c_str());
+            WritePrivateProfileStringA("stereo", "smooth_defaults", "2", path.c_str());
             WritePrivateProfileStringA(nullptr, nullptr, nullptr, path.c_str());  // flush
         }
     }
@@ -104,6 +104,7 @@ Config loadConfig(const std::wstring& ini) {
     c.depthEye = readBool(ini, "stereo", "depth_eye", c.depthEye);
     c.depthEyeDebug = static_cast<int>(readInt(ini, "stereo", "depth_eye_debug", c.depthEyeDebug));
     c.depthEyeAlternate = readBool(ini, "stereo", "depth_eye_alternate", c.depthEyeAlternate);
+    c.flatWorld = readBool(ini, "stereo", "flat_world", c.flatWorld);
     c.depthEyePresentDepth = readBool(ini, "stereo", "depth_eye_present_depth", c.depthEyePresentDepth);
     c.madeEyeShiftX = readFloat(ini, "stereo", "made_eye_shift_x", c.madeEyeShiftX);
     c.madeEyeShiftY = readFloat(ini, "stereo", "made_eye_shift_y", c.madeEyeShiftY);
