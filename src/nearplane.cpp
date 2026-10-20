@@ -4,6 +4,7 @@
 #include <d3dcompiler.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -138,6 +139,11 @@ struct Slot {
     int waits = 0;
     float nearLow = 0, nearHigh = 0, farZ = 0;
     float eye[3]{};
+    // Graphics card time of this slot's copy and scan (timed: its queries were issued).
+    ID3D11Query* disjoint = nullptr;
+    ID3D11Query* begin = nullptr;
+    ID3D11Query* end = nullptr;
+    bool timed = false;
 };
 
 // A measured frame: the nearest point's view depth (a lower bound on how far
@@ -204,6 +210,8 @@ Slot g_slots[kSlots];
 int g_nextSlot = 0;
 uint32_t g_tag = 0;
 bool g_failed = false;
+std::atomic<bool> g_oncePerPair{true};  // [perf] near_once_per_pair
+ULONGLONG g_depthWantedAt = 0;  // sceneDepth/latestDepth asked for this pass's copy (under g_mutex)
 
 // For the log.
 struct Stats {
@@ -211,6 +219,8 @@ struct Stats {
     float low = kInf, high = 0;
     float nearestSeen = kInf, nearestBody = kInf;
     uint32_t frames = 0, measured = 0, touches = 0, stale = 0, held = 0, dropped = 0, jumps = 0, bodyLeftOut = 0, headHeld = 0;
+    uint32_t senses = 0, skipped = 0, timed = 0;  // depth copies made, right-eye passes left out, of them timed
+    double gpuSum = 0, gpuWorst = 0;              // ms of graphics card per copy and scan
 } g_stats;
 
 template <typename T>
@@ -259,6 +269,9 @@ void releaseAll() {
     safeRelease(g_result);
     for (auto& slot : g_slots) {
         safeRelease(slot.staging);
+        safeRelease(slot.disjoint);
+        safeRelease(slot.begin);
+        safeRelease(slot.end);
         slot = Slot{};
     }
     g_device = nullptr;
@@ -348,6 +361,15 @@ bool init(ID3D11Device* device) {
     sb.Usage = D3D11_USAGE_STAGING;
     sb.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
     for (auto& slot : g_slots) ok = ok && SUCCEEDED(device->CreateBuffer(&sb, nullptr, &slot.staging));
+    // Timing is optional: a slot without its queries just isn't timed.
+    D3D11_QUERY_DESC qd{D3D11_QUERY_TIMESTAMP_DISJOINT, 0}, qt{D3D11_QUERY_TIMESTAMP, 0};
+    for (auto& slot : g_slots)
+        if (ok && (FAILED(device->CreateQuery(&qd, &slot.disjoint)) || FAILED(device->CreateQuery(&qt, &slot.begin)) ||
+                   FAILED(device->CreateQuery(&qt, &slot.end)))) {
+            safeRelease(slot.disjoint);
+            safeRelease(slot.begin);
+            safeRelease(slot.end);
+        }
     if (!ok) {
         LOG("Near limit: could not make its shader or buffers; the near limit stays at near_clip");
         releaseAll();
@@ -515,10 +537,13 @@ float choose(const float eye[3], const float forward[3], float body, float head,
         if (logs++ < 200)
             LOG("Near limit: %.2f m now, %.2f to %.2f over %llu s; nearest seen %.2f m, own body %.2f m; %u of %u "
                 "frames measured (%u with your body left out), %u cut something off, %u stale, %u held after a jump "
-                "(%u jumps), %u lost; %u frames pushed past your own head",
+                "(%u jumps), %u lost; %u frames pushed past your own head; depth copied %u times (%u right-eye passes "
+                "left out), graphics card %.2f ms per copy and scan, worst %.2f (%u timed)",
                 result, g_stats.low, g_stats.high, static_cast<unsigned long long>((now - g_stats.since) / 1000),
                 g_stats.nearestSeen, g_stats.nearestBody, g_stats.measured, g_stats.frames, g_stats.bodyLeftOut,
-                g_stats.touches, g_stats.stale, g_stats.held, g_stats.jumps, g_stats.dropped, g_stats.headHeld);
+                g_stats.touches, g_stats.stale, g_stats.held, g_stats.jumps, g_stats.dropped, g_stats.headHeld,
+                g_stats.senses, g_stats.skipped, g_stats.timed ? g_stats.gpuSum / g_stats.timed : 0.0,
+                g_stats.gpuWorst, g_stats.timed);
         g_stats = Stats{};
         g_stats.since = now;
     }
@@ -548,6 +573,12 @@ void sense(ID3D11DeviceContext* context, ID3D11DepthStencilView* depth, bool rev
     g_nextSlot = (g_nextSlot + 1) % kSlots;
     if (slot.pending) ++g_stats.dropped;
     if (++g_tag == 0) ++g_tag;
+    ++g_stats.senses;
+    slot.timed = slot.disjoint && slot.begin && slot.end;
+    if (slot.timed) {
+        context->Begin(slot.disjoint);
+        context->End(slot.begin);
+    }
 
     context->CopyResource(g_copy, resource);
     resource->Release();
@@ -621,6 +652,10 @@ void sense(ID3D11DeviceContext* context, ID3D11DepthStencilView* depth, bool rev
     safeRelease(savedUav);
     safeRelease(savedParams);
     context->CopyResource(slot.staging, g_result);
+    if (slot.timed) {
+        context->End(slot.end);
+        context->End(slot.disjoint);
+    }
 
     slot.tag = g_tag;
     slot.pending = true;
@@ -635,6 +670,7 @@ void sense(ID3D11DeviceContext* context, ID3D11DepthStencilView* depth, bool rev
 
 ID3D11ShaderResourceView* sceneDepth(UINT& samples) {
     std::lock_guard<std::mutex> lock(g_mutex);
+    g_depthWantedAt = GetTickCount64();
     if (!g_copyView || GetTickCount64() - g_copiedAt > 30) return nullptr;
     samples = g_copyDesc.SampleDesc.Count;
     g_copyView->AddRef();
@@ -643,6 +679,7 @@ ID3D11ShaderResourceView* sceneDepth(UINT& samples) {
 
 ID3D11ShaderResourceView* latestDepth(UINT& samples, UINT& width, UINT& height, bool& reversed) {
     std::lock_guard<std::mutex> lock(g_mutex);
+    g_depthWantedAt = GetTickCount64();
     if (!g_copyView || GetTickCount64() - g_copiedAt > 100) return nullptr;
     samples = g_copyDesc.SampleDesc.Count;
     width = g_copyDesc.Width;
@@ -778,6 +815,20 @@ void collect(ID3D11DeviceContext* immediate) {
             return;
         }
         slot->pending = false;
+        if (slot->timed) {
+            D3D11_QUERY_DATA_TIMESTAMP_DISJOINT d{};
+            UINT64 a = 0, b = 0;
+            if (immediate->GetData(slot->disjoint, &d, sizeof(d), D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK &&
+                immediate->GetData(slot->begin, &a, sizeof(a), D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK &&
+                immediate->GetData(slot->end, &b, sizeof(b), D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK && !d.Disjoint &&
+                d.Frequency && b >= a) {
+                const double ms = double(b - a) * 1000.0 / double(d.Frequency);
+                g_stats.gpuSum += ms;
+                g_stats.gpuWorst = std::max(g_stats.gpuWorst, ms);
+                ++g_stats.timed;
+            }
+            slot->timed = false;
+        }
         float value;
         std::memcpy(&value, &data[0], sizeof(value));
         float d = slot->reversed ? 1 - value : value;
@@ -793,6 +844,17 @@ void collect(ID3D11DeviceContext* immediate) {
         if (seen.touch) ++g_stats.touches;
         if (!seen.touch) g_stats.nearestSeen = std::min(g_stats.nearestSeen, seen.z);
     }
+}
+
+void setOncePerPair(bool on) { g_oncePerPair.store(on, std::memory_order_relaxed); }
+
+bool skipPass(bool secondPass) {
+    if (!secondPass || !g_oncePerPair.load(std::memory_order_relaxed)) return false;
+    std::lock_guard<std::mutex> lock(g_mutex);
+    // The pie or a popup at your hand reads this pass's own depth: keep copying while they do.
+    if (GetTickCount64() - g_depthWantedAt < 200) return false;
+    ++g_stats.skipped;
+    return true;
 }
 
 }  // namespace s4vr::nearplane

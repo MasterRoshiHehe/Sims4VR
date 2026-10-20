@@ -396,7 +396,7 @@ void hookedRender(void* rm, void* movie) {
     g_mainResource.store(main, std::memory_order_relaxed);
     g_uiRenders.fetch_add(1, std::memory_order_relaxed);
     if (g_phonePending.exchange(false)) {
-        senseNear(context);
+        if (!nearplane::skipPass(g_secondPass.load(std::memory_order_acquire))) senseNear(context);
         drawPhone(context);
         if (phone3d::writesDepth()) senseLate(context);
     }

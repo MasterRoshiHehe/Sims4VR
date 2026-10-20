@@ -46,6 +46,12 @@ void sense(ID3D11DeviceContext* context, ID3D11DepthStencilView* depth, bool rev
 // Present thread, the immediate context: read finished measurements back.
 void collect(ID3D11DeviceContext* immediate);
 
+// Both real eyes: the near limit measured once per eye pair (Config::nearOncePerPair).
+// skipPass(true) in the right eye's pass: leave sense out there, unless something
+// (pie, popup at your hand, body layer) asked for the scene depth lately.
+void setOncePerPair(bool on);
+bool skipPass(bool secondPass);
+
 // The UI's render thread, right after sense: this frame's copy of the scene
 // depth (shader-readable; AddRef'd, the caller releases it), and its sample
 // count. Null when sense made none this frame.
