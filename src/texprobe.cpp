@@ -3,6 +3,8 @@
 #include <windows.h>
 #include "MinHook.h"
 #include <cstdint>
+#include <cstdio>
+#include <string>
 
 #include "gameaddr.h"
 #include "log.h"
@@ -66,6 +68,21 @@ uint64_t __fastcall outerHook(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
     return r;
 }
 
+// Hex of n bytes at p (8 bytes a group), "unreadable" if not mapped; plus printable characters.
+std::string dump(uint64_t p, size_t n) {
+    if (!readable(p, n)) return "unreadable";
+    std::string out, text;
+    char b[8];
+    const uint8_t* d = reinterpret_cast<const uint8_t*>(p);
+    for (size_t i = 0; i < n; ++i) {
+        std::snprintf(b, sizeof(b), "%02x", d[i]);
+        out += b;
+        if ((i & 7) == 7 && i + 1 < n) out += ' ';
+        text += d[i] >= 32 && d[i] < 127 ? static_cast<char>(d[i]) : '.';
+    }
+    return out + " |" + text + "|";
+}
+
 uint64_t __fastcall innerHook(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
     const int64_t t0 = ticks();
     const uint64_t r = g_inner(a, b, c, d);
@@ -75,6 +92,14 @@ uint64_t __fastcall innerHook(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
         LOGT("texprobe", "Texture inner call %.0f ms: this vt game+0x%llx, arg2 vt game+0x%llx, inside outer step: %s", ms,
              static_cast<unsigned long long>(vtableOf(a)), static_cast<unsigned long long>(vtableOf(b)),
              t_depth > 0 ? "yes" : "no");
+        static int details = 0;
+        if (ms >= 50 && details < 60) {  // what was built: raw bytes (the resource key sits in the ModelLOD's first 0x60)
+            ++details;
+            uint64_t name = readable(a + 0x1c0, 8) ? *reinterpret_cast<const uint64_t*>(a + 0x1c0) : 0;
+            LOGT("texprobe", "Texture build detail: ModelLOD %s | owner+0: %s | owner+0x1c0: %s | *(owner+0x1c0): %s",
+                 dump(b, 0x60).c_str(), dump(a, 0x40).c_str(), dump(a + 0x1c0, 0x20).c_str(),
+                 name ? dump(name, 0x30).c_str() : "none");
+        }
     }
     return r;
 }
