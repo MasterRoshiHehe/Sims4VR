@@ -63,6 +63,12 @@ ID3D11ShaderResourceView* latestDepth(UINT& samples, UINT& width, UINT& height, 
 void senseLate(ID3D11DeviceContext* context, ID3D11DepthStencilView* depth);
 // Present thread: that copy, as latestDepth.
 ID3D11ShaderResourceView* lateDepth(UINT& samples, UINT& width, UINT& height, bool& reversed);
+// Present thread, the immediate context: copies `scene` (the 3D view's depth-stencil, which holds
+// the presented frame's finished depth at Present) and returns that copy, as latestDepth. Always
+// this frame's, where the copies above may be a frame behind (taken when the UI is recorded).
+// Null until sense has copied once, or if the depth is another size.
+ID3D11ShaderResourceView* presentDepth(ID3D11DeviceContext* immediate, ID3D11DepthStencilView* scene, UINT& samples,
+                                       UINT& width, UINT& height);
 // How long ago (ms, CPU time) the late or the plain copy was made (-1: never).
 double depthAgeMs(bool late);
 

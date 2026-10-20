@@ -196,6 +196,9 @@ bool g_copyReversed = false;  // that copy clears to 0 (near is 1)
 ID3D11Texture2D* g_late = nullptr;
 ID3D11ShaderResourceView* g_lateView = nullptr;
 ULONGLONG g_lateAt = 0;
+// The scene depth copied at Present, on the immediate context (presentDepth).
+ID3D11Texture2D* g_present = nullptr;
+ID3D11ShaderResourceView* g_presentView = nullptr;
 LONGLONG g_copyCounter = 0, g_lateCounter = 0;  // QueryPerformanceCounter at each copy (depthAgeMs)
 Slot g_slots[kSlots];
 int g_nextSlot = 0;
@@ -239,6 +242,8 @@ void nearRange(ULONGLONG now, float& low, float& high) {
 }
 
 void releaseCopy() {
+    safeRelease(g_presentView);
+    safeRelease(g_present);
     safeRelease(g_lateView);
     safeRelease(g_late);
     safeRelease(g_copyView);
@@ -666,6 +671,48 @@ void senseLate(ID3D11DeviceContext* context, ID3D11DepthStencilView* depth) {
         g_lateCounter = c.QuadPart;
     }
     resource->Release();
+}
+
+ID3D11ShaderResourceView* presentDepth(ID3D11DeviceContext* immediate, ID3D11DepthStencilView* scene, UINT& samples,
+                                       UINT& width, UINT& height) {
+    if (!immediate || !scene) return nullptr;
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (!g_copy || !g_copyView) return nullptr;  // sense sets up the copy's format
+    ID3D11Resource* resource = nullptr;
+    scene->GetResource(&resource);
+    if (!resource) return nullptr;
+    D3D11_RESOURCE_DIMENSION dimension{};
+    resource->GetType(&dimension);
+    D3D11_TEXTURE2D_DESC desc{};
+    if (dimension == D3D11_RESOURCE_DIMENSION_TEXTURE2D) static_cast<ID3D11Texture2D*>(resource)->GetDesc(&desc);
+    if (desc.Width != g_copyDesc.Width || desc.Height != g_copyDesc.Height ||
+        desc.SampleDesc.Count != g_copyDesc.SampleDesc.Count) {
+        resource->Release();
+        return nullptr;
+    }
+    if (!g_present) {
+        ID3D11Device* device = nullptr;
+        immediate->GetDevice(&device);
+        D3D11_SHADER_RESOURCE_VIEW_DESC sv{};
+        g_copyView->GetDesc(&sv);
+        if (!device || FAILED(device->CreateTexture2D(&g_copyDesc, nullptr, &g_present)) ||
+            FAILED(device->CreateShaderResourceView(g_present, &sv, &g_presentView))) {
+            safeRelease(g_presentView);
+            safeRelease(g_present);
+        }
+        if (device) device->Release();
+    }
+    if (!g_present) {
+        resource->Release();
+        return nullptr;
+    }
+    immediate->CopyResource(g_present, resource);
+    resource->Release();
+    samples = g_copyDesc.SampleDesc.Count;
+    width = g_copyDesc.Width;
+    height = g_copyDesc.Height;
+    g_presentView->AddRef();
+    return g_presentView;
 }
 
 double depthAgeMs(bool late) {

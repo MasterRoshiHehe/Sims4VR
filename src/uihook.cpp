@@ -219,11 +219,20 @@ void STDMETHODCALLTYPE hookedSetTargets1(ID3D11DeviceContext* c, UINT n, ID3D11R
     setTargets(g_setTargets[1], c, n, v, d);
 }
 
+// The UI cleared the scene's depth while drawing (it uses the depth-stencil for its masks): then
+// the depth at Present is no longer the 3D view's (sceneDepthAtPresent).
+std::atomic<bool> g_uiClearsDepth{false};
+
 void clearDepth(ClearDepthFn original, ID3D11DeviceContext* c, ID3D11DepthStencilView* d, UINT flags, FLOAT value,
                 UINT8 stencil) {
     if (d && (flags & D3D11_CLEAR_DEPTH) && d == g_sceneDepth.load(std::memory_order_relaxed)) {
-        int seen = value < 0.5f ? 0 : 1;
-        if (g_depthClear.exchange(seen) != seen) LOG("Phone 3D: the scene's depth clears to %.2f", value);
+        if (t_inRender) {
+            if (!g_uiClearsDepth.exchange(true))
+                LOG("UI layer: the UI clears the scene depth; the depth eye uses the copy taken before the UI");
+        } else {
+            int seen = value < 0.5f ? 0 : 1;
+            if (g_depthClear.exchange(seen) != seen) LOG("Phone 3D: the scene's depth clears to %.2f", value);
+        }
     }
     original(c, d, flags, value, stencil);
 }
@@ -670,6 +679,16 @@ ID3D11Texture2D* onPresent(ID3D11Texture2D* backbuffer, bool enabled) {
     g_phonePending = true;
     g_enabled.store(enabled && g_contextHooked.load(), std::memory_order_release);
     return result;
+}
+
+ID3D11DepthStencilView* sceneDepthAtPresent(bool& reversed) {
+    if (g_uiClearsDepth.load()) return nullptr;
+    std::lock_guard<std::mutex> lock(g_sceneMutex);
+    ID3D11DepthStencilView* depth = g_sceneDepth.load();
+    if (!depth) return nullptr;
+    reversed = g_depthClear.load() == 0;
+    depth->AddRef();
+    return depth;
 }
 
 }  // namespace s4vr::uihook

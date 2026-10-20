@@ -75,6 +75,7 @@ struct Config {
     // the other eye is made from the fresh one, where it can't see behind near things from that eye's
     // own last picture (1); 0: the left eye every frame, those spots filled from beside.
     bool depthEyeAlternate = true;
+    bool depthEyePresentDepth = true;  // [stereo] depth_eye_present_depth (deptheye::setPresentDepth)
     // [stereo] made_eye_*: the made eye's alignment, set by hand from the menu (Advanced › View ›
     // Right eye alignment) to find what's off. Picture: shift_x / shift_y (degrees, + right / up),
     // distance (eye distance used for the depth shift, 1 = measured), depth (scene depth scale).

@@ -13,6 +13,7 @@
 
 #include "log.h"
 #include "nearplane.h"
+#include "uihook.h"
 
 namespace s4vr::deptheye {
 
@@ -391,6 +392,12 @@ struct KeptDepth {
     bool valid = false;
 };
 KeptDepth g_kept[2];
+// The depth the last draw used (keepDepth keeps it): one reference, with what it is.
+ID3D11ShaderResourceView* g_lastDepth = nullptr;
+UINT g_lastSamples = 0, g_lastWidth = 0, g_lastHeight = 0;
+bool g_lastReversed = false;
+std::atomic<bool> g_presentDepth{true};  // [stereo] depth_eye_present_depth
+uint64_t g_atPresent = 0;  // draws with the depth copied at Present (last 30 s)
 uint64_t g_usedOlder = 0;
 double g_olderAgeSum = 0;
 
@@ -664,11 +671,14 @@ void logNow() {
     ++g_logs;
     LOG("Depth eye: last 30 s, %llu other-eye pictures made, %llu without this frame's depth, %llu of another size; "
         "graphics card %.2f ms each on average, worst %.2f (%llu timed); depth copied %.1f ms before use on average, "
-        "worst %.1f; %llu with that eye's older picture behind near things (%.1f ms old on average)",
+        "worst %.1f; %llu with the depth copied at Present; %llu with that eye's older picture behind near things "
+        "(%.1f ms old on average)",
         static_cast<unsigned long long>(g_drawn), static_cast<unsigned long long>(g_noDepth),
         static_cast<unsigned long long>(g_otherSize), g_gpuCount ? g_gpuSum / double(g_gpuCount) : 0.0, g_gpuWorst,
         static_cast<unsigned long long>(g_gpuCount), g_ageCount ? g_ageSum / double(g_ageCount) : 0.0, g_ageWorst,
-        static_cast<unsigned long long>(g_usedOlder), g_usedOlder ? g_olderAgeSum / double(g_usedOlder) : 0.0);
+        static_cast<unsigned long long>(g_atPresent), static_cast<unsigned long long>(g_usedOlder),
+        g_usedOlder ? g_olderAgeSum / double(g_usedOlder) : 0.0);
+    g_atPresent = 0;
     g_usedOlder = 0;
     g_olderAgeSum = 0;
     g_ageSum = g_ageWorst = 0;
@@ -699,11 +709,11 @@ bool keepDepth(int eye) {
     if (eye < 0 || eye > 1 || !g_device || g_failed) return false;
     KeptDepth& k = g_kept[eye];
     k.valid = false;
-    UINT samples = 0, width = 0, height = 0;
-    bool reversed = false;
-    ID3D11ShaderResourceView* depth = nearplane::lateDepth(samples, width, height, reversed);
-    if (!depth) depth = nearplane::latestDepth(samples, width, height, reversed);
+    ID3D11ShaderResourceView* depth = g_lastDepth;  // the one the fresh eye's draw just used
+    g_lastDepth = nullptr;
     if (!depth) return false;
+    const UINT samples = g_lastSamples, width = g_lastWidth, height = g_lastHeight;
+    const bool reversed = g_lastReversed;
     ID3D11Resource* resource = nullptr;
     depth->GetResource(&resource);
     ID3D11Texture2D* texture = nullptr;
@@ -769,11 +779,30 @@ bool draw(ID3D11ShaderResourceView* source, ID3D11Texture2D* target, DXGI_FORMAT
 
     UINT samples = 0, depthWidth = 0, depthHeight = 0;
     bool reversed = false;
-    // The copy with our own 3D pieces in it (phone3d::setWriteDepth), else the plain one.
-    ID3D11ShaderResourceView* depth = nearplane::lateDepth(samples, depthWidth, depthHeight, reversed);
-    const bool late = depth != nullptr;
+    // The 3D view's depth as it is now, at Present: the presented frame's own, our 3D pieces in it.
+    // The copies taken while the UI is recorded can be a frame behind (with the eyes taking turns,
+    // the other eye's: every outline shook).
+    ID3D11ShaderResourceView* depth = nullptr;
+    if (g_presentDepth.load(std::memory_order_relaxed)) {
+        bool sceneReversed = false;
+        if (ID3D11DepthStencilView* scene = uihook::sceneDepthAtPresent(sceneReversed)) {
+            ID3D11DeviceContext* immediate = nullptr;
+            device->GetImmediateContext(&immediate);
+            depth = nearplane::presentDepth(immediate, scene, samples, depthWidth, depthHeight);
+            immediate->Release();
+            scene->Release();
+            if (depth) {
+                reversed = sceneReversed;
+                ++g_atPresent;
+            }
+        }
+    }
+    const bool atPresent = depth != nullptr;
+    // Else the copy with our own 3D pieces in it (phone3d::setWriteDepth), else the plain one.
+    if (!depth) depth = nearplane::lateDepth(samples, depthWidth, depthHeight, reversed);
+    const bool late = atPresent || depth != nullptr;
     if (!depth) depth = nearplane::latestDepth(samples, depthWidth, depthHeight, reversed);
-    const double age = nearplane::depthAgeMs(late);
+    const double age = atPresent ? 0.0 : nearplane::depthAgeMs(late);
     if (age >= 0) {
         g_ageSum += age;
         g_ageWorst = std::max(g_ageWorst, age);
@@ -898,6 +927,13 @@ bool draw(ID3D11ShaderResourceView* source, ID3D11Texture2D* target, DXGI_FORMAT
             timing->pending = true;
         }
         done = true;
+        safeRelease(g_lastDepth);
+        g_lastDepth = depth;
+        depth->AddRef();
+        g_lastSamples = samples;
+        g_lastWidth = width;
+        g_lastHeight = height;
+        g_lastReversed = reversed;
         if (++g_drawn == 1 && g_logs == 0)
             LOG("Depth eye: the other eye made from the fresh one (%ux%u, depth x%u%s, %u steps a pixel)", width, height,
                 samples, reversed ? ", reversed" : "", kIterations);
@@ -911,6 +947,7 @@ bool draw(ID3D11ShaderResourceView* source, ID3D11Texture2D* target, DXGI_FORMAT
 }
 
 const char* failure() { return g_failure ? g_failure : "unknown"; }
+void setPresentDepth(bool on) { g_presentDepth.store(on, std::memory_order_relaxed); }
 void setDebugView(int view) { g_debugView.store(view, std::memory_order_relaxed); }
 void noteDrawnProjection(float nearZ, float farZ) {
     g_drawnNear = nearZ;
@@ -929,6 +966,7 @@ void release() {
     forgetTargets();
     releaseKept(g_kept[0]);
     releaseKept(g_kept[1]);
+    safeRelease(g_lastDepth);
     safeRelease(g_depthView);
     safeRelease(g_depth);
     g_width = g_height = 0;

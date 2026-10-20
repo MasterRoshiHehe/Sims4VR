@@ -26,4 +26,9 @@ bool install();
 // null if no UI was redirected.
 ID3D11Texture2D* onPresent(ID3D11Texture2D* backbuffer, bool enabled);
 
+// Present thread: the 3D view's depth-stencil (a reference of the caller's own), which holds the
+// presented frame's finished depth there (its command lists ran, the next frame's not yet), our 3D
+// pieces in it; and whether it clears to 0. Null if not learned, or if the UI clears it.
+ID3D11DepthStencilView* sceneDepthAtPresent(bool& reversed);
+
 }  // namespace s4vr::uihook

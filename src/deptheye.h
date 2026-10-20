@@ -53,6 +53,9 @@ bool broken();
 // shift); 3 that with the depth's edges in magenta. The numbers log ("Depth
 // eye numbers" / "Depth eye grid") comes on the first picture and on a change.
 void setDebugView(int view);
+// [stereo] depth_eye_present_depth: the depth copied at Present (on, the presented frame's own) or the
+// copies taken while the UI is recorded (off, as up to v0.13.297).
+void setPresentDepth(bool on);
 // The near / far planes worked out from the projection the game drew the
 // last frame with (for the numbers log; 0 if unknown).
 void noteDrawnProjection(float nearZ, float farZ);
