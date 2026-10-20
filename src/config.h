@@ -67,14 +67,14 @@ struct Config {
     bool frameMap = false;  // [stereo] frame_map: log the render frame's order and call stacks (framemap.cpp)
     // First person: every frame the eye the game didn't draw is made from the
     // one it did, moved by its depth (deptheye.h), so both eyes show the same moment.
-    bool depthEye = false;
+    bool depthEye = true;  // the smoothest setup (user 2026-10-20 16:45Z)
     // [stereo] depth_eye_debug: what the made eye shows, to check it (deptheye.h
     // setDebugView): 0 the picture, 1 its depth, 2 no depth shift, 3 depth edges.
     int depthEyeDebug = 0;
     // [stereo] depth_eye_alternate: with depth_eye the game draws the eyes in turn again, and each frame
     // the other eye is made from the fresh one, where it can't see behind near things from that eye's
     // own last picture (1); 0: the left eye every frame, those spots filled from beside.
-    bool depthEyeAlternate = true;
+    bool depthEyeAlternate = false;  // took turns: edges shook (v0.13.297-298)
     bool depthEyePresentDepth = true;  // [stereo] depth_eye_present_depth (deptheye::setPresentDepth)
     // [stereo] made_eye_*: the made eye's alignment, set by hand from the menu (Advanced › View ›
     // Right eye alignment) to find what's off. Picture: shift_x / shift_y (degrees, + right / up),

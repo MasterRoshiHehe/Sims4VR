@@ -59,6 +59,22 @@ static long readInt(const std::wstring& ini, const char* section, const char* ke
 }
 
 Config loadConfig(const std::wstring& ini) {
+    // The smoothest setup as everyone's start (user 2026-10-20 16:45Z: "whatever option will make the game
+    // run smoothest"): the depth eye on, the eyes not taking turns, no test view, the alignment as measured.
+    // Once: the menu's saved values for these keys are taken out of sims4vr_user.ini so sims4vr.ini's apply.
+    {
+        const std::wstring user = userIniPath(ini);
+        std::string path(user.begin(), user.end());
+        std::string done;
+        if (!readFrom(user, "stereo", "smooth_defaults", done) || atoi(done.c_str()) < 1) {
+            for (const char* key : {"depth_eye", "depth_eye_alternate", "depth_eye_debug", "depth_eye_present_depth",
+                                    "made_eye_shift_x", "made_eye_shift_y", "made_eye_distance", "made_eye_depth",
+                                    "made_eye_submit_x", "made_eye_submit_yaw", "made_eye_submit_pitch"})
+                WritePrivateProfileStringA("stereo", key, nullptr, path.c_str());
+            WritePrivateProfileStringA("stereo", "smooth_defaults", "1", path.c_str());
+            WritePrivateProfileStringA(nullptr, nullptr, nullptr, path.c_str());  // flush
+        }
+    }
     Config c;
     c.autostart = readInt(ini, "general", "autostart", 1);
     c.autoStereo = readInt(ini, "general", "auto_stereo", 1) != 0;
