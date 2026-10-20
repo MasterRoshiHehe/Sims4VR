@@ -378,6 +378,9 @@ static void depthCompareEye(const XrView (&located)[2], const camera::Rendered& 
     XrPosef target;
     float rows[12], srcTan[4], dstTan[4];
     depthEyeTarget(from, fov, 0, located, target, rows, srcTan, dstTan);
+    // Both eyes are drawn with the same widened view here (as with the depth eye on), so the made
+    // right eye is made for that view too: the two pictures line up pixel for pixel.
+    for (int i = 0; i < 4; ++i) dstTan[i] = srcTan[i];
     const float scale = camera::worldScale() > 0 ? camera::worldScale() : 1.0f;
     deptheye::setDebugView(0);
     if (g_compareImage &&
@@ -560,7 +563,7 @@ static bool renderStereo(ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_DESC
     int next = depthEye && !g_config.depthEyeAlternate ? 0 : g_renderingEye == 0 ? 1 : 0;
     const XrPosef& p = located[next].pose;
     XrFovf f = located[next].fov;
-    if (depthEye) {
+    if (depthEye || depthCompare()) {  // the compare view: both eyes drawn exactly as the depth eye draws them
         const XrFovf& o = located[1 - next].fov;
         f = {std::min(f.angleLeft, o.angleLeft), std::max(f.angleRight, o.angleRight), std::max(f.angleUp, o.angleUp),
              std::min(f.angleDown, o.angleDown)};
