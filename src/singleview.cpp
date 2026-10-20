@@ -10,6 +10,7 @@
 #include "addrs.h"
 #include "camera.h"
 #include "log.h"
+#include "uihook.h"
 
 namespace s4vr::singleview {
 namespace {
@@ -51,13 +52,15 @@ void log(const Sums& s, double seconds) {
     const uint32_t main = g_culls[0].exchange(0, std::memory_order_relaxed);
     const uint32_t other = g_culls[1].exchange(0, std::memory_order_relaxed);
     auto per = [](double total, int n) { return n ? total / n : 0.0; };
+    uint32_t ui = 0, uiSecond = 0;
+    uihook::takeRenders(ui, uiSecond);
     LOG("Single view (last %.0f s, %d frames, %.1f a second): scene render %.2f ms on the main thread (worst %.1f); "
         "second pass %d frames, %.2f ms (worst %.1f); main frame every %.1f ms (worst %.0f); %.2f pictures, room "
-        "culls %.2f main / %.2f other views a frame",
+        "culls %.2f main / %.2f other views a frame; UI drawn %u times (%u in second passes)",
         seconds, s.frames, s.frames / seconds, per(s.first, s.frames), s.firstWorst, s.doubled,
         per(s.second, s.doubled), s.secondWorst, per(s.between, s.frames), s.betweenWorst,
         s.frames ? double(presents) / s.frames : 0.0, s.frames ? double(main) / s.frames : 0.0,
-        s.frames ? double(other) / s.frames : 0.0);
+        s.frames ? double(other) / s.frames : 0.0, ui, uiSecond);
 }
 
 void hookedScene(void* renderer, const void* viewport, float seconds) {
@@ -68,7 +71,9 @@ void hookedScene(void* renderer, const void* viewport, float seconds) {
     g_scene(renderer, viewport, seconds);
     const int64_t mid = ticks();
     if (both && camera::secondEye()) {
+        uihook::beginSecondPass();
         g_scene(renderer, viewport, 0.0f);
+        uihook::endSecondPass();
         const double ms = (ticks() - mid) * g_msPerTick;
         ++g_sums.doubled;
         g_sums.second += ms;

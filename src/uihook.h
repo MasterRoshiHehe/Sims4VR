@@ -1,6 +1,8 @@
 #pragma once
 #include <d3d11.h>
 
+#include <cstdint>
+
 // Separates the game's UI from the 3D view (DX11 game only).
 //
 // The game draws its UI with Scaleform once a frame in RenderManager::Render
@@ -30,5 +32,12 @@ ID3D11Texture2D* onPresent(ID3D11Texture2D* backbuffer, bool enabled);
 // presented frame's finished depth there (its command lists ran, the next frame's not yet), our 3D
 // pieces in it; and whether it clears to 0. Null if not learned, or if the UI clears it.
 ID3D11DepthStencilView* sceneDepthAtPresent(bool& reversed);
+// Both real eyes every frame (singleview.cpp): the frame's second scene pass (the right eye) is
+// drawn between these. Our 3D pieces (phone, panels, bubbles, screens) go into it again with its
+// camera; the game's flat UI isn't drawn a second time (the UI texture already has this frame's).
+void beginSecondPass();
+void endSecondPass();
+// UI renders since the last call, and how many of them fell in second passes.
+void takeRenders(uint32_t& all, uint32_t& second);
 
 }  // namespace s4vr::uihook

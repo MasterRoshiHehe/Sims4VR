@@ -82,6 +82,8 @@ std::atomic<bool> g_enabled{false};
 std::atomic<int> g_rendering{0};  // UI renders in progress (any thread): binds elsewhere skip the thread-local check
 std::atomic<bool> g_clearPending{true};
 std::atomic<bool> g_phonePending{true};  // the phone goes into the 3D view once a frame
+std::atomic<bool> g_secondPass{false};    // beginSecondPass .. endSecondPass
+std::atomic<uint32_t> g_uiRenders{0}, g_uiSecondRenders{0};
 std::atomic<bool> g_drawn{false};
 std::atomic<uint64_t> g_renders{0};
 
@@ -392,10 +394,16 @@ void hookedRender(void* rm, void* movie) {
         context->ClearRenderTargetView(ui, transparent);
     }
     g_mainResource.store(main, std::memory_order_relaxed);
+    g_uiRenders.fetch_add(1, std::memory_order_relaxed);
     if (g_phonePending.exchange(false)) {
         senseNear(context);
         drawPhone(context);
         if (phone3d::writesDepth()) senseLate(context);
+    }
+    if (g_secondPass.load(std::memory_order_acquire)) {
+        // The right eye's pass: our pieces only; the UI texture has this frame's UI already.
+        g_uiSecondRenders.fetch_add(1, std::memory_order_relaxed);
+        return;
     }
     g_rendering.fetch_add(1, std::memory_order_relaxed);
     t_inRender = true;
@@ -679,6 +687,18 @@ ID3D11Texture2D* onPresent(ID3D11Texture2D* backbuffer, bool enabled) {
     g_phonePending = true;
     g_enabled.store(enabled && g_contextHooked.load(), std::memory_order_release);
     return result;
+}
+
+void beginSecondPass() {
+    g_phonePending.store(true, std::memory_order_relaxed);
+    g_secondPass.store(true, std::memory_order_release);
+}
+
+void endSecondPass() { g_secondPass.store(false, std::memory_order_release); }
+
+void takeRenders(uint32_t& all, uint32_t& second) {
+    all = g_uiRenders.exchange(0, std::memory_order_relaxed);
+    second = g_uiSecondRenders.exchange(0, std::memory_order_relaxed);
 }
 
 ID3D11DepthStencilView* sceneDepthAtPresent(bool& reversed) {
