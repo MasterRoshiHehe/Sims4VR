@@ -245,6 +245,14 @@ void forgetTargets() {
 
 bool has(int eye) { return eye >= 0 && eye <= 1 && g_kept[eye].valid; }
 
+ID3D11ShaderResourceView* keptView(int eye, UINT& width, UINT& height) {
+    if (!has(eye) || !g_kept[eye].view) return nullptr;
+    width = g_kept[eye].width;
+    height = g_kept[eye].height;
+    g_kept[eye].view->AddRef();
+    return g_kept[eye].view;
+}
+
 void forget(int eye) {
     if (eye >= 0 && eye <= 1) g_kept[eye].valid = false;
 }

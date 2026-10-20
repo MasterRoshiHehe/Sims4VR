@@ -45,6 +45,7 @@
 #include "claudescreen.h"
 #include "voice.h"
 #include "singleview.h"
+#include "deptheye.h"
 #include "benchmark.h"
 
 namespace s4vr::vr {

@@ -81,6 +81,7 @@ struct Rendered {
     // First person, paired eyes: a left eye the next right eye is drawn from
     // the same place as (Present holds it back until that right eye arrives).
     bool pairFirst = false;
+    float nearZ = 0, farZ = 0;  // the planes it was drawn with (0: not known)
     BodyParts body;
 };
 bool takeRendered(Rendered& out);

@@ -5,6 +5,7 @@ static void destroySwapchain(Swapchain& s) {
     if (s.handle) sharpen::forgetTargets();
     if (s.handle) eyealign::forgetTargets();
     if (s.handle) bodylayer::forgetTargets();
+    if (s.handle) deptheye::forgetTargets();
     if (s.handle) xrDestroySwapchain(s.handle);
     s = Swapchain{};
 }
@@ -28,6 +29,7 @@ static void destroySession() {
     sharpen::release();
     eyealign::release();
     bodylayer::release();
+    deptheye::release();
     if (g_mirror) g_mirror->Release();
     g_mirror = nullptr;
     g_mirrorValid = false;

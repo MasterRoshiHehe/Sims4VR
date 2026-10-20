@@ -1547,6 +1547,14 @@ void applyEye(uint8_t* dst) {
     rendered.yaw = yaw;
     rendered.lead = yawLead;
     rendered.pairFirst = g_pairBase.valid;
+    {
+        float clip[2];
+        std::memcpy(clip, dst + kNearOffset, sizeof(clip));
+        if (clip[0] > 0 && clip[1] > clip[0]) {
+            rendered.nearZ = clip[0];
+            rendered.farZ = clip[1];
+        }
+    }
     rendered.body.count = 0;
     // Free movement turns your body with the view (the stick turns both), so
     // it can go to the headset on its own layer; in the game's animations

@@ -65,6 +65,9 @@ struct Config {
     // (vr.cpp renderStereo, bodylayer.cpp).
     bool bodyLayer = true;
     bool frameMap = false;  // [stereo] frame_map: log the render frame's order and call stacks (framemap.cpp)
+    // First person: every frame the eye the game didn't draw is made from the
+    // one it did, moved by its depth (deptheye.h), so both eyes show the same moment.
+    bool depthEye = false;
     bool probeDouble = false;  // [stereo] probe_double: draw the scene twice a frame and time it (singleview.cpp)
     bool alignEyes = true;  // SteamVR: the older eye turned to the newest head pose each frame (eyealign.h)
     // Game render resolution as a fraction of the headset's (0 = the game's own, the monitor's)

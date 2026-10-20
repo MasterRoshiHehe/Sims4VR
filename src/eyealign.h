@@ -32,6 +32,10 @@ void forgetTargets();
 // tangents are the field of view (tan left, right, up, down) of both.
 bool draw(int eye, ID3D11Texture2D* target, DXGI_FORMAT format, const float rotation[9], const float tangents[4]);
 
+// The kept image of `eye` as a shader view, with a reference of the caller's
+// own (Release it), and its size; null if none is kept.
+ID3D11ShaderResourceView* keptView(int eye, UINT& width, UINT& height);
+
 void release();
 
 }  // namespace s4vr::eyealign

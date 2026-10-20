@@ -64,6 +64,7 @@ add_library(sims4vr SHARED
     src/benchmark.cpp
     src/framemap.cpp
     src/singleview.cpp
+    src/deptheye.cpp
     src/touch.cpp
     src/grab.cpp
     src/d3d9_hook.cpp
