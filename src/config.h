@@ -206,7 +206,7 @@ struct Config {
     float mirrorExterior = 50;  // ... outdoors (0: the game's 100)
     bool mirrorClip = true;   // first person lopsided eye: keep the game's clip at the mirror glass
     bool reflectionsOff = false;  // no mirror or water reflections at all
-    bool ssaoOff = false;         // [stereo] ssao_off: the game's screen-space ambient occlusion off (GPU pack, perf item 4)
+    bool ambientOcclusion = true;  // [stereo] ambient_occlusion: the game's SSAO; 0 = off for speed (GPU pack, perf item 4)
     bool hitchCatcher = true;     // [perf] hitch_catcher: log what the game's main thread does during stalls over 60 ms (hitch.cpp)
 
     // Phone (first person): close your right hand at your right hip and your

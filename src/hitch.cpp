@@ -21,7 +21,7 @@ constexpr int kMaxSamples = 10, kMaxLines = 300, kStackBytes = 4096, kMaxFrames 
 
 std::atomic<int64_t> g_lastEnd{0}, g_lastStart{0};
 std::atomic<bool> g_inPresent{false}, g_on{false};
-std::atomic<DWORD> g_tid{0};
+std::atomic<DWORD> g_tid{0}, g_mainTid{0};
 double g_msPerTick = 0;
 int g_lines = 0;
 uint64_t g_stalls = 0;
@@ -125,21 +125,27 @@ std::string describe(const Sample& s) {
     return out;
 }
 
-void logStall(double ms, const std::vector<Sample>& samples) {
-    ++g_stalls;
-    if (g_lines >= kMaxLines) return;
-    ++g_lines;
+std::string top(const std::vector<Sample>& samples, size_t count) {
     std::map<std::string, int> groups;
     for (const Sample& s : samples) ++groups[describe(s)];
     std::vector<std::pair<int, std::string>> order;
     for (auto& g : groups) order.emplace_back(g.second, g.first);
     std::sort(order.begin(), order.end(), [](auto& a, auto& b) { return a.first > b.first; });
     std::string text;
-    for (size_t i = 0; i < order.size() && i < 3; ++i)
+    for (size_t i = 0; i < order.size() && i < count; ++i)
         text += (i ? "; " : "") + std::string("x") + std::to_string(order[i].first) + " " + order[i].second;
-    LOGT("hitch", "Hitch #%llu: %.0f ms between pictures, %d samples (stack scan, innermost first): %s",
-         static_cast<unsigned long long>(g_stalls), ms, static_cast<int>(samples.size()),
-         samples.empty() ? "stall over before the first sample" : text.c_str());
+    return text.empty() ? "no sample" : text;
+}
+
+// render = the thread that calls Present (v0.13.279 showed it idles in a job semaphore wait: game+0x13ef6eb is the
+// return address after WaitForSingleObject), main = the thread that copies the camera (the producer).
+void logStall(double ms, const std::vector<Sample>& render, const std::vector<Sample>& main) {
+    ++g_stalls;
+    if (g_lines >= kMaxLines) return;
+    ++g_lines;
+    LOGT("hitch", "Hitch #%llu: %.0f ms between pictures, %d samples (stack scan, innermost first). MAIN: %s || RENDER: %s",
+         static_cast<unsigned long long>(g_stalls), ms, static_cast<int>(render.size()), top(main, 3).c_str(),
+         top(render, 2).c_str());
 }
 
 void wait5ms(HANDLE timer) {
@@ -155,10 +161,10 @@ void wait5ms(HANDLE timer) {
 
 DWORD WINAPI watchdog(void*) {
     HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, 0x2 /* CREATE_WAITABLE_TIMER_HIGH_RESOLUTION */, TIMER_ALL_ACCESS);
-    HANDLE thread = nullptr;
-    DWORD openedFor = 0;
+    HANDLE thread = nullptr, mainThread = nullptr;
+    DWORD openedFor = 0, mainOpenedFor = 0;
     int64_t episodeEnd = 0;
-    std::vector<Sample> samples;
+    std::vector<Sample> samples, mainSamples;
     double lastMs = 0;
     for (;;) {
         wait5ms(timer);
@@ -169,13 +175,20 @@ DWORD WINAPI watchdog(void*) {
             thread = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, tid);
             openedFor = tid;
         }
+        const DWORD mtid = g_mainTid.load();
+        if (mtid && mtid != mainOpenedFor) {
+            if (mainThread) CloseHandle(mainThread);
+            mainThread = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, mtid);
+            mainOpenedFor = mtid;
+        }
         const int64_t end = g_lastEnd.load();
         if (!end || !thread) continue;
         if (episodeEnd && end != episodeEnd) {  // the picture thread came back: log the stall that ended
             const int64_t start = g_lastStart.load();
-            logStall(start > episodeEnd ? (start - episodeEnd) * g_msPerTick : lastMs, samples);
+            logStall(start > episodeEnd ? (start - episodeEnd) * g_msPerTick : lastMs, samples, mainSamples);
             episodeEnd = 0;
             samples.clear();
+            mainSamples.clear();
         }
         if (g_inPresent.load()) continue;
         const double ms = (ticks() - end) * g_msPerTick;
@@ -190,6 +203,12 @@ DWORD WINAPI watchdog(void*) {
         s.rip = rip;
         analyse(s, copied);
         samples.push_back(s);
+        if (mainThread && mtid != tid && grab(mainThread, rip, rsp, copied)) {
+            Sample m;
+            m.rip = rip;
+            analyse(m, copied);
+            mainSamples.push_back(m);
+        }
     }
     return 0;
 }
@@ -207,6 +226,11 @@ void install(bool on) {
     HANDLE t = CreateThread(nullptr, 0, watchdog, nullptr, 0, nullptr);
     if (t) CloseHandle(t);
     LOGT("hitch", "Hitch catcher on: stalls over %.0f ms between pictures are sampled every 5 ms", kStallMs);
+}
+
+void mainThreadSeen() {
+    const DWORD id = GetCurrentThreadId();
+    if (g_mainTid.load(std::memory_order_relaxed) != id) g_mainTid.store(id);
 }
 
 void presentStart() {

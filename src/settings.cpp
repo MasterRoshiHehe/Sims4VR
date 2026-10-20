@@ -405,7 +405,7 @@ std::vector<Row> makeRows() {
         toggle(L"View motion", L"Hands match in both eyes (walking)", "stereo", "paired_hands", &Config::pairedHands),
         toggle(L"View motion", L"Own body steady while turning", "stereo", "body_layer", &Config::bodyLayer),
         toggle(L"View picture", L"Test: draw the scene twice (log)", "stereo", "probe_double", &Config::probeDouble),
-        toggle(L"View picture", L"No ambient occlusion (SSAO, next start)", "stereo", "ssao_off", &Config::ssaoOff, kNextStart),
+        toggle(L"View picture", L"Ambient occlusion (SSAO, next start)", "stereo", "ambient_occlusion", &Config::ambientOcclusion, kNextStart),
         benchButton(L"Run turn test (game paused)", 201,
                     L"Stand still, close this menu. After 8 s: 5 s still, 3 turns each way, 5 s still. One 'Benchmark:' line in the log. Pause the game first."),
         benchButton(L"Run turn test (game running)", 202,

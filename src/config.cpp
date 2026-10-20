@@ -172,7 +172,8 @@ Config loadConfig(const std::wstring& ini) {
     c.mirrorExterior = readFloat(ini, "stereo", "mirror_far_outside", c.mirrorExterior);
     c.mirrorClip = readInt(ini, "stereo", "mirror_clip", 1) != 0;
     c.reflectionsOff = readInt(ini, "stereo", "reflections_off", 0) != 0;
-    c.ssaoOff = readBool(ini, "stereo", "ssao_off", c.ssaoOff);
+    c.ambientOcclusion = readBool(ini, "stereo", "ambient_occlusion", c.ambientOcclusion);
+    if (readBool(ini, "stereo", "ssao_off", false)) c.ambientOcclusion = false;  // the key of v0.13.279
     c.hitchCatcher = readBool(ini, "perf", "hitch_catcher", c.hitchCatcher);
     c.outdoorFade = readFloat(ini, "audio", "outdoor_fade", c.outdoorFade);
     if (!(c.outdoorFade >= 0 && c.outdoorFade <= 20)) c.outdoorFade = 4.0f;

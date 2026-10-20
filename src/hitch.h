@@ -11,5 +11,7 @@ void install(bool on);
 // framecost.cpp calls these from the Present hook (the thread that draws the pictures).
 void presentStart();
 void presentEnd();
+// framecost::renderCamera: the camera copy runs on the game's main thread; that thread is sampled too ("MAIN:" in the line).
+void mainThreadSeen();
 
 }  // namespace s4vr::hitch

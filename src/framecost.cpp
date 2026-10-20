@@ -61,7 +61,10 @@ void log(const Sums& s, double seconds) {
 
 }  // namespace
 
-void renderCamera() { first(g_camera, ticks()); }
+void renderCamera() {
+    hitch::mainThreadSeen();
+    first(g_camera, ticks());
+}
 
 void simDraw(bool eyes) {
     const int64_t now = ticks();

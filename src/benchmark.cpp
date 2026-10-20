@@ -70,18 +70,18 @@ void report(const Config& c) {
     const double turnS = std::max(0.001, (g_turn.end - g_turn.start) / 1000.0);
     LOGT("benchmark",
          "Benchmark: v%s game %s | still %.1f s: %d pictures (%.1f/s), game ms p50 %.1f p95 %.1f | turning 2x3 turns (%.0f deg at %.0f deg/s) in %.1f s: "
-         "%d pictures (%.1f/s, %.1f pairs/s), %d refreshes (%.1f/s), game ms p50 %.1f p95 %.1f p99 %.1f worst %.1f, "
+         "%d new pictures (%.1f/s, one per shown pair), %d refreshes (%.1f/s), game ms p50 %.1f p95 %.1f p99 %.1f worst %.1f, "
          "xrWaitFrame avg %.1f ms, GPU 3D busy avg %.0f%% worst %.0f%% (%d samples; the game's share %.0f%%), %d slow frames (>100 ms), "
          "eyes turned back max %.1f deg, %d refreshes missed | render_scale %.2f msaa %d exact_fov %d paired_eyes %d mirrors %.0f/%.0f m reflections %s "
          "ssao %s shadow_map %.0f px mode %s",
          S4VR_BUILD_VERSION, g_paused ? "paused" : "running", stillS, g_still.frames, g_still.frames / stillS,
          percentile(g_still.gameMs, 0.5), percentile(g_still.gameMs, 0.95), 2 * kTurnRadians * 57.29578, c.bodyTurnRate, turnS,
-         g_turn.pictures, g_turn.pictures / turnS, g_turn.pictures / turnS / 2, g_turn.frames, g_turn.frames / turnS,
+         g_turn.pictures, g_turn.pictures / turnS, g_turn.frames, g_turn.frames / turnS,
          percentile(g_turn.gameMs, 0.5), percentile(g_turn.gameMs, 0.95), percentile(g_turn.gameMs, 0.99),
          g_turn.gameMs.empty() ? 0.0f : *std::max_element(g_turn.gameMs.begin(), g_turn.gameMs.end()),
          g_turn.frames ? g_turn.wait / g_turn.frames : 0.0, g_busy.all3d, g_busy.worst3d, g_busy.samples, g_busy.game3d,
          g_turn.slow, g_turn.backMax, g_turn.missed, c.renderScale, c.renderMsaa, c.exactFov ? 1 : 0, c.pairedEyes ? 1 : 0,
-         c.mirrorInterior, c.mirrorExterior, c.reflectionsOff ? "off" : "on", c.ssaoOff ? "off" : "on", c.shadowMap,
+         c.mirrorInterior, c.mirrorExterior, c.reflectionsOff ? "off" : "on", c.ambientOcclusion ? "on" : "off", c.shadowMap,
          camera::bodyActive() ? "first person" : "other");
 }
 

@@ -31,7 +31,16 @@ float __fastcall hookedFloat(void* options, const char* name, float fallback) {
     else if (g_exterior > 0 && !std::strcmp(name, "ExteriorMirrorFarPlane"))
         cap = g_exterior;
     if (cap > 0 && v > cap) {
-        LOG("Mirror cap: %s %.1f m -> %.1f m", name, v, cap);
+        static ULONGLONG lastLog = 0;
+        static unsigned skipped = 0;
+        const ULONGLONG tick = GetTickCount64();
+        if (!lastLog || tick - lastLog > 60000) {
+            LOG("Mirror cap: %s %.1f m -> %.1f m (%u more reads since the last line)", name, v, cap, skipped);
+            lastLog = tick;
+            skipped = 0;
+        } else {
+            ++skipped;
+        }
         return cap;
     }
     return v;
