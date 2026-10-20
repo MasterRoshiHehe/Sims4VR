@@ -106,6 +106,7 @@ Config loadConfig(const std::wstring& ini) {
     c.depthEyeAlternate = readBool(ini, "stereo", "depth_eye_alternate", c.depthEyeAlternate);
     c.flatWorld = readBool(ini, "stereo", "flat_world", c.flatWorld);
     c.bothEyes = readBool(ini, "stereo", "both_eyes", c.bothEyes);
+    c.bothEyesSkip = static_cast<int>(readInt(ini, "stereo", "both_eyes_skip", c.bothEyesSkip));
     c.depthEyePresentDepth = readBool(ini, "stereo", "depth_eye_present_depth", c.depthEyePresentDepth);
     c.madeEyeShiftX = readFloat(ini, "stereo", "made_eye_shift_x", c.madeEyeShiftX);
     c.madeEyeShiftY = readFloat(ini, "stereo", "made_eye_shift_y", c.madeEyeShiftY);

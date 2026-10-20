@@ -81,6 +81,9 @@ struct Config {
     // [stereo] both_eyes: first person, the game draws the left and the right eye every frame (two
     // scene passes, one headset frame), so both are real pictures of the same moment: real depth, no
     // ghost edges. Costs a second scene pass; off until tested (v0.13.304).
+    // [stereo] both_eyes_skip: the right eye's pass leaves out a scene part (1 = mode 3, 2 = mode 4, 3 = mode 8;
+    // 0 = none) and reuses the left eye's: a test of which part is the shadows (v0.13.307).
+    int bothEyesSkip = 0;
     bool bothEyes = true;  // the one mode to make work (user 2026-10-20 18:32Z)
     bool depthEyeAlternate = false;  // took turns: edges shook (v0.13.297-298)
     bool depthEyePresentDepth = true;  // [stereo] depth_eye_present_depth (deptheye::setPresentDepth)

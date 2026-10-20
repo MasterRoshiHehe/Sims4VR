@@ -13,5 +13,11 @@ void install();
 void setProbe(bool on);  // live, from the settings
 void presented();        // a picture was presented (Present thread)
 void culled(int kind);   // the game culled rooms for a view (job threads)
+// Both real eyes: the scene's parts (render jobs by mode 3, 4, 8): a sun shadow fit ran in the
+// current job thread's part (shadows.cpp), counted per part in the 10 s log.
+void fitted();
+// Settings: the second (right eye) pass leaves out the part with this mode (3, 4 or 8; 0 none), reusing
+// the first pass's result. A test of which part is the shadows ([stereo] both_eyes_skip).
+void setSecondSkip(int mode);
 
 }  // namespace s4vr::singleview
