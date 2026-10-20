@@ -426,7 +426,7 @@ std::vector<Row> makeRows() {
         toggle(L"View motion", L"Draw only the width the headset needs (faster)", "stereo", "headset_width",
                &Config::headsetWidth),
         choice(L"View motion", L"Right eye reuses a scene part (test)", "stereo", "both_eyes_skip", &Config::bothEyesSkip,
-               {L"Off", L"Part 3", L"Part 4", L"Part 8"}),
+               {L"Off", L"Part 3", L"Part 4", L"Part 8", L"Frame begin"}),
         choice(L"View motion", L"Depth eye test view", "stereo", "depth_eye_debug", &Config::depthEyeDebug,
                {L"Off", L"Depth", L"No shift", L"Depth edges", L"Compare with the real eye"}),
         toggle(L"View align", L"Eyes take turns (real picture behind near things)", "stereo", "depth_eye_alternate",

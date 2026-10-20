@@ -27,7 +27,12 @@ SceneFn g_scene = nullptr;
 using JobFn = void (*)(void* task, uint8_t* data);
 JobFn g_job = nullptr;
 thread_local int t_part = -1;  // index of the part this job thread is drawing (-1 none)
-constexpr int kParts = 4;      // modes 3, 4, 8, other
+// Modes 3, 4, 8, other; then the scene render's own steps on the main thread (v0.13.312, which of
+// them holds the sun shadow fits and the shadow/mirror culls): FrameBegin 0x11c1a60, SceneViews
+// 0x11c45a0 (views, before its draw lists), SceneLists 0x11c46d0 (draw lists, may run as a job).
+constexpr int kParts = 7;
+constexpr int kBegin = 4, kViews = 5, kLists = 6;
+constexpr uint32_t kSkipBegin = 101;  // setSecondSkip: the second eye leaves out FrameBegin
 std::atomic<uint32_t> g_partRuns[kParts] = {}, g_partFits[kParts] = {}, g_partCulls[kParts][2] = {};
 std::atomic<uint64_t> g_partTicks[kParts] = {};
 std::atomic<uint32_t> g_skipped{0};
@@ -35,6 +40,37 @@ std::atomic<int> g_secondSkip{0};
 std::atomic<bool> g_inSecond{false};
 
 int partIndex(uint32_t mode) { return mode == 3 ? 0 : mode == 4 ? 1 : mode == 8 ? 2 : 3; }
+
+int64_t ticks();
+
+// FrameBegin takes the time step in xmm1 (movaps xmm6, xmm1), the others integers only.
+using BeginFn = uint64_t (*)(void* renderer, float seconds);
+using StepFn = uint64_t (*)(void* a, uint64_t b, uint64_t c, uint64_t d);
+void* g_step[3] = {};  // FrameBegin, SceneViews, SceneLists (originals)
+
+// One of the scene render's steps, tagged and timed like a part.
+uint64_t runStep(int part, void* a, uint64_t b, uint64_t c, uint64_t d, float seconds = 0) {
+    const int was = t_part;
+    t_part = part;
+    const int64_t start = ticks();
+    const uint64_t r = part == kBegin ? reinterpret_cast<BeginFn>(g_step[0])(a, seconds)
+                                      : reinterpret_cast<StepFn>(g_step[part - kBegin])(a, b, c, d);
+    // SceneViews' time includes SceneLists' when that runs inline (renderer+0x6d3 off).
+    g_partTicks[part].fetch_add(static_cast<uint64_t>(ticks() - start), std::memory_order_relaxed);
+    g_partRuns[part].fetch_add(1, std::memory_order_relaxed);
+    t_part = was;
+    return r;
+}
+uint64_t hookedBegin(void* renderer, float seconds) {
+    if (g_secondSkip.load(std::memory_order_relaxed) == static_cast<int>(kSkipBegin) &&
+        g_inSecond.load(std::memory_order_acquire)) {
+        g_skipped.fetch_add(1, std::memory_order_relaxed);
+        return 0;
+    }
+    return runStep(kBegin, renderer, 0, 0, 0, seconds);
+}
+uint64_t hookedViews(void* a, uint64_t b, uint64_t c, uint64_t d) { return runStep(kViews, a, b, c, d); }
+uint64_t hookedLists(void* a, uint64_t b, uint64_t c, uint64_t d) { return runStep(kLists, a, b, c, d); }
 
 std::atomic<bool> g_probe{false};
 std::atomic<uint32_t> g_presents{0};
@@ -70,9 +106,9 @@ void log(const Sums& s, double seconds) {
     uihook::takeRenders(ui, uiSecond);
     {
         // Per scene part: runs, CPU ms each (on its job thread), sun shadow fits and room culls.
-        char parts[400];
+        char parts[900];
         int n = 0;
-        static const char* names[kParts] = {"3", "4", "8", "other"};
+        static const char* names[kParts] = {"3", "4", "8", "other", "frame begin", "views", "draw lists"};
         for (int i = 0; i < kParts; ++i) {
             const uint32_t runs = g_partRuns[i].exchange(0, std::memory_order_relaxed);
             const uint64_t t = g_partTicks[i].exchange(0, std::memory_order_relaxed);
@@ -188,6 +224,19 @@ void install() {
         else
             g_job = nullptr;
     }
+    const char* steps[3] = {"FrameBegin", "SceneViews", "SceneLists"};
+    void* detours[3] = {reinterpret_cast<void*>(&hookedBegin), reinterpret_cast<void*>(&hookedViews),
+                        reinterpret_cast<void*>(&hookedLists)};
+    int hooked = 0;
+    for (int i = 0; i < 3; ++i) {
+        void* fn = addrs::fn(steps[i]);
+        if (fn && MH_CreateHook(fn, detours[i], &g_step[i]) == MH_OK &&
+            MH_EnableHook(fn) == MH_OK)
+            ++hooked;
+        else
+            g_step[i] = nullptr;
+    }
+    LOG("Single view: %d of 3 scene steps timed", hooked);
 }
 
 void setProbe(bool on) { g_probe.store(on, std::memory_order_relaxed); }

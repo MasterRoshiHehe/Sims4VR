@@ -612,8 +612,8 @@ static bool renderStereo(ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_DESC
     camera::setPairedEyes((g_config.pairedEyes || both) && !alignEyes() && !depthEyeOn());
     camera::setBothEyes(both);
     {
-        static const int kSkip[4] = {0, 3, 4, 8};
-        singleview::setSecondSkip(kSkip[std::clamp(g_config.bothEyesSkip, 0, 3)]);
+        static const int kSkip[5] = {0, 3, 4, 8, 101};  // 101: FrameBegin (singleview.cpp)
+        singleview::setSecondSkip(kSkip[std::clamp(g_config.bothEyesSkip, 0, 4)]);
     }
     camera::setExactFov(g_config.exactFov);
     camera::setPairedHands(g_config.pairedHands);
