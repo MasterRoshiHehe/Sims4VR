@@ -23,4 +23,8 @@ void request(int width, int height);
 // True while a render size is requested (the headset view is on).
 bool scaled();
 
+// While a size is requested: its width is used even when narrower than the window (the engine
+// otherwise never renders narrower than the window). Re-applies when it changes.
+void setFitWidth(bool on);
+
 }  // namespace s4vr::renderscale

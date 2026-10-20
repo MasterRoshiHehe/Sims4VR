@@ -188,6 +188,7 @@ static void updateRenderSize(bool stereo) {
     ULONGLONG now = GetTickCount64();
     if (stereo && g_renderSize[0]) {
         lastStereo = now;
+        renderscale::setFitWidth(g_config.headsetWidth);
         renderscale::request(g_renderSize[0], g_renderSize[1]);
     } else if (now - lastStereo > 1500) {
         renderscale::request(0, 0);

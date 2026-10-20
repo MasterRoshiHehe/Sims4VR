@@ -50,6 +50,24 @@ ResetFn g_reset = nullptr;
 uint8_t* g_dm = nullptr;
 
 std::atomic<int> g_width{0}, g_height{0};
+// Headset width (v0.13.309): ApplySettings takes render width = max(window width, RenderMinWidth * dpi)
+// (0xdaf977..0xdaf98e in 1.128: cmp r14d, eax; cmovl ecx, eax), so the 3D view was never narrower
+// than the window: 2560 wide where the headset needs ~1464. While on, the cmovl becomes a mov
+// (ApplySettings + 0x17e: 0f 4c c8 -> 89 c1 90): the width is ours alone. Restored when off.
+std::atomic<bool> g_fitWidth{false};
+uint8_t* g_widthPatch = nullptr;  // ApplySettings + 0x17e once the bytes there were recognised
+bool g_widthPatched = false;
+constexpr uint8_t kWidthMax[3] = {0x0f, 0x4c, 0xc8}, kWidthOurs[3] = {0x89, 0xc1, 0x90};
+
+void patchWidth(bool ours) {
+    if (!g_widthPatch || g_widthPatched == ours) return;
+    DWORD old = 0;
+    if (!VirtualProtect(g_widthPatch, 3, PAGE_EXECUTE_READWRITE, &old)) return;
+    std::memcpy(g_widthPatch, ours ? kWidthOurs : kWidthMax, 3);
+    VirtualProtect(g_widthPatch, 3, old, &old);
+    FlushInstructionCache(GetCurrentProcess(), g_widthPatch, 3);
+    g_widthPatched = ours;
+}
 int g_savedMinW = -1, g_savedMinH = -1;  // the game's RenderMin, restored when we stop
 int g_msaa = 0;                          // the player's edge smoothing (MSAA samples) before we scaled
 int g_msaaCap = 4;                       // ini: most samples while scaled (never more than the player's)
@@ -84,12 +102,15 @@ uint64_t hookedApplySettings(void* dm, void* settings, char a3, char a4, char a5
         }
         std::memcpy(d + kRenderMinWidth, &w, sizeof(int));
         std::memcpy(d + kRenderMinHeight, &h, sizeof(int));
+        patchWidth(g_fitWidth.load());
     } else if (g_savedMinW >= 0) {
+        patchWidth(false);
         std::memcpy(d + kRenderMinWidth, &g_savedMinW, sizeof(int));
         std::memcpy(d + kRenderMinHeight, &g_savedMinH, sizeof(int));
         g_savedMinW = g_savedMinH = -1;
     }
 
+    if (!(w > 0 && h > 0)) patchWidth(false);
     uint64_t result = g_original(dm, settings, a3, a4, a5, a6);
 
     gfx = g_gfx();
@@ -163,6 +184,12 @@ bool tryInstall() {
     MH_STATUS init = MH_Initialize();
     if (init != MH_OK && init != MH_ERROR_ALREADY_INITIALIZED) return false;
     void* target = fn("ApplySettings");
+    {
+        auto* at = static_cast<uint8_t*>(target) + 0x17b;  // cmp r14d, eax; cmovl ecx, eax
+        const uint8_t expected[6] = {0x44, 0x3b, 0xf0, 0x0f, 0x4c, 0xc8};
+        if (std::memcmp(at, expected, sizeof(expected)) == 0) g_widthPatch = at + 3;
+        else LOG("Render scale: render width can't go under the window's on this game build");
+    }
     if (MH_CreateHook(target, reinterpret_cast<void*>(&hookedApplySettings), reinterpret_cast<void**>(&g_original)) !=
             MH_OK ||
         MH_EnableHook(target) != MH_OK) {
@@ -202,5 +229,15 @@ void request(int width, int height) {
 }
 
 bool scaled() { return g_width.load() > 0 || g_height.load() > 0; }
+
+void setFitWidth(bool on) {
+    if (g_fitWidth.exchange(on) == on) return;
+    LOG("Render scale: the 3D view %s", on ? "as wide as the headset needs (may be narrower than the window)"
+                                           : "at least as wide as the window");
+    if (!g_original || !g_dm || !scaled()) return;
+    int64_t zero = 0, minusOne = -1;  // re-apply next frame, as request does
+    std::memcpy(g_dm + kAppliedWindowSize, &minusOne, sizeof(minusOne));
+    std::memcpy(g_dm + kPolledSize, &zero, sizeof(zero));
+}
 
 }  // namespace s4vr::renderscale

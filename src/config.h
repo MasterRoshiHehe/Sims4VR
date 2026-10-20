@@ -89,6 +89,9 @@ struct Config {
     // the newest pictures turned on by the stick turn since they were drawn, so turning stays smooth
     // when the game draws fewer frames than the headset shows (v0.13.307). 0 = the Present sends them.
     bool frameClock = true;
+    // [stereo] headset_width: the game draws its 3D view only as wide as the headset needs, even when
+    // that is narrower than the game window (2560 -> ~1464 wide at render_scale 0.65), v0.13.309.
+    bool headsetWidth = true;
     bool depthEyeAlternate = false;  // took turns: edges shook (v0.13.297-298)
     bool depthEyePresentDepth = true;  // [stereo] depth_eye_present_depth (deptheye::setPresentDepth)
     // [stereo] made_eye_*: the made eye's alignment, set by hand from the menu (Advanced › View ›

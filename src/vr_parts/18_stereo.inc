@@ -18,7 +18,9 @@ static bool depthCompare() {
 // Your body on its own layer: only the turn smoothing needs it, and not with
 // SteamVR's eye align or the depth eye (which redraw the older eye).
 static bool bodyLayerOn() {
-    return g_config.bodyLayer && g_config.turnReprojection && !alignEyes() && !depthEyeOn() && !bothEyesOn();
+    // Both real eyes too (v0.13.309): the frame clock turns the scene on every refresh, and hands
+    // in the scene turned with it (user 2026-10-20 20:50Z: hands wobble like crazy when turning).
+    return g_config.bodyLayer && g_config.turnReprojection && !alignEyes() && !depthEyeOn();
 }
 
 static XrQuaternionf qmul(const XrQuaternionf& a, const XrQuaternionf& b) {
@@ -472,8 +474,16 @@ static bool holdBothFirst(ID3D11Texture2D* backbuffer) {
     g_overlayFov = {rendered.fov.left, rendered.fov.right, rendered.fov.up, rendered.fov.down};
     g_overlayEye = true;
     g_captureSlot = 0;
-    g_splitSlot = -1;
+    // Your body split off onto its own layer while turning, as renderStereo does for each eye.
+    const int slot = chainSlot(chain);
+    const bool handUi = g_pie.active || ((g_phone.active || g_phoneSheet.m.active) && phone3d::drawnRecently());
+    g_splitSlot = bodyLayerOn() && !handUi ? slot : -1;
+    g_splitWanted = g_lastTurnTick && GetTickCount64() - g_lastTurnTick < kBodyLinger;
+    g_splitFrom = &rendered;
+    if (slot >= 0 && g_splitSlot < 0) g_bodyState[slot] = kBodyUnknown;
     const bool copied = copyIntoSwapchain(chain, backbuffer, desc);
+    g_splitSlot = -1;
+    g_splitFrom = nullptr;
     g_captureSlot = -1;
     g_overlayEye = false;
     g_leftHeld = copied;
