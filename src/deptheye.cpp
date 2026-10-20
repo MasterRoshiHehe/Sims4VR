@@ -15,7 +15,7 @@ namespace s4vr::deptheye {
 
 namespace {
 
-constexpr UINT kStep = 3;  // pixels between grid points (the depth is followed this finely)
+constexpr uint32_t kIterations = 6;  // steps each pixel takes to find its surface
 
 const char kShader[] = R"HLSL(
 // The fresh eye's picture, as the swapchain shows it (an sRGB view reads linear).
@@ -33,11 +33,14 @@ cbuffer Params : register(b0) {
     float4 row0;  // a source view point (x right, y up, z ahead) to the target view; w: translation
     float4 row1;
     float4 row2;
+    float4 inv0;  // the target view to the source view
+    float4 inv1;
+    float4 inv2;
     float4 srcTan;  // left, right, up, down
     float4 dstTan;
     float nearZ, farZ;
-    uint reversed, step;
-    uint cellsX, width, height, pad;
+    uint reversed, iterations;
+    uint width, height, pad0, pad1;
 };
 
 struct VsOut {
@@ -45,54 +48,70 @@ struct VsOut {
     float2 uv : TEXCOORD0;
 };
 
+VsOut vsMain(uint id : SV_VertexID) {
+    // One triangle that covers the whole target.
+    float2 uv = float2((id << 1) & 2, id & 2);
+    VsOut o;
+    o.position = float4(uv * float2(2, -2) + float2(-1, 1), 0.5, 1);
+    o.uv = uv;
+    return o;
+}
+
 float viewZ(float d) {
     float z = reversed ? nearZ * farZ / (nearZ + d * (farZ - nearZ)) : nearZ * farZ / (farZ - d * (farZ - nearZ));
     return min(z, farZ);
 }
 
-static const uint2 kCorner[6] = {uint2(0, 0), uint2(1, 0), uint2(0, 1), uint2(0, 1), uint2(1, 0), uint2(1, 1)};
-
-// Two triangles per grid cell; each corner is a source pixel moved by its depth.
-VsOut vsMain(uint id : SV_VertexID) {
-    uint cell = id / 6;
-    uint2 g = uint2(cell % cellsX, cell / cellsX) + kCorner[id % 6];
-    int2 p = min(int2(g * step), int2(width - 1, height - 1));
-    float2 uv = (float2(p) + 0.5) / float2(width, height);
-    float z = viewZ(DEPTH(p));
-    float3 s = float3(lerp(srcTan.x, srcTan.y, uv.x) * z, lerp(srcTan.z, srcTan.w, uv.y) * z, z);
-    float3 t = float3(dot(row0.xyz, s) + row0.w, dot(row1.xyz, s) + row1.w, dot(row2.xyz, s) + row2.w);
-    VsOut o;
-    o.uv = uv;
-    if (t.z < 1e-3) {
-        o.position = float4(0, 0, -1, 1);  // behind the target eye: clipped
-        return o;
-    }
-    float2 a = t.xy / t.z;
-    float2 q = float2((a.x - dstTan.x) / (dstTan.y - dstTan.x), (dstTan.z - a.y) / (dstTan.z - dstTan.w));
-    // Nearer is larger: the depth test keeps the nearest surface.
-    o.position = float4(q.x * 2 - 1, 1 - q.y * 2, 1 / (1 + t.z), 1);
-    return o;
+float2 project(float3 v, float4 tan) {
+    float2 a = v.xy / max(v.z, 1e-4);
+    return float2((a.x - tan.x) / (tan.y - tan.x), (tan.z - a.y) / (tan.z - tan.w));
 }
 
+float3 apply(float4 r0, float4 r1, float4 r2, float3 v) {
+    return float3(dot(r0.xyz, v) + r0.w, dot(r1.xyz, v) + r1.w, dot(r2.xyz, v) + r2.w);
+}
+
+// The source point seen through source pixel uv, in the target view.
+float3 seen(float2 uv) {
+    int2 p = clamp(int2(uv * float2(width, height)), int2(0, 0), int2(width - 1, height - 1));
+    float z = viewZ(DEPTH(p));
+    float3 s = float3(lerp(srcTan.x, srcTan.y, uv.x) * z, lerp(srcTan.z, srcTan.w, uv.y) * z, z);
+    return apply(row0, row1, row2, s);
+}
+
+// Each target pixel looks back into the fresh picture (iterative warp): start
+// where its ray lands at infinity, then step to where the ray lands at the depth
+// found there. Pixels that don't settle on a surface (behind near things, past
+// the fresh view's edge) keep what the target held (its own picture, turned).
 float4 psMain(VsOut i) : SV_Target {
-    return float4(source.SampleLevel(linearClamp, i.uv, 0).rgb, 1);
+    float3 ray = float3(lerp(dstTan.x, dstTan.y, i.uv.x), lerp(dstTan.z, dstTan.w, i.uv.y), 1);
+    float2 us = project(float3(dot(inv0.xyz, ray), dot(inv1.xyz, ray), dot(inv2.xyz, ray)), srcTan);
+    [loop] for (uint k = 0; k < iterations; ++k) {
+        float z = max(seen(us).z, 1e-3);
+        us = project(apply(inv0, inv1, inv2, ray * z), srcTan);
+    }
+    if (any(us < 0) || any(us > 1)) discard;
+    float2 back = project(seen(us), dstTan);
+    if (any(abs(back - i.uv) * float2(width, height) > 1.5)) discard;
+    return float4(source.SampleLevel(linearClamp, us, 0).rgb, 1);
 }
 )HLSL";
 
 struct Params {
     float rows[3][4];
+    float inverse[3][4];
     float srcTan[4];
     float dstTan[4];
     float nearZ, farZ;
-    uint32_t reversed, step;
-    uint32_t cellsX, width, height, pad;
+    uint32_t reversed, iterations;
+    uint32_t width, height, pad0, pad1;
 };
 static_assert(sizeof(Params) % 16 == 0, "constant buffer size");
 
 bool g_failed = false;
 ID3D11Device* g_device = nullptr;
-ID3D11VertexShader* g_vs[2] = {};  // single-sampled depth, MSAA depth
-ID3D11PixelShader* g_ps = nullptr;
+ID3D11VertexShader* g_vs = nullptr;
+ID3D11PixelShader* g_ps[2] = {};  // single-sampled depth, MSAA depth
 ID3D11Buffer* g_params = nullptr;
 ID3D11SamplerState* g_sampler = nullptr;
 ID3D11RasterizerState* g_raster = nullptr;
@@ -158,15 +177,14 @@ bool init(ID3D11Device* device) {
         LOG("Depth eye: d3dcompiler_47.dll not available; off");
         return false;
     }
-    bool ok = true;
+    ID3DBlob* vs = compile(compileFn, "vsMain", "vs_5_0", false);
+    bool ok = vs && SUCCEEDED(device->CreateVertexShader(vs->GetBufferPointer(), vs->GetBufferSize(), nullptr, &g_vs));
+    safeRelease(vs);
     for (int ms = 0; ms < 2 && ok; ++ms) {
-        ID3DBlob* vs = compile(compileFn, "vsMain", "vs_5_0", ms != 0);
-        ok = vs && SUCCEEDED(device->CreateVertexShader(vs->GetBufferPointer(), vs->GetBufferSize(), nullptr, &g_vs[ms]));
-        safeRelease(vs);
+        ID3DBlob* ps = compile(compileFn, "psMain", "ps_5_0", ms != 0);
+        ok = ps && SUCCEEDED(device->CreatePixelShader(ps->GetBufferPointer(), ps->GetBufferSize(), nullptr, &g_ps[ms]));
+        safeRelease(ps);
     }
-    ID3DBlob* ps = ok ? compile(compileFn, "psMain", "ps_5_0", false) : nullptr;
-    ok = ps && SUCCEEDED(device->CreatePixelShader(ps->GetBufferPointer(), ps->GetBufferSize(), nullptr, &g_ps));
-    safeRelease(ps);
     if (!ok) return false;
 
     D3D11_BUFFER_DESC cb{};
@@ -375,14 +393,17 @@ bool draw(ID3D11ShaderResourceView* source, ID3D11Texture2D* target, DXGI_FORMAT
         }
         Params params{};
         std::memcpy(params.rows, rows, sizeof(params.rows));
+        // The inverse of a rigid move: rotation transposed, translation turned back.
+        for (int r = 0; r < 3; ++r) {
+            for (int c = 0; c < 3; ++c) params.inverse[r][c] = rows[c * 4 + r];
+            params.inverse[r][3] = -(rows[0 * 4 + r] * rows[3] + rows[1 * 4 + r] * rows[7] + rows[2 * 4 + r] * rows[11]);
+        }
         std::memcpy(params.srcTan, srcTan, sizeof(params.srcTan));
         std::memcpy(params.dstTan, dstTan, sizeof(params.dstTan));
         params.nearZ = nearZ;
         params.farZ = farZ;
         params.reversed = reversed ? 1u : 0u;
-        params.step = kStep;
-        const UINT cellsX = (width - 1 + kStep - 1) / kStep, cellsY = (height - 1 + kStep - 1) / kStep;
-        params.cellsX = cellsX;
+        params.iterations = kIterations;
         params.width = width;
         params.height = height;
 
@@ -391,19 +412,18 @@ bool draw(ID3D11ShaderResourceView* source, ID3D11Texture2D* target, DXGI_FORMAT
         context1->UpdateSubresource(g_params, 0, nullptr, &params, 0, 0);
         context1->ClearDepthStencilView(g_depthView, D3D11_CLEAR_DEPTH, 0.0f, 0);
         context1->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        context1->VSSetShader(g_vs[samples > 1 ? 1 : 0], nullptr, 0);
-        context1->VSSetConstantBuffers(0, 1, &g_params);
+        context1->VSSetShader(g_vs, nullptr, 0);
         ID3D11ShaderResourceView* views[2] = {source, depth};
-        context1->VSSetShaderResources(0, 2, views);
-        context1->PSSetShader(g_ps, nullptr, 0);
-        context1->PSSetShaderResources(0, 1, &source);
+        context1->PSSetConstantBuffers(0, 1, &g_params);
+        context1->PSSetShaderResources(0, 2, views);
+        context1->PSSetShader(g_ps[samples > 1 ? 1 : 0], nullptr, 0);
         context1->PSSetSamplers(0, 1, &g_sampler);
         context1->RSSetState(g_raster);
         context1->OMSetDepthStencilState(g_depthState, 0);
         context1->OMSetRenderTargets(1, &targetRtv, g_depthView);
         D3D11_VIEWPORT v{0, 0, static_cast<float>(width), static_cast<float>(height), 0, 1};
         context1->RSSetViewports(1, &v);
-        context1->Draw(cellsX * cellsY * 6, 0);
+        context1->Draw(3, 0);
 
         ID3D11ShaderResourceView* none[2] = {};
         ID3D11RenderTargetView* noTarget = nullptr;
@@ -419,8 +439,8 @@ bool draw(ID3D11ShaderResourceView* source, ID3D11Texture2D* target, DXGI_FORMAT
         }
         done = true;
         if (++g_drawn == 1 && g_logs == 0)
-            LOG("Depth eye: the other eye made from the fresh one (%ux%u, depth x%u%s, grid %u px)", width, height,
-                samples, reversed ? ", reversed" : "", kStep);
+            LOG("Depth eye: the other eye made from the fresh one (%ux%u, depth x%u%s, %u steps a pixel)", width, height,
+                samples, reversed ? ", reversed" : "", kIterations);
     }
     safeRelease(targetRtv);
     safeRelease(context1);
@@ -452,9 +472,9 @@ void release() {
     safeRelease(g_raster);
     safeRelease(g_sampler);
     safeRelease(g_params);
-    safeRelease(g_ps);
-    safeRelease(g_vs[0]);
-    safeRelease(g_vs[1]);
+    safeRelease(g_ps[0]);
+    safeRelease(g_ps[1]);
+    safeRelease(g_vs);
     g_device = nullptr;
 }
 

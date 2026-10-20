@@ -5,11 +5,11 @@
 // docs/handoffs/SINGLE-VIEW-HANDOFF.md option D).
 //
 // The game draws one eye per frame (alternate eyes). With this on, every
-// frame the other eye is made from the eye just drawn: each point of it is
-// moved by its depth (the scene depth nearplane copies) to where the other
-// eye sees it, a grid of triangles drawn over the other eye's own last
-// picture turned to now (eyealign::draw), which fills what the fresh eye
-// can't see (edges of the view, behind near things). Both eyes then show the
+// frame the other eye is made from the eye just drawn: each of its pixels
+// looks back into the fresh picture along its own ray, stepping to the
+// surface the scene depth (nearplane's copy) puts there (an iterative warp,
+// sharp at edges). Pixels that find no surface keep the other eye's own last
+// picture turned to now (eyealign::draw): edges of the view, behind near things. Both eyes then show the
 // same moment, so moving Sims no longer differ between the eyes, and each
 // eye's picture changes every frame instead of every other one.
 namespace s4vr::deptheye {
