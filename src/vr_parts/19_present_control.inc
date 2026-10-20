@@ -42,6 +42,8 @@ int onFrame(ID3D11Texture2D* backbuffer, HWND window, bool ownMirror) {
     if (!g_instance) return -1;
     g_ownMirror = ownMirror;
     g_frameEye = -1;
+    // Both eyes: the frame's left eye only waits for its right eye (no UI, no headset frame).
+    if (g_session && g_sessionRunning && mode() == Mode::Stereo && holdBothFirst(backbuffer)) return g_frameEye;
     // The UI drawn this frame went to the panel texture if redirection was on.
     const bool uiOwnLayer = g_config.uiPanel && g_session && g_sessionRunning && mode() == Mode::Stereo && camera::available();
     bubbles::setOptions(g_config);

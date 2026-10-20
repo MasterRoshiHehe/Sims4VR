@@ -79,4 +79,5 @@ constexpr Row kRows[] = {
     {"SceneGlobal", 'g', 0x2965ce8, "", "", 0, 0},
     {"RenderSystemGlobal", 'g', 0x2982de8, "", "", 0, 0},
     {"AudioManagerGlobal", 'g', 0x29b0918, "", "", 0, 0},
+    {"CameraUpdate", 'f', 0x1208eb0, "48 8b c4 48 89 58 08 57 48 81 ec 10 01 00 00", "", 0, 0},
 };

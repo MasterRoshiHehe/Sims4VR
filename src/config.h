@@ -78,6 +78,10 @@ struct Config {
     // shift (test view 2 as the mode): no ghost edges, 72 fps, but the world and your hands have no stereo
     // depth (user 2026-10-20 17:57Z: "the best of both worlds when it comes to looks and performance").
     bool flatWorld = true;
+    // [stereo] both_eyes: first person, the game draws the left and the right eye every frame (two
+    // scene passes, one headset frame), so both are real pictures of the same moment: real depth, no
+    // ghost edges. Costs a second scene pass; off until tested (v0.13.304).
+    bool bothEyes = false;
     bool depthEyeAlternate = false;  // took turns: edges shook (v0.13.297-298)
     bool depthEyePresentDepth = true;  // [stereo] depth_eye_present_depth (deptheye::setPresentDepth)
     // [stereo] made_eye_*: the made eye's alignment, set by hand from the menu (Advanced › View ›

@@ -81,6 +81,9 @@ struct Rendered {
     // First person, paired eyes: a left eye the next right eye is drawn from
     // the same place as (Present holds it back until that right eye arrives).
     bool pairFirst = false;
+    // Both real eyes every frame (setBothEyes): this left eye's picture is followed in the same game
+    // frame by its right eye's, so its Present only holds it (no headset frame of its own).
+    bool bothFirst = false;
     float nearZ = 0, farZ = 0;  // the planes it was drawn with (0: not known)
     // The near / far planes of the projection the game drew the frame before
     // with (its z terms at the render camera's +0x70; 0: not known). A check
@@ -104,6 +107,17 @@ void setTurnLead(float radians);
 // Paired eyes (first person): each right eye drawn from where its left eye
 // was drawn (Config::pairedEyes); Present switches it off under SteamVR's eye align.
 void setPairedEyes(bool on);
+// Both real eyes every frame (Config::bothEyes, first person with paired eyes): the game draws the
+// scene twice a frame, the left eye (apply) then the right eye (applyRight), both from one place.
+void setBothEyes(bool on);
+void applyRight(const Vec3& eyePosition, const Quat& eyeOrientation, const Fov& fov);
+// Main thread, in the scene render hook (singleview.cpp): before the first pass, whether a right
+// eye pass follows (marks the left eye's entry bothFirst); between the passes, the right eye into
+// the render camera (false: no second pass).
+bool beginBoth();
+bool secondEye();
+// Present thread: the oldest picture not shown yet is the first of such a pair.
+bool frontIsBothFirst();
 // Each eye drawn with its own lopsided field of view (Config::exactFov), live.
 void setExactFov(bool on);
 // Paired hands (Config::pairedHands): the right eye of a free-moving pair

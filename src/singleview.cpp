@@ -8,6 +8,7 @@
 
 #include "MinHook.h"
 #include "addrs.h"
+#include "camera.h"
 #include "log.h"
 
 namespace s4vr::singleview {
@@ -61,9 +62,19 @@ void log(const Sums& s, double seconds) {
 
 void hookedScene(void* renderer, const void* viewport, float seconds) {
     const int64_t start = ticks();
+    // Both real eyes every frame (camera::setBothEyes): the left eye, then the right eye from the
+    // same place with no time step, so both pictures show the same moment.
+    const bool both = camera::beginBoth();
     g_scene(renderer, viewport, seconds);
     const int64_t mid = ticks();
-    const bool probe = g_probe.load(std::memory_order_relaxed);
+    if (both && camera::secondEye()) {
+        g_scene(renderer, viewport, 0.0f);
+        const double ms = (ticks() - mid) * g_msPerTick;
+        ++g_sums.doubled;
+        g_sums.second += ms;
+        g_sums.secondWorst = std::max(g_sums.secondWorst, ms);
+    }
+    const bool probe = g_probe.load(std::memory_order_relaxed) && !both;
     if (probe != g_wasProbing) {
         g_wasProbing = probe;
         LOG("Single view: probe %s (the scene is drawn %s a frame)", probe ? "on" : "off", probe ? "twice" : "once");

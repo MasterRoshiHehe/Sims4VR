@@ -167,6 +167,15 @@ std::atomic<CopyObserver> g_observer{nullptr};
 std::mutex g_poseMutex;
 bool g_active = false;
 Rendered g_pending{};
+// Both real eyes every frame (setBothEyes): the right eye's pose for the second pass, the count of
+// apply() calls (so secondEye's restore never undoes a newer left eye), g_applied at the last
+// scene render, and the frustum applyEye last wrote (+0x14..+0x20).
+std::atomic<bool> g_bothEyes{false};
+Rendered g_right{};
+bool g_rightValid = false;
+uint64_t g_applyGen = 0;
+uint64_t g_appliedAtScene = 0;
+float g_writtenFrustum[4] = {};
 // The render camera our eye pose went into, and the eye positions written
 // (left, right): the face is hidden only in passes drawn from them.
 std::atomic<uintptr_t> g_writtenCamera{0};
@@ -1539,6 +1548,7 @@ void applyEye(uint8_t* dst) {
         bool haveTip = hand >= 0 && fingertipWorld(actor, hand, tip);
         touch::update(dst, g_bodyId.load(), haveTip, tip);
     }
+    std::memcpy(g_writtenFrustum, dst + kFrustumOffset, sizeof(g_writtenFrustum));
     if (g_queueSize == 4) {  // Present stopped consuming; drop the oldest
         g_queueHead = (g_queueHead + 1) % 4;
         --g_queueSize;
@@ -2533,9 +2543,8 @@ bool yourEyeCamera(const void* camera) {
     return false;
 }
 
-void apply(int eye, const Vec3& eyePosition, const Quat& eyeOrientation, const Fov& fov) {
-    std::lock_guard<std::mutex> lock(g_poseMutex);
-    g_active = true;
+// The eye applyEye draws next and its frustum; g_poseMutex held.
+void setPending(int eye, const Vec3& eyePosition, const Quat& eyeOrientation, const Fov& fov) {
     g_pending = {eye, eyePosition, eyeOrientation, fov};
     g_tanX = 0;
     g_centred = true;
@@ -2559,6 +2568,105 @@ void apply(int eye, const Vec3& eyePosition, const Quat& eyeOrientation, const F
             g_pending.fov = {-halfX, halfX, halfY, -halfY};
         }
     }
+}
+
+void apply(int eye, const Vec3& eyePosition, const Quat& eyeOrientation, const Fov& fov) {
+    std::lock_guard<std::mutex> lock(g_poseMutex);
+    g_active = true;
+    setPending(eye, eyePosition, eyeOrientation, fov);
+    ++g_applyGen;
+}
+
+void setBothEyes(bool on) {
+    if (g_bothEyes.exchange(on) != on)
+        LOG("Both eyes: %s", on ? "on (the game draws the left and the right eye every frame)" : "off");
+    if (!on) {
+        std::lock_guard<std::mutex> lock(g_poseMutex);
+        g_rightValid = false;
+    }
+}
+
+void applyRight(const Vec3& eyePosition, const Quat& eyeOrientation, const Fov& fov) {
+    std::lock_guard<std::mutex> lock(g_poseMutex);
+    g_right = {1, eyePosition, eyeOrientation, fov};
+    g_rightValid = true;
+}
+
+bool beginBoth() {
+    std::lock_guard<std::mutex> lock(g_poseMutex);
+    const bool fresh = g_applied != g_appliedAtScene;  // a left eye was copied in since the last scene render
+    g_appliedAtScene = g_applied;
+    if (!fresh || !g_bothEyes.load() || !g_active || !g_rightValid || !g_pairBase.valid || g_lastAppliedEye != 0 ||
+        !g_queueSize)
+        return false;
+    Rendered& newest = g_queue[(g_queueHead + g_queueSize - 1) % 4];
+    if (newest.eye != 0) return false;
+    newest.bothFirst = true;
+    return true;
+}
+
+bool secondEye() {
+    using UpdateFn = void (*)(void* camera, void* unused, void* matrix);
+    static UpdateFn update = reinterpret_cast<UpdateFn>(addrs::fn("CameraUpdate"));
+    static int logs = 0;
+    uint8_t* dst = reinterpret_cast<uint8_t*>(g_writtenCamera.load(std::memory_order_acquire));
+    if (!update || !dst) {
+        if (logs < 1) {
+            ++logs;
+            LOG("Both eyes: no camera update for this game build; one eye a frame");
+        }
+        return false;
+    }
+    Rendered left;
+    float tanX, tanY, centreX, centreY, coverX, coverY, written[4], before[4];
+    bool centred;
+    uint64_t gen;
+    {
+        std::lock_guard<std::mutex> lock(g_poseMutex);
+        if (!g_bothEyes.load() || !g_active || !g_rightValid || !g_pairBase.valid || g_lastAppliedEye != 0)
+            return false;
+        left = g_pending;
+        tanX = g_tanX, tanY = g_tanY, centreX = g_centreX, centreY = g_centreY, coverX = g_coverX, coverY = g_coverY;
+        centred = g_centred;
+        gen = g_applyGen;
+        std::memcpy(written, g_writtenFrustum, sizeof(written));
+        setPending(1, g_right.position, g_right.orientation, g_right.fov);
+    }
+    // What the renderer made of the left eye's frustum after the copy (the frame's aspect fix,
+    // 0x1209d80 in 0x137b830): the same for the right eye.
+    std::memcpy(before, dst + kFrustumOffset, sizeof(before));
+    applyEye(dst);
+    {
+        std::lock_guard<std::mutex> lock(g_poseMutex);
+        const float kx = written[0] > 0 ? before[0] / written[0] : 1, ky = written[1] > 0 ? before[1] / written[1] : 1;
+        if (std::isfinite(kx) && std::isfinite(ky) && kx > 0.5f && kx < 2 && ky > 0.5f && ky < 2 &&
+            (kx != 1 || ky != 1)) {
+            float f[4] = {g_writtenFrustum[0] * kx, g_writtenFrustum[1] * ky, 0, 0};
+            f[2] = 2 * std::atan(f[0] / 2);
+            f[3] = f[0] / f[1];
+            std::memcpy(dst + kFrustumOffset, f, sizeof(f));
+        }
+        if (logs < 3) {
+            ++logs;
+            LOG("Both eyes: right eye written into %p; the renderer had scaled the left eye's frustum by %.4f / %.4f",
+                dst, kx, ky);
+        }
+        if (g_applyGen == gen) {  // the left eye back for the next frame's copy, unless Present gave a newer one
+            setPending(0, left.position, left.orientation, left.fov);
+            g_pending = left;
+            g_tanX = tanX, g_tanY = tanY, g_centreX = centreX, g_centreY = centreY, g_coverX = coverX,
+            g_coverY = coverY;
+            g_centred = centred;
+        }
+        g_appliedAtScene = g_applied;
+    }
+    update(dst, nullptr, nullptr);  // view matrices and projection (hookedProjection puts the centre in)
+    return true;
+}
+
+bool frontIsBothFirst() {
+    std::lock_guard<std::mutex> lock(g_poseMutex);
+    return g_queueSize && g_queue[g_queueHead].bothFirst;
 }
 
 void setHead(const Vec3& centre, const Quat& orientation) {
@@ -2726,6 +2834,7 @@ void release() {
     g_pairBase.valid = false;
     g_nextBase.valid = false;
     g_lastAppliedEye = -1;
+    g_rightValid = false;
 }
 
 void setPairedEyes(bool on) { g_pairedEyes.store(on, std::memory_order_relaxed); }

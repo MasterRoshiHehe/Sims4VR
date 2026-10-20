@@ -4,9 +4,12 @@
 static bool g_alignBroken = false;  // a turned image couldn't be drawn: off for this session
 static bool alignEyes() { return g_steamVR && g_config.alignEyes && !g_alignBroken; }
 // Both eyes every frame (deptheye.h): first person, not with SteamVR's eye align.
+// Both real eyes every frame ([stereo] both_eyes): first person, the game draws both eyes a frame.
+static bool bothEyesOn() { return g_config.bothEyes && !alignEyes() && camera::bodyActive(); }
 static bool g_depthEyeBroken = false;  // the pass couldn't be made: off for this session
 static bool depthEyeOn() {
-    return g_config.depthEye && g_config.depthEyeDebug != 4 && !alignEyes() && !g_depthEyeBroken && camera::bodyActive();
+    return g_config.depthEye && g_config.depthEyeDebug != 4 && !alignEyes() && !g_depthEyeBroken &&
+           camera::bodyActive() && !bothEyesOn();
 }
 // Its test view 4: both eyes drawn by the game, the made one only for screenshots (depthCompareEye).
 static bool depthCompare() {
@@ -14,7 +17,9 @@ static bool depthCompare() {
 }
 // Your body on its own layer: only the turn smoothing needs it, and not with
 // SteamVR's eye align or the depth eye (which redraw the older eye).
-static bool bodyLayerOn() { return g_config.bodyLayer && g_config.turnReprojection && !alignEyes() && !depthEyeOn(); }
+static bool bodyLayerOn() {
+    return g_config.bodyLayer && g_config.turnReprojection && !alignEyes() && !depthEyeOn() && !bothEyesOn();
+}
 
 static XrQuaternionf qmul(const XrQuaternionf& a, const XrQuaternionf& b) {
     return {a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y, a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
@@ -446,6 +451,45 @@ static void turnCheck(float nowYaw, const float (&turned)[2], bool newPicture) {
     }
 }
 
+// Both eyes: the first Present of a frame carries its left eye. It goes into the held left swapchain
+// with no headset frame of its own (xrWaitFrame once a game frame, not twice); the right eye's
+// Present shows both (renderStereo). False: not such a Present.
+static bool holdBothFirst(ID3D11Texture2D* backbuffer) {
+    if (!camera::frontIsBothFirst()) return false;
+    camera::Rendered rendered;
+    if (!camera::takeRendered(rendered)) return false;
+    D3D11_TEXTURE2D_DESC desc;
+    backbuffer->GetDesc(&desc);
+    Swapchain& chain = heldChain();
+    bool recreated;
+    if (!ensureSwapchain(chain, desc, recreated)) {
+        g_leftHeld = false;
+        return true;
+    }
+    const camera::Vec3& p = rendered.position;
+    const camera::Quat& q = rendered.orientation;
+    g_overlayPose = {{q.x, q.y, q.z, q.w}, {p.x, p.y, p.z}};
+    g_overlayFov = {rendered.fov.left, rendered.fov.right, rendered.fov.up, rendered.fov.down};
+    g_overlayEye = true;
+    g_captureSlot = 0;
+    g_splitSlot = -1;
+    const bool copied = copyIntoSwapchain(chain, backbuffer, desc);
+    g_captureSlot = -1;
+    g_overlayEye = false;
+    g_leftHeld = copied;
+    if (copied) {
+        g_heldPose = g_overlayPose;
+        g_heldFov = g_overlayFov;
+        g_heldYaw = rendered.yaw;
+    }
+    g_frameEye = 0;
+    static uint64_t held = 0;
+    if (++held == 1 || held % 20000 == 0)
+        LOG("Both eyes: %llu left eyes held for their right eye (one headset frame per game frame)",
+            static_cast<unsigned long long>(held));
+    return true;
+}
+
 static bool renderStereo(ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_DESC& desc, XrTime time,
                          XrCompositionLayerProjection& layer, XrCompositionLayerProjectionView (&views)[2]) {
     XrViewLocateInfo locate{XR_TYPE_VIEW_LOCATE_INFO};
@@ -551,7 +595,9 @@ static bool renderStereo(ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_DESC
     camera::setHead({(l.position.x + r.position.x) / 2, (l.position.y + r.position.y) / 2,
                      (l.position.z + r.position.z) / 2},
                     {l.orientation.x, l.orientation.y, l.orientation.z, l.orientation.w});
-    camera::setPairedEyes(g_config.pairedEyes && !alignEyes() && !depthEyeOn());
+    const bool both = bothEyesOn();
+    camera::setPairedEyes((g_config.pairedEyes || both) && !alignEyes() && !depthEyeOn());
+    camera::setBothEyes(both);
     camera::setExactFov(g_config.exactFov);
     camera::setPairedHands(g_config.pairedHands);
     singleview::setProbe(g_config.probeDouble);
@@ -561,7 +607,15 @@ static bool renderStereo(ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_DESC
     // eye's too (the right eye is made from it).
     const bool depthEye = depthEyeOn();
     // Eyes taking turns ([stereo] depth_eye_alternate): each widened the same way.
-    int next = depthEye && !g_config.depthEyeAlternate ? 0 : g_renderingEye == 0 ? 1 : 0;
+    // Both eyes: the left eye here, the right eye for the frame's second pass.
+    int next = both || (depthEye && !g_config.depthEyeAlternate) ? 0 : g_renderingEye == 0 ? 1 : 0;
+    if (both) {
+        const XrPosef& rp = located[1].pose;
+        const XrFovf& rf = located[1].fov;
+        camera::applyRight({rp.position.x, rp.position.y, rp.position.z},
+                           {rp.orientation.x, rp.orientation.y, rp.orientation.z, rp.orientation.w},
+                           {rf.angleLeft, rf.angleRight, rf.angleUp, rf.angleDown});
+    }
     const XrPosef& p = located[next].pose;
     XrFovf f = located[next].fov;
     if (depthEye || depthCompare()) {  // the compare view: both eyes drawn exactly as the depth eye draws them

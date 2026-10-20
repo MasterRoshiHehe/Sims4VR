@@ -417,6 +417,8 @@ std::vector<Row> makeRows() {
         toggle(L"View motion", L"Both eyes every frame (depth)", "stereo", "depth_eye", &Config::depthEye),
         toggle(L"View motion", L"Flat world (clean, fast; no depth in the picture)", "stereo", "flat_world",
                &Config::flatWorld),
+        toggle(L"View motion", L"Both real eyes every frame (real depth; test)", "stereo", "both_eyes",
+               &Config::bothEyes),
         choice(L"View motion", L"Depth eye test view", "stereo", "depth_eye_debug", &Config::depthEyeDebug,
                {L"Off", L"Depth", L"No shift", L"Depth edges", L"Compare with the real eye"}),
         toggle(L"View align", L"Eyes take turns (real picture behind near things)", "stereo", "depth_eye_alternate",
