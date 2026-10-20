@@ -71,6 +71,13 @@ struct Config {
     // [stereo] depth_eye_debug: what the made eye shows, to check it (deptheye.h
     // setDebugView): 0 the picture, 1 its depth, 2 no depth shift, 3 depth edges.
     int depthEyeDebug = 0;
+    // [stereo] made_eye_*: the made eye's alignment, set by hand from the menu (Advanced › View ›
+    // Right eye alignment) to find what's off. Picture: shift_x / shift_y (degrees, + right / up),
+    // distance (eye distance used for the depth shift, 1 = measured), depth (scene depth scale).
+    // Submitted to the headset: submit_x (metres, + right), submit_yaw / submit_pitch (degrees,
+    // + right / up). The picture's own content is left as made by the submit ones.
+    float madeEyeShiftX = 0, madeEyeShiftY = 0, madeEyeDistance = 1, madeEyeDepth = 1;
+    float madeEyeSubmitX = 0, madeEyeSubmitYaw = 0, madeEyeSubmitPitch = 0;
     bool probeDouble = false;  // [stereo] probe_double: draw the scene twice a frame and time it (singleview.cpp)
     bool alignEyes = true;  // SteamVR: the older eye turned to the newest head pose each frame (eyealign.h)
     // Game render resolution as a fraction of the headset's (0 = the game's own, the monitor's)

@@ -87,6 +87,13 @@ Config loadConfig(const std::wstring& ini) {
     c.probeDouble = readBool(ini, "stereo", "probe_double", c.probeDouble);
     c.depthEye = readBool(ini, "stereo", "depth_eye", c.depthEye);
     c.depthEyeDebug = static_cast<int>(readInt(ini, "stereo", "depth_eye_debug", c.depthEyeDebug));
+    c.madeEyeShiftX = readFloat(ini, "stereo", "made_eye_shift_x", c.madeEyeShiftX);
+    c.madeEyeShiftY = readFloat(ini, "stereo", "made_eye_shift_y", c.madeEyeShiftY);
+    c.madeEyeDistance = readFloat(ini, "stereo", "made_eye_distance", c.madeEyeDistance);
+    c.madeEyeDepth = readFloat(ini, "stereo", "made_eye_depth", c.madeEyeDepth);
+    c.madeEyeSubmitX = readFloat(ini, "stereo", "made_eye_submit_x", c.madeEyeSubmitX);
+    c.madeEyeSubmitYaw = readFloat(ini, "stereo", "made_eye_submit_yaw", c.madeEyeSubmitYaw);
+    c.madeEyeSubmitPitch = readFloat(ini, "stereo", "made_eye_submit_pitch", c.madeEyeSubmitPitch);
     c.renderScale = readFloat(ini, "stereo", "render_scale", c.renderScale);
     if (!(c.renderScale >= 0 && c.renderScale <= 1.5f)) c.renderScale = 0.8f;
     c.renderMsaa = static_cast<int>(readInt(ini, "stereo", "render_msaa", c.renderMsaa));

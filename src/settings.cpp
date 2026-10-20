@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cwchar>
+#include <cstring>
 #include <cwctype>
 #include <iterator>
 #include <mutex>
@@ -83,6 +84,7 @@ const Page kFixedPages[] = {
     {L"View", L"View", L"Advanced"},
     {L"View picture", L"Picture", L"View"},
     {L"View motion", L"Smooth motion", L"View"},
+    {L"View align", L"Right eye alignment", L"View"},
     {L"View head", L"Head and body", L"View"},
     {L"View near", L"Near clipping", L"View"},
     {L"View shadows", L"Shadows", L"View"},
@@ -319,6 +321,13 @@ std::vector<Row> makeRows() {
     stopAll.action = 13;
     stopAll.tip = L"Your Sim stops whatever it is doing at once, walks too; standing up or putting something down "
                   L"still plays. Still busy a few seconds later, the game resets it where it stands. First person only.";
+    Row alignReset;
+    alignReset.group = L"View align";
+    alignReset.label = L"Reset the alignment";
+    alignReset.kind = Kind::Action;
+    alignReset.action = 203;  // native: every made_eye_* row back to as measured
+    alignReset.tip = L"Picture and headset rows back to 0 (eye distance and depth to 100%). Each change logs "
+                     L"\"Depth eye alignment\" and is saved in your ini.";
     Row reset;
     reset.group = advanced;
     reset.label = L"Use sims4vr.ini for everything";
@@ -388,6 +397,7 @@ std::vector<Row> makeRows() {
 
         link(view, L"Picture", L"View picture"),
         link(view, L"Smooth motion", L"View motion"),
+        link(view, L"Right eye alignment (depth eye)", L"View align"),
         link(view, L"Head and body", L"View head"),
         link(view, L"Near clipping", L"View near"),
         link(view, L"Shadows", L"View shadows"),
@@ -407,6 +417,22 @@ std::vector<Row> makeRows() {
         toggle(L"View motion", L"Both eyes every frame (depth)", "stereo", "depth_eye", &Config::depthEye),
         choice(L"View motion", L"Depth eye test view", "stereo", "depth_eye_debug", &Config::depthEyeDebug,
                {L"Off", L"Depth", L"No shift", L"Depth edges", L"Compare with the real eye"}),
+        // The made eye lined up by hand (user 2026-10-20 15:29Z): picture, then what the headset is told.
+        number(L"View align", L"Picture: shift sideways (+ right)", "stereo", "made_eye_shift_x", &Config::madeEyeShiftX,
+               -3, 3, 0.05f, 1, L"%+.2f\u00b0"),
+        number(L"View align", L"Picture: shift up/down (+ up)", "stereo", "made_eye_shift_y", &Config::madeEyeShiftY,
+               -3, 3, 0.05f, 1, L"%+.2f\u00b0"),
+        number(L"View align", L"Picture: eye distance", "stereo", "made_eye_distance", &Config::madeEyeDistance,
+               0, 2, 0.05f, 100, L"%.0f%%"),
+        number(L"View align", L"Picture: depth scale", "stereo", "made_eye_depth", &Config::madeEyeDepth,
+               0.5f, 2, 0.05f, 100, L"%.0f%%"),
+        number(L"View align", L"Headset: eye position sideways (+ right)", "stereo", "made_eye_submit_x",
+               &Config::madeEyeSubmitX, -0.02f, 0.02f, 0.0005f, 1000, L"%+.1f mm"),
+        number(L"View align", L"Headset: eye turned sideways (+ right)", "stereo", "made_eye_submit_yaw",
+               &Config::madeEyeSubmitYaw, -3, 3, 0.05f, 1, L"%+.2f\u00b0"),
+        number(L"View align", L"Headset: eye tilted up/down (+ up)", "stereo", "made_eye_submit_pitch",
+               &Config::madeEyeSubmitPitch, -3, 3, 0.05f, 1, L"%+.2f\u00b0"),
+        alignReset,
         toggle(L"View picture", L"Test: draw the scene twice (log)", "stereo", "probe_double", &Config::probeDouble),
         toggle(L"View picture", L"Ambient occlusion (SSAO, next start)", "stereo", "ambient_occlusion", &Config::ambientOcclusion, kNextStart),
         benchButton(L"Run turn test (game paused)", 201,
@@ -1292,6 +1318,23 @@ bool change(size_t i, int dir) {
                 return true;
             }
             if (dir) return false;
+            if (r.action == 203) {  // native: the made eye's alignment back to as measured
+                static const Config defaults;
+                for (size_t k = 0; k < g_rows.size(); ++k) {
+                    const Row& a = g_rows[k];
+                    if (a.kind != Kind::Number || !a.number || !a.key || strncmp(a.key, "made_eye_", 9) != 0) continue;
+                    {
+                        std::lock_guard<std::mutex> lock(g_valueMutex);
+                        numberRef(k) = defaults.*a.number;
+                    }
+                    changed(k);
+                }
+                g_redraw = true;
+                g_doneAt = GetTickCount64();
+                g_doneRow = i;
+                LOG("Settings: %ls", r.label);
+                return true;
+            }
             if (r.action == 201 || r.action == 202) {  // native: the turn benchmark (benchmark.cpp), not a script control
                 benchmark::start(r.action == 201);
                 g_redraw = true;

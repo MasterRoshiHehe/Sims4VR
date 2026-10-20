@@ -131,11 +131,12 @@ static void depthEyeTarget(const XrPosef& from, const XrFovf& f, int fresh, cons
     const XrVector3f offset = qrot(from.orientation, apart);
     target.position = {from.position.x + offset.x, from.position.y + offset.y, from.position.z + offset.z};
 
+    // The picture is made for the eye distance set by hand (made_eye_distance, 1 = measured); the
+    // headset is still told the measured place (depthOtherEye adds made_eye_submit_*).
+    const float k = g_config.madeEyeDistance;
     float r[9];
     qmatrix(qnorm(qmul(qconj(target.orientation), from.orientation)), r);
-    const XrVector3f t = qrot(qconj(target.orientation), {from.position.x - target.position.x,
-                                                          from.position.y - target.position.y,
-                                                          from.position.z - target.position.z});
+    const XrVector3f t = qrot(qconj(target.orientation), {-offset.x * k, -offset.y * k, -offset.z * k});
     const float flip[3] = {1, 1, -1};
     for (int i = 0; i < 3; ++i) {
         for (int j = 0; j < 3; ++j) rows[i * 4 + j] = r[i * 3 + j] * flip[i] * flip[j];
@@ -148,10 +149,41 @@ static void depthEyeTarget(const XrPosef& from, const XrFovf& f, int fresh, cons
     srcTan[2] = std::tan(f.angleUp);
     srcTan[3] = std::tan(f.angleDown);
     const XrFovf& g = located[old].fov;
-    dstTan[0] = std::tan(g.angleLeft);
-    dstTan[1] = std::tan(g.angleRight);
-    dstTan[2] = std::tan(g.angleUp);
-    dstTan[3] = std::tan(g.angleDown);
+    // made_eye_shift_*: the window the picture is made through moves the other way, so its content
+    // moves by the shift (+ right / up).
+    const float sx = std::tan(g_config.madeEyeShiftX * 0.01745329f), sy = std::tan(g_config.madeEyeShiftY * 0.01745329f);
+    dstTan[0] = std::tan(g.angleLeft) - sx;
+    dstTan[1] = std::tan(g.angleRight) - sx;
+    dstTan[2] = std::tan(g.angleUp) - sy;
+    dstTan[3] = std::tan(g.angleDown) - sy;
+}
+
+// The made eye's place as the headset is told it: made_eye_submit_x along the eye's own right,
+// turned made_eye_submit_yaw right and made_eye_submit_pitch up about itself.
+static XrPosef madeEyeSubmitted(const XrPosef& p) {
+    const Config& c = g_config;
+    if (c.madeEyeSubmitX == 0 && c.madeEyeSubmitYaw == 0 && c.madeEyeSubmitPitch == 0) return p;
+    XrPosef out = p;
+    const XrVector3f side = qrot(p.orientation, {c.madeEyeSubmitX, 0, 0});
+    out.position = {p.position.x + side.x, p.position.y + side.y, p.position.z + side.z};
+    const float yaw = -c.madeEyeSubmitYaw * 0.00872665f, pitch = c.madeEyeSubmitPitch * 0.00872665f;  // half angles
+    const XrQuaternionf turn{0, std::sin(yaw), 0, std::cos(yaw)};      // about +y: + turns left, so - for right
+    const XrQuaternionf tilt{std::sin(pitch), 0, 0, std::cos(pitch)};  // about +x: + tips -z (ahead) up
+    out.orientation = qnorm(qmul(p.orientation, qmul(turn, tilt)));
+    return out;
+}
+
+// Each change to the made eye's alignment, in the log.
+static void logMadeEyeAlignment() {
+    const Config& c = g_config;
+    const float now[7] = {c.madeEyeShiftX, c.madeEyeShiftY, c.madeEyeDistance, c.madeEyeDepth,
+                          c.madeEyeSubmitX, c.madeEyeSubmitYaw, c.madeEyeSubmitPitch};
+    static float was[7] = {0, 0, 1, 1, 0, 0, 0};
+    if (!memcmp(now, was, sizeof now)) return;
+    memcpy(was, now, sizeof now);
+    LOG("Depth eye alignment: picture shift %+.2f / %+.2f deg (right / up), eye distance %.0f%%, depth %.0f%%; "
+        "headset: eye %+.1f mm right, turned %+.2f deg right, %+.2f deg up",
+        now[0], now[1], now[2] * 100, now[3] * 100, now[4] * 1000, now[5], now[6]);
 }
 
 // Depth eye (deptheye.h): `fresh` was just copied; the other eye's picture is
@@ -183,8 +215,10 @@ static void depthOtherEye(int fresh, const XrView (&located)[2], const D3D11_TEX
     const float scale = camera::worldScale() > 0 ? camera::worldScale() : 1.0f;
     deptheye::setDebugView(g_config.depthEyeDebug);
     deptheye::noteDrawnProjection(rendered.drawnNear / scale, rendered.drawnFar / scale);
+    logMadeEyeAlignment();
+    const float depthScale = g_config.madeEyeDepth > 0.05f ? g_config.madeEyeDepth : 1.0f;
     const bool drawn = deptheye::draw(source, s.images[index].texture, s.format, width, height, rows, srcTan, dstTan,
-                                      rendered.nearZ / scale, rendered.farZ / scale);
+                                      rendered.nearZ / scale * depthScale, rendered.farZ / scale * depthScale);
     source->Release();
     if (drawn) {
         // A screenshot (right stick click) takes this made eye as the right one.
@@ -215,6 +249,7 @@ static void depthOtherEye(int fresh, const XrView (&located)[2], const D3D11_TEX
         return;
     }
     misses = 0;
+    target = madeEyeSubmitted(target);
     g_eyePose[old] = g_shownPose[old] = target;
     g_eyeFov[old] = g;
     g_eyeYaw[old] = g_shownYaw[old] = g_eyeYaw[fresh];
@@ -538,6 +573,35 @@ static bool renderStereo(ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_DESC
         LOG("Turning: eyes turned back %.2f / %.2f degrees (left / right) to the newest heading%s",
             turned[0] * 57.29578f, turned[1] * 57.29578f,
             g_bodyLayerReady ? "; your body on its own layer, not turned" : "");
+    }
+    if (depthEyeOn()) {
+        // What the headset is sent for each eye, against where it says the eyes are now: the right
+        // eye's place and turn seen from the left eye, both fields of view, both pictures' sizes.
+        static int submitLogs = 0;
+        static ULONGLONG lastSubmitLog = 0;
+        if (submitLogs < 6 && (!submitLogs || GetTickCount64() - lastSubmitLog > 30000)) {
+            ++submitLogs;
+            lastSubmitLog = GetTickCount64();
+            auto between = [](const XrPosef& a, const XrPosef& b, XrVector3f& d, float& deg) {
+                d = qrot(qconj(a.orientation), {b.position.x - a.position.x, b.position.y - a.position.y,
+                                                b.position.z - a.position.z});
+                const XrQuaternionf m = qmul(qconj(a.orientation), b.orientation);
+                deg = 2 * std::acos(std::min(1.0f, std::fabs(m.w))) * 57.29578f;
+            };
+            XrVector3f sent, now;
+            float sentDeg, nowDeg;
+            between(views[0].pose, views[1].pose, sent, sentDeg);
+            between(located[0].pose, located[1].pose, now, nowDeg);
+            const XrFovf &a = views[0].fov, &b = views[1].fov;
+            LOG("Depth eye submit: right eye from the left sent %+.1f %+.1f %+.1f mm, turned %.2f deg (headset now "
+                "%+.1f %+.1f %+.1f mm, %.2f deg); fov sent left %.1f..%.1f / %.1f..%.1f, right %.1f..%.1f / "
+                "%.1f..%.1f deg; pictures %dx%d / %dx%d",
+                sent.x * 1000, sent.y * 1000, sent.z * 1000, sentDeg, now.x * 1000, now.y * 1000, now.z * 1000, nowDeg,
+                a.angleLeft * 57.29578f, a.angleRight * 57.29578f, a.angleDown * 57.29578f, a.angleUp * 57.29578f,
+                b.angleLeft * 57.29578f, b.angleRight * 57.29578f, b.angleDown * 57.29578f, b.angleUp * 57.29578f,
+                views[0].subImage.imageRect.extent.width, views[0].subImage.imageRect.extent.height,
+                views[1].subImage.imageRect.extent.width, views[1].subImage.imageRect.extent.height);
+        }
     }
     layer = {XR_TYPE_COMPOSITION_LAYER_PROJECTION};
     layer.space = g_appSpace;
