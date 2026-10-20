@@ -40,7 +40,7 @@ cbuffer Params : register(b0) {
     float4 dstTan;
     float nearZ, farZ;
     uint reversed, iterations;
-    uint width, height, pad0, pad1;
+    uint width, height, samples, pad1;
 };
 
 struct VsOut {
@@ -71,12 +71,44 @@ float3 apply(float4 r0, float4 r1, float4 r2, float3 v) {
     return float3(dot(r0.xyz, v) + r0.w, dot(r1.xyz, v) + r1.w, dot(r2.xyz, v) + r2.w);
 }
 
+uint2 texel(float2 uv) {
+    return clamp(int2(uv * float2(width, height)), int2(0, 0), int2(width - 1, height - 1));
+}
+
+// The nearest (near = 1) or farthest (near = 0) depth over every sample of the
+// pixel and its four neighbours. The colour at an edge is a blend of both
+// sides; taking the near side's depth there moves the whole blended edge with
+// the near thing (no see-through rim left on the background), and the far
+// side's depth tells what lies behind.
+float viewZAround(uint2 p, bool nearest) {
+    float best = nearest ? 1e30 : 0;
+    const int2 offsets[5] = {int2(0, 0), int2(1, 0), int2(-1, 0), int2(0, 1), int2(0, -1)};
+    [unroll] for (uint o = 0; o < 5; ++o) {
+        int2 q = clamp(int2(p) + offsets[o], int2(0, 0), int2(width - 1, height - 1));
+#ifdef MS
+        for (uint s = 0; s < samples; ++s) {
+            float z = viewZ(depthTex.Load(q, s));
+            best = nearest ? min(best, z) : max(best, z);
+        }
+#else
+        float z = viewZ(depthTex.Load(int3(q, 0)));
+        best = nearest ? min(best, z) : max(best, z);
+#endif
+    }
+    return best;
+}
+
+float3 at(float2 uv, float z) {
+    return apply(row0, row1, row2, float3(lerp(srcTan.x, srcTan.y, uv.x) * z, lerp(srcTan.z, srcTan.w, uv.y) * z, z));
+}
+
 // The source point seen through source pixel uv, in the target view.
 float3 seen(float2 uv) {
-    int2 p = clamp(int2(uv * float2(width, height)), int2(0, 0), int2(width - 1, height - 1));
-    float z = viewZ(DEPTH(p));
-    float3 s = float3(lerp(srcTan.x, srcTan.y, uv.x) * z, lerp(srcTan.z, srcTan.w, uv.y) * z, z);
-    return apply(row0, row1, row2, s);
+    return at(uv, viewZ(DEPTH(texel(uv))));
+}
+
+float3 seenNear(float2 uv) {
+    return at(uv, viewZAround(texel(uv), true));
 }
 
 // Each target pixel looks back into the fresh picture (iterative warp): start
@@ -88,22 +120,33 @@ float3 seen(float2 uv) {
 float4 psMain(VsOut i) : SV_Target {
     float3 ray = float3(lerp(dstTan.x, dstTan.y, i.uv.x), lerp(dstTan.z, dstTan.w, i.uv.y), 1);
     float2 us = project(float3(dot(inv0.xyz, ray), dot(inv1.xyz, ray), dot(inv2.xyz, ray)), srcTan);
-    [loop] for (uint k = 0; k < iterations; ++k) {
+    [loop] for (uint k = 0; k + 1 < iterations; ++k) {
         float z = max(seen(saturate(us)).z, 1e-3);
         us = project(apply(inv0, inv1, inv2, ray * z), srcTan);
     }
-    float2 back = project(seen(saturate(us)), dstTan);
+    // The last step and the check use the near side at edges.
+    us = project(apply(inv0, inv1, inv2, ray * max(seenNear(saturate(us)).z, 1e-3)), srcTan);
+    float2 back = project(seenNear(saturate(us)), dstTan);
     if (any(abs(back - i.uv) * float2(width, height) > 1.5)) {
+        // Hidden from the fresh eye: what lies behind, along this ray's path.
         float farthest = -1;
         float2 pick = us;
         [unroll] for (uint c = 0; c < 8; ++c) {
             float2 u = project(apply(inv0, inv1, inv2, ray * (0.25 * exp2(c))), srcTan);
-            float z = seen(saturate(u)).z;
+            float z = viewZAround(texel(saturate(u)), false);
             if (z > farthest) {
                 farthest = z;
                 pick = u;
             }
         }
+        // Settle on that far surface, then step two pixels further from the
+        // near thing so the near thing's blended edge isn't copied in.
+        [unroll] for (uint f = 0; f < 2; ++f)
+            pick = project(apply(inv0, inv1, inv2, ray * viewZAround(texel(saturate(pick)), false)), srcTan);
+        float2 nearSide = project(apply(inv0, inv1, inv2, ray * 0.25), srcTan);
+        float2 away = pick - nearSide;
+        float len = length(away * float2(width, height));
+        if (len > 1e-3) pick += away / len * 2.0;
         us = pick;
     }
     return float4(source.SampleLevel(linearClamp, saturate(us), 0).rgb, 1);
@@ -117,7 +160,7 @@ struct Params {
     float dstTan[4];
     float nearZ, farZ;
     uint32_t reversed, iterations;
-    uint32_t width, height, pad0, pad1;
+    uint32_t width, height, samples, pad1;
 };
 static_assert(sizeof(Params) % 16 == 0, "constant buffer size");
 
@@ -435,6 +478,7 @@ bool draw(ID3D11ShaderResourceView* source, ID3D11Texture2D* target, DXGI_FORMAT
         params.iterations = kIterations;
         params.width = width;
         params.height = height;
+        params.samples = samples;
 
         ID3DDeviceContextState* gameState = nullptr;
         context1->SwapDeviceContextState(g_state, &gameState);
