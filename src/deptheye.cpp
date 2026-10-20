@@ -15,7 +15,7 @@ namespace s4vr::deptheye {
 
 namespace {
 
-constexpr uint32_t kIterations = 6;  // steps each pixel takes to find its surface
+constexpr uint32_t kIterations = 64;  // steps each pixel walks along its ray (STEPS in the shader)
 
 const char kShader[] = R"HLSL(
 // The fresh eye's picture, as the swapchain shows it (an sRGB view reads linear).
@@ -75,29 +75,6 @@ uint2 texel(float2 uv) {
     return clamp(int2(uv * float2(width, height)), int2(0, 0), int2(width - 1, height - 1));
 }
 
-// The nearest (near = 1) or farthest (near = 0) depth over every sample of the
-// pixel and its four neighbours. The colour at an edge is a blend of both
-// sides; taking the near side's depth there moves the whole blended edge with
-// the near thing (no see-through rim left on the background), and the far
-// side's depth tells what lies behind.
-float viewZAround(uint2 p, bool nearest) {
-    float best = nearest ? 1e30 : 0;
-    const int2 offsets[5] = {int2(0, 0), int2(1, 0), int2(-1, 0), int2(0, 1), int2(0, -1)};
-    [unroll] for (uint o = 0; o < 5; ++o) {
-        int2 q = clamp(int2(p) + offsets[o], int2(0, 0), int2(width - 1, height - 1));
-#ifdef MS
-        for (uint s = 0; s < samples; ++s) {
-            float z = viewZ(depthTex.Load(q, s));
-            best = nearest ? min(best, z) : max(best, z);
-        }
-#else
-        float z = viewZ(depthTex.Load(int3(q, 0)));
-        best = nearest ? min(best, z) : max(best, z);
-#endif
-    }
-    return best;
-}
-
 float3 at(float2 uv, float z) {
     return apply(row0, row1, row2, float3(lerp(srcTan.x, srcTan.y, uv.x) * z, lerp(srcTan.z, srcTan.w, uv.y) * z, z));
 }
@@ -107,47 +84,54 @@ float3 seen(float2 uv) {
     return at(uv, viewZ(DEPTH(texel(uv))));
 }
 
-float3 seenNear(float2 uv) {
-    return at(uv, viewZAround(texel(uv), true));
-}
-
-// Each target pixel looks back into the fresh picture (iterative warp): start
-// where its ray lands at infinity, then step to where the ray lands at the depth
-// found there. A pixel that doesn't settle on a surface sees something the fresh
-// eye can't (beside a near thing): it takes the farthest surface along its
-// ray's path in the fresh picture, i.e. what lies behind. Past the fresh
-// picture's edge, its edge is stretched.
+// Each target pixel walks its own ray out from the eye, in steps even in
+// 1/distance (even in picture shift), and looks at where each step lands in
+// the fresh picture. The first step that goes behind the surface seen there,
+// with that surface between this step and the last, is what this eye sees:
+// refined by halving, and that spot of the fresh picture is its colour. The
+// first hit is the nearest one, so a near thing's edge is never replaced by
+// the wall behind it. A ray that only passes behind near things sees
+// something the fresh eye can't: it takes the farthest surface met on the
+// way, stepped clear of the near thing's edge.
+#define STEPS 64
 float4 psMain(VsOut i) : SV_Target {
     float3 ray = float3(lerp(dstTan.x, dstTan.y, i.uv.x), lerp(dstTan.z, dstTan.w, i.uv.y), 1);
-    float2 us = project(float3(dot(inv0.xyz, ray), dot(inv1.xyz, ray), dot(inv2.xyz, ray)), srcTan);
-    [loop] for (uint k = 0; k + 1 < iterations; ++k) {
-        float z = max(seen(saturate(us)).z, 1e-3);
-        us = project(apply(inv0, inv1, inv2, ray * z), srcTan);
-    }
-    // The last step and the check use the near side at edges.
-    us = project(apply(inv0, inv1, inv2, ray * max(seenNear(saturate(us)).z, 1e-3)), srcTan);
-    float2 back = project(seenNear(saturate(us)), dstTan);
-    if (any(abs(back - i.uv) * float2(width, height) > 1.5)) {
-        // Hidden from the fresh eye: what lies behind, along this ray's path.
-        float farthest = -1;
-        float2 pick = us;
-        [unroll] for (uint c = 0; c < 8; ++c) {
-            float2 u = project(apply(inv0, inv1, inv2, ray * (0.25 * exp2(c))), srcTan);
-            float z = viewZAround(texel(saturate(u)), false);
-            if (z > farthest) {
-                farthest = z;
-                pick = u;
-            }
+    float wNear = 1.0 / max(nearZ, 0.08), wFar = 1.0 / farZ;
+    float zPrev = 1.0 / wNear;
+    bool hit = false;
+    float zHit = farZ;
+    float farthest = -1, zFill = farZ;
+    [loop] for (uint k = 1; k <= STEPS; ++k) {
+        float z = 1.0 / lerp(wNear, wFar, k / float(STEPS));
+        float2 u = project(apply(inv0, inv1, inv2, ray * z), srcTan);
+        float d = viewZ(DEPTH(texel(saturate(u))));
+        if (d > farthest) {
+            farthest = d;
+            zFill = z;
         }
-        // Settle on that far surface, then step two pixels further from the
-        // near thing so the near thing's blended edge isn't copied in.
-        [unroll] for (uint f = 0; f < 2; ++f)
-            pick = project(apply(inv0, inv1, inv2, ray * viewZAround(texel(saturate(pick)), false)), srcTan);
-        float2 nearSide = project(apply(inv0, inv1, inv2, ray * 0.25), srcTan);
-        float2 away = pick - nearSide;
+        if (z >= d && d >= zPrev * 0.97) {
+            // Crossed the surface between zPrev and z: halve onto it.
+            float lo = zPrev, hi = z;
+            [unroll] for (uint h = 0; h < 5; ++h) {
+                float m = 0.5 * (lo + hi);
+                float2 um = project(apply(inv0, inv1, inv2, ray * m), srcTan);
+                if (m >= viewZ(DEPTH(texel(saturate(um))))) hi = m; else lo = m;
+            }
+            zHit = hi;
+            hit = true;
+            break;
+        }
+        zPrev = z;
+    }
+    float2 us;
+    if (hit) {
+        us = project(apply(inv0, inv1, inv2, ray * zHit), srcTan);
+    } else {
+        us = project(apply(inv0, inv1, inv2, ray * zFill), srcTan);
+        float2 nearSide = project(apply(inv0, inv1, inv2, ray * (1.0 / wNear)), srcTan);
+        float2 away = us - nearSide;
         float len = length(away * float2(width, height));
-        if (len > 1e-3) pick += away / len * 2.0;
-        us = pick;
+        if (len > 1e-3) us += away / len * 2.0;
     }
     return float4(source.SampleLevel(linearClamp, saturate(us), 0).rgb, 1);
 }
