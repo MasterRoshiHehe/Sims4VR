@@ -252,6 +252,8 @@ void init(const std::wstring& moduleDir) {
 
 void request() { g_requested = true; }
 
+bool taking() { return g_active; }
+
 void offer(ID3D11DeviceContext* context, ID3D11Texture2D* image, int slot) {
     if (!g_active || slot < 0 || slot >= kSlots || g_copied[slot] || !image || !context) return;
     D3D11_TEXTURE2D_DESC desc;

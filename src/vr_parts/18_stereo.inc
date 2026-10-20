@@ -5,7 +5,13 @@ static bool g_alignBroken = false;  // a turned image couldn't be drawn: off for
 static bool alignEyes() { return g_steamVR && g_config.alignEyes && !g_alignBroken; }
 // Both eyes every frame (deptheye.h): first person, not with SteamVR's eye align.
 static bool g_depthEyeBroken = false;  // the pass couldn't be made: off for this session
-static bool depthEyeOn() { return g_config.depthEye && !alignEyes() && !g_depthEyeBroken && camera::bodyActive(); }
+static bool depthEyeOn() {
+    return g_config.depthEye && g_config.depthEyeDebug != 4 && !alignEyes() && !g_depthEyeBroken && camera::bodyActive();
+}
+// Its test view 4: both eyes drawn by the game, the made one only for screenshots (depthCompareEye).
+static bool depthCompare() {
+    return g_config.depthEye && g_config.depthEyeDebug == 4 && !alignEyes() && camera::bodyActive();
+}
 // Your body on its own layer: only the turn smoothing needs it, and not with
 // SteamVR's eye align or the depth eye (which redraw the older eye).
 static bool bodyLayerOn() { return g_config.bodyLayer && g_config.turnReprojection && !alignEyes() && !depthEyeOn(); }
@@ -111,6 +117,43 @@ static void alignOlderEye(int fresh, const XrView (&located)[2]) {
     }
 }
 
+// Where the other eye is now, relative to the fresh eye's render pose (this
+// frame's located views), and what deptheye::draw needs to make it: a point
+// in the fresh view to the other eye's view (x right, y up, z ahead: OpenXR's
+// view axes with z flipped), both views' tangents.
+static void depthEyeTarget(const XrPosef& from, const XrFovf& f, int fresh, const XrView (&located)[2], XrPosef& target,
+                           float rows[12], float srcTan[4], float dstTan[4]) {
+    const int old = 1 - fresh;
+    const XrPosef &lf = located[fresh].pose, &lo = located[old].pose;
+    target.orientation = qnorm(qmul(from.orientation, qmul(qconj(lf.orientation), lo.orientation)));
+    const XrVector3f apart = qrot(qconj(lf.orientation), {lo.position.x - lf.position.x, lo.position.y - lf.position.y,
+                                                          lo.position.z - lf.position.z});
+    const XrVector3f offset = qrot(from.orientation, apart);
+    target.position = {from.position.x + offset.x, from.position.y + offset.y, from.position.z + offset.z};
+
+    float r[9];
+    qmatrix(qnorm(qmul(qconj(target.orientation), from.orientation)), r);
+    const XrVector3f t = qrot(qconj(target.orientation), {from.position.x - target.position.x,
+                                                          from.position.y - target.position.y,
+                                                          from.position.z - target.position.z});
+    const float flip[3] = {1, 1, -1};
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) rows[i * 4 + j] = r[i * 3 + j] * flip[i] * flip[j];
+    }
+    rows[3] = t.x;
+    rows[7] = t.y;
+    rows[11] = -t.z;
+    srcTan[0] = std::tan(f.angleLeft);
+    srcTan[1] = std::tan(f.angleRight);
+    srcTan[2] = std::tan(f.angleUp);
+    srcTan[3] = std::tan(f.angleDown);
+    const XrFovf& g = located[old].fov;
+    dstTan[0] = std::tan(g.angleLeft);
+    dstTan[1] = std::tan(g.angleRight);
+    dstTan[2] = std::tan(g.angleUp);
+    dstTan[3] = std::tan(g.angleDown);
+}
+
 // Depth eye (deptheye.h): `fresh` was just copied; the other eye's picture is
 // made from it for this frame, moved by its depth to where that eye is now
 // (this frame's located views, relative to the fresh render pose). Both views
@@ -126,34 +169,10 @@ static void depthOtherEye(int fresh, const XrView (&located)[2], const D3D11_TEX
     ID3D11ShaderResourceView* source = eyealign::keptView(fresh, width, height);
     if (!source) return;
 
-    const XrPosef& from = g_eyePose[fresh];
-    const XrPosef &lf = located[fresh].pose, &lo = located[old].pose;
     XrPosef target;
-    target.orientation = qnorm(qmul(from.orientation, qmul(qconj(lf.orientation), lo.orientation)));
-    const XrVector3f apart = qrot(qconj(lf.orientation), {lo.position.x - lf.position.x, lo.position.y - lf.position.y,
-                                                          lo.position.z - lf.position.z});
-    const XrVector3f offset = qrot(from.orientation, apart);
-    target.position = {from.position.x + offset.x, from.position.y + offset.y, from.position.z + offset.z};
-
-    // A point in the fresh view to the other eye's view (x right, y up, z
-    // ahead: OpenXR's view axes with z flipped).
-    float r[9];
-    qmatrix(qnorm(qmul(qconj(target.orientation), from.orientation)), r);
-    const XrVector3f t = qrot(qconj(target.orientation), {from.position.x - target.position.x,
-                                                          from.position.y - target.position.y,
-                                                          from.position.z - target.position.z});
-    const float flip[3] = {1, 1, -1};
-    float rows[12];
-    for (int i = 0; i < 3; ++i) {
-        for (int j = 0; j < 3; ++j) rows[i * 4 + j] = r[i * 3 + j] * flip[i] * flip[j];
-    }
-    rows[3] = t.x;
-    rows[7] = t.y;
-    rows[11] = -t.z;
-    const XrFovf& f = g_eyeFov[fresh];
-    const float srcTan[4] = {std::tan(f.angleLeft), std::tan(f.angleRight), std::tan(f.angleUp), std::tan(f.angleDown)};
+    float rows[12], srcTan[4], dstTan[4];
+    depthEyeTarget(g_eyePose[fresh], g_eyeFov[fresh], fresh, located, target, rows, srcTan, dstTan);
     const XrFovf& g = located[old].fov;
-    const float dstTan[4] = {std::tan(g.angleLeft), std::tan(g.angleRight), std::tan(g.angleUp), std::tan(g.angleDown)};
 
     uint32_t index = 0;
     if (!acquireImage(s, index)) {
@@ -205,6 +224,65 @@ static void depthOtherEye(int fresh, const XrView (&located)[2], const D3D11_TEX
     if (++frames == 1 || frames == 1000 || frames % 100000 == 0)
         LOG("Depth eye: %llu frames made from the %s eye", static_cast<unsigned long long>(frames),
             fresh ? "right" : "left");
+}
+
+// Depth eye test view 4 ("Compare with the real eye"): the game draws both
+// eyes in turn as without the depth eye, and while a screenshot is taken the
+// right eye is also made from the left one into a picture of its own, saved
+// as the screenshot's _menu.jpg, to set beside the real right eye.
+static ID3D11Texture2D* g_compareImage = nullptr;
+static void depthCompareEye(const XrView (&located)[2], const camera::Rendered& rendered) {
+    const Swapchain& right = shownChain(1);
+    UINT width = 0, height = 0;
+    ID3D11ShaderResourceView* source = eyealign::keptView(0, width, height);
+    if (!source || !right.handle) {
+        if (source) source->Release();
+        return;
+    }
+    ID3D11Device* device = nullptr;
+    source->GetDevice(&device);
+    D3D11_TEXTURE2D_DESC have{};
+    ID3D11Device* made = nullptr;  // a reset device makes a new one
+    if (g_compareImage) {
+        g_compareImage->GetDesc(&have);
+        g_compareImage->GetDevice(&made);
+        made->Release();
+    }
+    if (!g_compareImage || made != device || have.Width != width || have.Height != height ||
+        have.Format != right.format) {
+        if (g_compareImage) g_compareImage->Release();
+        g_compareImage = nullptr;
+        D3D11_TEXTURE2D_DESC d{};
+        d.Width = width;
+        d.Height = height;
+        d.MipLevels = 1;
+        d.ArraySize = 1;
+        d.Format = right.format;
+        d.SampleDesc.Count = 1;
+        d.Usage = D3D11_USAGE_DEFAULT;
+        d.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+        if (FAILED(device->CreateTexture2D(&d, nullptr, &g_compareImage))) g_compareImage = nullptr;
+    }
+    const XrPosef from{{rendered.orientation.x, rendered.orientation.y, rendered.orientation.z, rendered.orientation.w},
+                       {rendered.position.x, rendered.position.y, rendered.position.z}};
+    const XrFovf fov{rendered.fov.left, rendered.fov.right, rendered.fov.up, rendered.fov.down};
+    XrPosef target;
+    float rows[12], srcTan[4], dstTan[4];
+    depthEyeTarget(from, fov, 0, located, target, rows, srcTan, dstTan);
+    const float scale = camera::worldScale() > 0 ? camera::worldScale() : 1.0f;
+    deptheye::setDebugView(0);
+    if (g_compareImage &&
+        deptheye::draw(source, g_compareImage, right.format, width, height, rows, srcTan, dstTan,
+                       rendered.nearZ / scale, rendered.farZ / scale)) {
+        ID3D11DeviceContext* context = nullptr;
+        device->GetImmediateContext(&context);
+        screenshot::offer(context, g_compareImage, screenshot::kMenu);
+        context->Release();
+        static int logged = 0;
+        if (logged++ < 20) LOG("Depth eye compare: the right eye made from the left one for the screenshot's _menu.jpg");
+    }
+    device->Release();
+    source->Release();
 }
 
 // The stick turn check: each frame while the right stick turns, how far the
@@ -302,7 +380,7 @@ static bool renderStereo(ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_DESC
         g_overlayFov = {rendered.fov.left, rendered.fov.right, rendered.fov.up, rendered.fov.down};
         g_overlayEye = true;
         g_captureSlot = eye;  // screenshot::kLeftEye / kRightEye
-        g_keepEye = alignEyes() || depthEyeOn() ? eye : -1;
+        g_keepEye = alignEyes() || depthEyeOn() || (depthCompare() && eye == 0) ? eye : -1;
         const int slot = chainSlot(chain);
         // Not with the phone or the pie drawn into the view at your hand: they
         // are drawn after the depth that finds your body, so only the pieces
@@ -318,6 +396,7 @@ static bool renderStereo(ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_DESC
         g_keepEye = -1;
         g_captureSlot = -1;
         g_overlayEye = false;
+        if (copied && eye == 0 && depthCompare() && screenshot::taking()) depthCompareEye(located, rendered);
         if (copied && hold) {
             g_heldPose = g_overlayPose;
             g_heldFov = g_overlayFov;

@@ -172,7 +172,12 @@ float4 psMain(VsOut i) : SV_Target {
             float2 dir = away / len;
             float2 under = (project(apply(inv0, inv1, inv2, ray * zFill), srcTan) - uFill) * float2(width, height);
             float inside = clamp(-dot(under, dir), 0.0, 400.0);  // pixels under the near thing
-            us += dir * (2.0 + inside) / float2(width, height);
+            float2 mirrored = uFill + dir * (2.0 + inside) / float2(width, height);
+            // Only while the mirrored spot is still that far side: something
+            // nearer there (another Sim, your other hand) would be copied in;
+            // then the edge itself is stretched over.
+            float there = viewZ(DEPTH(texel(saturate(mirrored))));
+            us = there >= zFill * 0.8 ? mirrored : uFill + dir * 2.0 / float2(width, height);
         }
     }
     if (debugView == 1) {

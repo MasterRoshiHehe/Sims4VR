@@ -14,6 +14,8 @@ enum Slot { kLeftEye = 0, kRightEye = 1, kFlatScreen = 2, kMenu = 3, kSlots = 4 
 void init(const std::wstring& moduleDir);
 // Any thread: take a screenshot of the next frames.
 void request();
+// Whether a screenshot is being taken now (render thread).
+bool taking();
 // Render thread: an image just drawn for the headset (the swapchain image,
 // still acquired). Copied only while a screenshot is being taken.
 void offer(ID3D11DeviceContext* context, ID3D11Texture2D* image, int slot);
