@@ -34,6 +34,12 @@ struct Config {
     bool exactFov = true;
     // Contrast-adaptive sharpening of the eye images, 0 (off) .. 1
     float sharpen = 0.6f;
+    // [stereo] upscale: 1 = FSR 1 (fsr.h): the game draws at fsr_render_scale of the headset's size and
+    // each eye is upscaled to fsr_output_scale and sharpened by `sharpen`; 0 = render_scale and the
+    // plain sharpen (sharpen.h). Not with SteamVR's align_eyes or the depth eye.
+    bool upscale = true;
+    float fsrRenderScale = 0.67f;
+    float fsrOutputScale = 1.0f;
     // Stick turns reach the headset like head turns: each eye's pose is turned
     // by how far the world turned since it was rendered (vr.cpp renderStereo).
     bool turnReprojection = true;

@@ -3,6 +3,7 @@
 
 static void destroySwapchain(Swapchain& s) {
     if (s.handle) sharpen::forgetTargets();
+    if (s.handle) fsr::forgetTargets();
     if (s.handle) eyealign::forgetTargets();
     if (s.handle) bodylayer::forgetTargets();
     if (s.handle) deptheye::forgetTargets();
@@ -29,6 +30,7 @@ static void destroySession() {
     gpuload::yieldToStreamer(false);
     releaseBeam();
     sharpen::release();
+    fsr::release();
     eyealign::release();
     bodylayer::release();
     deptheye::release();

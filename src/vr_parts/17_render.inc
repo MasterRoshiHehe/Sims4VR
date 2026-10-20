@@ -171,14 +171,22 @@ static void computeRenderSize(const XrView (&views)[2]) {
                 f.angleLeft * 57.29578f, f.angleRight * 57.29578f, f.angleUp * 57.29578f, f.angleDown * 57.29578f);
     }
     g_fovLogged = true;
-    auto size = [](float pixels) {
-        int n = static_cast<int>(pixels * g_config.renderScale / 8 + 0.5f) * 8;
+    // FSR (fsr.h): the game draws at fsr_render_scale, the eyes go out at fsr_output_scale.
+    const bool fsrOn = g_config.upscale && !(g_steamVR && g_config.alignEyes) && !g_config.depthEye;
+    const float scale = fsrOn ? g_config.fsrRenderScale : g_config.renderScale;
+    auto size = [](float pixels, float scale) {
+        int n = static_cast<int>(pixels * scale / 8 + 0.5f) * 8;
         return n < 64 ? 64 : n > 4096 ? 4096 : n;
     };
-    g_renderSize[0] = size(densityX * width);
-    g_renderSize[1] = size(densityY * height);
-    LOG("Headset render size %dx%d (render_scale %.2f, %s eye view)", g_renderSize[0], g_renderSize[1],
-        g_config.renderScale, exact ? "lopsided" : "centred");
+    g_renderSize[0] = size(densityX * width, scale);
+    g_renderSize[1] = size(densityY * height, scale);
+    LOG("Headset render size %dx%d (%s %.2f, %s eye view)", g_renderSize[0], g_renderSize[1],
+        fsrOn ? "fsr_render_scale" : "render_scale", scale, exact ? "lopsided" : "centred");
+    if (fsrOn)
+        fsr::setSizes(g_renderSize[0], g_renderSize[1], size(densityX * width, g_config.fsrOutputScale),
+                      size(densityY * height, g_config.fsrOutputScale));
+    else
+        fsr::setSizes(0, 0, 0, 0);
 }
 
 // Ask the game for the headset size while stereo runs; its own size otherwise.

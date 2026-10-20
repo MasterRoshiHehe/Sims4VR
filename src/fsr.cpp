@@ -75,9 +75,9 @@ float3 toLinear(float3 c) {
 
 float4 psRcas(VsOut i) : SV_Target {
     AU2 p = AU2(i.position.xy);
-    float3 result;
-    FsrRcasF(result.r, result.g, result.b, p, rcas);
-    result = saturate(result);
+    AF1 r, g, b;
+    FsrRcasF(r, g, b, p, rcas);
+    float3 result = saturate(float3(r, g, b));
 
     if (closure > 0) {
         // Eyelids, as sharpen.cpp draws them.

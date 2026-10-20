@@ -464,7 +464,7 @@ static bool holdBothFirst(ID3D11Texture2D* backbuffer) {
     backbuffer->GetDesc(&desc);
     Swapchain& chain = heldChain();
     bool recreated;
-    if (!ensureSwapchain(chain, desc, recreated)) {
+    if (!ensureSwapchain(chain, fsr::eyeDesc(desc), recreated)) {
         g_leftHeld = false;
         return true;
     }
@@ -537,7 +537,7 @@ static bool renderStereo(ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_DESC
         const bool hold = eye == 0 && rendered.pairFirst && !alignEyes() && !depthEyeOn();
         Swapchain& chain = hold ? heldChain() : shownChain(eye);
         bool recreated;
-        if (!ensureSwapchain(chain, desc, recreated)) return false;
+        if (!ensureSwapchain(chain, fsr::eyeDesc(desc), recreated)) return false;
         if (recreated && hold) {
             g_leftHeld = false;
         } else if (recreated) {

@@ -73,7 +73,11 @@ static bool copyIntoSwapchain(Swapchain& s, ID3D11Texture2D* backbuffer, const D
     device->GetImmediateContext(&context);
     ID3D11Texture2D* target = s.images[index].texture;
     eyelids::State lids = eyelids::advance();
-    if (g_overlayEye && sharpen::draw(backbuffer, desc, target, s.format, g_config.sharpen, lids.closure, lids.dark)) {
+    if (s.width != desc.Width || s.height != desc.Height) {
+        // made larger by fsr::eyeDesc: upscaled (a frame left as it was if that fails; the next is copied)
+        fsr::draw(backbuffer, desc, target, s.format, s.width, s.height, g_config.sharpen, lids.closure, lids.dark);
+    } else if (g_overlayEye &&
+               sharpen::draw(backbuffer, desc, target, s.format, g_config.sharpen, lids.closure, lids.dark)) {
         // sharpened (and eyelids drawn) into the eye image
     } else if (desc.SampleDesc.Count > 1)
         context->ResolveSubresource(target, 0, backbuffer, 0, s.format);

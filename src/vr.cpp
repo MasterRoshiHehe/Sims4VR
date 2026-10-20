@@ -33,6 +33,7 @@
 #include "screenshot.h"
 #include "settings.h"
 #include "sharpen.h"
+#include "fsr.h"
 #include "bodylayer.h"
 #include "eyelids.h"
 #include "hud.h"

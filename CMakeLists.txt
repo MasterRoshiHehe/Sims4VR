@@ -95,6 +95,7 @@ add_library(sims4vr SHARED
     src/claudescreen.cpp
     src/simsforever_sound.cpp
     src/sharpen.cpp
+    src/fsr.cpp
     src/bodylayer.cpp
     src/eyealign.cpp
     src/vr.cpp

@@ -28,9 +28,11 @@ Texture2D<float4> push : register(t2);
 #ifdef MS
 Texture2DMS<float> depthTex : register(t3);
 #define DEPTH(p, k) depthTex.Load(p, k)
+#define DEPTH_SIZE(w, h) { uint n; depthTex.GetDimensions(w, h, n); }
 #else
 Texture2D<float> depthTex : register(t3);
 #define DEPTH(p, k) depthTex.Load(int3(p, 0))
+#define DEPTH_SIZE(w, h) depthTex.GetDimensions(w, h)
 #endif
 SamplerState linearClamp : register(s0);
 
@@ -70,10 +72,11 @@ bool onBody(float3 q) {
     return false;
 }
 
-// Your body's share of each pixel, from the depth of each of its samples.
+// Your body's share of each depth pixel, from the depth of each of its samples
+// (the eye picture can be larger: FSR, fsr.h).
 float psMask(VsOut i) : SV_Target {
     uint w, h;
-    scene.GetDimensions(w, h);
+    DEPTH_SIZE(w, h);
     int2 p = int2(i.position.xy);
     float2 uv = (float2(p) + 0.5) / float2(w, h);
     float2 t = float2(lerp(tangents.x, tangents.y, uv.x), lerp(tangents.z, tangents.w, uv.y));
@@ -87,10 +90,15 @@ float psMask(VsOut i) : SV_Target {
 }
 
 // Your body and a pixel around it, so its edges keep their smoothing.
+// p: an eye picture pixel, looked up in the mask at the depth's size.
 float hole(int2 p) {
+    uint sw, sh, mw, mh;
+    scene.GetDimensions(sw, sh);
+    mask.GetDimensions(mw, mh);
+    int2 q = int2((float2(p) + 0.5) * float2(mw, mh) / float2(sw, sh));
     float m = 0;
     [unroll] for (int dy = -1; dy <= 1; ++dy)
-        [unroll] for (int dx = -1; dx <= 1; ++dx) m = max(m, mask.Load(int3(p + int2(dx, dy), 0)));
+        [unroll] for (int dx = -1; dx <= 1; ++dx) m = max(m, mask.Load(int3(q + int2(dx, dy), 0)));
     return m;
 }
 
@@ -163,7 +171,7 @@ ID3D11SamplerState* g_sampler = nullptr;
 ID3DDeviceContextState* g_state = nullptr;
 
 // Sized to the eye pictures.
-UINT g_width = 0, g_height = 0;
+UINT g_width = 0, g_height = 0, g_maskWidth = 0, g_maskHeight = 0;
 DXGI_FORMAT g_format = DXGI_FORMAT_UNKNOWN;
 ID3D11Texture2D* g_scene = nullptr;
 ID3D11ShaderResourceView* g_sceneView = nullptr;
@@ -333,12 +341,15 @@ void releaseSized() {
     safeRelease(g_sceneView);
     safeRelease(g_scene);
     g_levels = 0;
-    g_width = g_height = 0;
+    g_width = g_height = g_maskWidth = g_maskHeight = 0;
     g_format = DXGI_FORMAT_UNKNOWN;
 }
 
-bool ensureSized(ID3D11Device* device, UINT width, UINT height, DXGI_FORMAT format) {
-    if (g_scene && g_width == width && g_height == height && g_format == format) return true;
+// width x height: the eye picture; maskWidth x maskHeight: the scene depth.
+bool ensureSized(ID3D11Device* device, UINT width, UINT height, DXGI_FORMAT format, UINT maskWidth, UINT maskHeight) {
+    if (g_scene && g_width == width && g_height == height && g_format == format && g_maskWidth == maskWidth &&
+        g_maskHeight == maskHeight)
+        return true;
     releaseSized();
     D3D11_TEXTURE2D_DESC d{};
     d.Width = width;
@@ -353,6 +364,8 @@ bool ensureSized(ID3D11Device* device, UINT width, UINT height, DXGI_FORMAT form
               SUCCEEDED(device->CreateShaderResourceView(g_scene, nullptr, &g_sceneView));
     d.Format = DXGI_FORMAT_R8_UNORM;
     d.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+    d.Width = maskWidth;
+    d.Height = maskHeight;
     ok = ok && SUCCEEDED(device->CreateTexture2D(&d, nullptr, &g_mask)) &&
          SUCCEEDED(device->CreateShaderResourceView(g_mask, nullptr, &g_maskView)) &&
          SUCCEEDED(device->CreateRenderTargetView(g_mask, nullptr, &g_maskTarget));
@@ -389,6 +402,8 @@ bool ensureSized(ID3D11Device* device, UINT width, UINT height, DXGI_FORMAT form
     g_levels = levels;
     g_width = width;
     g_height = height;
+    g_maskWidth = maskWidth;
+    g_maskHeight = maskHeight;
     g_format = format;
     return true;
 }
@@ -476,7 +491,9 @@ bool split(ID3D11Texture2D* eye, ID3D11Texture2D* body, DXGI_FORMAT format, UINT
         ++g_noDepth;
         return false;
     }
-    if (depthWidth != width || depthHeight != height || samples < 1 || samples > 8) {
+    // The eye picture is the depth's size, or upscaled from it by FSR (fsr.h): never smaller, at most 2x.
+    if (depthWidth > width || depthHeight > height || width > 2 * depthWidth || height > 2 * depthHeight ||
+        samples < 1 || samples > 8) {
         ++g_otherSize;
         static bool logged = false;
         if (!logged) {
@@ -494,7 +511,7 @@ bool split(ID3D11Texture2D* eye, ID3D11Texture2D* body, DXGI_FORMAT format, UINT
     ID3D11RenderTargetView* bodyTarget = nullptr;
     bool done = false;
     if (SUCCEEDED(context->QueryInterface(__uuidof(ID3D11DeviceContext1), reinterpret_cast<void**>(&context1))) &&
-        ensureSized(device, width, height, format) && (eyeTarget = targetView(device, eye, format)) &&
+        ensureSized(device, width, height, format, depthWidth, depthHeight) && (eyeTarget = targetView(device, eye, format)) &&
         (bodyTarget = targetView(device, body, format))) {
         collectTimings(context);
         Timing* timing = &g_timing[g_timingNext];
@@ -551,7 +568,7 @@ bool split(ID3D11Texture2D* eye, ID3D11Texture2D* body, DXGI_FORMAT format, UINT
         ID3D11ShaderResourceView* maskViews[4] = {g_sceneView, nullptr, nullptr, depth};
         context1->PSSetShaderResources(0, 4, maskViews);
         context1->PSSetShader(g_psMask[samples > 1 ? 1 : 0], nullptr, 0);
-        viewport(width, height);
+        viewport(depthWidth, depthHeight);
         context1->Draw(3, 0);
 
         // 2. Your body to its layer.

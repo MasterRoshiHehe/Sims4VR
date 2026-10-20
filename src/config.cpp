@@ -90,6 +90,11 @@ Config loadConfig(const std::wstring& ini) {
     c.exactFov = readBool(ini, "stereo", "exact_fov", c.exactFov);
     c.sharpen = readFloat(ini, "stereo", "sharpen", c.sharpen);
     if (!(c.sharpen >= 0 && c.sharpen <= 1)) c.sharpen = 0.6f;
+    c.upscale = readBool(ini, "stereo", "upscale", c.upscale);
+    c.fsrRenderScale = readFloat(ini, "stereo", "fsr_render_scale", c.fsrRenderScale);
+    if (!(c.fsrRenderScale >= 0.3f && c.fsrRenderScale <= 1.5f)) c.fsrRenderScale = 0.67f;
+    c.fsrOutputScale = readFloat(ini, "stereo", "fsr_output_scale", c.fsrOutputScale);
+    if (!(c.fsrOutputScale >= 0.3f && c.fsrOutputScale <= 2.0f)) c.fsrOutputScale = 1.0f;
     c.turnReprojection = readBool(ini, "stereo", "turn_reprojection", c.turnReprojection);
     c.turnDisplayClock = readBool(ini, "stereo", "turn_display_clock", c.turnDisplayClock);
     c.walkDisplayClock = readBool(ini, "stereo", "walk_display_clock", c.walkDisplayClock);
