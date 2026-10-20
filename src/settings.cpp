@@ -417,6 +417,8 @@ std::vector<Row> makeRows() {
         toggle(L"View motion", L"Both eyes every frame (depth)", "stereo", "depth_eye", &Config::depthEye),
         choice(L"View motion", L"Depth eye test view", "stereo", "depth_eye_debug", &Config::depthEyeDebug,
                {L"Off", L"Depth", L"No shift", L"Depth edges", L"Compare with the real eye"}),
+        toggle(L"View align", L"Eyes take turns (real picture behind near things)", "stereo", "depth_eye_alternate",
+               &Config::depthEyeAlternate),
         // The made eye lined up by hand (user 2026-10-20 15:29Z): picture, then what the headset is told.
         number(L"View align", L"Picture: shift sideways (+ right)", "stereo", "made_eye_shift_x", &Config::madeEyeShiftX,
                -3, 3, 0.05f, 1, L"%+.2f\u00b0"),

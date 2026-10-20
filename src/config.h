@@ -71,6 +71,10 @@ struct Config {
     // [stereo] depth_eye_debug: what the made eye shows, to check it (deptheye.h
     // setDebugView): 0 the picture, 1 its depth, 2 no depth shift, 3 depth edges.
     int depthEyeDebug = 0;
+    // [stereo] depth_eye_alternate: with depth_eye the game draws the eyes in turn again, and each frame
+    // the other eye is made from the fresh one, where it can't see behind near things from that eye's
+    // own last picture (1); 0: the left eye every frame, those spots filled from beside.
+    bool depthEyeAlternate = true;
     // [stereo] made_eye_*: the made eye's alignment, set by hand from the menu (Advanced › View ›
     // Right eye alignment) to find what's off. Picture: shift_x / shift_y (degrees, + right / up),
     // distance (eye distance used for the depth shift, 1 = measured), depth (scene depth scale).

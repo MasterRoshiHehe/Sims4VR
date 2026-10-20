@@ -86,6 +86,12 @@ struct Rendered {
     // with (its z terms at the render camera's +0x70; 0: not known). A check
     // on nearZ / farZ for the depth eye's numbers log.
     float drawnNear = 0, drawnFar = 0;
+    // The eye camera in the game world: where it is (game units), how it is turned (x right, y up, z back,
+    // like OpenXR's view axes) and game units a metre (0: not known). The depth eye moves an older
+    // picture of the other eye by it (stick turn and walking included).
+    Vec3 worldPosition{};
+    Quat worldOrientation{0, 0, 0, 1};
+    float worldScale = 0;
     BodyParts body;
 };
 bool takeRendered(Rendered& out);

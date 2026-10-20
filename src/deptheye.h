@@ -23,8 +23,25 @@ namespace s4vr::deptheye {
 // right, up, down; nearZ / farZ: the planes the depth was drawn with. Fills
 // all of `target`. False when nothing was drawn (no scene depth of that size,
 // the pass unavailable).
+// older: the other eye's own last picture from the game (eyes taking turns),
+// for what the fresh eye can't see behind near things: its colour, a point in
+// its view to the target view, its tangents and planes (its depth is the one
+// keepDepth kept for that eye). Null: those spots are filled from beside.
+struct Older {
+    ID3D11ShaderResourceView* colour;
+    int eye;
+    float rows[12];
+    float tan[4];
+    float nearZ, farZ;
+    double ageMs;
+};
 bool draw(ID3D11ShaderResourceView* source, ID3D11Texture2D* target, DXGI_FORMAT format, UINT width, UINT height,
-          const float rows[12], const float srcTan[4], const float dstTan[4], float nearZ, float farZ);
+          const float rows[12], const float srcTan[4], const float dstTan[4], float nearZ, float farZ,
+          const Older* older = nullptr);
+
+// Present thread, after the fresh eye's picture is made: keeps this frame's
+// scene depth as that eye's (for Older the next frame). False if it couldn't.
+bool keepDepth(int eye);
 
 // Why the last draw returned false, and whether the pass can never be made
 // this session (anything else may work next frame).

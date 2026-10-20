@@ -23,12 +23,18 @@ constexpr uint32_t kIterations = 64;  // steps each pixel walks along its ray (S
 const char kShader[] = R"HLSL(
 // The fresh eye's picture, as the swapchain shows it (an sRGB view reads linear).
 Texture2D<float4> source : register(t0);
+// The other eye's own older picture (the last one the game drew of it) and its depth.
+Texture2D<float4> sourceB : register(t2);
 #ifdef MS
 Texture2DMS<float> depthTex : register(t1);
+Texture2DMS<float> depthTexB : register(t3);
 #define DEPTH(p) depthTex.Load(p, 0)
+#define DEPTHB(p) depthTexB.Load(p, 0)
 #else
 Texture2D<float> depthTex : register(t1);
+Texture2D<float> depthTexB : register(t3);
 #define DEPTH(p) depthTex.Load(int3(p, 0))
+#define DEPTHB(p) depthTexB.Load(int3(p, 0))
 #endif
 SamplerState linearClamp : register(s0);
 
@@ -44,6 +50,12 @@ cbuffer Params : register(b0) {
     float nearZ, farZ;
     uint reversed, iterations;
     uint width, height, samples, debugView;
+    float4 invB0;  // the target view to the older picture's view
+    float4 invB1;
+    float4 invB2;
+    float4 tanB;
+    float nearB, farB;
+    uint hasB, reversedB;
 };
 
 struct VsOut {
@@ -87,17 +99,105 @@ float3 seen(float2 uv) {
     return at(uv, viewZ(DEPTH(texel(uv))));
 }
 
+float viewZB(float d) {
+    float z = reversedB ? nearB * farB / (nearB + d * (farB - nearB)) : nearB * farB / (farB - d * (farB - nearB));
+    return min(z, farB);
+}
+
+// Where the ray's point at distance z lands in the fresh picture (b false) or
+// the older one (b true).
+float2 toSource(float3 ray, float z, bool b) {
+    if (b) return project(apply(invB0, invB1, invB2, ray * z), tanB);
+    return project(apply(inv0, inv1, inv2, ray * z), srcTan);
+}
+
+// The distance of what that picture shows at uv. Past the older picture's
+// edges nothing is known: never in front of the ray.
+float depthAt(float2 uv, bool b) {
+    if (b) {
+        if (any(uv < 0) || any(uv > 1)) return 1e9;
+        return viewZB(DEPTHB(texel(uv)));
+    }
+    return viewZ(DEPTH(texel(saturate(uv))));
+}
+
+struct March {
+    bool hit, hidden;
+    float zHit;      // where the ray met a surface
+    float zFill;     // hidden: the far side's distance just before the near thing's edge
+    float zHidden;   // hidden: how far along the ray it went behind the near thing
+    float2 uFill;    // hidden: the far side's spot
+    float2 uBehind;  // hidden: the first spot under the near thing
+};
+
 // Each target pixel walks its own ray out from the eye, in steps even in
 // 1/distance (even in picture shift), and looks at where each step lands in
-// the fresh picture. The first step that goes from in front of the surface
-// seen there to behind it, where halving finds the ray on that surface (not
-// behind a near thing's edge), is what this eye sees: that spot of the fresh
-// picture is its colour. The
-// first hit is the nearest one, so a near thing's edge is never replaced by
-// the wall behind it. A ray that passes behind a near thing without meeting
-// a surface sees something the fresh eye can't: it takes the surface just
-// before that near thing's edge (the far side), stepped clear of the edge.
+// a picture. The first step that goes from in front of the surface seen
+// there to behind it, where halving finds the ray on that surface (not
+// behind a near thing's edge), is what this eye sees. The first hit is the
+// nearest one, so a near thing's edge is never replaced by the wall behind
+// it. A ray that passes behind a near thing without meeting a surface sees
+// something that picture can't.
 #define STEPS 64
+March march(float3 ray, bool b, float zStart, float zEnd) {
+    March m;
+    m.hit = false;
+    m.hidden = false;
+    m.zHit = zEnd;
+    m.zFill = zEnd;
+    m.zHidden = zEnd;
+    m.uFill = toSource(ray, zEnd, b);
+    m.uBehind = m.uFill;
+    float wNear = 1.0 / zStart, wFar = 1.0 / zEnd;
+    float zPrev = zStart;
+    float2 uPrev = toSource(ray, zPrev, b);
+    float dPrev = depthAt(uPrev, b);
+    bool behindPrev = zPrev >= dPrev;
+    [loop] for (uint k = 1; k <= STEPS; ++k) {
+        float z = 1.0 / lerp(wNear, wFar, k / float(STEPS));
+        float2 u = toSource(ray, z, b);
+        float d = depthAt(u, b);
+        bool behind = z >= d;
+        if (behind && !behindPrev) {
+            // From in front of what the picture shows to behind it: either
+            // the ray met that surface, or it went behind a near thing's
+            // edge. Halve onto the change; on a surface the depth there is
+            // where the ray is (a slanted one too: a sleeve, a floor), at an
+            // edge it is the near thing, far in front of the ray.
+            float lo = zPrev, hi = z, dHi = d;
+            [unroll] for (uint h = 0; h < 6; ++h) {
+                float mid = 0.5 * (lo + hi);
+                float dm = depthAt(toSource(ray, mid, b), b);
+                if (mid >= dm) {
+                    hi = mid;
+                    dHi = dm;
+                } else {
+                    lo = mid;
+                }
+            }
+            if (hi - dHi <= 0.04 * hi + 2 * (hi - lo)) {
+                m.zHit = hi;
+                m.hit = true;
+                break;
+            }
+            if (!m.hidden) {
+                // Behind a near thing without meeting a surface. Remember the
+                // last surface before it (the far side next to the edge).
+                m.hidden = true;
+                m.uFill = uPrev;
+                m.zFill = dPrev;
+                m.zHidden = lo;
+                m.uBehind = u;
+            }
+        }
+        behindPrev = behind;
+        zPrev = z;
+        uPrev = u;
+        dPrev = d;
+    }
+    return m;
+}
+
 float4 psMain(VsOut i) : SV_Target {
     float3 ray = float3(lerp(dstTan.x, dstTan.y, i.uv.x), lerp(dstTan.z, dstTan.w, i.uv.y), 1);
     // Test views ([stereo] depth_eye_debug): 2 the fresh picture turned only
@@ -117,93 +217,54 @@ float4 psMain(VsOut i) : SV_Target {
         if (edge > 0.15) return float4(1, 0, 1, 1);
         return float4(source.SampleLevel(linearClamp, saturate(flat), 0).rgb, 1);
     }
-    float wNear = 1.0 / max(nearZ, 0.08), wFar = 1.0 / farZ;
-    float zPrev = 1.0 / wNear;
-    float2 uPrev = project(apply(inv0, inv1, inv2, ray * zPrev), srcTan);
-    float dPrev = viewZ(DEPTH(texel(saturate(uPrev))));
-    bool hit = false, hidden = false;
-    bool behindPrev = zPrev >= dPrev;
-    float zHit = farZ, zFill = farZ;
-    float2 uFill = flat, uBehind = flat;
-    [loop] for (uint k = 1; k <= STEPS; ++k) {
-        float z = 1.0 / lerp(wNear, wFar, k / float(STEPS));
-        float2 u = project(apply(inv0, inv1, inv2, ray * z), srcTan);
-        float d = viewZ(DEPTH(texel(saturate(u))));
-        bool behind = z >= d;
-        if (behind && !behindPrev) {
-            // From in front of what the fresh eye sees to behind it: either
-            // the ray met that surface, or it went behind a near thing's
-            // edge. Halve onto the change; on a surface the depth there is
-            // where the ray is (a slanted one too: a sleeve, a floor), at an
-            // edge it is the near thing, far in front of the ray.
-            float lo = zPrev, hi = z, dHi = d;
-            [unroll] for (uint h = 0; h < 6; ++h) {
-                float m = 0.5 * (lo + hi);
-                float2 um = project(apply(inv0, inv1, inv2, ray * m), srcTan);
-                float dm = viewZ(DEPTH(texel(saturate(um))));
-                if (m >= dm) {
-                    hi = m;
-                    dHi = dm;
-                } else {
-                    lo = m;
-                }
-            }
-            if (hi - dHi <= 0.04 * hi + 2 * (hi - lo)) {
-                zHit = hi;
-                hit = true;
-                break;
-            }
-            if (!hidden) {
-                // Behind a near thing without meeting a surface: this eye
-                // sees what the fresh eye can't, just past that near thing's
-                // edge. Remember the last surface before it (the far side
-                // next to the edge) to fill from.
-                hidden = true;
-                uFill = uPrev;
-                zFill = dPrev;
-                uBehind = u;
-            }
-        }
-        behindPrev = behind;
-        zPrev = z;
-        uPrev = u;
-        dPrev = d;
+    March a = march(ray, false, max(nearZ, 0.08), farZ);
+    a.uFill = a.hidden ? a.uFill : flat;
+    // Hidden from the fresh eye: this eye's own older picture, which saw
+    // behind that near thing, moved to now by its own depth. Only a surface
+    // farther than where the ray went behind the near thing (a near thing that
+    // has moved on since, your hand, is not taken from it).
+    March bm = a;
+    bool fromB = false;
+    if (!a.hit && a.hidden && hasB) {
+        bm = march(ray, true, max(a.zHidden * 0.9, max(nearB, 0.08)), farB);
+        fromB = bm.hit;
     }
     float2 us;
     float3 fillColour = 0;
     bool softened = false;
-    if (hit) {
-        us = project(apply(inv0, inv1, inv2, ray * zHit), srcTan);
+    if (a.hit) {
+        us = toSource(ray, a.zHit, false);
     } else {
-        // Hidden from the fresh eye: the far side next to the near thing's
-        // edge, mirrored out from under it (where this ray meets the far
-        // side's distance lies under the near thing; the same distance the
-        // other way from the edge is far side the fresh eye saw), two pixels
-        // clear of the edge's blended pixels. Never anything farther along
-        // the ray (that pulled the sky and other far things in).
-        us = uFill;
-        if (hidden) {
+        // Hidden from the fresh eye, nothing in the older picture either: the
+        // far side next to the near thing's edge, mirrored out from under it
+        // (where this ray meets the far side's distance lies under the near
+        // thing; the same distance the other way from the edge is far side the
+        // fresh eye saw), two pixels clear of the edge's blended pixels. Never
+        // anything farther along the ray (that pulled the sky and other far
+        // things in).
+        us = a.uFill;
+        if (a.hidden && !fromB) {
             // The edge itself, found by halving between the far side and the
             // near thing (the steps alone put it up to a step off: sawtooth).
             const float2 px = float2(width, height);
-            float split = 0.5 * (zFill + viewZ(DEPTH(texel(saturate(uBehind)))));
-            float2 a = uFill, b = uBehind;
+            float split = 0.5 * (a.zFill + viewZ(DEPTH(texel(saturate(a.uBehind)))));
+            float2 e0 = a.uFill, e1 = a.uBehind;
             [unroll] for (uint e = 0; e < 6; ++e) {
-                float2 m = 0.5 * (a + b);
-                if (viewZ(DEPTH(texel(saturate(m)))) > split) a = m; else b = m;
+                float2 mid = 0.5 * (e0 + e1);
+                if (viewZ(DEPTH(texel(saturate(mid)))) > split) e0 = mid; else e1 = mid;
             }
-            float2 away = (uFill - uBehind) * px;
+            float2 away = (a.uFill - a.uBehind) * px;
             float len = length(away);
             if (len > 1e-3) {
                 float2 dir = away / len;
-                float2 under = (project(apply(inv0, inv1, inv2, ray * zFill), srcTan) - a) * px;
+                float2 under = (toSource(ray, a.zFill, false) - e0) * px;
                 float inside = clamp(-dot(under, dir), 0.0, 400.0);  // pixels under the near thing
-                float2 mirrored = a + dir * (2.0 + inside) / px;
+                float2 mirrored = e0 + dir * (2.0 + inside) / px;
                 // Only while the mirrored spot is still that far side: something
                 // nearer there (another Sim, your other hand) would be copied in;
                 // then the edge itself is stretched over.
                 float there = viewZ(DEPTH(texel(saturate(mirrored))));
-                us = there >= zFill * 0.8 ? mirrored : a + dir * 2.0 / px;
+                us = there >= a.zFill * 0.8 ? mirrored : e0 + dir * 2.0 / px;
                 // Softened along the edge, so neighbouring rows don't tear apart.
                 float2 along = float2(-dir.y, dir.x) / px;
                 float3 c = 0;
@@ -216,10 +277,14 @@ float4 psMain(VsOut i) : SV_Target {
     }
     if (debugView == 1) {
         // Test view 1: how far each pixel's surface is, 0.1 m white to 50 m
-        // black; red where the fresh eye can't see (filled from behind).
-        float g = 1 - saturate(log2(max(hit ? zHit : zFill, 0.1) / 0.1) / 9);
-        return hit ? float4(g, g, g, 1) : float4(0.5 + 0.5 * g, 0.1 * g, 0.1 * g, 1);
+        // black; blue where it came from this eye's older picture, red where
+        // nothing saw it (filled from beside).
+        float g = 1 - saturate(log2(max(a.hit ? a.zHit : fromB ? bm.zHit : a.zFill, 0.1) / 0.1) / 9);
+        if (a.hit) return float4(g, g, g, 1);
+        if (fromB) return float4(0.1 * g, 0.3 * g, 0.5 + 0.5 * g, 1);
+        return float4(0.5 + 0.5 * g, 0.1 * g, 0.1 * g, 1);
     }
+    if (fromB) return float4(sourceB.SampleLevel(linearClamp, saturate(toSource(ray, bm.zHit, true)), 0).rgb, 1);
     if (softened) return float4(fillColour, 1);
     return float4(source.SampleLevel(linearClamp, saturate(us), 0).rgb, 1);
 }
@@ -241,6 +306,10 @@ struct Params {
     float nearZ, farZ;
     uint32_t reversed, iterations;
     uint32_t width, height, samples, debugView;
+    float inverseB[3][4];
+    float tanB[4];
+    float nearB, farB;
+    uint32_t hasB, reversedB;
 };
 static_assert(sizeof(Params) % 16 == 0, "constant buffer size");
 
@@ -310,6 +379,20 @@ GridInfo g_gridInfo{};
 float g_drawnNear = 0, g_drawnFar = 0;
 ULONGLONG g_logAt = 0;
 int g_logs = 0;
+
+// Each eye's scene depth from the last frame the game drew it (keepDepth), for
+// when the other eye is made from the fresh one: what it sees behind near
+// things comes from there.
+struct KeptDepth {
+    ID3D11Texture2D* texture = nullptr;
+    ID3D11ShaderResourceView* view = nullptr;
+    UINT width = 0, height = 0, samples = 0;
+    bool reversed = false;
+    bool valid = false;
+};
+KeptDepth g_kept[2];
+uint64_t g_usedOlder = 0;
+double g_olderAgeSum = 0;
 
 template <typename T>
 void safeRelease(T*& p) {
@@ -581,10 +664,13 @@ void logNow() {
     ++g_logs;
     LOG("Depth eye: last 30 s, %llu other-eye pictures made, %llu without this frame's depth, %llu of another size; "
         "graphics card %.2f ms each on average, worst %.2f (%llu timed); depth copied %.1f ms before use on average, "
-        "worst %.1f",
+        "worst %.1f; %llu with that eye's older picture behind near things (%.1f ms old on average)",
         static_cast<unsigned long long>(g_drawn), static_cast<unsigned long long>(g_noDepth),
         static_cast<unsigned long long>(g_otherSize), g_gpuCount ? g_gpuSum / double(g_gpuCount) : 0.0, g_gpuWorst,
-        static_cast<unsigned long long>(g_gpuCount), g_ageCount ? g_ageSum / double(g_ageCount) : 0.0, g_ageWorst);
+        static_cast<unsigned long long>(g_gpuCount), g_ageCount ? g_ageSum / double(g_ageCount) : 0.0, g_ageWorst,
+        static_cast<unsigned long long>(g_usedOlder), g_usedOlder ? g_olderAgeSum / double(g_usedOlder) : 0.0);
+    g_usedOlder = 0;
+    g_olderAgeSum = 0;
     g_ageSum = g_ageWorst = 0;
     g_ageCount = 0;
     g_drawn = g_noDepth = g_otherSize = 0;
@@ -593,10 +679,76 @@ void logNow() {
     g_logAt = now;
 }
 
+// The inverse of a rigid move (3x4 rows): rotation transposed, translation turned back.
+void invert(const float rows[12], float out[3][4]) {
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 3; ++c) out[r][c] = rows[c * 4 + r];
+        out[r][3] = -(rows[0 * 4 + r] * rows[3] + rows[1 * 4 + r] * rows[7] + rows[2 * 4 + r] * rows[11]);
+    }
+}
+
+void releaseKept(KeptDepth& k) {
+    safeRelease(k.view);
+    safeRelease(k.texture);
+    k = KeptDepth{};
+}
+
 }  // namespace
 
+bool keepDepth(int eye) {
+    if (eye < 0 || eye > 1 || !g_device || g_failed) return false;
+    KeptDepth& k = g_kept[eye];
+    k.valid = false;
+    UINT samples = 0, width = 0, height = 0;
+    bool reversed = false;
+    ID3D11ShaderResourceView* depth = nearplane::lateDepth(samples, width, height, reversed);
+    if (!depth) depth = nearplane::latestDepth(samples, width, height, reversed);
+    if (!depth) return false;
+    ID3D11Resource* resource = nullptr;
+    depth->GetResource(&resource);
+    ID3D11Texture2D* texture = nullptr;
+    D3D11_TEXTURE2D_DESC desc{};
+    if (resource && SUCCEEDED(resource->QueryInterface(__uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&texture))))
+        texture->GetDesc(&desc);
+    if (texture && (!k.texture || k.width != width || k.height != height || k.samples != samples)) {
+        releaseKept(k);
+        D3D11_SHADER_RESOURCE_VIEW_DESC viewDesc{};
+        depth->GetDesc(&viewDesc);
+        desc.Usage = D3D11_USAGE_DEFAULT;
+        desc.CPUAccessFlags = 0;
+        desc.MiscFlags = 0;
+        if (FAILED(g_device->CreateTexture2D(&desc, nullptr, &k.texture)) ||
+            FAILED(g_device->CreateShaderResourceView(k.texture, &viewDesc, &k.view))) {
+            static bool logged = false;
+            if (!logged) {
+                logged = true;
+                LOG("Depth eye: couldn't keep an eye's depth (%ux%u x%u, format %d)", width, height, samples,
+                    static_cast<int>(desc.Format));
+            }
+            releaseKept(k);
+        } else {
+            k.width = width;
+            k.height = height;
+            k.samples = samples;
+        }
+    }
+    if (texture && k.texture) {
+        ID3D11DeviceContext* context = nullptr;
+        g_device->GetImmediateContext(&context);
+        context->CopyResource(k.texture, texture);
+        context->Release();
+        k.reversed = reversed;
+        k.valid = true;
+    }
+    safeRelease(texture);
+    safeRelease(resource);
+    depth->Release();
+    return k.valid;
+}
+
 bool draw(ID3D11ShaderResourceView* source, ID3D11Texture2D* target, DXGI_FORMAT format, UINT width, UINT height,
-          const float rows[12], const float srcTan[4], const float dstTan[4], float nearZ, float farZ) {
+          const float rows[12], const float srcTan[4], const float dstTan[4], float nearZ, float farZ,
+          const Older* older) {
     g_failure = nullptr;
     if (!source || !target || width < 2 || height < 2) {
         g_failure = "no fresh picture";
@@ -662,11 +814,7 @@ bool draw(ID3D11ShaderResourceView* source, ID3D11Texture2D* target, DXGI_FORMAT
         }
         Params params{};
         std::memcpy(params.rows, rows, sizeof(params.rows));
-        // The inverse of a rigid move: rotation transposed, translation turned back.
-        for (int r = 0; r < 3; ++r) {
-            for (int c = 0; c < 3; ++c) params.inverse[r][c] = rows[c * 4 + r];
-            params.inverse[r][3] = -(rows[0 * 4 + r] * rows[3] + rows[1 * 4 + r] * rows[7] + rows[2 * 4 + r] * rows[11]);
-        }
+        invert(rows, params.inverse);
         std::memcpy(params.srcTan, srcTan, sizeof(params.srcTan));
         std::memcpy(params.dstTan, dstTan, sizeof(params.dstTan));
         params.nearZ = nearZ;
@@ -677,6 +825,24 @@ bool draw(ID3D11ShaderResourceView* source, ID3D11Texture2D* target, DXGI_FORMAT
         params.height = height;
         params.samples = samples;
         params.debugView = static_cast<uint32_t>(std::clamp(g_debugView.load(std::memory_order_relaxed), 0, 3));
+        // The other eye's older picture: only with its depth kept, the same size as this frame's.
+        ID3D11ShaderResourceView* olderColour = nullptr;
+        ID3D11ShaderResourceView* olderDepth = nullptr;
+        if (older && older->colour && older->eye >= 0 && older->eye < 2 && older->nearZ > 0 && older->farZ > older->nearZ) {
+            const KeptDepth& k = g_kept[older->eye];
+            if (k.valid && k.view && k.width == width && k.height == height && k.samples == samples) {
+                olderColour = older->colour;
+                olderDepth = k.view;
+                invert(older->rows, params.inverseB);
+                std::memcpy(params.tanB, older->tan, sizeof(params.tanB));
+                params.nearB = older->nearZ;
+                params.farB = older->farZ;
+                params.hasB = 1;
+                params.reversedB = k.reversed ? 1u : 0u;
+                ++g_usedOlder;
+                g_olderAgeSum += older->ageMs;
+            }
+        }
         logGrid(context);
         // The numbers: on the first picture, when the test view changes, and
         // every 30 s for the first few.
@@ -691,9 +857,9 @@ bool draw(ID3D11ShaderResourceView* source, ID3D11Texture2D* target, DXGI_FORMAT
         context1->ClearDepthStencilView(g_depthView, D3D11_CLEAR_DEPTH, 0.0f, 0);
         context1->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         context1->VSSetShader(g_vs, nullptr, 0);
-        ID3D11ShaderResourceView* views[2] = {source, depth};
+        ID3D11ShaderResourceView* views[4] = {source, depth, olderColour, olderDepth};
         context1->PSSetConstantBuffers(0, 1, &g_params);
-        context1->PSSetShaderResources(0, 2, views);
+        context1->PSSetShaderResources(0, 4, views);
         context1->PSSetShader(g_ps[samples > 1 ? 1 : 0], nullptr, 0);
         context1->PSSetSamplers(0, 1, &g_sampler);
         context1->RSSetState(g_raster);
@@ -710,10 +876,10 @@ bool draw(ID3D11ShaderResourceView* source, ID3D11Texture2D* target, DXGI_FORMAT
             context1->Draw(3, 0);
         }
 
-        ID3D11ShaderResourceView* none[2] = {};
+        ID3D11ShaderResourceView* none[4] = {};
         ID3D11RenderTargetView* noTarget = nullptr;
-        context1->VSSetShaderResources(0, 2, none);
-        context1->PSSetShaderResources(0, 2, none);
+        context1->VSSetShaderResources(0, 4, none);
+        context1->PSSetShaderResources(0, 4, none);
         context1->OMSetRenderTargets(1, &noTarget, nullptr);
         context1->SwapDeviceContextState(gameState, nullptr);
         safeRelease(gameState);
@@ -761,6 +927,8 @@ void forgetTargets() {
 
 void release() {
     forgetTargets();
+    releaseKept(g_kept[0]);
+    releaseKept(g_kept[1]);
     safeRelease(g_depthView);
     safeRelease(g_depth);
     g_width = g_height = 0;

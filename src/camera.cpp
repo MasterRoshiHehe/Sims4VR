@@ -1547,6 +1547,9 @@ void applyEye(uint8_t* dst) {
     rendered.yaw = yaw;
     rendered.lead = yawLead;
     rendered.pairFirst = g_pairBase.valid;
+    rendered.worldPosition = {position[0] + offset.x, position[1] + offset.y, position[2] + offset.z};
+    rendered.worldOrientation = q;
+    rendered.worldScale = s;
     {
         float clip[2];
         std::memcpy(clip, dst + kNearOffset, sizeof(clip));

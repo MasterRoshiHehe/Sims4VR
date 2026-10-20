@@ -151,7 +151,9 @@ static void depthEyeTarget(const XrPosef& from, const XrFovf& f, int fresh, cons
     const XrFovf& g = located[old].fov;
     // made_eye_shift_*: the window the picture is made through moves the other way, so its content
     // moves by the shift (+ right / up).
-    const float sx = std::tan(g_config.madeEyeShiftX * 0.01745329f), sy = std::tan(g_config.madeEyeShiftY * 0.01745329f);
+    const bool right = old == 1;  // the alignment rows are the right eye's
+    const float sx = right ? std::tan(g_config.madeEyeShiftX * 0.01745329f) : 0.0f;
+    const float sy = right ? std::tan(g_config.madeEyeShiftY * 0.01745329f) : 0.0f;
     dstTan[0] = std::tan(g.angleLeft) - sx;
     dstTan[1] = std::tan(g.angleRight) - sx;
     dstTan[2] = std::tan(g.angleUp) - sy;
@@ -186,6 +188,43 @@ static void logMadeEyeAlignment() {
         now[0], now[1], now[2] * 100, now[3] * 100, now[4] * 1000, now[5], now[6]);
 }
 
+// Depth eye, eyes taking turns: each eye's last real picture's view (camera::Rendered) and when it
+// was kept (performance counter), with its depth (deptheye::keepDepth).
+static camera::Rendered g_realView[2];
+static bool g_realValid[2] = {false, false};
+static LONGLONG g_realAt[2] = {0, 0};
+
+// A point in the older picture's view (b: the other eye's last real one) to the view the other eye is
+// made for now: both through the game world, so a stick turn or walk since b was drawn counts too.
+// The target is where depthEyeTarget puts it, from the fresh eye's world camera (a). False when
+// the world scale changed between them.
+static bool olderEyeRows(int fresh, const XrView (&located)[2], const camera::Rendered& a, const camera::Rendered& b,
+                         float rows[12]) {
+    const float s = a.worldScale;
+    if (!(s > 0) || !(b.worldScale > 0) || std::fabs(b.worldScale / s - 1) > 0.01f) return false;
+    const int old = 1 - fresh;
+    const XrPosef &lf = located[fresh].pose, &lo = located[old].pose;
+    const XrQuaternionf qa{a.worldOrientation.x, a.worldOrientation.y, a.worldOrientation.z, a.worldOrientation.w};
+    const XrQuaternionf qb{b.worldOrientation.x, b.worldOrientation.y, b.worldOrientation.z, b.worldOrientation.w};
+    const XrQuaternionf qt = qnorm(qmul(qa, qmul(qconj(lf.orientation), lo.orientation)));
+    const XrVector3f apart = qrot(qconj(lf.orientation), {lo.position.x - lf.position.x, lo.position.y - lf.position.y,
+                                                          lo.position.z - lf.position.z});
+    const float k = g_config.madeEyeDistance * s;
+    const XrVector3f off = qrot(qa, {apart.x * k, apart.y * k, apart.z * k});
+    const XrVector3f pt{a.worldPosition.x + off.x, a.worldPosition.y + off.y, a.worldPosition.z + off.z};
+    float r[9];
+    qmatrix(qnorm(qmul(qconj(qt), qb)), r);
+    const XrVector3f t = qrot(qconj(qt), {(b.worldPosition.x - pt.x) / s, (b.worldPosition.y - pt.y) / s,
+                                          (b.worldPosition.z - pt.z) / s});
+    const float flip[3] = {1, 1, -1};
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) rows[i * 4 + j] = r[i * 3 + j] * flip[i] * flip[j];
+    rows[3] = t.x;
+    rows[7] = t.y;
+    rows[11] = -t.z;
+    return true;
+}
+
 // Depth eye (deptheye.h): `fresh` was just copied; the other eye's picture is
 // made from it for this frame, moved by its depth to where that eye is now
 // (this frame's located views, relative to the fresh render pose). Both views
@@ -217,9 +256,43 @@ static void depthOtherEye(int fresh, const XrView (&located)[2], const D3D11_TEX
     deptheye::noteDrawnProjection(rendered.drawnNear / scale, rendered.drawnFar / scale);
     logMadeEyeAlignment();
     const float depthScale = g_config.madeEyeDepth > 0.05f ? g_config.madeEyeDepth : 1.0f;
+    // Eyes taking turns: what the fresh eye can't see comes from the other eye's own last picture.
+    deptheye::Older older{};
+    const deptheye::Older* olderUsed = nullptr;
+    UINT olderWidth = 0, olderHeight = 0;
+    if (g_config.depthEyeAlternate && g_realValid[old]) {
+        LARGE_INTEGER now, frequency;
+        QueryPerformanceCounter(&now);
+        QueryPerformanceFrequency(&frequency);
+        older.ageMs = double(now.QuadPart - g_realAt[old]) * 1000.0 / double(frequency.QuadPart);
+        const camera::Rendered& b = g_realView[old];
+        if (older.ageMs < 100 && olderEyeRows(fresh, located, rendered, b, older.rows) &&
+            (older.colour = eyealign::keptView(old, olderWidth, olderHeight)) != nullptr) {
+            if (olderWidth == width && olderHeight == height) {
+                older.eye = old;
+                older.tan[0] = std::tan(b.fov.left);
+                older.tan[1] = std::tan(b.fov.right);
+                older.tan[2] = std::tan(b.fov.up);
+                older.tan[3] = std::tan(b.fov.down);
+                older.nearZ = b.nearZ / b.worldScale * depthScale;
+                older.farZ = b.farZ / b.worldScale * depthScale;
+                olderUsed = &older;
+            }
+        }
+    }
     const bool drawn = deptheye::draw(source, s.images[index].texture, s.format, width, height, rows, srcTan, dstTan,
-                                      rendered.nearZ / scale * depthScale, rendered.farZ / scale * depthScale);
+                                      rendered.nearZ / scale * depthScale, rendered.farZ / scale * depthScale,
+                                      olderUsed);
+    if (older.colour) older.colour->Release();
     source->Release();
+    // This frame's depth and view, kept as the fresh eye's for when it is the made one next frame.
+    g_realValid[fresh] = rendered.worldScale > 0 && deptheye::keepDepth(fresh);
+    if (g_realValid[fresh]) {
+        g_realView[fresh] = rendered;
+        LARGE_INTEGER now;
+        QueryPerformanceCounter(&now);
+        g_realAt[fresh] = now.QuadPart;
+    }
     if (drawn) {
         // A screenshot (right stick click) takes this made eye as the right one.
         ID3D11Device* device = nullptr;
@@ -249,7 +322,7 @@ static void depthOtherEye(int fresh, const XrView (&located)[2], const D3D11_TEX
         return;
     }
     misses = 0;
-    target = madeEyeSubmitted(target);
+    if (old == 1) target = madeEyeSubmitted(target);
     g_eyePose[old] = g_shownPose[old] = target;
     g_eyeFov[old] = g;
     g_eyeYaw[old] = g_shownYaw[old] = g_eyeYaw[fresh];
@@ -482,11 +555,12 @@ static bool renderStereo(ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_DESC
     // Depth eye: the left eye every frame, its view widened to hold the right
     // eye's too (the right eye is made from it).
     const bool depthEye = depthEyeOn();
-    int next = depthEye ? 0 : g_renderingEye == 0 ? 1 : 0;
+    // Eyes taking turns ([stereo] depth_eye_alternate): each widened the same way.
+    int next = depthEye && !g_config.depthEyeAlternate ? 0 : g_renderingEye == 0 ? 1 : 0;
     const XrPosef& p = located[next].pose;
     XrFovf f = located[next].fov;
     if (depthEye) {
-        const XrFovf& o = located[1].fov;
+        const XrFovf& o = located[1 - next].fov;
         f = {std::min(f.angleLeft, o.angleLeft), std::max(f.angleRight, o.angleRight), std::max(f.angleUp, o.angleUp),
              std::min(f.angleDown, o.angleDown)};
     }
