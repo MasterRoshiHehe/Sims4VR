@@ -89,9 +89,10 @@ float3 seen(float2 uv) {
 
 // Each target pixel walks its own ray out from the eye, in steps even in
 // 1/distance (even in picture shift), and looks at where each step lands in
-// the fresh picture. The first step that goes behind the surface seen there,
-// with that surface between this step and the last, is what this eye sees:
-// refined by halving, and that spot of the fresh picture is its colour. The
+// the fresh picture. The first step that goes from in front of the surface
+// seen there to behind it, where halving finds the ray on that surface (not
+// behind a near thing's edge), is what this eye sees: that spot of the fresh
+// picture is its colour. The
 // first hit is the nearest one, so a near thing's edge is never replaced by
 // the wall behind it. A ray that passes behind a near thing without meeting
 // a surface sees something the fresh eye can't: it takes the surface just
@@ -121,36 +122,49 @@ float4 psMain(VsOut i) : SV_Target {
     float2 uPrev = project(apply(inv0, inv1, inv2, ray * zPrev), srcTan);
     float dPrev = viewZ(DEPTH(texel(saturate(uPrev))));
     bool hit = false, hidden = false;
+    bool behindPrev = zPrev >= dPrev;
     float zHit = farZ, zFill = farZ;
     float2 uFill = flat, uBehind = flat;
     [loop] for (uint k = 1; k <= STEPS; ++k) {
         float z = 1.0 / lerp(wNear, wFar, k / float(STEPS));
         float2 u = project(apply(inv0, inv1, inv2, ray * z), srcTan);
         float d = viewZ(DEPTH(texel(saturate(u))));
-        if (z >= d) {
-            if (d >= zPrev * 0.97) {
-                // Crossed the surface between zPrev and z: halve onto it.
-                float lo = zPrev, hi = z;
-                [unroll] for (uint h = 0; h < 5; ++h) {
-                    float m = 0.5 * (lo + hi);
-                    float2 um = project(apply(inv0, inv1, inv2, ray * m), srcTan);
-                    if (m >= viewZ(DEPTH(texel(saturate(um))))) hi = m; else lo = m;
+        bool behind = z >= d;
+        if (behind && !behindPrev) {
+            // From in front of what the fresh eye sees to behind it: either
+            // the ray met that surface, or it went behind a near thing's
+            // edge. Halve onto the change; on a surface the depth there is
+            // where the ray is (a slanted one too: a sleeve, a floor), at an
+            // edge it is the near thing, far in front of the ray.
+            float lo = zPrev, hi = z, dHi = d;
+            [unroll] for (uint h = 0; h < 6; ++h) {
+                float m = 0.5 * (lo + hi);
+                float2 um = project(apply(inv0, inv1, inv2, ray * m), srcTan);
+                float dm = viewZ(DEPTH(texel(saturate(um))));
+                if (m >= dm) {
+                    hi = m;
+                    dHi = dm;
+                } else {
+                    lo = m;
                 }
+            }
+            if (hi - dHi <= 0.04 * hi + 2 * (hi - lo)) {
                 zHit = hi;
                 hit = true;
                 break;
             }
             if (!hidden) {
-                // The ray went behind something near without meeting a
-                // surface: this eye sees what the fresh eye can't, just past
-                // that near thing's edge. Remember the last surface before
-                // it (the far side next to the edge) to fill from.
+                // Behind a near thing without meeting a surface: this eye
+                // sees what the fresh eye can't, just past that near thing's
+                // edge. Remember the last surface before it (the far side
+                // next to the edge) to fill from.
                 hidden = true;
                 uFill = uPrev;
                 zFill = dPrev;
                 uBehind = u;
             }
         }
+        behindPrev = behind;
         zPrev = z;
         uPrev = u;
         dPrev = d;
