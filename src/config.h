@@ -210,6 +210,7 @@ struct Config {
     bool mirrorClip = true;   // first person lopsided eye: keep the game's clip at the mirror glass
     bool reflectionsOff = false;  // no mirror or water reflections at all
     bool ambientOcclusion = true;  // [stereo] ambient_occlusion: the game's SSAO; 0 = off for speed (GPU pack, perf item 4)
+    bool textureProbe = true;     // [perf] texture_probe: time the Sim texture compositing calls, log those over 20 ms (texprobe.cpp)
     bool hitchCatcher = true;     // [perf] hitch_catcher: log what the game's main thread does during stalls over 60 ms (hitch.cpp)
 
     // Phone (first person): close your right hand at your right hip and your

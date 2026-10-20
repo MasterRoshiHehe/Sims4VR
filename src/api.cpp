@@ -20,6 +20,7 @@
 #include "walkstop.h"
 #include "framemap.h"
 #include "hitch.h"
+#include "texprobe.h"
 #include "singleview.h"
 #include "gamefix.h"
 #include "ambience.h"
@@ -149,6 +150,7 @@ S4VR_API int s4vr_init() {
     s4vr::mirrorcap::install(g_config.mirrorInterior, g_config.mirrorExterior, g_config.reflectionsOff, !g_config.ambientOcclusion);
     s4vr::shadows::install(g_config.steadyShadows, g_config.shadowStep, g_config.shadowSharp, static_cast<int>(g_config.shadowMap), !g_config.ambientOcclusion);
     s4vr::hitch::install(g_config.hitchCatcher);
+    s4vr::texprobe::install(g_config.textureProbe);
     LOGT("perf", "GPU pack: exact_fov %d, mirrors %.0f m in rooms / %.0f m outdoors (0 = game's), reflections %s, SSAO %s, shadow map %.0f px, render_scale %.2f, msaa %d, hitch catcher %s",
          g_config.exactFov ? 1 : 0, g_config.mirrorInterior, g_config.mirrorExterior, g_config.reflectionsOff ? "off" : "on",
          !g_config.ambientOcclusion ? "off" : "on", g_config.shadowMap, g_config.renderScale, g_config.renderMsaa, g_config.hitchCatcher ? "on" : "off");
