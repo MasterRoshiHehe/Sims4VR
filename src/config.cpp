@@ -172,6 +172,8 @@ Config loadConfig(const std::wstring& ini) {
     c.mirrorExterior = readFloat(ini, "stereo", "mirror_far_outside", c.mirrorExterior);
     c.mirrorClip = readInt(ini, "stereo", "mirror_clip", 1) != 0;
     c.reflectionsOff = readInt(ini, "stereo", "reflections_off", 0) != 0;
+    c.ssaoOff = readBool(ini, "stereo", "ssao_off", c.ssaoOff);
+    c.hitchCatcher = readBool(ini, "perf", "hitch_catcher", c.hitchCatcher);
     c.outdoorFade = readFloat(ini, "audio", "outdoor_fade", c.outdoorFade);
     if (!(c.outdoorFade >= 0 && c.outdoorFade <= 20)) c.outdoorFade = 4.0f;
     c.phone = readBool(ini, "phone", "phone", true);
@@ -245,7 +247,7 @@ Config loadConfig(const std::wstring& ini) {
     c.steadyShadows = readInt(ini, "body", "steady_shadows", 1) != 0;
     c.shadowStep = readFloat(ini, "body", "shadow_step", c.shadowStep);
     c.shadowSharp = readFloat(ini, "body", "shadow_sharp", c.shadowSharp);
-    c.shadowMap = static_cast<int>(readInt(ini, "stereo", "shadow_map", c.shadowMap));
+    c.shadowMap = readFloat(ini, "stereo", "shadow_map", c.shadowMap);
     c.bodyTurnRate = readFloat(ini, "body", "turn_rate", c.bodyTurnRate);
     c.walkSpeed = readFloat(ini, "body", "walk_speed", c.walkSpeed);
     c.runSpeed = readFloat(ini, "body", "run_speed", c.runSpeed);

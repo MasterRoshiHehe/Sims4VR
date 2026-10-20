@@ -6,6 +6,7 @@
 #include <atomic>
 #include <cstdint>
 
+#include "hitch.h"
 #include "log.h"
 
 namespace s4vr::framecost {
@@ -68,9 +69,13 @@ void simDraw(bool eyes) {
     latest(eyes ? g_eyeLast : g_shadowLast, now);
 }
 
-void presentStart() { g_start = ticks(); }
+void presentStart() {
+    hitch::presentStart();
+    g_start = ticks();
+}
 
 void presentEnd() {
+    hitch::presentEnd();
     const int64_t end = ticks();
     const int64_t camera = g_camera.exchange(0, std::memory_order_relaxed);
     const int64_t shadowFirst = g_shadowFirst.exchange(0, std::memory_order_relaxed);

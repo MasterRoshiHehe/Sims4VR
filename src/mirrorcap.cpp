@@ -20,6 +20,7 @@ FloatFn g_float = nullptr;
 BoolFn g_bool = nullptr;
 float g_interior = 0, g_exterior = 0;
 bool g_reflectionsOff = false;
+bool g_ssaoOff = false;
 
 float __fastcall hookedFloat(void* options, const char* name, float fallback) {
     float v = g_float(options, name, fallback);
@@ -42,16 +43,21 @@ bool __fastcall hookedBool(void* options, const char* name, bool fallback) {
         LOG("Mirror cap: reflections off");
         return false;
     }
+    if (g_ssaoOff && name && v && !std::strcmp(name, "SsaoEnabled")) {
+        LOG("Mirror cap: SsaoEnabled read as a bool, forced off");
+        return false;
+    }
     return v;
 }
 
 }  // namespace
 
-void install(float interiorMetres, float exteriorMetres, bool reflectionsOff) {
+void install(float interiorMetres, float exteriorMetres, bool reflectionsOff, bool ssaoOff) {
     g_interior = interiorMetres > 0 ? interiorMetres : 0;
     g_exterior = exteriorMetres > 0 ? exteriorMetres : 0;
     g_reflectionsOff = reflectionsOff;
-    if (!(g_interior > 0 || g_exterior > 0 || g_reflectionsOff)) return;
+    g_ssaoOff = ssaoOff;
+    if (!(g_interior > 0 || g_exterior > 0 || g_reflectionsOff || g_ssaoOff)) return;
     if (!gameaddr::recognised() || gameaddr::dx9()) {
         LOG("Mirror cap: game build not recognised; the game's own mirror distance");
         return;
@@ -67,8 +73,8 @@ void install(float interiorMetres, float exteriorMetres, bool reflectionsOff) {
         LOG("Mirror cap: hook failed; the game's own mirror distance");
         return;
     }
-    LOG("Mirror cap: rooms %.1f m, outdoors %.1f m (0 = the game's), reflections %s; takes effect when the game reads its options",
-        g_interior, g_exterior, g_reflectionsOff ? "off" : "on");
+    LOG("Mirror cap: rooms %.1f m, outdoors %.1f m (0 = the game's), reflections %s, SSAO %s; takes effect when the game reads its options",
+        g_interior, g_exterior, g_reflectionsOff ? "off" : "on", g_ssaoOff ? "off" : "on");
 }
 
 }  // namespace s4vr::mirrorcap

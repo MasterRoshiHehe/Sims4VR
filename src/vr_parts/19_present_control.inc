@@ -330,6 +330,7 @@ int onFrame(ID3D11Texture2D* backbuffer, HWND window, bool ownMirror) {
             worst = oursWorst = oursTotal = 0;
         }
     }
+    benchmark::frame(g_config, gameMs, waitMs, renderMs, endMs, stereoFrame);
     static uint64_t slowFrames = 0;
     static ULONGLONG lastSlowLog = 0;
     if (gameMs + waitMs + renderMs + endMs > 100) {

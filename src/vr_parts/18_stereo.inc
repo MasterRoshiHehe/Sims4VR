@@ -121,6 +121,7 @@ static void turnCheck(float nowYaw, const float (&turned)[2], bool newPicture) {
     if (!c.start) c.start = GetTickCount64();
     ++c.frames;
     if (newPicture) ++c.pictures;
+    benchmark::turnFrame(newPicture, std::max(std::fabs(turned[0]), std::fabs(turned[1])) * 57.29578f);
     if (std::isfinite(c.lastHeading)) {
         const double step = std::fabs(std::remainder(nowYaw - c.lastHeading, 6.2831853f)) * 57.29578;
         c.turnMin = std::min(c.turnMin, step);

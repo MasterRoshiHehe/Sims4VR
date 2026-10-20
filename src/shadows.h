@@ -34,7 +34,8 @@ namespace s4vr::shadows {
 // (0: every frame, as the game does). sharpRange: metres the first (sharpest)
 // cascade reaches in first person (0: the game's 10). mapSize: shadow map
 // pixels while the headset view is on (0: the game's own; at most 4096).
-void install(bool on, float stepDegrees, float sharpRange, int mapSize);
+// ssaoOff: the config getter answers "SsaoEnabled" with 0 (see mirrorcap.h).
+void install(bool on, float stepDegrees, float sharpRange, int mapSize, bool ssaoOff = false);
 void configure(bool on, float stepDegrees, float sharpRange);
 
 }  // namespace s4vr::shadows

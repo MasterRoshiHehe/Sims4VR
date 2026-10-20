@@ -60,6 +60,8 @@ add_library(sims4vr SHARED
     src/eyelids.cpp
     src/facehide.cpp
     src/framecost.cpp
+    src/hitch.cpp
+    src/benchmark.cpp
     src/framemap.cpp
     src/singleview.cpp
     src/touch.cpp

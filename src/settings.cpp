@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "armik.h"
+#include "benchmark.h"
 #include "camera.h"
 #include "facehide.h"
 #include "walkstop.h"
@@ -85,6 +86,7 @@ const Page kFixedPages[] = {
     {L"View head", L"Head and body", L"View"},
     {L"View near", L"Near clipping", L"View"},
     {L"View shadows", L"Shadows", L"View"},
+    {L"View speed", L"Speed test", L"View"},
     {L"Moving", L"Moving", L"Advanced"},
     {L"Hands", L"Hands", L"Advanced"},
     {L"Reach", L"Reach and game control", L"Advanced"},
@@ -277,6 +279,15 @@ std::vector<Row> makeRows() {
         r.action = action;
         return r;
     };
+    auto benchButton = [](const wchar_t* label, int action, const wchar_t* tip) {
+        Row r;
+        r.group = L"View speed";
+        r.label = label;
+        r.kind = Kind::Action;
+        r.action = action;
+        r.tip = tip;
+        return r;
+    };
     auto perfButton = [](const wchar_t* label, int action, const wchar_t* tip) {
         Row r;
         r.group = L"Performance";
@@ -380,6 +391,7 @@ std::vector<Row> makeRows() {
         link(view, L"Head and body", L"View head"),
         link(view, L"Near clipping", L"View near"),
         link(view, L"Shadows", L"View shadows"),
+        link(view, L"Speed test", L"View speed"),
         number(L"View picture", L"Sharpness", "stereo", "sharpen", &Config::sharpen, 0, 1, 0.05f, 100, L"%.0f%%"),
         toggle(L"View picture", L"Card goes to the headset stream first", "stereo", "gpu_yield", &Config::gpuYield),
         toggle(L"View picture", L"Align the eyes (SteamVR)", "stereo", "align_eyes", &Config::alignEyes),
@@ -393,6 +405,12 @@ std::vector<Row> makeRows() {
         toggle(L"View motion", L"Hands match in both eyes (walking)", "stereo", "paired_hands", &Config::pairedHands),
         toggle(L"View motion", L"Own body steady while turning", "stereo", "body_layer", &Config::bodyLayer),
         toggle(L"View picture", L"Test: draw the scene twice (log)", "stereo", "probe_double", &Config::probeDouble),
+        toggle(L"View picture", L"No ambient occlusion (SSAO, next start)", "stereo", "ssao_off", &Config::ssaoOff, kNextStart),
+        benchButton(L"Run turn test (game paused)", 201,
+                    L"Stand still, close this menu. After 8 s: 5 s still, 3 turns each way, 5 s still. One 'Benchmark:' line in the log. Pause the game first."),
+        benchButton(L"Run turn test (game running)", 202,
+                    L"Same test with the game running at speed 1 (the sim runs too). Compare it with the paused run."),
+        toggle(L"View speed", L"Hitch catcher (log stalls, next start)", "perf", "hitch_catcher", &Config::hitchCatcher, kNextStart),
         number(L"View head", L"Head follow speed", "body", "smoothing", &Config::bodySmoothing, 0.05f, 1, 0.05f, 1, L"%.2f",
                kView),
         number(L"View head", L"Turn with your Sim", "body", "turn_smoothing", &Config::bodyTurnSmoothing, 0, 1, 0.05f, 1,
@@ -418,6 +436,8 @@ std::vector<Row> makeRows() {
         toggle(L"View picture", L"No mirror or water reflections", "stereo", "reflections_off", &Config::reflectionsOff,
                kNextStart),
         toggle(L"View shadows", L"Steady shadows", "body", "steady_shadows", &Config::steadyShadows, kShadows),
+        number(L"View shadows", L"Shadow map size (0 = game's, next start)", "stereo", "shadow_map", &Config::shadowMap, 0, 4096,
+               1024, 1, L"%.0f px", kNextStart),
         number(L"View shadows", L"Shadows follow the sun every", "body", "shadow_step", &Config::shadowStep, 0, 2, 0.05f, 1,
                L"%.2f°", kShadows),
         number(L"View shadows", L"Sharpest shadows reach", "body", "shadow_sharp", &Config::shadowSharp, 0, 10, 0.5f, 1,
@@ -1267,6 +1287,14 @@ bool change(size_t i, int dir) {
                 return true;
             }
             if (dir) return false;
+            if (r.action == 201 || r.action == 202) {  // native: the turn benchmark (benchmark.cpp), not a script control
+                benchmark::start(r.action == 201);
+                g_redraw = true;
+                g_doneAt = GetTickCount64();
+                g_doneRow = i;
+                LOG("Settings: %ls", r.label);
+                return true;
+            }
             grab::pushControl(r.action);
             g_redraw = true;
             if (r.action != 1) {

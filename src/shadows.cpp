@@ -59,6 +59,7 @@ std::atomic<float> g_step{0.2f};
 std::atomic<float> g_sharp{5.0f};  // metres the first cascade reaches in first person (0: the game's)
 ConfigIntFn g_configInt = nullptr;
 int g_mapSize = 0;
+std::atomic<bool> g_ssaoOff{false};
 
 // The fit's thread only from here on.
 bool g_active = false;
@@ -219,6 +220,10 @@ void steadyFit(const float* sun, const uint8_t* camera, uint8_t* light, float* s
 // The game asks its config for ShadowMapSize when it makes the shadow map.
 int32_t sizedConfig(void* config, const char* name, int32_t fallback) {
     int32_t value = g_configInt(config, name, fallback);
+    if (name && name[0] == 'S' && g_ssaoOff.load(std::memory_order_relaxed) && value && !std::strcmp(name, "SsaoEnabled")) {
+        LOG("Shadows: SsaoEnabled read as an int, forced off");
+        return 0;
+    }
     if (!name || name[0] != 'S' || std::strcmp(name, "ShadowMapSize") != 0) return value;
     int32_t want = renderscale::scaled() ? g_mapSize : 0;
     int32_t give = want > value ? want : value;
@@ -244,20 +249,21 @@ void configure(bool on, float stepDegrees, float sharpRange) {
     g_sharp.store(std::isfinite(sharpRange) ? std::clamp(sharpRange, 0.f, 50.f) : 5.f);
 }
 
-void install(bool on, float stepDegrees, float sharpRange, int mapSize) {
+void install(bool on, float stepDegrees, float sharpRange, int mapSize, bool ssaoOff) {
     configure(on, stepDegrees, sharpRange);
+    g_ssaoOff.store(ssaoOff);
     // A power of two from 1024 to 4096, or 0 for the game's own.
     int size = 0;
     if (mapSize > 0)
         for (size = 1024; size * 2 <= std::min(mapSize, kMaxMapSize);) size *= 2;
     g_mapSize = size;
-    if (g_mapSize) {
+    if (g_mapSize || ssaoOff) {
         uint8_t* get = addrs::fn("ConfigInt");
         MH_STATUS status = MH_Initialize();
         if (get && (status == MH_OK || status == MH_ERROR_ALREADY_INITIALIZED)) {
             status = MH_CreateHook(get, reinterpret_cast<void*>(&sizedConfig), reinterpret_cast<void**>(&g_configInt));
             if (status == MH_OK) status = MH_EnableHook(get);
-            LOG("Shadows: shadow map %d px while the headset view is on: %s", g_mapSize, MH_StatusToString(status));
+            LOG("Shadows: shadow map %d px while the headset view is on (SSAO %s): %s", g_mapSize, ssaoOff ? "off" : "on", MH_StatusToString(status));
         } else {
             LOG("Shadows: game build not recognised; the game's own shadow map size");
         }

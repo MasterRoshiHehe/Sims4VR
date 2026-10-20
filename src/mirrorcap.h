@@ -12,6 +12,8 @@
 // next start); 0 keeps the game's own value. Untested at runtime.
 namespace s4vr::mirrorcap {
 
-void install(float interiorMetres, float exteriorMetres, bool reflectionsOff);
+// ssaoOff: the same bool hook (and shadows.cpp's int hook) answer "SsaoEnabled" with false/0 (GPU pack, docs/PERF-PLAN.md item 4;
+// the key's getter is not verified, the log says which one saw it).
+void install(float interiorMetres, float exteriorMetres, bool reflectionsOff, bool ssaoOff = false);
 
 }  // namespace s4vr::mirrorcap

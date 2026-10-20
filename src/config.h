@@ -166,7 +166,7 @@ struct Config {
     bool steadyShadows = true;       // first person: sun shadows that hold still (shadows.h)
     float shadowStep = 0.2f;         // degrees the sun moves before the shadows follow
     float shadowSharp = 5.0f;        // metres the sharpest shadow cascade reaches (0: the game's 10)
-    int shadowMap = 4096;            // shadow map pixels while the headset view is on (0: the game's)
+    float shadowMap = 4096;            // shadow map pixels while the headset view is on (0: the game's)
     float bodyTurnRate = 150;    // degrees per second, right stick fully pushed
     bool armIk = true;           // the Sim's arms and fingers follow your controllers
     float handPitch = 40;        // degrees the Sim's hand points below the controller's grip axis
@@ -202,10 +202,12 @@ struct Config {
     // Audio (first person): the outdoor ambience fades in over this many metres either side
     // of the outside walls instead of switching at the doorway; 0 = the game's own switch
     float outdoorFade = 4.0f;
-    float mirrorInterior = 0;  // max metres a mirror in a room renders (0: the game's 15)
-    float mirrorExterior = 0;  // ... outdoors (0: the game's 100)
+    float mirrorInterior = 10;  // max metres a mirror in a room renders (0: the game's 15)
+    float mirrorExterior = 50;  // ... outdoors (0: the game's 100)
     bool mirrorClip = true;   // first person lopsided eye: keep the game's clip at the mirror glass
     bool reflectionsOff = false;  // no mirror or water reflections at all
+    bool ssaoOff = false;         // [stereo] ssao_off: the game's screen-space ambient occlusion off (GPU pack, perf item 4)
+    bool hitchCatcher = true;     // [perf] hitch_catcher: log what the game's main thread does during stalls over 60 ms (hitch.cpp)
 
     // Phone (first person): close your right hand at your right hip and your
     // Sim holds its phone, with the game menu on its screen (game not paused)

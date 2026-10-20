@@ -531,6 +531,7 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
         last = t;
         lastShown = time;
         if (dt > 0.1f) dt = 0.1f;
+        benchmark::stick(right.x);  // turn benchmark: the stick pushed fully (benchmark.cpp)
         float a = std::fabs(right.x);
         g_turnChecking = a > 0.15f;
         if (g_turnChecking && step > 0 && step < 0.1) {
@@ -540,12 +541,14 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
             c.stepSum += step * 1000;
             ++c.steps;
             c.missed += refreshes - 1;
+            benchmark::missedRefreshes(refreshes - 1);
         }
         if (a > 0.15f) {
             float shaped = (a - 0.15f) / 0.85f;
             shaped *= shaped;
             g_stickRate = (right.x > 0 ? -1 : 1) * shaped * g_config.bodyTurnRate * 0.0174533f;
             camera::turnBody(g_stickRate * dt);
+            benchmark::turned(g_stickRate * dt);
         }
         // Up/down tilts the view, only while it lies with your Sim's body
         // (WickedWhims animations and the like); the camera drops it otherwise.
