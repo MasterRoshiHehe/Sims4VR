@@ -59,19 +59,19 @@ static long readInt(const std::wstring& ini, const char* section, const char* ke
 }
 
 Config loadConfig(const std::wstring& ini) {
-    // The smoothest setup as everyone's start (user 2026-10-20 16:45Z: "whatever option will make the game
+    // v3 (user 2026-10-20 18:32Z, one mode): both real eyes every frame at render scale 0.65. Before: the smoothest setup (16:45Z: "whatever option will make the game
     // run smoothest"): the depth eye on, the eyes not taking turns, no test view, the alignment as measured.
     // Once: the menu's saved values for these keys are taken out of sims4vr_user.ini so sims4vr.ini's apply.
     {
         const std::wstring user = userIniPath(ini);
         std::string path(user.begin(), user.end());
         std::string done;
-        if (!readFrom(user, "stereo", "smooth_defaults", done) || atoi(done.c_str()) < 2) {
+        if (!readFrom(user, "stereo", "smooth_defaults", done) || atoi(done.c_str()) < 3) {
             for (const char* key : {"depth_eye", "depth_eye_alternate", "depth_eye_debug", "depth_eye_present_depth",
-                                    "flat_world", "made_eye_shift_x", "made_eye_shift_y", "made_eye_distance", "made_eye_depth",
+                                    "flat_world", "both_eyes", "render_scale", "made_eye_shift_x", "made_eye_shift_y", "made_eye_distance", "made_eye_depth",
                                     "made_eye_submit_x", "made_eye_submit_yaw", "made_eye_submit_pitch"})
                 WritePrivateProfileStringA("stereo", key, nullptr, path.c_str());
-            WritePrivateProfileStringA("stereo", "smooth_defaults", "2", path.c_str());
+            WritePrivateProfileStringA("stereo", "smooth_defaults", "3", path.c_str());
             WritePrivateProfileStringA(nullptr, nullptr, nullptr, path.c_str());  // flush
         }
     }
@@ -115,7 +115,7 @@ Config loadConfig(const std::wstring& ini) {
     c.madeEyeSubmitYaw = readFloat(ini, "stereo", "made_eye_submit_yaw", c.madeEyeSubmitYaw);
     c.madeEyeSubmitPitch = readFloat(ini, "stereo", "made_eye_submit_pitch", c.madeEyeSubmitPitch);
     c.renderScale = readFloat(ini, "stereo", "render_scale", c.renderScale);
-    if (!(c.renderScale >= 0 && c.renderScale <= 1.5f)) c.renderScale = 0.8f;
+    if (!(c.renderScale >= 0 && c.renderScale <= 1.5f)) c.renderScale = 0.65f;
     c.renderMsaa = static_cast<int>(readInt(ini, "stereo", "render_msaa", c.renderMsaa));
     c.nearFade = readInt(ini, "stereo", "near_fade", 0) != 0;
 

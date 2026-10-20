@@ -81,7 +81,7 @@ struct Config {
     // [stereo] both_eyes: first person, the game draws the left and the right eye every frame (two
     // scene passes, one headset frame), so both are real pictures of the same moment: real depth, no
     // ghost edges. Costs a second scene pass; off until tested (v0.13.304).
-    bool bothEyes = false;
+    bool bothEyes = true;  // the one mode to make work (user 2026-10-20 18:32Z)
     bool depthEyeAlternate = false;  // took turns: edges shook (v0.13.297-298)
     bool depthEyePresentDepth = true;  // [stereo] depth_eye_present_depth (deptheye::setPresentDepth)
     // [stereo] made_eye_*: the made eye's alignment, set by hand from the menu (Advanced › View ›
@@ -94,7 +94,7 @@ struct Config {
     bool probeDouble = false;  // [stereo] probe_double: draw the scene twice a frame and time it (singleview.cpp)
     bool alignEyes = true;  // SteamVR: the older eye turned to the newest head pose each frame (eyealign.h)
     // Game render resolution as a fraction of the headset's (0 = the game's own, the monitor's)
-    float renderScale = 0.8f;
+    float renderScale = 0.65f;  // both real eyes every frame needs the room (v0.13.304: 0.8 gave ~62 fps)
     int renderMsaa = 2;  // most edge-smoothing samples at that resolution (never more than in-game)
     bool nearFade = false;  // the game's "see-through when the camera is close" (off: never)
 
