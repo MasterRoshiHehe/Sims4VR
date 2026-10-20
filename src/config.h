@@ -213,7 +213,7 @@ struct Config {
     bool textureProbe = true;     // [perf] texture_probe: time the Sim texture compositing calls, log those over 20 ms (texprobe.cpp)
     bool simCacheBoost = false;   // [perf] sim_cache_boost: Sim body-shape caches x4 (simcache.cpp)
     int simCacheMb = 256;         // [perf] sim_cache_mb: SimCacheSizeLimit used when boosted and the game has none
-    float simLodScale = 1;        // [perf] sim_lod_scale: stretch the Sim detail-change distances (1 = game's)
+    float simLodScale = 2;        // [perf] sim_lod_scale: stretch the Sim detail-change distances (1 = game's)
     bool hitchCatcher = true;     // [perf] hitch_catcher: log what the game's main thread does during stalls over 60 ms (hitch.cpp)
 
     // Phone (first person): close your right hand at your right hip and your
