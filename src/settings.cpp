@@ -405,6 +405,8 @@ std::vector<Row> makeRows() {
         toggle(L"View motion", L"Hands match in both eyes (walking)", "stereo", "paired_hands", &Config::pairedHands),
         toggle(L"View motion", L"Own body steady while turning", "stereo", "body_layer", &Config::bodyLayer),
         toggle(L"View motion", L"Both eyes every frame (depth)", "stereo", "depth_eye", &Config::depthEye),
+        choice(L"View motion", L"Depth eye test view", "stereo", "depth_eye_debug", &Config::depthEyeDebug,
+               {L"Off", L"Depth", L"No shift", L"Depth edges"}),
         toggle(L"View picture", L"Test: draw the scene twice (log)", "stereo", "probe_double", &Config::probeDouble),
         toggle(L"View picture", L"Ambient occlusion (SSAO, next start)", "stereo", "ambient_occlusion", &Config::ambientOcclusion, kNextStart),
         benchButton(L"Run turn test (game paused)", 201,

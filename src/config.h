@@ -68,6 +68,9 @@ struct Config {
     // First person: every frame the eye the game didn't draw is made from the
     // one it did, moved by its depth (deptheye.h), so both eyes show the same moment.
     bool depthEye = false;
+    // [stereo] depth_eye_debug: what the made eye shows, to check it (deptheye.h
+    // setDebugView): 0 the picture, 1 its depth, 2 no depth shift, 3 depth edges.
+    int depthEyeDebug = 0;
     bool probeDouble = false;  // [stereo] probe_double: draw the scene twice a frame and time it (singleview.cpp)
     bool alignEyes = true;  // SteamVR: the older eye turned to the newest head pose each frame (eyealign.h)
     // Game render resolution as a fraction of the headset's (0 = the game's own, the monitor's)

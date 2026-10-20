@@ -1554,6 +1554,15 @@ void applyEye(uint8_t* dst) {
             rendered.nearZ = clip[0];
             rendered.farZ = clip[1];
         }
+        // Row-vector projection: depth = a + b / distance, a = m22 * m23 (m23 is
+        // the w sign), b = m32; near = -b / a, far = a near / (a - 1).
+        float m[16];
+        std::memcpy(m, dst + 0x70, sizeof(m));
+        const float a = m[10] * m[11], b = m[14];
+        if (std::isfinite(a) && std::isfinite(b) && a != 0 && a != 1) {
+            rendered.drawnNear = -b / a;
+            rendered.drawnFar = a * rendered.drawnNear / (a - 1);
+        }
     }
     rendered.body.count = 0;
     // Free movement turns your body with the view (the stick turns both), so

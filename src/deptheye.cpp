@@ -5,6 +5,9 @@
 #include <d3dcompiler.h>
 
 #include <algorithm>
+#include <atomic>
+#include <cmath>
+#include <cstdio>
 #include <cstdint>
 #include <cstring>
 
@@ -40,7 +43,7 @@ cbuffer Params : register(b0) {
     float4 dstTan;
     float nearZ, farZ;
     uint reversed, iterations;
-    uint width, height, samples, pad1;
+    uint width, height, samples, debugView;
 };
 
 struct VsOut {
@@ -96,6 +99,23 @@ float3 seen(float2 uv) {
 #define STEPS 64
 float4 psMain(VsOut i) : SV_Target {
     float3 ray = float3(lerp(dstTan.x, dstTan.y, i.uv.x), lerp(dstTan.z, dstTan.w, i.uv.y), 1);
+    // Test views ([stereo] depth_eye_debug): 2 the fresh picture turned only
+    // (as if everything were far away), 3 the same with its depth's edges in
+    // magenta (they should sit on the picture's outlines).
+    float2 flat = project(float3(dot(inv0.xyz, ray), dot(inv1.xyz, ray), dot(inv2.xyz, ray)), srcTan);
+    if (debugView == 2) return float4(source.SampleLevel(linearClamp, saturate(flat), 0).rgb, 1);
+    if (debugView == 3) {
+        int2 p = int2(texel(saturate(flat)));
+        float z0 = viewZ(DEPTH(p));
+        float edge = 0;
+        const int2 offsets[4] = {int2(2, 0), int2(-2, 0), int2(0, 2), int2(0, -2)};
+        [unroll] for (uint o = 0; o < 4; ++o) {
+            int2 q = clamp(p + offsets[o], int2(0, 0), int2(width - 1, height - 1));
+            edge = max(edge, abs(log2(viewZ(DEPTH(q)) / z0)));
+        }
+        if (edge > 0.15) return float4(1, 0, 1, 1);
+        return float4(source.SampleLevel(linearClamp, saturate(flat), 0).rgb, 1);
+    }
     float wNear = 1.0 / max(nearZ, 0.08), wFar = 1.0 / farZ;
     float zPrev = 1.0 / wNear;
     bool hit = false;
@@ -133,7 +153,21 @@ float4 psMain(VsOut i) : SV_Target {
         float len = length(away * float2(width, height));
         if (len > 1e-3) us += away / len * 2.0;
     }
+    if (debugView == 1) {
+        // Test view 1: how far each pixel's surface is, 0.1 m white to 50 m
+        // black; red where the fresh eye can't see (filled from behind).
+        float g = 1 - saturate(log2(max(hit ? zHit : zFill, 0.1) / 0.1) / 9);
+        return hit ? float4(g, g, g, 1) : float4(0.5 + 0.5 * g, 0.1 * g, 0.1 * g, 1);
+    }
     return float4(source.SampleLevel(linearClamp, saturate(us), 0).rgb, 1);
+}
+
+// The numbers log: the depth at a 32 x 18 grid over the fresh picture
+// (metres, and the raw value).
+float2 psGrid(VsOut i) : SV_Target {
+    int2 p = int2(texel(i.position.xy / float2(32, 18)));
+    float d = DEPTH(p);
+    return float2(viewZ(d), d);
 }
 )HLSL";
 
@@ -144,7 +178,7 @@ struct Params {
     float dstTan[4];
     float nearZ, farZ;
     uint32_t reversed, iterations;
-    uint32_t width, height, samples, pad1;
+    uint32_t width, height, samples, debugView;
 };
 static_assert(sizeof(Params) % 16 == 0, "constant buffer size");
 
@@ -153,6 +187,7 @@ const char* g_failure = nullptr;  // why the last draw made nothing
 ID3D11Device* g_device = nullptr;
 ID3D11VertexShader* g_vs = nullptr;
 ID3D11PixelShader* g_ps[2] = {};  // single-sampled depth, MSAA depth
+ID3D11PixelShader* g_psGrid[2] = {};
 ID3D11Buffer* g_params = nullptr;
 ID3D11SamplerState* g_sampler = nullptr;
 ID3D11RasterizerState* g_raster = nullptr;
@@ -187,6 +222,30 @@ int g_timingNext = 0;
 double g_gpuSum = 0, g_gpuWorst = 0;
 uint64_t g_gpuCount = 0;
 uint64_t g_drawn = 0, g_noDepth = 0, g_otherSize = 0;
+double g_ageSum = 0, g_ageWorst = 0;  // how old the depth copy was when used (ms)
+uint64_t g_ageCount = 0;
+
+// Test view ([stereo] depth_eye_debug) and the numbers log: the depth at a
+// grid over the fresh picture, read back a few frames later with what it was
+// drawn with.
+std::atomic<int> g_debugView{0};
+int g_loggedView = -1;
+constexpr UINT kGridW = 32, kGridH = 18;
+ID3D11Texture2D* g_grid = nullptr;
+ID3D11RenderTargetView* g_gridView = nullptr;
+ID3D11Texture2D* g_gridStaging = nullptr;
+bool g_gridPending = false;
+int g_gridWaits = 0;
+int g_gridLogs = 0;
+ULONGLONG g_gridAt = 0;
+struct GridInfo {
+    Params params;
+    bool late;
+    float drawnNear, drawnFar;
+    double ageMs;
+};
+GridInfo g_gridInfo{};
+float g_drawnNear = 0, g_drawnFar = 0;
 ULONGLONG g_logAt = 0;
 int g_logs = 0;
 
@@ -227,6 +286,35 @@ bool init(ID3D11Device* device) {
         safeRelease(ps);
     }
     if (!ok) return false;
+    // The numbers log's grid (without it the depth eye still works).
+    for (int ms = 0; ms < 2; ++ms) {
+        ID3DBlob* ps = compile(compileFn, "psGrid", "ps_5_0", ms != 0);
+        if (!ps || FAILED(device->CreatePixelShader(ps->GetBufferPointer(), ps->GetBufferSize(), nullptr, &g_psGrid[ms])))
+            g_psGrid[ms] = nullptr;
+        safeRelease(ps);
+    }
+    {
+        D3D11_TEXTURE2D_DESC g{};
+        g.Width = kGridW;
+        g.Height = kGridH;
+        g.MipLevels = 1;
+        g.ArraySize = 1;
+        g.Format = DXGI_FORMAT_R32G32_FLOAT;
+        g.SampleDesc.Count = 1;
+        g.Usage = D3D11_USAGE_DEFAULT;
+        g.BindFlags = D3D11_BIND_RENDER_TARGET;
+        D3D11_TEXTURE2D_DESC st = g;
+        st.Usage = D3D11_USAGE_STAGING;
+        st.BindFlags = 0;
+        st.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        if (FAILED(device->CreateTexture2D(&g, nullptr, &g_grid)) ||
+            FAILED(device->CreateRenderTargetView(g_grid, nullptr, &g_gridView)) ||
+            FAILED(device->CreateTexture2D(&st, nullptr, &g_gridStaging))) {
+            safeRelease(g_gridView);
+            safeRelease(g_grid);
+            safeRelease(g_gridStaging);
+        }
+    }
 
     D3D11_BUFFER_DESC cb{};
     cb.ByteWidth = sizeof(Params);
@@ -371,16 +459,72 @@ void collectTimings(ID3D11DeviceContext* context) {
     }
 }
 
+const char* viewName(int view) {
+    switch (view) {
+        case 1: return "depth";
+        case 2: return "no shift";
+        case 3: return "depth edges";
+        default: return "off";
+    }
+}
+
+// The grid drawn a few frames ago, once the graphics card has it.
+void logGrid(ID3D11DeviceContext* context) {
+    if (!g_gridPending) return;
+    D3D11_MAPPED_SUBRESOURCE mapped{};
+    HRESULT hr = context->Map(g_gridStaging, 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &mapped);
+    if (hr == DXGI_ERROR_WAS_STILL_DRAWING) {
+        if (++g_gridWaits > 60) g_gridPending = false;
+        return;
+    }
+    g_gridPending = false;
+    if (FAILED(hr)) return;
+    float grid[kGridH][kGridW][2];
+    for (UINT y = 0; y < kGridH; ++y)
+        std::memcpy(grid[y], static_cast<const uint8_t*>(mapped.pData) + mapped.RowPitch * y, sizeof(grid[y]));
+    context->Unmap(g_gridStaging, 0);
+
+    const GridInfo& g = g_gridInfo;
+    const Params& p = g.params;
+    // The other eye's place and turn, seen from the fresh eye (millimetres, degrees).
+    const float* r = &p.rows[0][0];
+    float t[3];
+    for (int i = 0; i < 3; ++i) t[i] = p.inverse[i][3] * 1000.0f;
+    const float trace = r[0] + r[5] + r[10];
+    const float turned = std::acos(std::clamp((trace - 1) / 2, -1.0f, 1.0f)) * 57.29578f;
+    LOG("Depth eye numbers (test view %s): depth from the %s copy, x%u, %s; drawn with near %.3f far %.1f m "
+        "(the projection drawn before: near %.3f far %.1f); the other eye at x %.1f y %.1f z %.1f mm from the fresh "
+        "one (%.1f mm), turned %.2f degrees; fresh view tan left %.3f right %.3f up %.3f down %.3f; other view tan "
+        "left %.3f right %.3f up %.3f down %.3f; picture %ux%u; depth copied %.1f ms before",
+        viewName(p.debugView), g.late ? "late (with our 3D pieces)" : "plain", p.samples,
+        p.reversed ? "reversed (near 1)" : "normal (near 0)", p.nearZ, p.farZ, g.drawnNear, g.drawnFar, t[0], t[1],
+        t[2], std::sqrt(t[0] * t[0] + t[1] * t[1] + t[2] * t[2]), turned, p.srcTan[0], p.srcTan[1], p.srcTan[2],
+        p.srcTan[3], p.dstTan[0], p.dstTan[1], p.dstTan[2], p.dstTan[3], p.width, p.height, g.ageMs);
+    LOG("Depth eye grid: metres to the surface at 32 x 18 points over the fresh picture, top row first; raw depth at "
+        "the centre %.7f, top left %.7f, bottom left %.7f",
+        grid[kGridH / 2][kGridW / 2][1], grid[0][0][1], grid[kGridH - 1][0][1]);
+    for (UINT y = 0; y < kGridH; ++y) {
+        char line[kGridW * 7 + 8];
+        int n = 0;
+        for (UINT x = 0; x < kGridW; ++x)
+            n += std::snprintf(line + n, sizeof(line) - n, "%6.2f ", std::min(grid[y][x][0], 999.0f));
+        LOG("Depth eye grid %2u: %s", y, line);
+    }
+}
+
 void logNow() {
     ULONGLONG now = GetTickCount64();
     if (!g_logAt) g_logAt = now;
     if (now - g_logAt < 30000 || g_logs >= 120) return;
     ++g_logs;
     LOG("Depth eye: last 30 s, %llu other-eye pictures made, %llu without this frame's depth, %llu of another size; "
-        "graphics card %.2f ms each on average, worst %.2f (%llu timed)",
+        "graphics card %.2f ms each on average, worst %.2f (%llu timed); depth copied %.1f ms before use on average, "
+        "worst %.1f",
         static_cast<unsigned long long>(g_drawn), static_cast<unsigned long long>(g_noDepth),
         static_cast<unsigned long long>(g_otherSize), g_gpuCount ? g_gpuSum / double(g_gpuCount) : 0.0, g_gpuWorst,
-        static_cast<unsigned long long>(g_gpuCount));
+        static_cast<unsigned long long>(g_gpuCount), g_ageCount ? g_ageSum / double(g_ageCount) : 0.0, g_ageWorst);
+    g_ageSum = g_ageWorst = 0;
+    g_ageCount = 0;
     g_drawn = g_noDepth = g_otherSize = 0;
     g_gpuSum = g_gpuWorst = 0;
     g_gpuCount = 0;
@@ -413,7 +557,14 @@ bool draw(ID3D11ShaderResourceView* source, ID3D11Texture2D* target, DXGI_FORMAT
     bool reversed = false;
     // The copy with our own 3D pieces in it (phone3d::setWriteDepth), else the plain one.
     ID3D11ShaderResourceView* depth = nearplane::lateDepth(samples, depthWidth, depthHeight, reversed);
+    const bool late = depth != nullptr;
     if (!depth) depth = nearplane::latestDepth(samples, depthWidth, depthHeight, reversed);
+    const double age = nearplane::depthAgeMs(late);
+    if (age >= 0) {
+        g_ageSum += age;
+        g_ageWorst = std::max(g_ageWorst, age);
+        ++g_ageCount;
+    }
     if (!depth) {
         ++g_noDepth;
         g_failure = "no scene depth from this frame";
@@ -463,6 +614,14 @@ bool draw(ID3D11ShaderResourceView* source, ID3D11Texture2D* target, DXGI_FORMAT
         params.width = width;
         params.height = height;
         params.samples = samples;
+        params.debugView = static_cast<uint32_t>(std::clamp(g_debugView.load(std::memory_order_relaxed), 0, 3));
+        logGrid(context);
+        // The numbers: on the first picture, when the test view changes, and
+        // every 30 s for the first few.
+        const ULONGLONG now = GetTickCount64();
+        const bool wantGrid = g_gridView && g_psGrid[samples > 1 ? 1 : 0] && !g_gridPending &&
+                              (g_loggedView != static_cast<int>(params.debugView) ||
+                               (g_gridLogs < 6 && now - g_gridAt >= 30000));
 
         ID3DDeviceContextState* gameState = nullptr;
         context1->SwapDeviceContextState(g_state, &gameState);
@@ -481,6 +640,13 @@ bool draw(ID3D11ShaderResourceView* source, ID3D11Texture2D* target, DXGI_FORMAT
         D3D11_VIEWPORT v{0, 0, static_cast<float>(width), static_cast<float>(height), 0, 1};
         context1->RSSetViewports(1, &v);
         context1->Draw(3, 0);
+        if (wantGrid) {
+            context1->OMSetRenderTargets(1, &g_gridView, nullptr);
+            D3D11_VIEWPORT gv{0, 0, static_cast<float>(kGridW), static_cast<float>(kGridH), 0, 1};
+            context1->RSSetViewports(1, &gv);
+            context1->PSSetShader(g_psGrid[samples > 1 ? 1 : 0], nullptr, 0);
+            context1->Draw(3, 0);
+        }
 
         ID3D11ShaderResourceView* none[2] = {};
         ID3D11RenderTargetView* noTarget = nullptr;
@@ -489,6 +655,15 @@ bool draw(ID3D11ShaderResourceView* source, ID3D11Texture2D* target, DXGI_FORMAT
         context1->OMSetRenderTargets(1, &noTarget, nullptr);
         context1->SwapDeviceContextState(gameState, nullptr);
         safeRelease(gameState);
+        if (wantGrid) {
+            context->CopyResource(g_gridStaging, g_grid);
+            g_gridPending = true;
+            g_gridWaits = 0;
+            g_gridAt = now;
+            ++g_gridLogs;
+            g_loggedView = static_cast<int>(params.debugView);
+            g_gridInfo = {params, late, g_drawnNear, g_drawnFar, age};
+        }
         if (timing) {
             context->End(timing->end);
             context->End(timing->disjoint);
@@ -508,6 +683,11 @@ bool draw(ID3D11ShaderResourceView* source, ID3D11Texture2D* target, DXGI_FORMAT
 }
 
 const char* failure() { return g_failure ? g_failure : "unknown"; }
+void setDebugView(int view) { g_debugView.store(view, std::memory_order_relaxed); }
+void noteDrawnProjection(float nearZ, float farZ) {
+    g_drawnNear = nearZ;
+    g_drawnFar = farZ;
+}
 bool broken() { return g_failed; }
 
 void forgetTargets() {
@@ -535,6 +715,13 @@ void release() {
     safeRelease(g_params);
     safeRelease(g_ps[0]);
     safeRelease(g_ps[1]);
+    safeRelease(g_psGrid[0]);
+    safeRelease(g_psGrid[1]);
+    safeRelease(g_gridView);
+    safeRelease(g_grid);
+    safeRelease(g_gridStaging);
+    g_gridPending = false;
+    g_loggedView = -1;
     safeRelease(g_vs);
     g_device = nullptr;
 }

@@ -196,6 +196,7 @@ bool g_copyReversed = false;  // that copy clears to 0 (near is 1)
 ID3D11Texture2D* g_late = nullptr;
 ID3D11ShaderResourceView* g_lateView = nullptr;
 ULONGLONG g_lateAt = 0;
+LONGLONG g_copyCounter = 0, g_lateCounter = 0;  // QueryPerformanceCounter at each copy (depthAgeMs)
 Slot g_slots[kSlots];
 int g_nextSlot = 0;
 uint32_t g_tag = 0;
@@ -546,6 +547,11 @@ void sense(ID3D11DeviceContext* context, ID3D11DepthStencilView* depth, bool rev
     context->CopyResource(g_copy, resource);
     resource->Release();
     g_copiedAt = now;
+    {
+        LARGE_INTEGER c;
+        QueryPerformanceCounter(&c);
+        g_copyCounter = c.QuadPart;
+    }
     g_copyReversed = reversed;
     float nearLow = 0, nearHigh = 0;
     nearRange(now, nearLow, nearHigh);
@@ -655,8 +661,21 @@ void senseLate(ID3D11DeviceContext* context, ID3D11DepthStencilView* depth) {
         desc.SampleDesc.Count == g_copyDesc.SampleDesc.Count) {
         context->CopyResource(g_late, resource);
         g_lateAt = now;
+        LARGE_INTEGER c;
+        QueryPerformanceCounter(&c);
+        g_lateCounter = c.QuadPart;
     }
     resource->Release();
+}
+
+double depthAgeMs(bool late) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    const LONGLONG at = late ? g_lateCounter : g_copyCounter;
+    if (!at) return -1;
+    LARGE_INTEGER now, frequency;
+    QueryPerformanceCounter(&now);
+    QueryPerformanceFrequency(&frequency);
+    return double(now.QuadPart - at) * 1000.0 / double(frequency.QuadPart);
 }
 
 ID3D11ShaderResourceView* lateDepth(UINT& samples, UINT& width, UINT& height, bool& reversed) {

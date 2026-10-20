@@ -63,5 +63,7 @@ ID3D11ShaderResourceView* latestDepth(UINT& samples, UINT& width, UINT& height, 
 void senseLate(ID3D11DeviceContext* context, ID3D11DepthStencilView* depth);
 // Present thread: that copy, as latestDepth.
 ID3D11ShaderResourceView* lateDepth(UINT& samples, UINT& width, UINT& height, bool& reversed);
+// How long ago (ms, CPU time) the late or the plain copy was made (-1: never).
+double depthAgeMs(bool late);
 
 }  // namespace s4vr::nearplane

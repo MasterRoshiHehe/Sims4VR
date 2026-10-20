@@ -82,6 +82,10 @@ struct Rendered {
     // the same place as (Present holds it back until that right eye arrives).
     bool pairFirst = false;
     float nearZ = 0, farZ = 0;  // the planes it was drawn with (0: not known)
+    // The near / far planes of the projection the game drew the frame before
+    // with (its z terms at the render camera's +0x70; 0: not known). A check
+    // on nearZ / farZ for the depth eye's numbers log.
+    float drawnNear = 0, drawnFar = 0;
     BodyParts body;
 };
 bool takeRendered(Rendered& out);

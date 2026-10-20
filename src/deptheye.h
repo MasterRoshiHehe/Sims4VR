@@ -31,6 +31,15 @@ bool draw(ID3D11ShaderResourceView* source, ID3D11Texture2D* target, DXGI_FORMAT
 const char* failure();
 bool broken();
 
+// Test view ([stereo] depth_eye_debug): 0 the made eye; 1 its depth (grey,
+// red where filled from behind); 2 the fresh picture turned only (no depth
+// shift); 3 that with the depth's edges in magenta. The numbers log ("Depth
+// eye numbers" / "Depth eye grid") comes on the first picture and on a change.
+void setDebugView(int view);
+// The near / far planes worked out from the projection the game drew the
+// last frame with (for the numbers log; 0 if unknown).
+void noteDrawnProjection(float nearZ, float farZ);
+
 // Drops the views of swapchain images (call before the runtime destroys them).
 void forgetTargets();
 // Frees everything (session end).

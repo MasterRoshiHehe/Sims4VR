@@ -160,9 +160,23 @@ static void depthOtherEye(int fresh, const XrView (&located)[2], const D3D11_TEX
         source->Release();
         return;
     }
+    // The depth is in game units, the eyes' places in metres.
+    const float scale = camera::worldScale() > 0 ? camera::worldScale() : 1.0f;
+    deptheye::setDebugView(g_config.depthEyeDebug);
+    deptheye::noteDrawnProjection(rendered.drawnNear / scale, rendered.drawnFar / scale);
     const bool drawn = deptheye::draw(source, s.images[index].texture, s.format, width, height, rows, srcTan, dstTan,
-                                      rendered.nearZ, rendered.farZ);
+                                      rendered.nearZ / scale, rendered.farZ / scale);
     source->Release();
+    if (drawn) {
+        // A screenshot (right stick click) takes this made eye as the right one.
+        ID3D11Device* device = nullptr;
+        s.images[index].texture->GetDevice(&device);
+        ID3D11DeviceContext* context = nullptr;
+        device->GetImmediateContext(&context);
+        screenshot::offer(context, s.images[index].texture, old == 1 ? screenshot::kRightEye : screenshot::kLeftEye);
+        context->Release();
+        device->Release();
+    }
     XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
     if (!check(xrReleaseSwapchainImage(s.handle, &release), "xrReleaseSwapchainImage")) return;
     static int misses = 0;  // frames in a row without the other eye
