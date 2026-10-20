@@ -170,6 +170,8 @@ float4 psMain(VsOut i) : SV_Target {
         dPrev = d;
     }
     float2 us;
+    float3 fillColour = 0;
+    bool softened = false;
     if (hit) {
         us = project(apply(inv0, inv1, inv2, ray * zHit), srcTan);
     } else {
@@ -180,18 +182,36 @@ float4 psMain(VsOut i) : SV_Target {
         // clear of the edge's blended pixels. Never anything farther along
         // the ray (that pulled the sky and other far things in).
         us = uFill;
-        float2 away = (uFill - uBehind) * float2(width, height);
-        float len = length(away);
-        if (hidden && len > 1e-3) {
-            float2 dir = away / len;
-            float2 under = (project(apply(inv0, inv1, inv2, ray * zFill), srcTan) - uFill) * float2(width, height);
-            float inside = clamp(-dot(under, dir), 0.0, 400.0);  // pixels under the near thing
-            float2 mirrored = uFill + dir * (2.0 + inside) / float2(width, height);
-            // Only while the mirrored spot is still that far side: something
-            // nearer there (another Sim, your other hand) would be copied in;
-            // then the edge itself is stretched over.
-            float there = viewZ(DEPTH(texel(saturate(mirrored))));
-            us = there >= zFill * 0.8 ? mirrored : uFill + dir * 2.0 / float2(width, height);
+        if (hidden) {
+            // The edge itself, found by halving between the far side and the
+            // near thing (the steps alone put it up to a step off: sawtooth).
+            const float2 px = float2(width, height);
+            float split = 0.5 * (zFill + viewZ(DEPTH(texel(saturate(uBehind)))));
+            float2 a = uFill, b = uBehind;
+            [unroll] for (uint e = 0; e < 6; ++e) {
+                float2 m = 0.5 * (a + b);
+                if (viewZ(DEPTH(texel(saturate(m)))) > split) a = m; else b = m;
+            }
+            float2 away = (uFill - uBehind) * px;
+            float len = length(away);
+            if (len > 1e-3) {
+                float2 dir = away / len;
+                float2 under = (project(apply(inv0, inv1, inv2, ray * zFill), srcTan) - a) * px;
+                float inside = clamp(-dot(under, dir), 0.0, 400.0);  // pixels under the near thing
+                float2 mirrored = a + dir * (2.0 + inside) / px;
+                // Only while the mirrored spot is still that far side: something
+                // nearer there (another Sim, your other hand) would be copied in;
+                // then the edge itself is stretched over.
+                float there = viewZ(DEPTH(texel(saturate(mirrored))));
+                us = there >= zFill * 0.8 ? mirrored : a + dir * 2.0 / px;
+                // Softened along the edge, so neighbouring rows don't tear apart.
+                float2 along = float2(-dir.y, dir.x) / px;
+                float3 c = 0;
+                [unroll] for (int t = -2; t <= 2; ++t)
+                    c += source.SampleLevel(linearClamp, saturate(us + along * (1.5 * t)), 0).rgb;
+                fillColour = c / 5;
+                softened = true;
+            }
         }
     }
     if (debugView == 1) {
@@ -200,6 +220,7 @@ float4 psMain(VsOut i) : SV_Target {
         float g = 1 - saturate(log2(max(hit ? zHit : zFill, 0.1) / 0.1) / 9);
         return hit ? float4(g, g, g, 1) : float4(0.5 + 0.5 * g, 0.1 * g, 0.1 * g, 1);
     }
+    if (softened) return float4(fillColour, 1);
     return float4(source.SampleLevel(linearClamp, saturate(us), 0).rgb, 1);
 }
 
