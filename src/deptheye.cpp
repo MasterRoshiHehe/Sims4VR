@@ -199,6 +199,46 @@ March march(float3 ray, bool b, float zStart, float zEnd) {
     return m;
 }
 
+// Both depth samples of a pixel (the second only with MSAA), as distances.
+float2 depthPair(int2 p, bool b) {
+#ifdef MS
+    if (samples > 1)
+        return b ? float2(viewZB(depthTexB.Load(p, 0)), viewZB(depthTexB.Load(p, 1)))
+                 : float2(viewZ(depthTex.Load(p, 0)), viewZ(depthTex.Load(p, 1)));
+#endif
+    float z = b ? viewZB(DEPTHB(p)) : viewZ(DEPTH(p));
+    return float2(z, z);
+}
+
+// The colour of the surface at distance z seen at uv. A plain filtered read
+// blends across an outline: an outline pixel holds a near thing and the
+// background mixed (edge smoothing), and moved with one of their depths that
+// mix showed up beside the thing, a faint copy of its edge (ghost edges). Of
+// the 4 pixels around uv only those on the surface itself count, and mixed
+// ones (their two depth samples far apart) hardly.
+float3 colourAt(float2 uv, float z, bool b) {
+    float2 q = saturate(uv) * float2(width, height) - 0.5;
+    int2 base = int2(floor(q));
+    float2 f = q - floor(q);
+    float3 sum = 0;
+    float total = 0;
+    [unroll] for (int k = 0; k < 4; ++k) {
+        int2 o = int2(k & 1, k >> 1);
+        int2 p = clamp(base + o, int2(0, 0), int2(width - 1, height - 1));
+        float w = (o.x ? f.x : 1 - f.x) * (o.y ? f.y : 1 - f.y);
+        float2 d = depthPair(p, b);
+        float off = min(abs(d.x - z), abs(d.y - z)) / (0.04 * z + 0.01);
+        w *= 1 / (1 + off * off);
+        if (abs(d.x - d.y) > 0.05 * min(d.x, d.y) + 0.01) w *= 0.03;
+        float3 c = b ? sourceB.Load(int3(p, 0)).rgb : source.Load(int3(p, 0)).rgb;
+        sum += c * w;
+        total += w;
+    }
+    if (total < 1e-4)
+        return b ? sourceB.SampleLevel(linearClamp, saturate(uv), 0).rgb : source.SampleLevel(linearClamp, saturate(uv), 0).rgb;
+    return sum / total;
+}
+
 float4 psMain(VsOut i) : SV_Target {
     float3 ray = float3(lerp(dstTan.x, dstTan.y, i.uv.x), lerp(dstTan.z, dstTan.w, i.uv.y), 1);
     // Test views ([stereo] depth_eye_debug): 2 the fresh picture turned only
@@ -285,7 +325,8 @@ float4 psMain(VsOut i) : SV_Target {
         if (fromB) return float4(0.1 * g, 0.3 * g, 0.5 + 0.5 * g, 1);
         return float4(0.5 + 0.5 * g, 0.1 * g, 0.1 * g, 1);
     }
-    if (fromB) return float4(sourceB.SampleLevel(linearClamp, saturate(toSource(ray, bm.zHit, true)), 0).rgb, 1);
+    if (fromB) return float4(colourAt(toSource(ray, bm.zHit, true), bm.zHit, true), 1);
+    if (a.hit) return float4(colourAt(us, a.zHit, false), 1);
     if (softened) return float4(fillColour, 1);
     return float4(source.SampleLevel(linearClamp, saturate(us), 0).rgb, 1);
 }
