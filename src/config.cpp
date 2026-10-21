@@ -115,6 +115,7 @@ Config loadConfig(const std::wstring& ini) {
     // which crashed in 317; 1-3 leave a scene part out of the right eye).
     c.bothEyesSkip = 0;
     c.reuseShadows = readBool(ini, "stereo", "reuse_shadows", c.reuseShadows);
+    c.skipShadowLists = readBool(ini, "stereo", "skip_shadow_prep", c.skipShadowLists);
     c.frameClock = readBool(ini, "stereo", "frame_clock", c.frameClock);
     c.headsetWidth = readBool(ini, "stereo", "headset_width", c.headsetWidth);
     c.textureBias = readFloat(ini, "stereo", "texture_bias", c.textureBias);

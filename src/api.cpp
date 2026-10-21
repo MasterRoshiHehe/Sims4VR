@@ -21,6 +21,7 @@
 #include "framemap.h"
 #include "hitch.h"
 #include "texprobe.h"
+#include "passtime.h"
 #include "shadowreuse.h"
 #include "singleview.h"
 #include "gamefix.h"
@@ -148,6 +149,7 @@ S4VR_API int s4vr_init() {
     s4vr::gamefix::install(g_config.nearFade);
     s4vr::singleview::install();
     s4vr::shadowreuse::installGame();
+    s4vr::passtime::install();
     s4vr::singleview::setProbe(g_config.probeDouble);
     s4vr::nodim::installSource(g_config.noDimming);
     s4vr::ambience::install(g_config.outdoorFade);

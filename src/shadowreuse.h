@@ -20,7 +20,7 @@ bool skipClear(ID3D11DeviceContext* context, ID3D11DepthStencilView* depth);
 
 // The game's non-eye lists (ShadowLists 0x11c8080: sun shadow casters and Sims into the shadow map)
 // left out of the right eye's pass altogether, not only their draws: saves the CPU work of walking
-// and recording them ([stereo] skip_shadow_lists, a test that starts off every start, v0.13.320).
+// and recording them ([stereo] skip_shadow_prep, v0.13.320; on by default from 321).
 void installGame();
 void setSkipLists(bool on);
 
