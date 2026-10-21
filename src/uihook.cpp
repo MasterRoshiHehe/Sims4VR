@@ -11,6 +11,7 @@
 #include "camera.h"
 #include "facehide.h"
 #include "framemap.h"
+#include "shadowreuse.h"
 #include "addrs.h"
 #include "gameaddr.h"
 #include "log.h"
@@ -192,6 +193,7 @@ bool sceneDepthBound(ID3D11DepthStencilView* depth) {
 
 void setTargets(SetTargetsFn original, ID3D11DeviceContext* context, UINT count, ID3D11RenderTargetView* const* views,
                 ID3D11DepthStencilView* depth) {
+    shadowreuse::bound(context, count, views, depth);
     facehide::targets(context, sceneDepthBound(depth));
     if (!t_inRender && depth && views && count && views[0]) learnScene(views[0], depth);
     if (!depth)
@@ -227,6 +229,7 @@ std::atomic<bool> g_uiClearsDepth{false};
 
 void clearDepth(ClearDepthFn original, ID3D11DeviceContext* c, ID3D11DepthStencilView* d, UINT flags, FLOAT value,
                 UINT8 stencil) {
+    if (shadowreuse::skipClear(c, d)) return;
     if (d && (flags & D3D11_CLEAR_DEPTH) && d == g_sceneDepth.load(std::memory_order_relaxed)) {
         if (t_inRender) {
             if (!g_uiClearsDepth.exchange(true))

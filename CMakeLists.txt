@@ -56,6 +56,7 @@ add_library(sims4vr SHARED
     src/mirrorcap.cpp
     src/shadows.cpp
     src/texbias.cpp
+    src/shadowreuse.cpp
     src/doorswing.cpp
     src/walkstop.cpp
     src/eyelids.cpp

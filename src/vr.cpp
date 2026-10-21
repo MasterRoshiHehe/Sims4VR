@@ -52,6 +52,7 @@
 #include "deptheye.h"
 #include "benchmark.h"
 #include "texbias.h"
+#include "shadowreuse.h"
 
 namespace s4vr::vr {
 

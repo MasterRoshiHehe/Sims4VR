@@ -90,6 +90,9 @@ struct Config {
     // [stereo] both_eyes_skip: the right eye's pass leaves out a scene part (1 = mode 3, 2 = mode 4, 3 = mode 8;
     // 0 = none) and reuses the left eye's: a test of which part is the shadows (v0.13.307).
     int bothEyesSkip = 0;
+    // [stereo] reuse_shadows: both real eyes, the right eye's pass uses the sun shadow map the left
+    // eye's pass drew this frame instead of drawing it again (shadowreuse.h, v0.13.318).
+    bool reuseShadows = true;
     bool bothEyes = true;  // the one mode to make work (user 2026-10-20 18:32Z)
     // [stereo] frame_clock: headset frames go out on their own thread at the headset's rate, each with
     // the newest pictures turned on by the stick turn since they were drawn, so turning stays smooth

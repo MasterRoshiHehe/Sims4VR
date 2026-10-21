@@ -16,6 +16,7 @@
 #include "framemap.h"
 #include "log.h"
 #include "renderscale.h"
+#include "shadowreuse.h"
 #include "singleview.h"
 
 namespace s4vr::shadows {
@@ -73,6 +74,8 @@ float g_sharpUsed = -1;
 bool g_loggedSettings = false;
 float g_held[4];
 bool g_haveHeld = false;
+alignas(16) uint8_t g_firstView[kCascades][kCameraBytes];  // the first (left eye) pass's fit cameras
+bool g_haveFirst[kCascades] = {};
 
 struct Stats {
     unsigned fits = 0, snapped = 0, steps = 0, mapSize = 0;
@@ -208,6 +211,15 @@ void steadyFit(const float* sun, const uint8_t* camera, uint8_t* light, float* s
     alignas(16) uint8_t view[kCameraBytes];
     std::memcpy(view, camera, sizeof(view));
     std::memcpy(view + kNearOffset, &kShadowNear, sizeof(float));
+    // Both real eyes with the right eye reusing the left eye's shadow map (shadowreuse.h): the right
+    // eye's pass fits each cascade from the left eye's camera, so its light matrices match the map.
+    if (!singleview::inSecond()) {
+        std::memcpy(g_firstView[cascade], view, sizeof(view));
+        g_haveFirst[cascade] = true;
+    } else if (shadowreuse::on() && g_haveFirst[cascade]) {
+        std::memcpy(view, g_firstView[cascade], sizeof(view));
+        g_haveFirst[cascade] = false;
+    }
 
     float centre[4] = {};
     if (g_centres) std::memcpy(centre, g_centres + 4 * cascade, sizeof(centre));

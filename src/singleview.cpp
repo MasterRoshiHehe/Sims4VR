@@ -32,7 +32,6 @@ thread_local int t_part = -1;  // index of the part this job thread is drawing (
 // 0x11c45a0 (views, before its draw lists), SceneLists 0x11c46d0 (draw lists, may run as a job).
 constexpr int kParts = 7;
 constexpr int kBegin = 4, kViews = 5, kLists = 6;
-constexpr uint32_t kSkipBegin = 101;  // setSecondSkip: the second eye leaves out FrameBegin
 std::atomic<uint32_t> g_partRuns[kParts] = {}, g_partFits[kParts] = {}, g_partCulls[kParts][2] = {};
 std::atomic<uint64_t> g_partTicks[kParts] = {};
 std::atomic<uint32_t> g_skipped{0};
@@ -61,14 +60,8 @@ uint64_t runStep(int part, void* a, uint64_t b, uint64_t c, uint64_t d, float se
     t_part = was;
     return r;
 }
-uint64_t hookedBegin(void* renderer, float seconds) {
-    if (g_secondSkip.load(std::memory_order_relaxed) == static_cast<int>(kSkipBegin) &&
-        g_inSecond.load(std::memory_order_acquire)) {
-        g_skipped.fetch_add(1, std::memory_order_relaxed);
-        return 0;
-    }
-    return runStep(kBegin, renderer, 0, 0, 0, seconds);
-}
+// Leaving FrameBegin out of the second pass crashed the game in the next job submit (v0.13.317).
+uint64_t hookedBegin(void* renderer, float seconds) { return runStep(kBegin, renderer, 0, 0, 0, seconds); }
 uint64_t hookedViews(void* a, uint64_t b, uint64_t c, uint64_t d) { return runStep(kViews, a, b, c, d); }
 uint64_t hookedLists(void* a, uint64_t b, uint64_t c, uint64_t d) { return runStep(kLists, a, b, c, d); }
 
