@@ -115,7 +115,7 @@ Config loadConfig(const std::wstring& ini) {
     c.frameClock = readBool(ini, "stereo", "frame_clock", c.frameClock);
     c.headsetWidth = readBool(ini, "stereo", "headset_width", c.headsetWidth);
     c.textureBias = readFloat(ini, "stereo", "texture_bias", c.textureBias);
-    if (!(c.textureBias >= -3 && c.textureBias <= 0)) c.textureBias = -0.6f;
+    if (!(c.textureBias >= -3 && c.textureBias <= 0)) c.textureBias = 0;
     c.depthEyePresentDepth = readBool(ini, "stereo", "depth_eye_present_depth", c.depthEyePresentDepth);
     c.madeEyeShiftX = readFloat(ini, "stereo", "made_eye_shift_x", c.madeEyeShiftX);
     c.madeEyeShiftY = readFloat(ini, "stereo", "made_eye_shift_y", c.madeEyeShiftY);

@@ -405,6 +405,8 @@ std::vector<Row> makeRows() {
         link(view, L"Shadows", L"View shadows"),
         link(view, L"Speed test", L"View speed"),
         number(L"View picture", L"Sharpness", "stereo", "sharpen", &Config::sharpen, 0, 1, 0.05f, 100, L"%.0f%%"),
+        number(L"View picture", L"Texture sharpness (mip bias, next start; 0 = off)", "stereo", "texture_bias",
+               &Config::textureBias, -1, 0, 0.1f, 1, L"%.1f", kNextStart),
         toggle(L"View picture", L"FSR upscaling (off: plain sharpen at Render resolution)", "stereo", "upscale",
                &Config::upscale, kRenderScale),
         number(L"View picture", L"FSR: game draws at", "stereo", "fsr_render_scale", &Config::fsrRenderScale, 0.4f, 1,

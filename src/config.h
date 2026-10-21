@@ -100,7 +100,7 @@ struct Config {
     bool headsetWidth = true;
     // [stereo] texture_bias: mip bias added to the game's material samplers in the headset view
     // (texbias.h): sharper textures a few metres out at render_scale under 1. 0 = off. Needs a restart.
-    float textureBias = -0.6f;
+    float textureBias = 0;  // -0.6 (v0.13.311) made textures a few metres out shimmer (user 2026-10-21)
     bool depthEyeAlternate = false;  // took turns: edges shook (v0.13.297-298)
     bool depthEyePresentDepth = true;  // [stereo] depth_eye_present_depth (deptheye::setPresentDepth)
     // [stereo] made_eye_*: the made eye's alignment, set by hand from the menu (Advanced › View ›

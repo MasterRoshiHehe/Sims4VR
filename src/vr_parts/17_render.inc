@@ -172,7 +172,9 @@ static void computeRenderSize(const XrView (&views)[2]) {
     }
     g_fovLogged = true;
     // FSR (fsr.h): the game draws at fsr_render_scale, the eyes go out at fsr_output_scale.
-    const bool fsrOn = g_config.upscale && !(g_steamVR && g_config.alignEyes) && !g_config.depthEye;
+    // (the depth eye only runs without both_eyes, deptheye.h)
+    const bool fsrOn =
+        g_config.upscale && !(g_steamVR && g_config.alignEyes) && !(g_config.depthEye && !g_config.bothEyes);
     const float scale = fsrOn ? g_config.fsrRenderScale : g_config.renderScale;
     auto size = [](float pixels, float scale) {
         int n = static_cast<int>(pixels * scale / 8 + 0.5f) * 8;
