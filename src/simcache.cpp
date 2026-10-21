@@ -4,6 +4,7 @@
 #include "MinHook.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 
 #include "gameaddr.h"
@@ -33,6 +34,45 @@ uint32_t __fastcall hookedUInt(void* options, const char* name, uint32_t fallbac
     return v;
 }
 
+// Who asked: the game reads RenderSimLODDistances when it starts (re)building a Sim, so the call stack says what
+// started each rebuild (freeze hunt, 2026-10-21). Logged for the first kMaxReadStacks reads.
+constexpr int kMaxReadStacks = 80, kReadDepth = 32;
+int g_readStacks = 0;
+
+void describe(void* address, char* out, size_t size) {
+    HMODULE module = nullptr;
+    if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           reinterpret_cast<LPCWSTR>(address), &module) &&
+        module) {
+        const unsigned long long rva = reinterpret_cast<uintptr_t>(address) - reinterpret_cast<uintptr_t>(module);
+        if (module == GetModuleHandleW(nullptr)) {
+            std::snprintf(out, size, "game+0x%llx", rva);
+            return;
+        }
+        wchar_t path[MAX_PATH] = {};
+        GetModuleFileNameW(module, path, MAX_PATH);
+        const wchar_t* file = wcsrchr(path, L'\\');
+        std::snprintf(out, size, "%ls+0x%llx", file ? file + 1 : path, rva);
+        return;
+    }
+    std::snprintf(out, size, "%p", address);
+}
+
+void logReadStack() {
+    if (g_readStacks >= kMaxReadStacks) return;
+    ++g_readStacks;
+    void* frames[kReadDepth];
+    const int depth = RtlCaptureStackBackTrace(2, kReadDepth, frames, nullptr);
+    char line[2048] = {};
+    char one[96];
+    size_t used = 0;
+    for (int f = 0; f < depth && used + sizeof(one) + 2 < sizeof(line); ++f) {
+        describe(frames[f], one, sizeof(one));
+        used += std::snprintf(line + used, sizeof(line) - used, f ? " < %s" : "%s", one);
+    }
+    LOG("Sim cache: read %d on thread %lu, called from %s", g_readStacks, static_cast<unsigned long>(GetCurrentThreadId()), line);
+}
+
 bool __fastcall hookedVec(void* options, const char* name, float* out) {
     bool ok = g_vec(options, name, out);
     if (ok && out && name && name[0] == 'R' && !std::strcmp(name, "RenderSimLODDistances")) {
@@ -42,6 +82,7 @@ bool __fastcall hookedVec(void* options, const char* name, float* out) {
             for (int i = 0; i < 4; ++i) out[i] *= g_lodScale;
         LOG("Sim cache: RenderSimLODDistances game %.2f %.2f %.2f %.2f -> %.2f %.2f %.2f %.2f", before[0], before[1], before[2], before[3],
             out[0], out[1], out[2], out[3]);
+        logReadStack();
     }
     return ok;
 }
