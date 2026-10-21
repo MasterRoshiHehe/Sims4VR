@@ -634,6 +634,10 @@ static_assert(sizeof(kBodyBones) / sizeof(kBodyBones[0]) + 1 <= nearplane::kMaxC
 constexpr float kPieHandReach = 0.14f;   // metres from the wrist joint along the hand, for the pie menu ...
 constexpr float kPieHandRadius = 0.08f;  // ... and around it: palm and fingers, however the wrist bends
 constexpr float kBodyClipNear = 0.15f;  // metres: torso and arms may be cut off closer than this
+// Added to the view's half-width and half-height (tangent) when your body is checked against it: the
+// near limit is chosen once for both eyes from the left eye, so a hand at the edge only the right eye
+// sees (or one inside the eye offset) must still count, else it is cut off there.
+constexpr float kBodyViewPad = 0.2f;
 constexpr float kBodyMargin = 0.06f;    // metres added around your body when the measurement leaves it out
                                         // (the other eye, a frame of movement)
 
@@ -1477,7 +1481,9 @@ void applyEye(uint8_t* dst) {
             int count = 0;
             float headEnd = 0;
             float own =
-                actor ? bodyNearest(actor, eyeWorld, right, up, ahead, tanX, tanY, capsules, count, headEnd) : 0;
+                actor ? bodyNearest(actor, eyeWorld, right, up, ahead, tanX + kBodyViewPad, tanY + kBodyViewPad,
+                                    capsules, count, headEnd)
+                      : 0;
             const float rightF[3] = {right.x, right.y, right.z}, upF[3] = {up.x, up.y, up.z};
             // The depth check rebuilds each pixel's ray, so it gets the exact frustum.
             const bool ours = g_tanX > 0 && g_tanY > 0;
