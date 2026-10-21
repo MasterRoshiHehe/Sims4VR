@@ -19,5 +19,7 @@ void fitted();
 // Settings: the second (right eye) pass leaves out the part with this mode (3, 4 or 8; 0 none), reusing
 // the first pass's result. A test of which part is the shadows ([stereo] both_eyes_skip).
 void setSecondSkip(int mode);
+// The second (right eye) scene pass is running (any thread; jobs it waits for run inside it).
+bool inSecond();
 
 }  // namespace s4vr::singleview

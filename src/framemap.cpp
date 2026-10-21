@@ -9,18 +9,20 @@
 #include <mutex>
 
 #include "log.h"
+#include "singleview.h"
 
 namespace s4vr::framemap {
 namespace {
 
 const char* const kNames[SiteCount] = {"CameraCopy", "SceneBind", "DepthOnlyBind", "OtherBind", "ColourBind",
-                                       "SceneDraw",  "CullRooms", "UiRender",      "Present"};
+                                       "SceneDraw",  "CullRooms", "UiRender",      "Present",     "ShadowFit"};
 
 // Presents at which a window of kWindowFrames frames is recorded.
-const uint64_t kWindowAt[] = {3000, 9000, 20000, 40000};
-constexpr int kWindowFrames = 3;
-constexpr int kMaxEvents = 3000;
-constexpr int kMaxStacks = 64;
+// Both real eyes present twice a game frame: 4 Presents = two frames, both passes each.
+const uint64_t kWindowAt[] = {3000, 9000, 20000, 40000, 70000};
+constexpr int kWindowFrames = 4;
+constexpr int kMaxEvents = 4000;
+constexpr int kMaxStacks = 128;
 constexpr int kStackDepth = 40;
 
 struct Event {
@@ -183,7 +185,7 @@ void mark(Site site, int extra) {
         }
         return;
     }
-    if (g_recording.load(std::memory_order_relaxed)) record(site, extra);
+    if (g_recording.load(std::memory_order_relaxed)) record(site, singleview::inSecond() ? extra + 100 : extra);
 }
 
 }  // namespace s4vr::framemap

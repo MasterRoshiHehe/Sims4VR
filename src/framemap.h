@@ -17,10 +17,12 @@ enum Site {
     CullRooms,       // room culling (gamefix.cpp): extra = view kind
     UiRender,        // the UI's render (uihook.cpp hookedRender)
     Present,         // the swapchain Present (d3d11_hook.cpp)
+    ShadowFit,       // a sun shadow cascade fitted (shadows.cpp steadyFit): extra = cascade
     SiteCount
 };
 
 void init(bool enabled);
+// Marks made during the second (right eye) scene pass log their extra + 100.
 void mark(Site site, int extra = 0);
 
 }  // namespace s4vr::framemap

@@ -75,6 +75,7 @@ uint64_t hookedLists(void* a, uint64_t b, uint64_t c, uint64_t d) { return runSt
 std::atomic<bool> g_probe{false};
 std::atomic<uint32_t> g_presents{0};
 std::atomic<uint32_t> g_culls[2] = {};
+std::atomic<uint32_t> g_secondFits{0}, g_secondCulls{0};  // in the second (right eye) pass, any thread
 
 int64_t ticks() {
     LARGE_INTEGER t;
@@ -101,6 +102,8 @@ void log(const Sums& s, double seconds) {
     const uint32_t presents = g_presents.exchange(0, std::memory_order_relaxed);
     const uint32_t main = g_culls[0].exchange(0, std::memory_order_relaxed);
     const uint32_t other = g_culls[1].exchange(0, std::memory_order_relaxed);
+    const uint32_t secondFits = g_secondFits.exchange(0, std::memory_order_relaxed);
+    const uint32_t secondCulls = g_secondCulls.exchange(0, std::memory_order_relaxed);
     auto per = [](double total, int n) { return n ? total / n : 0.0; };
     uint32_t ui = 0, uiSecond = 0;
     uihook::takeRenders(ui, uiSecond);
@@ -121,8 +124,8 @@ void log(const Sums& s, double seconds) {
             if (n >= static_cast<int>(sizeof(parts))) break;
         }
         LOG("Scene parts (last %.0f s, mode: runs, CPU ms each, shadow fits, culls main/other): %s; second eye left "
-            "out part %d %u times",
-            seconds, n ? parts : "none", g_secondSkip.load(), g_skipped.exchange(0));
+            "out part %d %u times; in second passes %u shadow fits, %u culls",
+            seconds, n ? parts : "none", g_secondSkip.load(), g_skipped.exchange(0), secondFits, secondCulls);
     }
     LOG("Single view (last %.0f s, %d frames, %.1f a second): scene render %.2f ms on the main thread (worst %.1f); "
         "second pass %d frames, %.2f ms (worst %.1f); main frame every %.1f ms (worst %.0f); %.2f pictures, room "
@@ -230,11 +233,14 @@ void install() {
     int hooked = 0;
     for (int i = 0; i < 3; ++i) {
         void* fn = addrs::fn(steps[i]);
-        if (fn && MH_CreateHook(fn, detours[i], &g_step[i]) == MH_OK &&
-            MH_EnableHook(fn) == MH_OK)
+        MH_STATUS status = fn ? MH_CreateHook(fn, detours[i], &g_step[i]) : MH_ERROR_NOT_EXECUTABLE;
+        if (status == MH_OK) status = MH_EnableHook(fn);
+        if (status == MH_OK) {
             ++hooked;
-        else
+        } else {
+            LOG("Single view: step %s not timed (%s)", steps[i], fn ? MH_StatusToString(status) : "address not found");
             g_step[i] = nullptr;
+        }
     }
     LOG("Single view: %d of 3 scene steps timed", hooked);
 }
@@ -245,12 +251,16 @@ void presented() { g_presents.fetch_add(1, std::memory_order_relaxed); }
 
 void culled(int kind) {
     g_culls[kind == 0 ? 0 : 1].fetch_add(1, std::memory_order_relaxed);
+    if (g_inSecond.load(std::memory_order_relaxed)) g_secondCulls.fetch_add(1, std::memory_order_relaxed);
     if (t_part >= 0) g_partCulls[t_part][kind == 0 ? 0 : 1].fetch_add(1, std::memory_order_relaxed);
 }
 
 void fitted() {
+    if (g_inSecond.load(std::memory_order_relaxed)) g_secondFits.fetch_add(1, std::memory_order_relaxed);
     if (t_part >= 0) g_partFits[t_part].fetch_add(1, std::memory_order_relaxed);
 }
+
+bool inSecond() { return g_inSecond.load(std::memory_order_relaxed); }
 
 void setSecondSkip(int mode) {
     if (g_secondSkip.exchange(mode) != mode) LOG("Both eyes: the second eye leaves out scene part %d (0 = none)", mode);

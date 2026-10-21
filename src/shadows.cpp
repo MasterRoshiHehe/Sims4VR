@@ -13,6 +13,7 @@
 #include "camera.h"
 #include "addrs.h"
 #include "gameaddr.h"
+#include "framemap.h"
 #include "log.h"
 #include "renderscale.h"
 #include "singleview.h"
@@ -182,6 +183,7 @@ void steadyFit(const float* sun, const uint8_t* camera, uint8_t* light, float* s
                uint64_t mapSize) {
     int cascade = static_cast<int>(static_cast<uint32_t>(cascadeArg));
     singleview::fitted();
+    framemap::mark(framemap::ShadowFit, cascade);
     bool want = g_on.load(std::memory_order_relaxed) && camera::bodyActive() && sun && camera && light &&
                 settings && cascade >= 0 && cascade < kCascades && finite4(sun);
     if (!want) {
