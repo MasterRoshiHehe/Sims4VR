@@ -18,4 +18,10 @@ void bound(ID3D11DeviceContext* context, UINT count, ID3D11RenderTargetView* con
 // uihook.cpp: true when this depth clear is the sun shadow map's in the second pass (leave it out).
 bool skipClear(ID3D11DeviceContext* context, ID3D11DepthStencilView* depth);
 
+// The game's non-eye lists (ShadowLists 0x11c8080: sun shadow casters and Sims into the shadow map)
+// left out of the right eye's pass altogether, not only their draws: saves the CPU work of walking
+// and recording them ([stereo] skip_shadow_lists, a test that starts off every start, v0.13.320).
+void installGame();
+void setSkipLists(bool on);
+
 }  // namespace s4vr::shadowreuse

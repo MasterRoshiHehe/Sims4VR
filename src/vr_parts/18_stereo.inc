@@ -615,6 +615,7 @@ static bool renderStereo(ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_DESC
         static const int kSkip[4] = {0, 3, 4, 8};
         singleview::setSecondSkip(kSkip[std::clamp(g_config.bothEyesSkip, 0, 3)]);
         shadowreuse::setOn(g_config.reuseShadows);
+        shadowreuse::setSkipLists(g_config.skipShadowLists);
     }
     camera::setExactFov(g_config.exactFov);
     camera::setPairedHands(g_config.pairedHands);

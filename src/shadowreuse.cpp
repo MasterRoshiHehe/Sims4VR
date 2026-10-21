@@ -7,6 +7,7 @@
 #include <mutex>
 
 #include "MinHook.h"
+#include "addrs.h"
 #include "log.h"
 #include "singleview.h"
 
@@ -150,7 +151,71 @@ bool hookSet(void** vtbl) {
     return true;
 }
 
+// ShadowLists(renderer->a8, flag, kind mask, 0), on the scene lists' job thread.
+using ListsFn = void (*)(void* renderer, uint64_t flag, uint64_t mask, uint64_t extra);
+ListsFn g_lists = nullptr;
+std::atomic<bool> g_skipLists{false};
+std::atomic<uint32_t> g_listRuns[2] = {}, g_listSkips{0};
+std::atomic<uint64_t> g_listTicks[2] = {};
+std::atomic<ULONGLONG> g_listLog{0};
+
+int64_t now() {
+    LARGE_INTEGER t;
+    QueryPerformanceCounter(&t);
+    return t.QuadPart;
+}
+
+void logLists() {
+    const ULONGLONG at = GetTickCount64();
+    ULONGLONG last = g_listLog.load(std::memory_order_relaxed);
+    if (at - last < 10000 || !g_listLog.compare_exchange_strong(last, at)) return;
+    LARGE_INTEGER f;
+    QueryPerformanceFrequency(&f);
+    const double ms = 1000.0 / static_cast<double>(f.QuadPart);
+    uint32_t runs[2];
+    double each[2];
+    for (int i = 0; i < 2; ++i) {
+        runs[i] = g_listRuns[i].exchange(0);
+        const uint64_t t = g_listTicks[i].exchange(0);
+        each[i] = runs[i] ? t * ms / runs[i] : 0.0;
+    }
+    LOG("Shadow lists (last 10 s): left eye %u runs %.2f ms each, right eye %u runs %.2f ms each, %u left out of "
+        "the right eye",
+        runs[0], each[0], runs[1], each[1], g_listSkips.exchange(0));
+}
+
+void hookedLists(void* renderer, uint64_t flag, uint64_t mask, uint64_t extra) {
+    const bool second = singleview::inSecond();
+    if (second && g_skipLists.load(std::memory_order_relaxed) && on()) {
+        g_listSkips.fetch_add(1, std::memory_order_relaxed);
+        logLists();
+        return;
+    }
+    const int64_t start = now();
+    g_lists(renderer, flag, mask, extra);
+    g_listTicks[second].fetch_add(static_cast<uint64_t>(now() - start), std::memory_order_relaxed);
+    g_listRuns[second].fetch_add(1, std::memory_order_relaxed);
+    logLists();
+}
+
 }  // namespace
+
+void installGame() {
+    void* fn = addrs::fn("ShadowLists");
+    MH_STATUS s = MH_Initialize();
+    if (!fn || (s != MH_OK && s != MH_ERROR_ALREADY_INITIALIZED)) {
+        LOG("Shadow lists: game build not recognised; not timed");
+        return;
+    }
+    s = MH_CreateHook(fn, reinterpret_cast<void*>(&hookedLists), reinterpret_cast<void**>(&g_lists));
+    if (s == MH_OK) s = MH_EnableHook(fn);
+    LOG("Shadow lists: timed per eye (%s)", MH_StatusToString(s));
+}
+
+void setSkipLists(bool on) {
+    if (g_skipLists.exchange(on) != on)
+        LOG("Shadow lists: the right eye %s", on ? "leaves them out (test)" : "walks them again");
+}
 
 void install(ID3D11Device* device) {
     static bool tried = false;
