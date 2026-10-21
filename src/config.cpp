@@ -111,8 +111,9 @@ Config loadConfig(const std::wstring& ini) {
     c.depthEyeAlternate = readBool(ini, "stereo", "depth_eye_alternate", c.depthEyeAlternate);
     c.flatWorld = readBool(ini, "stereo", "flat_world", c.flatWorld);
     c.bothEyes = readBool(ini, "stereo", "both_eyes", c.bothEyes);
-    c.bothEyesSkip = static_cast<int>(readInt(ini, "stereo", "both_eyes_skip", c.bothEyesSkip));
-    if (c.bothEyesSkip < 0 || c.bothEyesSkip > 3) c.bothEyesSkip = 0;  // 4 was "Frame begin": crashed (317)
+    // both_eyes_skip is a live test: every start begins with it off (a saved 4 was "Frame begin",
+    // which crashed in 317; 1-3 leave a scene part out of the right eye).
+    c.bothEyesSkip = 0;
     c.reuseShadows = readBool(ini, "stereo", "reuse_shadows", c.reuseShadows);
     c.frameClock = readBool(ini, "stereo", "frame_clock", c.frameClock);
     c.headsetWidth = readBool(ini, "stereo", "headset_width", c.headsetWidth);
