@@ -577,6 +577,7 @@ bool split(ID3D11Texture2D* eye, ID3D11Texture2D* body, DXGI_FORMAT format, UINT
         ID3D11ShaderResourceView* pushViews[2] = {g_sceneView, g_maskView};
         context1->PSSetShaderResources(0, 2, pushViews);
         context1->PSSetShader(g_psBody, nullptr, 0);
+        viewport(width, height);  // the mask pass left the depth's size (smaller with FSR)
         context1->Draw(3, 0);
 
         // 3. The world around it, averaged into ever coarser levels.
