@@ -632,8 +632,8 @@ constexpr BodyBone kBodyBones[] = {
     {12, 14, 0.08f, false}, {13, 15, 0.08f, false}, {14, -1, 0.15f, false}, {15, -1, 0.15f, false},  // calves, feet
 };
 static_assert(sizeof(kBodyBones) / sizeof(kBodyBones[0]) + 1 <= nearplane::kMaxCapsules, "too many body capsules");
-constexpr float kPieHandReach = 0.14f;   // metres from the wrist joint along the hand, for the pie menu ...
-constexpr float kPieHandRadius = 0.08f;  // ... and around it: palm and fingers, however the wrist bends
+constexpr float kPieHandReach = 0.20f;   // metres from the wrist joint along the hand, for the pie menu ...
+constexpr float kPieHandRadius = 0.11f;  // ... and around it: palm and fingers, however the wrist bends
 constexpr float kBodyClipNear = 0.15f;  // metres: torso and arms may be cut off closer than this
 // Added to the view's half-width and half-height (tangent) when your body is checked against it: the
 // near limit is chosen once for both eyes from the left eye, so a hand at the edge only the right eye
@@ -709,10 +709,10 @@ float bodyNearest(void* object, const float eye[3], const Vec3& right, const Vec
         int armCount = 0;
         for (int side = 0; side < 2; ++side) {
             const int shoulder = 4 + side, elbow = 6 + side, wrist = 8 + side;
-            if (ok[shoulder] && ok[elbow]) arms[armCount++] = {{p[shoulder].x, p[shoulder].y, p[shoulder].z}, {p[elbow].x, p[elbow].y, p[elbow].z}, 0.08f};
+            if (ok[shoulder] && ok[elbow]) arms[armCount++] = {{p[shoulder].x, p[shoulder].y, p[shoulder].z}, {p[elbow].x, p[elbow].y, p[elbow].z}, 0.10f};
             if (!ok[elbow] || !ok[wrist]) continue;
             const Vec3 &e = p[elbow], &w = p[wrist];
-            arms[armCount++] = {{e.x, e.y, e.z}, {w.x, w.y, w.z}, 0.07f};
+            arms[armCount++] = {{e.x, e.y, e.z}, {w.x, w.y, w.z}, 0.09f};
             Vec3 d{w.x - e.x, w.y - e.y, w.z - e.z};
             float length = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
             if (length < 1e-4f) continue;
