@@ -30,6 +30,7 @@
 #include "nearplane.h"
 #include "phone3d.h"
 #include "rtti.h"
+#include "singleview.h"
 #include "touch.h"
 
 namespace s4vr::camera {
@@ -2360,6 +2361,23 @@ using ProjectionFn = void (*)(void* camera);
 ProjectionFn g_originalProjection = nullptr;
 int g_projectionLogs = 0;
 
+void logMirrorCamera(const uint8_t* cam, const uint8_t* eye) {
+    static int calls[2] = {0, 0}, logs = 0;
+    const int pass = singleview::inSecond() ? 1 : 0;
+    if (logs >= 24 || calls[pass]++ % 400 != 0) return;
+    ++logs;
+    auto f = [](const uint8_t* c, size_t at) { return *reinterpret_cast<const float*>(c + at); };
+    static const uint8_t* base = reinterpret_cast<const uint8_t*>(GetModuleHandleW(nullptr));
+    const int counter = gameaddr::recognised() && !gameaddr::dx9() ? *reinterpret_cast<const int*>(base + 0x280cb9c) : -1;
+    LOG("Mirror camera (%s eye pass, counter %d): centre %.3f %.3f size %.3f %.3f crop %.2f %.2f %.2f %.2f at %.2f %.2f %.2f;"
+        " eye camera centre %.3f %.3f size %.3f %.3f crop %.2f %.2f %.2f %.2f at %.2f %.2f %.2f; eyes at %.2f %.2f %.2f / %.2f %.2f %.2f",
+        pass ? "right" : "left", counter, f(cam, 0x1f0), f(cam, 0x1f4), f(cam, 0x14), f(cam, 0x18), f(cam, 0x270),
+        f(cam, 0x274), f(cam, 0x278), f(cam, 0x27c), f(cam, 0x60), f(cam, 0x64), f(cam, 0x68), f(eye, 0x1f0),
+        f(eye, 0x1f4), f(eye, 0x14), f(eye, 0x18), f(eye, 0x270), f(eye, 0x274), f(eye, 0x278), f(eye, 0x27c),
+        f(eye, 0x60), f(eye, 0x64), f(eye, 0x68), g_writtenEye[0][0].load(), g_writtenEye[0][1].load(),
+        g_writtenEye[0][2].load(), g_writtenEye[1][0].load(), g_writtenEye[1][1].load(), g_writtenEye[1][2].load());
+}
+
 void hookedProjection(void* camera) {
     if (reinterpret_cast<uintptr_t>(camera) == g_writtenCamera.load(std::memory_order_relaxed)) {
         const float cx = g_appliedCentre[0].load(std::memory_order_relaxed);
@@ -2375,54 +2393,13 @@ void hookedProjection(void* camera) {
         }
     }
     {
-        // The mirror pass's camera has the eye's centre (copied) and its glass clip on (+0x280). The game's clip
-        // maths assumes a centred frustum, which popped objects out of mirrors. Build it with no centre, so the clip
-        // is right, then put the centre's shift (third column, x and y) back into the matrix: it is only a shear of
-        // x/y, the clip is the depth row (user marks 2026-10-20: right with the lopsided eye off).
+        // The mirror pass (0x11c5743) copies the whole scene camera [ctx+0x30] into a stack camera, reflects its
+        // view and, with the glass clip, sets +0x6e9 (plane +0x6f0). It never narrows or re-centres it
+        // (disassembly 2026-10-22; +0x280 is the look-at flag, not the clip). Log what each eye's pass gave it
+        // next to the eye's camera: does the right eye's pass reflect the right eye?
         uint8_t* cam = static_cast<uint8_t*>(camera);
-        float* centre = reinterpret_cast<float*>(cam + kCentreOffset);
-        uint32_t* clip = reinterpret_cast<uint32_t*>(cam + 0x280);
-        float* m = reinterpret_cast<float*>(cam + 0x70);
-        if (reinterpret_cast<uintptr_t>(camera) != g_writtenCamera.load(std::memory_order_relaxed) && *clip != 0 &&
-            std::isfinite(centre[0]) && std::isfinite(centre[1]) && (centre[0] != 0 || centre[1] != 0)) {
-            const float keep[2] = {centre[0], centre[1]};
-            // The mirror camera copies its centre from a camera that still holds the left eye's (both eyes:
-            // the right eye's pass reflected the room with the left eye's lopsided view, 327 screenshots:
-            // its mirror showed the room shifted to one side, objects at the glass edges missing). The eye
-            // being drawn now is the one applyEye last wrote: shear by that eye's centre.
-            const float ax = g_appliedCentre[0].load(std::memory_order_relaxed);
-            const float ay = g_appliedCentre[1].load(std::memory_order_relaxed);
-            // Only a centre in the eyes' units (tangents); other cameras with a clip use pixels (1280 720).
-            const bool own = std::isfinite(ax) && std::isfinite(ay) && std::fabs(keep[0]) < 1.5f && std::fabs(keep[1]) < 1.5f;
-            static int compareLogs = 0;
-            if (compareLogs < 8 && own && (ax != keep[0] || ay != keep[1])) {
-                ++compareLogs;
-                LOG("Mirror clip: camera %p had the centre %.3f %.3f, the eye being drawn has %.3f %.3f; using the eye's",
-                    camera, keep[0], keep[1], ax, ay);
-            }
-            if (own) {
-                centre[0] = ax;
-                centre[1] = ay;
-            }
-            const uint32_t keepClip = *clip;
-            *clip = 0;
-            g_originalProjection(camera);  // the eye's own projection, no clip
-            const float shear[2] = {m[8], m[9]};
-            *clip = keepClip;
-            centre[0] = centre[1] = 0;
-            g_originalProjection(camera);  // centred, with the clip
-            m[8] = shear[0];
-            m[9] = shear[1];
-            centre[0] = keep[0];
-            centre[1] = keep[1];
-            static int logs = 0;
-            if (logs < 5) {
-                ++logs;
-                LOG("Mirror clip: camera %p built centred with the glass clip, then sheared by the eye's centre %.3f %.3f (%.3f %.3f)",
-                    camera, keep[0], keep[1], shear[0], shear[1]);
-            }
-            return;
-        }
+        uint8_t* eye = reinterpret_cast<uint8_t*>(g_writtenCamera.load(std::memory_order_relaxed));
+        if (eye && cam != eye && cam[0x6e9] == 1) logMirrorCamera(cam, eye);
     }
     clearOldCentre(camera, "projection build");
     g_originalProjection(camera);
