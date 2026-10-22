@@ -2386,6 +2386,24 @@ void hookedProjection(void* camera) {
         if (reinterpret_cast<uintptr_t>(camera) != g_writtenCamera.load(std::memory_order_relaxed) && *clip != 0 &&
             std::isfinite(centre[0]) && std::isfinite(centre[1]) && (centre[0] != 0 || centre[1] != 0)) {
             const float keep[2] = {centre[0], centre[1]};
+            // The mirror camera copies its centre from a camera that still holds the left eye's (both eyes:
+            // the right eye's pass reflected the room with the left eye's lopsided view, 327 screenshots:
+            // its mirror showed the room shifted to one side, objects at the glass edges missing). The eye
+            // being drawn now is the one applyEye last wrote: shear by that eye's centre.
+            const float ax = g_appliedCentre[0].load(std::memory_order_relaxed);
+            const float ay = g_appliedCentre[1].load(std::memory_order_relaxed);
+            // Only a centre in the eyes' units (tangents); other cameras with a clip use pixels (1280 720).
+            const bool own = std::isfinite(ax) && std::isfinite(ay) && std::fabs(keep[0]) < 1.5f && std::fabs(keep[1]) < 1.5f;
+            static int compareLogs = 0;
+            if (compareLogs < 8 && own && (ax != keep[0] || ay != keep[1])) {
+                ++compareLogs;
+                LOG("Mirror clip: camera %p had the centre %.3f %.3f, the eye being drawn has %.3f %.3f; using the eye's",
+                    camera, keep[0], keep[1], ax, ay);
+            }
+            if (own) {
+                centre[0] = ax;
+                centre[1] = ay;
+            }
             const uint32_t keepClip = *clip;
             *clip = 0;
             g_originalProjection(camera);  // the eye's own projection, no clip
