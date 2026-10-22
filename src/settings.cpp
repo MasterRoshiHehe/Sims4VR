@@ -463,6 +463,7 @@ std::vector<Row> makeRows() {
                     L"Same test with the game running at speed 1 (the sim runs too). Compare it with the paused run."),
         toggle(L"View speed", L"Bigger Sim caches (next start)", "perf", "sim_cache_boost", &Config::simCacheBoost, kNextStart),
         number(L"View speed", L"Sim detail distance (next start)", "perf", "sim_lod_scale", &Config::simLodScale, 1, 3, 0.5f, 1, L"x%.1f", kNextStart),
+        toggle(L"View speed", L"Game and frame clock on fast cores (next start)", "perf", "fast_cores", &Config::fastCores, kNextStart),
         toggle(L"View speed", L"Hitch catcher (log stalls, next start)", "perf", "hitch_catcher", &Config::hitchCatcher, kNextStart),
         number(L"View head", L"Head follow speed", "body", "smoothing", &Config::bodySmoothing, 0.05f, 1, 0.05f, 1, L"%.2f",
                kView),

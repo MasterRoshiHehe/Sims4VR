@@ -224,6 +224,7 @@ Config loadConfig(const std::wstring& ini) {
     c.simCacheMb = static_cast<int>(readFloat(ini, "perf", "sim_cache_mb", static_cast<float>(c.simCacheMb)));
     c.simLodScale = readFloat(ini, "perf", "sim_lod_scale", c.simLodScale);
     c.nearOncePerPair = readBool(ini, "perf", "near_once_per_pair", c.nearOncePerPair);
+    c.fastCores = readBool(ini, "perf", "fast_cores", c.fastCores);
     c.hitchCatcher = readBool(ini, "perf", "hitch_catcher", c.hitchCatcher);
     c.outdoorFade = readFloat(ini, "audio", "outdoor_fade", c.outdoorFade);
     if (!(c.outdoorFade >= 0 && c.outdoorFade <= 20)) c.outdoorFade = 4.0f;

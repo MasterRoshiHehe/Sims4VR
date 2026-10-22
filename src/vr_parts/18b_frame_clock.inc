@@ -58,6 +58,7 @@ static void turnPoseAbout(XrPosef& pose, const XrVector3f& head, float delta) {
 }
 
 static void clockLoop(XrSession session) {
+    s4vr::cpuprio::boostClockThread();
     LARGE_INTEGER frequency;
     QueryPerformanceFrequency(&frequency);
     auto now = [] {

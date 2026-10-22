@@ -265,6 +265,7 @@ struct Config {
     int simCacheMb = 256;         // [perf] sim_cache_mb: SimCacheSizeLimit used when boosted and the game has none
     bool nearOncePerPair = true;  // [perf] near_once_per_pair: both eyes, near limit's depth copy in the left eye's pass only
     float simLodScale = 2;        // [perf] sim_lod_scale: stretch the Sim detail-change distances (1 = game's)
+    bool fastCores = true;        // [perf] fast_cores: main + frame clock threads on the fast cores, higher priority (cpuprio.cpp)
     bool hitchCatcher = true;     // [perf] hitch_catcher: log what the game's main thread does during stalls over 60 ms (hitch.cpp)
 
     // Phone (first person): close your right hand at your right hip and your
