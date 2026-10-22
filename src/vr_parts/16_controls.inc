@@ -1,3 +1,74 @@
+// The real mouse on a flat menu (main menu, loading, map, CAS: the game's UI
+// panel or screen quad). The game's own arrow is an OS cursor, not in the
+// picture we send, so with the controllers put down the mouse worked but was
+// invisible (user 2026-10-22). While the controllers are idle and the mouse
+// moved last, an arrow is drawn on the menu at the mouse point. Never in live
+// first person; the laser or any controller input takes the view back.
+static POINT g_mouseSeen{-1, -1};
+static ULONGLONG g_mouseMovedTick = 0, g_controllerTick = 0;
+
+static void updateMouseCursor(XrTime time, const D3D11_TEXTURE2D_DESC& desc, const pointer::Controls& c) {
+    g_mouseArrow = false;
+    const ULONGLONG now = GetTickCount64();
+    // Controllers in use: a button, trigger, stick or touch, or a pose that moved (a resting one doesn't count).
+    static XrVector3f anchorPos[2], anchorDir[2];
+    static bool anchored[2] = {false, false};
+    bool active = c.leftButton || c.rightButton || c.escape;
+    for (int i = 0; i < 2; ++i) {
+        XrVector2f stick = stickState(i);
+        if (boolState(g_indexTouchAction, i) || boolState(g_thumbTouchAction, i) || floatState(g_triggerAction, i) > 0.1f ||
+            floatState(g_gripAction, i) > 0.3f || boolState(g_primaryAction, i) || boolState(g_secondaryAction, i) ||
+            boolState(g_menuAction, i) || std::fabs(stick.x) + std::fabs(stick.y) > 0.3f)
+            active = true;
+        XrSpaceLocation aim{XR_TYPE_SPACE_LOCATION};
+        const XrSpaceLocationFlags needed = XR_SPACE_LOCATION_ORIENTATION_VALID_BIT | XR_SPACE_LOCATION_POSITION_VALID_BIT;
+        if (g_aimSpaces[i] && XR_SUCCEEDED(xrLocateSpace(g_aimSpaces[i], g_appSpace, time, &aim)) &&
+            (aim.locationFlags & needed) == needed) {
+            const XrVector3f p = aim.pose.position, d = forwardOf(aim.pose.orientation);
+            if (!anchored[i]) {
+                anchored[i] = true;
+                anchorPos[i] = p;
+                anchorDir[i] = d;
+            } else if (std::sqrt(dot3(sub3(p, anchorPos[i]), sub3(p, anchorPos[i]))) > 0.03f || dot3(d, anchorDir[i]) < 0.9994f) {
+                active = true;  // moved 3 cm or turned 2 degrees
+                anchorPos[i] = p;
+                anchorDir[i] = d;
+            }
+        } else {
+            anchored[i] = false;
+        }
+    }
+    if (active) g_controllerTick = now;
+    POINT mouse;
+    if (!g_gameWindow || !GetCursorPos(&mouse)) return;
+    if (g_mouseSeen.x >= 0 && (std::abs(mouse.x - g_mouseSeen.x) > 2 || std::abs(mouse.y - g_mouseSeen.y) > 2))
+        g_mouseMovedTick = now;
+    const bool flat = mode() == Mode::Quad || (mode() == Mode::Stereo && !camera::bodyActive());
+    if (!flat || g_mouseMovedTick <= g_controllerTick || g_pie.active || g_phone.active || g_objMenu.active ||
+        g_wrist.active || g_frontCropOn || settings::isOpen())
+        return;
+    RECT client;
+    POINT at = mouse;
+    if (!ScreenToClient(g_gameWindow, &at) || !GetClientRect(g_gameWindow, &client) || client.right <= 0 || client.bottom <= 0)
+        return;
+    const float u = static_cast<float>(at.x) / client.right, v = static_cast<float>(at.y) / client.bottom;
+    if (u < 0 || u > 1 || v < 0 || v > 1) return;
+    XrVector3f point;
+    if (mode() == Mode::Quad) {
+        const float w = g_config.quadWidth, h = w * desc.Height / desc.Width;
+        point = {(u - 0.5f) * w, h / 2 - v * h, -g_config.quadDistance};
+    } else {
+        float w, h;
+        uiPanelSize(desc, w, h);
+        point = {(u - 0.5f) * w, g_config.uiHeight + h / 2 - v * h, -g_config.uiDistance};
+    }
+    g_laserFrom = {point.x, point.y, point.z + 0.1f};
+    g_laserTo = point;
+    g_laserValid = true;
+    g_tipOnly = true;
+    g_mouseArrow = true;
+}
+
 static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
     g_laserValid = false;
     g_tipOnly = false;
@@ -1037,6 +1108,8 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
     if (!claudescreen::on()) g_laserOnClaude = false;
     claudescreen::setGameWindow(g_gameWindow);
     holdSelfPieMouse(c, mode() == Mode::Stereo && camera::bodyActive());
+    updateMouseCursor(time, desc, c);
     pointer::update(g_gameWindow, c);
+    if (g_gameWindow) GetCursorPos(&g_mouseSeen);  // after our own SetCursorPos, so only the real mouse differs next frame
 }
 

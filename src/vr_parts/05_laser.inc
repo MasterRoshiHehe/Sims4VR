@@ -108,7 +108,9 @@ struct LayerImage {
     // release (each a call into the runtime, and a wait) every frame.
     bool uploaded = false;
 };
-static LayerImage g_beamImage, g_tipImage, g_phoneBodyImage, g_settingsImage, g_voidImage;
+static LayerImage g_beamImage, g_tipImage, g_phoneBodyImage, g_settingsImage, g_voidImage, g_cursorImage;
+// The real mouse's arrow on a flat menu (instead of the laser tip) while the controllers are put down.
+static bool g_mouseArrow = false;
 
 static void releaseLayerImage(LayerImage& image) {
     destroySwapchain(image.swapchain);
@@ -123,6 +125,7 @@ static void releaseBeam() {
     releaseLayerImage(g_phoneBodyImage);
     releaseLayerImage(g_settingsImage);
     releaseLayerImage(g_voidImage);
+    releaseLayerImage(g_cursorImage);
 }
 
 // rgba(x, y) returns premultiplied {r, g, b, a} in 0..1.
@@ -250,10 +253,30 @@ static bool renderBeam(ID3D11Device* device, XrTime time, XrCompositionLayerQuad
         c[2] = a;
         c[3] = a;
     });
-    if (!ok || !g_beamImage.source || !g_tipImage.source) return false;
+    // The mouse arrow, 32 x 48 px, hot spot at the top left: white with a black outline.
+    if (g_mouseArrow)
+        ok = ok && ensureLayerImage(g_cursorImage, device, 32, 48, [](float u, float v, float* c) {
+            static const float poly[7][2] = {{1, 1}, {1, 34}, {9, 27}, {15, 41}, {20, 39}, {14, 26}, {25, 26}};
+            const float px = u * 32, py = v * 48;
+            bool inside = false;
+            float edge = 1e9f;
+            for (int i = 0, j = 6; i < 7; j = i++) {
+                const float ax = poly[j][0], ay = poly[j][1], bx = poly[i][0], by = poly[i][1];
+                if ((ay > py) != (by > py) && px < (bx - ax) * (py - ay) / (by - ay) + ax) inside = !inside;
+                const float ex = bx - ax, ey = by - ay, t = std::clamp(((px - ax) * ex + (py - ay) * ey) / (ex * ex + ey * ey), 0.f, 1.f);
+                edge = std::min(edge, std::hypot(px - (ax + ex * t), py - (ay + ey * t)));
+            }
+            const float sd = inside ? edge : -edge;  // + inside
+            const float a = std::clamp(sd + 2.0f, 0.f, 1.f);       // outline reaches 2 px out
+            const float white = std::clamp(sd - 1.0f, 0.f, 1.f);  // fill from 1.5 px in
+            c[0] = c[1] = c[2] = a * white;
+            c[3] = a;
+        });
+    if (!ok || !g_beamImage.source || !g_tipImage.source || (g_mouseArrow && !g_cursorImage.source)) return false;
     ID3D11DeviceContext* context = nullptr;
     device->GetImmediateContext(&context);
-    ok = submitLayerImage(g_beamImage, context) && submitLayerImage(g_tipImage, context);
+    ok = submitLayerImage(g_beamImage, context) && submitLayerImage(g_tipImage, context) &&
+         (!g_mouseArrow || submitLayerImage(g_cursorImage, context));
     context->Release();
     if (!ok) return false;
 
@@ -296,6 +319,13 @@ static bool renderBeam(ID3D11Device* device, XrTime time, XrCompositionLayerQuad
     tip.pose = {fromAxes(x, y, z), to};
     float tipSize = 0.025f * distance;
     tip.size = {tipSize, tipSize};
+    if (g_mouseArrow) {
+        // Flat on its menu, hot spot (top left of the picture) on the mouse point.
+        const float h = 0.045f * distance, w = h * 32 / 48;
+        tip.subImage = subImage(g_cursorImage.swapchain);
+        tip.pose = {fromAxes({1, 0, 0}, {0, 1, 0}, {0, 0, 1}), {to.x + w / 2, to.y - h / 2, to.z}};
+        tip.size = {w, h};
+    }
     return true;
 }
 
