@@ -407,7 +407,7 @@ static bool pokeSheet(PieMenu& m, const armik::Hand hands[2], const bool use[2],
         // fingers before the palm is fast enough to count as a shove) flings it.
         const XrVector3f& hv = g_handVelocity[best];
         if (pie && emptyHand(best) && dot3(hv, hv) > kSlapThrough * kSlapThrough) {
-            if (!g_pie.own) flingPie(hv);
+            flingPie(hv);
             dismissPie("slapped through");
             buzz(best, 0.4f, 0.04f);
         } else {
@@ -462,16 +462,22 @@ static constexpr float kFlingSeconds = 0.4f;
 // shoving hand's, m/s, app space). Present thread, before the game's pie goes.
 static void flingPie(const XrVector3f& velocity) {
     g_fling.active = false;
-    if (!g_uiFrame || !camera::bodyActive() || g_pie.cw <= 0 || g_pie.ch <= 0) return;
+    // The pie drawn by us: its part of the HUD atlas; else the game's UI cut.
+    ID3D11Texture2D* source = g_pie.own ? hud::texture() : g_uiFrame;
+    const int32_t sx = g_pie.own ? static_cast<int32_t>(hud::kPie.x) : g_pie.x0,
+                  sy = g_pie.own ? static_cast<int32_t>(hud::kPie.y) : g_pie.y0,
+                  sw = g_pie.own ? static_cast<int32_t>(hud::kPie.w) : g_pie.cw,
+                  sh = g_pie.own ? static_cast<int32_t>(hud::kPie.h) : g_pie.ch;
+    if (!source || !camera::bodyActive() || sw <= 0 || sh <= 0) return;
     D3D11_TEXTURE2D_DESC ui;
-    g_uiFrame->GetDesc(&ui);
+    source->GetDesc(&ui);
     if (ui.SampleDesc.Count != 1) return;
-    const UINT x0 = static_cast<UINT>(std::max(0, g_pie.x0)), y0 = static_cast<UINT>(std::max(0, g_pie.y0));
-    const UINT w = std::min(static_cast<UINT>(g_pie.cw), ui.Width - std::min(x0, ui.Width));
-    const UINT h = std::min(static_cast<UINT>(g_pie.ch), ui.Height - std::min(y0, ui.Height));
+    const UINT x0 = static_cast<UINT>(std::max(0, sx)), y0 = static_cast<UINT>(std::max(0, sy));
+    const UINT w = std::min(static_cast<UINT>(sw), ui.Width - std::min(x0, ui.Width));
+    const UINT h = std::min(static_cast<UINT>(sh), ui.Height - std::min(y0, ui.Height));
     if (!w || !h) return;
     ID3D11Device* device = nullptr;
-    g_uiFrame->GetDevice(&device);
+    source->GetDevice(&device);
     if (!device) return;
     D3D11_TEXTURE2D_DESC have{};
     if (g_flingStill) g_flingStill->GetDesc(&have);
@@ -493,7 +499,7 @@ static void flingPie(const XrVector3f& velocity) {
         ID3D11DeviceContext* context = nullptr;
         device->GetImmediateContext(&context);
         D3D11_BOX box{x0, y0, 0, x0 + w, y0 + h, 1};
-        context->CopySubresourceRegion(g_flingStill, 0, 0, 0, 0, g_uiFrame, 0, &box);
+        context->CopySubresourceRegion(g_flingStill, 0, 0, 0, 0, source, 0, &box);
         context->Release();
         g_fling.active = true;
         g_fling.start = GetTickCount64();
@@ -501,8 +507,8 @@ static void flingPie(const XrVector3f& velocity) {
         g_fling.x = g_pie.x;
         g_fling.y = g_pie.y;
         g_fling.z = g_pie.z;
-        g_fling.width = g_pie.width * w / static_cast<float>(g_pie.cw);
-        g_fling.height = g_pie.height * h / static_cast<float>(g_pie.ch);
+        g_fling.width = g_pie.width * w / static_cast<float>(sw);
+        g_fling.height = g_pie.height * h / static_cast<float>(sh);
         // At least a brisk throw, at most a fast one, the way the hand went.
         float speed = std::sqrt(dot3(velocity, velocity));
         float k = speed > 0.01f ? std::min(std::max(speed, 2.0f), 4.0f) / speed : 0.0f;
@@ -529,8 +535,11 @@ static bool pieInWorld(bool show) {
     float t = g_fling.active ? (GetTickCount64() - g_fling.start) / 1000.0f : 0.0f;
     if (show || t >= kFlingSeconds) g_fling.active = false;
     const bool flying = g_fling.active && g_flingStill;
+    // The pie drawn by us comes from the HUD atlas (hud::kPie), the game's cut from its UI.
+    const bool own = show && g_pie.own;
+    ID3D11Texture2D* source = own ? hud::texture() : g_uiFrame;
     if ((!show && !flying) || !camera::bodyActive() || !camera::lastView(view) ||
-        (show && (!g_uiFrame || !g_pie.uiW || !g_pie.uiH))) {
+        (show && (!source || (!own && (!g_pie.uiW || !g_pie.uiH)) || !(g_pie.width > 0)))) {
         phone3d::setPie(phone3d::Panel{}, nullptr);
         return false;
     }
@@ -586,12 +595,20 @@ static bool pieInWorld(bool show) {
         phone3d::setPie(panel, g_flingStill);
         return false;
     }
-    const float W = static_cast<float>(g_pie.uiW), H = static_cast<float>(g_pie.uiH);
-    panel.crop[0] = g_pie.x0 / W;
-    panel.crop[1] = g_pie.y0 / H;
-    panel.crop[2] = (g_pie.x0 + g_pie.cw) / W;
-    panel.crop[3] = (g_pie.y0 + g_pie.ch) / H;
-    phone3d::setPie(panel, g_uiFrame);
+    if (own) {
+        const float W = static_cast<float>(hud::kWidth), H = static_cast<float>(hud::kHeight);
+        panel.crop[0] = hud::kPie.x / W;
+        panel.crop[1] = hud::kPie.y / H;
+        panel.crop[2] = (hud::kPie.x + hud::kPie.w) / W;
+        panel.crop[3] = (hud::kPie.y + hud::kPie.h) / H;
+    } else {
+        const float W = static_cast<float>(g_pie.uiW), H = static_cast<float>(g_pie.uiH);
+        panel.crop[0] = g_pie.x0 / W;
+        panel.crop[1] = g_pie.y0 / H;
+        panel.crop[2] = (g_pie.x0 + g_pie.cw) / W;
+        panel.crop[3] = (g_pie.y0 + g_pie.ch) / H;
+    }
+    phone3d::setPie(panel, source);
     static int logged = 0;
     bool drawn = phone3d::pieDrawnRecently();
     if (drawn && logged++ < 5) LOG("Pie: drawn in the world (your hands in front of it)");

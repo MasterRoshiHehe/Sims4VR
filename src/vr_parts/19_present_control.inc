@@ -165,7 +165,7 @@ int onFrame(ID3D11Texture2D* backbuffer, HWND window, bool ownMirror) {
                              showObject = !showPie && !showPhone && g_objMenu.active,
                              showWrist = !showPie && !showPhone && !showObject && g_wrist.active,
                              showPanel = !showPie && !showPhone && !showObject && !showWrist && frontPanelShown();
-                        bool pieIn3d = pieInWorld(showPie);
+                        bool pieIn3d = pieInWorld(showPie || (g_pie.active && g_pie.own && g_hud[kHudPie].m.active));
                         // Asleep (first person): the clock over the closed eyelids.
                         if (hudSleepLayer(hud::texture(), sleepQuad)) add(&sleepQuad);
                         if ((showPie || showPhone || showObject || showWrist || showPanel) && renderUiPanel(uiQuad)) {

@@ -537,7 +537,6 @@ static void updatePieHud() {
     }
     const float perStage = g_config.pieWidth / 1100.0f, scale = std::max(0.2f, hud::pieScale());
     const float w = hud::kPie.w / scale * perStage;
-    s.onTop = true;
     placeHud(s, g_pie.pose.position, g_pie.x, g_pie.y, w, {hud::kPie.x, hud::kPie.y, hud::kPie.w, hud::kPie.h});
     g_pie.width = s.m.width;
     g_pie.height = s.m.height;
@@ -614,7 +613,7 @@ static void updateHud(const armik::Hand hands[2], bool firstPerson, bool headOk,
         phone3d::Panel panels[5];
         int count = 0;
         updateTip();
-        for (int i : {kHudPopup, kHudPicker, kHudNote, kHudTip, kHudPie})
+        for (int i : {kHudPopup, kHudPicker, kHudNote, kHudTip})  // the pie: pieInWorld
             if (viewOk && atlas && g_hud[i].m.active) {
                 panels[count] = hudPanel(g_hud[i], view);
                 panels[count++].tag = i;
@@ -736,7 +735,7 @@ static void updateHud(const armik::Hand hands[2], bool firstPerson, bool headOk,
     ID3D11Texture2D* atlas = hud::texture();
     if (atlas)
         for (int i = 0; i < kHudCount; ++i)
-            if (i != kHudSleep && g_hud[i].m.active) {
+            if (i != kHudSleep && i != kHudPie && g_hud[i].m.active) {  // the pie: pieInWorld (app space, hands in front)
                 panels[count] = hudPanel(g_hud[i], view);
                 panels[count++].tag = i;
             }
