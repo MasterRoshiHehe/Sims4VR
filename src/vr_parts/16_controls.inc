@@ -47,6 +47,18 @@ static void updateMouseCursor(XrTime time, const D3D11_TEXTURE2D_DESC& desc, con
     if (!flat || g_mouseMovedTick <= g_controllerTick || g_pie.active || g_phone.active || g_objMenu.active ||
         g_wrist.active || g_frontCropOn || settings::isOpen())
         return;
+    // The game's own cursor: when it shows its own (CAS turn-Sim and the like, drawn in the UI) the OS cursor
+    // is hidden, so nothing of ours goes over it. Otherwise draw the very cursor the game set.
+    CURSORINFO ci{sizeof(ci)};
+    static int lastShown = -1;
+    const bool shown = GetCursorInfo(&ci) && (ci.flags & CURSOR_SHOWING) && ci.hCursor;
+    if (lastShown != (shown ? 1 : 0)) {
+        lastShown = shown ? 1 : 0;
+        LOG("Mouse cursor: game's OS cursor %s (flags %u, handle %p)", shown ? "shown, drawn by us" : "hidden, the game draws its own",
+            static_cast<unsigned>(ci.flags), static_cast<void*>(ci.hCursor));
+    }
+    if (!shown) return;
+    g_cursorHandle = ci.hCursor;
     RECT client;
     POINT at = mouse;
     if (!ScreenToClient(g_gameWindow, &at) || !GetClientRect(g_gameWindow, &client) || client.right <= 0 || client.bottom <= 0)

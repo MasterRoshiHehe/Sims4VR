@@ -111,6 +111,52 @@ struct LayerImage {
 static LayerImage g_beamImage, g_tipImage, g_phoneBodyImage, g_settingsImage, g_voidImage, g_cursorImage;
 // The real mouse's arrow on a flat menu (instead of the laser tip) while the controllers are put down.
 static bool g_mouseArrow = false;
+static HCURSOR g_cursorHandle = nullptr, g_cursorBuilt = nullptr;
+static std::vector<float> g_cursorPix;  // premultiplied rgba of that cursor
+static uint32_t g_cursorW = 0, g_cursorH = 0;
+static int g_cursorHotX = 0, g_cursorHotY = 0;
+
+// Draws the cursor on black and on white to recover its alpha (DrawIconEx does not write alpha reliably).
+static void captureCursor(HCURSOR cur) {
+    ICONINFO info{};
+    if (!cur || !GetIconInfo(cur, &info)) return;
+    BITMAP bm{};
+    GetObject(info.hbmMask ? info.hbmMask : info.hbmColor, sizeof(bm), &bm);
+    int w = bm.bmWidth, h = info.hbmColor ? bm.bmHeight : bm.bmHeight / 2;
+    g_cursorHotX = static_cast<int>(info.xHotspot);
+    g_cursorHotY = static_cast<int>(info.yHotspot);
+    if (info.hbmColor) DeleteObject(info.hbmColor);
+    if (info.hbmMask) DeleteObject(info.hbmMask);
+    if (w <= 0 || h <= 0 || w > 256 || h > 256) return;
+    HDC dc = CreateCompatibleDC(nullptr);
+    BITMAPINFO bi{};
+    bi.bmiHeader = {sizeof(BITMAPINFOHEADER), w, -h, 1, 32, BI_RGB};
+    uint32_t* px[2] = {nullptr, nullptr};
+    HBITMAP bmp[2];
+    for (int k = 0; k < 2; ++k) {
+        bmp[k] = CreateDIBSection(dc, &bi, DIB_RGB_COLORS, reinterpret_cast<void**>(&px[k]), nullptr, 0);
+        SelectObject(dc, bmp[k]);
+        std::fill(px[k], px[k] + w * h, k ? 0x00FFFFFFu : 0x00000000u);
+        DrawIconEx(dc, 0, 0, cur, w, h, 0, nullptr, DI_NORMAL);
+    }
+    GdiFlush();
+    g_cursorW = w;
+    g_cursorH = h;
+    g_cursorPix.assign(static_cast<size_t>(w) * h * 4, 0.f);
+    for (int i = 0; i < w * h; ++i) {
+        const uint32_t blk = px[0][i], wht = px[1][i];
+        float a = 1.f;  // alpha = 1 - (white - black) per channel, averaged
+        a = 1.f - (((wht >> 16 & 255) - (blk >> 16 & 255)) + ((wht >> 8 & 255) - (blk >> 8 & 255)) + ((wht & 255) - (blk & 255))) / 765.f;
+        a = std::clamp(a, 0.f, 1.f);
+        float* o = &g_cursorPix[i * 4];
+        o[0] = (blk >> 16 & 255) / 255.f;  // on black = premultiplied colour
+        o[1] = (blk >> 8 & 255) / 255.f;
+        o[2] = (blk & 255) / 255.f;
+        o[3] = a;
+    }
+    for (int k = 0; k < 2; ++k) DeleteObject(bmp[k]);
+    DeleteDC(dc);
+}
 
 static void releaseLayerImage(LayerImage& image) {
     destroySwapchain(image.swapchain);
@@ -253,25 +299,24 @@ static bool renderBeam(ID3D11Device* device, XrTime time, XrCompositionLayerQuad
         c[2] = a;
         c[3] = a;
     });
-    // The mouse arrow, 32 x 48 px, hot spot at the top left: white with a black outline.
-    if (g_mouseArrow)
-        ok = ok && ensureLayerImage(g_cursorImage, device, 32, 48, [](float u, float v, float* c) {
-            static const float poly[7][2] = {{1, 1}, {1, 34}, {9, 27}, {15, 41}, {20, 39}, {14, 26}, {25, 26}};
-            const float px = u * 32, py = v * 48;
-            bool inside = false;
-            float edge = 1e9f;
-            for (int i = 0, j = 6; i < 7; j = i++) {
-                const float ax = poly[j][0], ay = poly[j][1], bx = poly[i][0], by = poly[i][1];
-                if ((ay > py) != (by > py) && px < (bx - ax) * (py - ay) / (by - ay) + ax) inside = !inside;
-                const float ex = bx - ax, ey = by - ay, t = std::clamp(((px - ax) * ex + (py - ay) * ey) / (ex * ex + ey * ey), 0.f, 1.f);
-                edge = std::min(edge, std::hypot(px - (ax + ex * t), py - (ay + ey * t)));
-            }
-            const float sd = inside ? edge : -edge;  // + inside
-            const float a = std::clamp(sd + 2.0f, 0.f, 1.f);       // outline reaches 2 px out
-            const float white = std::clamp(sd - 1.0f, 0.f, 1.f);  // fill from 1.5 px in
-            c[0] = c[1] = c[2] = a * white;
-            c[3] = a;
-        });
+    // The mouse cursor the game has set (its own HCURSOR, hot spot kept).
+    if (g_mouseArrow) {
+        if (g_cursorHandle != g_cursorBuilt) {
+            releaseLayerImage(g_cursorImage);
+            g_cursorBuilt = g_cursorHandle;
+            g_cursorPix.clear();
+            captureCursor(g_cursorHandle);
+        }
+        if (!g_cursorPix.empty())
+            ok = ok && ensureLayerImage(g_cursorImage, device, g_cursorW, g_cursorH, [](float u, float v, float* c) {
+                const uint32_t x = std::min(g_cursorW - 1, static_cast<uint32_t>(u * g_cursorW)),
+                               y = std::min(g_cursorH - 1, static_cast<uint32_t>(v * g_cursorH));
+                const float* p = &g_cursorPix[(y * g_cursorW + x) * 4];
+                c[0] = p[0]; c[1] = p[1]; c[2] = p[2]; c[3] = p[3];
+            });
+        else
+            ok = false;
+    }
     if (!ok || !g_beamImage.source || !g_tipImage.source || (g_mouseArrow && !g_cursorImage.source)) return false;
     ID3D11DeviceContext* context = nullptr;
     device->GetImmediateContext(&context);
@@ -321,9 +366,11 @@ static bool renderBeam(ID3D11Device* device, XrTime time, XrCompositionLayerQuad
     tip.size = {tipSize, tipSize};
     if (g_mouseArrow) {
         // Flat on its menu, hot spot (top left of the picture) on the mouse point.
-        const float h = 0.045f * distance, w = h * 32 / 48;
+        // 32 px of cursor = 2.2% of the distance (about a 2 cm cursor at 1 m).
+        const float per = 0.022f * distance / 32, w = per * g_cursorW, h = per * g_cursorH;
         tip.subImage = subImage(g_cursorImage.swapchain);
-        tip.pose = {fromAxes({1, 0, 0}, {0, 1, 0}, {0, 0, 1}), {to.x + w / 2, to.y - h / 2, to.z}};
+        tip.pose = {fromAxes({1, 0, 0}, {0, 1, 0}, {0, 0, 1}),
+                    {to.x + w / 2 - per * g_cursorHotX, to.y - h / 2 + per * g_cursorHotY, to.z}};
         tip.size = {w, h};
     }
     return true;
