@@ -22,6 +22,7 @@ struct ClockLayer {
     XrStructureType type = XR_TYPE_UNKNOWN;
     XrCompositionLayerProjection projection{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
     XrCompositionLayerProjectionView views[2]{};
+    XrCompositionLayerDepthInfoKHR depth[2]{};  // the views' depth (depth layer), when they had one
     XrCompositionLayerQuad quad{XR_TYPE_COMPOSITION_LAYER_QUAD};
 };
 struct ClockSnap {
@@ -262,6 +263,12 @@ static void clockPublish(const XrCompositionLayerBaseHeader* const* layers, uint
             for (uint32_t v = 0; v < l.projection.viewCount; ++v) {
                 l.views[v] = p->views[v];
                 l.views[v].next = nullptr;
+                const auto* d = reinterpret_cast<const XrCompositionLayerDepthInfoKHR*>(p->views[v].next);
+                if (d && d->type == XR_TYPE_COMPOSITION_LAYER_DEPTH_INFO_KHR) {
+                    l.depth[v] = *d;
+                    l.depth[v].next = nullptr;
+                    l.views[v].next = &l.depth[v];
+                }
             }
             l.projection.views = l.views;
             if (p == scene) s.turnLayer = int(s.count);

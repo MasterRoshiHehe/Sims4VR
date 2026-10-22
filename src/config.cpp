@@ -114,6 +114,7 @@ Config loadConfig(const std::wstring& ini) {
     // both_eyes_skip is a live test: every start begins with it off (a saved 4 was "Frame begin",
     // which crashed in 317; 1-3 leave a scene part out of the right eye).
     c.bothEyesSkip = 0;
+    c.depthLayer = readBool(ini, "stereo", "depth_layer", c.depthLayer);
     c.reuseShadows = readBool(ini, "stereo", "reuse_shadows", c.reuseShadows);
     c.skipShadowLists = readBool(ini, "stereo", "skip_shadow_prep", c.skipShadowLists);
     c.frameClock = readBool(ini, "stereo", "frame_clock", c.frameClock);

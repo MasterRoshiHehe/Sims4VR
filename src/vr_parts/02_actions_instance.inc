@@ -187,12 +187,13 @@ bool init(const std::wstring& moduleDir, const Config& config) {
         return false;
     std::vector<XrExtensionProperties> extensions(count, {XR_TYPE_EXTENSION_PROPERTIES});
     xrEnumerateInstanceExtensionProperties(nullptr, count, &count, extensions.data());
-    bool hasD3D11 = false, hasHands = false, hasHandSource = false;
+    bool hasD3D11 = false, hasHands = false, hasHandSource = false, hasDepth = false;
     std::string names;
     for (const auto& e : extensions) {
         hasD3D11 |= std::strcmp(e.extensionName, XR_KHR_D3D11_ENABLE_EXTENSION_NAME) == 0;
         hasHands |= std::strcmp(e.extensionName, XR_EXT_HAND_TRACKING_EXTENSION_NAME) == 0;
         hasHandSource |= std::strcmp(e.extensionName, XR_EXT_HAND_TRACKING_DATA_SOURCE_EXTENSION_NAME) == 0;
+        hasDepth |= std::strcmp(e.extensionName, XR_KHR_COMPOSITION_LAYER_DEPTH_EXTENSION_NAME) == 0;
         names += names.empty() ? "" : " ";
         names += e.extensionName;
     }
@@ -204,6 +205,8 @@ bool init(const std::wstring& moduleDir, const Config& config) {
     }
 
     std::vector<const char*> enabled{XR_KHR_D3D11_ENABLE_EXTENSION_NAME};
+    const bool wantDepth = config.depthLayer && hasDepth;
+    if (wantDepth) enabled.push_back(XR_KHR_COMPOSITION_LAYER_DEPTH_EXTENSION_NAME);
     const bool wantHands = config.armIk && config.handTracking && hasHands;
     if (wantHands) enabled.push_back(XR_EXT_HAND_TRACKING_EXTENSION_NAME);
     if (wantHands && hasHandSource) enabled.push_back(XR_EXT_HAND_TRACKING_DATA_SOURCE_EXTENSION_NAME);
@@ -223,6 +226,12 @@ bool init(const std::wstring& moduleDir, const Config& config) {
         created = xrCreateInstance(&info, &g_instance);
     }
     if (!check(created, "xrCreateInstance")) return false;
+    g_depthExt = false;
+    for (const char* name : enabled) g_depthExt |= std::strcmp(name, XR_KHR_COMPOSITION_LAYER_DEPTH_EXTENSION_NAME) == 0;
+    if (config.depthLayer)
+        LOG("Depth layer: %s", g_depthExt ? "on (each eye's depth goes to the headset)"
+                               : hasDepth ? "the runtime refused its extension; off"
+                                          : "the runtime has no XR_KHR_composition_layer_depth; off");
 
 #define S4VR_LOAD(name) \
     xrGetInstanceProcAddr(g_instance, #name, reinterpret_cast<PFN_xrVoidFunction*>(&name));

@@ -63,6 +63,82 @@ static void splitBody(const Swapchain& eye, ID3D11Texture2D* image) {
     g_bodyState[slot] = !released ? kBodyUnknown : drawn ? kBodyDrawn : empty ? kBodyEmpty : kBodyUnknown;
 }
 
+// A depth swapchain the size of an eye swapchain (depth layer).
+static bool ensureDepthSwapchain(Swapchain& s, uint32_t width, uint32_t height) {
+    if (s.handle && s.width == width && s.height == height) return true;
+    destroySwapchain(s);
+    uint32_t count = 0;
+    xrEnumerateSwapchainFormats(g_session, 0, &count, nullptr);
+    std::vector<int64_t> formats(count);
+    xrEnumerateSwapchainFormats(g_session, count, &count, formats.data());
+    DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
+    for (DXGI_FORMAT wanted : {DXGI_FORMAT_D32_FLOAT, DXGI_FORMAT_D24_UNORM_S8_UINT, DXGI_FORMAT_D16_UNORM}) {
+        for (int64_t f : formats)
+            if (f == wanted && format == DXGI_FORMAT_UNKNOWN) format = wanted;
+    }
+    static bool loggedNone = false;
+    if (format == DXGI_FORMAT_UNKNOWN) {
+        if (!loggedNone) LOG("Depth layer: the runtime offers no depth swapchain format; no depth sent");
+        loggedNone = true;
+        return false;
+    }
+    XrSwapchainCreateInfo info{XR_TYPE_SWAPCHAIN_CREATE_INFO};
+    info.usageFlags = XR_SWAPCHAIN_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    info.format = format;
+    info.sampleCount = 1;
+    info.width = width;
+    info.height = height;
+    info.faceCount = 1;
+    info.arraySize = 1;
+    info.mipCount = 1;
+    if (!check(xrCreateSwapchain(g_session, &info, &s.handle), "xrCreateSwapchain (depth)")) return false;
+    xrEnumerateSwapchainImages(s.handle, 0, &count, nullptr);
+    s.images.assign(count, {XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR});
+    xrEnumerateSwapchainImages(s.handle, count, &count, reinterpret_cast<XrSwapchainImageBaseHeader*>(s.images.data()));
+    s.width = width;
+    s.height = height;
+    s.sourceFormat = DXGI_FORMAT_UNKNOWN;
+    s.format = format;
+    LOG("Depth swapchain %ux%u format %d (%u images)", width, height, static_cast<int>(format), count);
+    return true;
+}
+
+// The eye swapchain `eye` just got its picture: the scene depth it was drawn with into the depth
+// swapchain beside it (g_depthSlot), with the near and far distances that depth means.
+static void fillDepth(const Swapchain& eye, ID3D11DeviceContext* context) {
+    const int slot = g_depthSlot;
+    g_depthReady[slot] = false;
+    if (!g_depthFrom) return;
+    bool reversed = false;
+    ID3D11DepthStencilView* scene = uihook::sceneDepthAtPresent(reversed);
+    if (!scene) return;
+    UINT samples = 0, width = 0, height = 0;
+    ID3D11ShaderResourceView* depth = nearplane::presentDepth(context, scene, samples, width, height);
+    scene->Release();
+    if (!depth) return;
+    Swapchain& chain = g_depthChains[slot];
+    uint32_t index = 0;
+    if (!ensureDepthSwapchain(chain, eye.width, eye.height) || !acquireImage(chain, index)) {
+        depth->Release();
+        return;
+    }
+    const bool drawn = xrdepth::fill(context, depth, samples, width, height, chain.images[index].texture, chain.format,
+                                     chain.width, chain.height);
+    depth->Release();
+    XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+    const bool released = check(xrReleaseSwapchainImage(chain.handle, &release), "xrReleaseSwapchainImage (depth)");
+    const camera::Rendered& r = *g_depthFrom;
+    const float scale = r.worldScale > 0 ? r.worldScale : camera::worldScale() > 0 ? camera::worldScale() : 1.0f;
+    g_depthNear[slot] = r.nearZ / scale;
+    g_depthFar[slot] = r.farZ / scale;
+    g_depthReversed[slot] = reversed;
+    g_depthReady[slot] = drawn && released && g_depthNear[slot] > 0 && g_depthFar[slot] > g_depthNear[slot];
+    static int logs = 0;
+    if (g_depthReady[slot] && logs < 3 && ++logs)
+        LOG("Depth layer: eye picture depth %s, near %.3f m, far %.1f m", reversed ? "reversed (near 1)" : "normal (near 0)",
+            g_depthNear[slot], g_depthFar[slot]);
+}
+
 static bool copyIntoSwapchain(Swapchain& s, ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_DESC& desc) {
     uint32_t index = 0;
     if (!acquireImage(s, index)) return false;
@@ -86,6 +162,7 @@ static bool copyIntoSwapchain(Swapchain& s, ID3D11Texture2D* backbuffer, const D
     if (g_keepEye >= 0) eyealign::keep(g_keepEye, target, s.format, s.width, s.height);
     if (g_captureSlot >= 0) screenshot::offer(context, target, g_captureSlot);
     if (g_splitSlot >= 0) splitBody(s, target);
+    if (g_depthSlot >= 0) fillDepth(s, context);
     context->Release();
     device->Release();
 

@@ -417,6 +417,7 @@ std::vector<Row> makeRows() {
         toggle(L"View picture", L"Align the eyes (SteamVR)", "stereo", "align_eyes", &Config::alignEyes),
         toggle(L"View picture", L"Lopsided eye view (draws less unseen picture)", "stereo", "exact_fov", &Config::exactFov,
                kRenderScale),
+        toggle(L"View motion", L"Send depth to the headset (next start)", "stereo", "depth_layer", &Config::depthLayer, kNextStart),
         toggle(L"View motion", L"Smooth stick turning", "stereo", "turn_reprojection", &Config::turnReprojection),
         toggle(L"View motion", L"Stick turn on the headset's clock", "stereo", "turn_display_clock", &Config::turnDisplayClock),
         toggle(L"View motion", L"Stick walk on the headset's clock", "stereo", "walk_display_clock", &Config::walkDisplayClock),

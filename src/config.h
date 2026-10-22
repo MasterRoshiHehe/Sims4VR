@@ -92,6 +92,7 @@ struct Config {
     int bothEyesSkip = 0;
     // [stereo] reuse_shadows: both real eyes, the right eye's pass uses the sun shadow map the left
     // eye's pass drew this frame instead of drawing it again (shadowreuse.h, v0.13.318).
+    bool depthLayer = false;  // [stereo] depth_layer: send each eye's depth to the headset (XR_KHR_composition_layer_depth; next start)
     bool reuseShadows = true;
     // [stereo] skip_shadow_prep: with reuse_shadows, the right eye's pass leaves out the game's
     // shadow lists altogether (CPU, ~0.8 ms a pass; tested in 320: no visible difference, ~+4 fps).
