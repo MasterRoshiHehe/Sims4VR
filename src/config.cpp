@@ -114,7 +114,6 @@ Config loadConfig(const std::wstring& ini) {
     // both_eyes_skip is a live test: every start begins with it off (a saved 4 was "Frame begin",
     // which crashed in 317; 1-3 leave a scene part out of the right eye).
     c.bothEyesSkip = 0;
-    c.depthLayer = readBool(ini, "stereo", "depth_layer", c.depthLayer);
     c.reuseShadows = readBool(ini, "stereo", "reuse_shadows", c.reuseShadows);
     c.skipShadowLists = readBool(ini, "stereo", "skip_shadow_prep", c.skipShadowLists);
     c.frameClock = readBool(ini, "stereo", "frame_clock", c.frameClock);
@@ -225,7 +224,6 @@ Config loadConfig(const std::wstring& ini) {
     c.simCacheMb = static_cast<int>(readFloat(ini, "perf", "sim_cache_mb", static_cast<float>(c.simCacheMb)));
     c.simLodScale = readFloat(ini, "perf", "sim_lod_scale", c.simLodScale);
     c.nearOncePerPair = readBool(ini, "perf", "near_once_per_pair", c.nearOncePerPair);
-    c.fastCores = readBool(ini, "perf", "fast_cores", c.fastCores);
     c.hitchCatcher = readBool(ini, "perf", "hitch_catcher", c.hitchCatcher);
     c.outdoorFade = readFloat(ini, "audio", "outdoor_fade", c.outdoorFade);
     if (!(c.outdoorFade >= 0 && c.outdoorFade <= 20)) c.outdoorFade = 4.0f;

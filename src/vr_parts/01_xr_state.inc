@@ -156,16 +156,6 @@ static BodyState g_bodyState[3] = {};
 static int chainSlot(const Swapchain& s) {
     return &s == &g_eyeSwapchains[0] ? 0 : &s == &g_eyeSwapchains[1] ? 1 : &s == &g_leftSpare ? 2 : -1;
 }
-// Depth layer ([stereo] depth_layer, xrdepth.h): a depth swapchain beside each eye swapchain (slots as the
-// body's), filled in the same copy as its eye picture with the scene depth it was drawn with.
-static bool g_depthExt = false;  // XR_KHR_composition_layer_depth enabled on the instance
-static Swapchain g_depthChains[3];
-static bool g_depthReady[3] = {};
-static float g_depthNear[3] = {}, g_depthFar[3] = {};  // metres
-static bool g_depthReversed[3] = {};
-static int g_depthSlot = -1;                         // the eye swapchain copyIntoSwapchain is drawing, for its depth
-static const camera::Rendered* g_depthFrom = nullptr;  // what that picture was drawn with
-static XrCompositionLayerDepthInfoKHR g_depthInfo[2]{};
 static int g_splitSlot = -1;                         // the eye swapchain copyIntoSwapchain is drawing, to split
 static const camera::Rendered* g_splitFrom = nullptr;  // what that eye picture was drawn with
 static XrCompositionLayerProjection g_bodyProjection{XR_TYPE_COMPOSITION_LAYER_PROJECTION};

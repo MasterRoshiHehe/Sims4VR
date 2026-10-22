@@ -53,8 +53,6 @@
 #include "benchmark.h"
 #include "texbias.h"
 #include "shadowreuse.h"
-#include "cpuprio.h"
-#include "xrdepth.h"
 
 namespace s4vr::vr {
 

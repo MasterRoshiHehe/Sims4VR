@@ -481,11 +481,7 @@ static bool holdBothFirst(ID3D11Texture2D* backbuffer) {
     g_splitWanted = g_lastTurnTick && GetTickCount64() - g_lastTurnTick < kBodyLinger;
     g_splitFrom = &rendered;
     if (slot >= 0 && g_splitSlot < 0) g_bodyState[slot] = kBodyUnknown;
-    g_depthSlot = g_depthExt && g_config.depthLayer ? slot : -1;
-    g_depthFrom = &rendered;
     const bool copied = copyIntoSwapchain(chain, backbuffer, desc);
-    g_depthSlot = -1;
-    g_depthFrom = nullptr;
     g_splitSlot = -1;
     g_splitFrom = nullptr;
     g_captureSlot = -1;
@@ -564,11 +560,7 @@ static bool renderStereo(ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_DESC
         g_splitWanted = turning;
         g_splitFrom = &rendered;
         if (slot >= 0 && g_splitSlot < 0) g_bodyState[slot] = kBodyUnknown;  // no longer goes with it
-        g_depthSlot = g_depthExt && g_config.depthLayer ? slot : -1;
-        g_depthFrom = &rendered;
         bool copied = copyIntoSwapchain(chain, backbuffer, desc);
-        g_depthSlot = -1;
-        g_depthFrom = nullptr;
         g_splitSlot = -1;
         g_splitFrom = nullptr;
         g_keepEye = -1;
@@ -702,25 +694,6 @@ static bool renderStereo(ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_DESC
         const float cd = std::cos(delta), sd = std::sin(delta);
         pose.position.x = head.x + cd * dx + sd * dz;
         pose.position.z = head.z - sd * dx + cd * dz;
-    }
-    // Depth layer: each eye's depth as its picture was drawn, when both have one.
-    {
-        const int slots[2] = {chainSlot(shownChain(0)), chainSlot(shownChain(1))};
-        if (g_depthExt && g_config.depthLayer && slots[0] >= 0 && slots[1] >= 0 && g_depthReady[slots[0]] &&
-            g_depthReady[slots[1]]) {
-            for (int eye = 0; eye < 2; ++eye) {
-                const int s = slots[eye];
-                XrCompositionLayerDepthInfoKHR& d = g_depthInfo[eye];
-                d = {XR_TYPE_COMPOSITION_LAYER_DEPTH_INFO_KHR};
-                d.subImage = subImage(g_depthChains[s]);
-                d.minDepth = 0;
-                d.maxDepth = 1;
-                // nearZ is the distance at minDepth: the far one when the depth is reversed.
-                d.nearZ = g_depthReversed[s] ? g_depthFar[s] : g_depthNear[s];
-                d.farZ = g_depthReversed[s] ? g_depthNear[s] : g_depthFar[s];
-                views[eye].next = &d;
-            }
-        }
     }
     // Your body, which turns with you, on its own layer that the turn leaves
     // alone (bodylayer.h): each eye's as it was drawn.

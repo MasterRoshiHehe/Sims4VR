@@ -29,7 +29,6 @@
 #include "log.h"
 #include "nearplane.h"
 #include "phone3d.h"
-#include "cpuprio.h"
 #include "rtti.h"
 #include "touch.h"
 
@@ -1617,7 +1616,6 @@ bool renderCamera(void* dst) {
         rtti::className(reinterpret_cast<uintptr_t>(dst), name, sizeof(name));
         expected = vtable;
         LOG("Render camera %p is %s (main thread %lu)", dst, name[0] ? name : "unknown", GetCurrentThreadId());
-        cpuprio::boostMainThread();
     }
     if (vtable == expected) return true;
     if (strays++ < 3) {

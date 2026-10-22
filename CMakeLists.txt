@@ -66,8 +66,6 @@ add_library(sims4vr SHARED
     src/hitch.cpp
     src/simcache.cpp
     src/texprobe.cpp
-    src/cpuprio.cpp
-    src/xrdepth.cpp
     src/benchmark.cpp
     src/framemap.cpp
     src/singleview.cpp

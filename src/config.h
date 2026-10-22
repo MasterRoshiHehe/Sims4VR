@@ -92,7 +92,6 @@ struct Config {
     int bothEyesSkip = 0;
     // [stereo] reuse_shadows: both real eyes, the right eye's pass uses the sun shadow map the left
     // eye's pass drew this frame instead of drawing it again (shadowreuse.h, v0.13.318).
-    bool depthLayer = false;  // [stereo] depth_layer: send each eye's depth to the headset (XR_KHR_composition_layer_depth; next start)
     bool reuseShadows = true;
     // [stereo] skip_shadow_prep: with reuse_shadows, the right eye's pass leaves out the game's
     // shadow lists altogether (CPU, ~0.8 ms a pass; tested in 320: no visible difference, ~+4 fps).
@@ -266,7 +265,6 @@ struct Config {
     int simCacheMb = 256;         // [perf] sim_cache_mb: SimCacheSizeLimit used when boosted and the game has none
     bool nearOncePerPair = true;  // [perf] near_once_per_pair: both eyes, near limit's depth copy in the left eye's pass only
     float simLodScale = 2;        // [perf] sim_lod_scale: stretch the Sim detail-change distances (1 = game's)
-    bool fastCores = false;       // [perf] fast_cores (off: 323 test no gain, -1 fps): main + frame clock threads on the fast cores, higher priority (cpuprio.cpp)
     bool hitchCatcher = true;     // [perf] hitch_catcher: log what the game's main thread does during stalls over 60 ms (hitch.cpp)
 
     // Phone (first person): close your right hand at your right hip and your

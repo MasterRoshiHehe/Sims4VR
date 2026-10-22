@@ -43,8 +43,6 @@ static void destroySession() {
     destroySwapchain(g_leftSpare);
     g_leftShown = 0;
     for (Swapchain& chain : g_bodyChains) destroySwapchain(chain);
-    for (Swapchain& chain : g_depthChains) destroySwapchain(chain);
-    for (bool& ready : g_depthReady) ready = false;
     destroySwapchain(g_uiSwapchain);
     for (auto*& probe : g_uiProbe) {
         if (probe) probe->Release();
