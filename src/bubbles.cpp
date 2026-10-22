@@ -577,7 +577,9 @@ int barCards(phone3d::Panel* out, int max) {
     const int n = hud::activeBars(info, hud::kBarSlots);
     const ULONGLONG now = GetTickCount64();
     static bool s_set = false;
-    static float s_pos[3], s_fwd[2];  // the bar's anchor: stays put in the world (head turns never move it) until you walk away
+    // The bar's anchor: the head and its ground axes when placed; stays put in the world (head turns never move it) until
+    // you walk away. The menu's offsets are applied to it every frame, so position rows move it live.
+    static float s_head[3], s_fwd[2], s_right[2];
     static ULONGLONG s_seen = 0;      // last frame a bar was placed; a short gap keeps the anchor
     // The last cards placed: shown again for a moment when the head or body isn't read this frame (no flicker).
     static phone3d::Panel s_last[hud::kBarSlots];
@@ -612,9 +614,7 @@ int barCards(phone3d::Panel* out, int max) {
     const float fl = std::sqrt(fx * fx + fz * fz);
     if (fl < 0.2f) fx = s_set ? s_fwd[0] : 0, fz = s_set ? s_fwd[1] : -1;
     else fx /= fl, fz /= fl;
-    // Where the anchor was placed from: the head then (the bar sits ahead of it).
-    const float hx = s_pos[0] - s_fwd[0] * o.skillOwnPos[2] * s, hz = s_pos[2] - s_fwd[1] * o.skillOwnPos[2] * s;
-    const float dx = hp.x - hx, dz = hp.z - hz, walked = std::sqrt(dx * dx + dz * dz);
+    const float dx = hp.x - s_head[0], dz = hp.z - s_head[2], walked = std::sqrt(dx * dx + dz * dz);
     if (!s_set || walked > 1.0f * s) {
         // Viewer's right on the ground from the head's own right axis, so + Horizontal is always to your right.
         float rx = hr.x, rz = hr.z;
@@ -628,10 +628,15 @@ int barCards(phone3d::Panel* out, int max) {
         s_set = true;
         s_fwd[0] = fx;
         s_fwd[1] = fz;
-        s_pos[0] = hp.x + fx * o.skillOwnPos[2] * s + rx * o.skillOwnPos[0] * s;
-        s_pos[1] = hp.y + o.skillOwnPos[1] * s;
-        s_pos[2] = hp.z + fz * o.skillOwnPos[2] * s + rz * o.skillOwnPos[0] * s;
+        s_right[0] = rx;
+        s_right[1] = rz;
+        s_head[0] = hp.x;
+        s_head[1] = hp.y;
+        s_head[2] = hp.z;
     }
+    const float* at = o.skillOwnPos;
+    const float s_pos[3] = {s_head[0] + (s_fwd[0] * at[2] + s_right[0] * at[0]) * s, s_head[1] + at[1] * s,
+                            s_head[2] + (s_fwd[1] * at[2] + s_right[1] * at[0]) * s};
     s_seen = now;
     // Faces you (billboard on the vertical axis).
     camera::Vec3 right{}, up{0, 1, 0};
