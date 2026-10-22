@@ -154,7 +154,7 @@ struct Config {
     // you in first person (metres from your head: right, up, ahead), their size, and hiding bubbles
     bool bubbleOwnFront = true;                        // own_in_front
     float bubbleOwnPos[3] = {0.0f, 0.08f, 0.6f};       // own_bubble_position
-    float skillOwnPos[3] = {0.0f, 0.45f, 0.5f};        // skill_position: right / up (world) / ahead of you; kept in the world
+    float skillOwnPos[3] = {0.0f, 0.45f, 0.5f};        // skill_position: horizontal (+ = your right) / up (world) / ahead of you; kept in the world
     float skillOwnSize = 0.14f;                        // skill_size: the skill bar's width (metres)
     float bubbleOwnSize = 0.14f;                       // own_size: a bubble's width in front of you (metres)
     float bubbleNpcSize = 0.5f;                        // npc_size: a bubble's width over other Sims (game units)

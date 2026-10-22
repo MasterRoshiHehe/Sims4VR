@@ -576,7 +576,7 @@ int barCards(phone3d::Panel* out, int max) {
     hud::BarInfo info[hud::kBarSlots];
     const int n = hud::activeBars(info, hud::kBarSlots);
     static bool s_set = false;
-    static float s_pos[3], s_fwd[2];  // the bar's anchor: stays in the world until you walk or turn well away
+    static float s_pos[3], s_fwd[2];  // the bar's anchor: stays put in the world (head turns never move it) until you walk away
     if (!n || !g_ownBalloons.load(std::memory_order_relaxed) || !camera::bodyActive()) {
         s_set = false;
         return 0;
@@ -596,13 +596,18 @@ int barCards(phone3d::Panel* out, int max) {
     if (fl < 0.2f) fx = s_set ? s_fwd[0] : 0, fz = s_set ? s_fwd[1] : -1;
     else fx /= fl, fz /= fl;
     const float dx = hp.x - s_pos[0], dz = hp.z - s_pos[2];
-    if (!s_set || std::sqrt(dx * dx + dz * dz) > 0.35f * s || fx * s_fwd[0] + fz * s_fwd[1] < 0.5f) {
+    if (!s_set || std::sqrt(dx * dx + dz * dz) > 0.35f * s) {
+        // Viewer's right on the ground from the head's own right axis, so + Horizontal is always to your right.
+        float rx = hr.x, rz = hr.z;
+        const float rl = std::sqrt(rx * rx + rz * rz);
+        if (rl < 0.2f) rx = -fz, rz = fx;
+        else rx /= rl, rz /= rl;
         s_set = true;
         s_fwd[0] = fx;
         s_fwd[1] = fz;
-        s_pos[0] = hp.x + fx * o.skillOwnPos[2] * s + fz * o.skillOwnPos[0] * s;
+        s_pos[0] = hp.x + fx * o.skillOwnPos[2] * s + rx * o.skillOwnPos[0] * s;
         s_pos[1] = hp.y + o.skillOwnPos[1] * s;
-        s_pos[2] = hp.z + fz * o.skillOwnPos[2] * s - fx * o.skillOwnPos[0] * s;
+        s_pos[2] = hp.z + fz * o.skillOwnPos[2] * s + rz * o.skillOwnPos[0] * s;
     }
     // Faces you (billboard on the vertical axis).
     camera::Vec3 right{}, up{0, 1, 0};

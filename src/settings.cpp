@@ -595,7 +595,7 @@ std::vector<Row> makeRows() {
                   0.01f, 100, L"%+.0f cm"),
         component(L"Bubbles yours", L"Your bubble: ahead", "bubbles", "own_bubble_position", &Config::bubbleOwnPos, 2, 0.2f,
                   2, 0.02f, 100, L"%.0f cm"),
-        component(L"Bubbles yours", L"Your skill bar: right", "bubbles", "skill_position", &Config::skillOwnPos, 0, -0.5f,
+        component(L"Bubbles yours", L"Your skill bar: horizontal", "bubbles", "skill_position", &Config::skillOwnPos, 0, -0.5f,
                   0.5f, 0.01f, 100, L"%+.0f cm"),
         component(L"Bubbles yours", L"Your skill bar: up", "bubbles", "skill_position", &Config::skillOwnPos, 1, -0.5f,
                   1.0f, 0.01f, 100, L"%+.0f cm"),
