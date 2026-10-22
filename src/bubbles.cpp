@@ -575,19 +575,36 @@ int balloonCards(const camera::View& view, phone3d::Panel* out, int max) {
 int barCards(phone3d::Panel* out, int max) {
     hud::BarInfo info[hud::kBarSlots];
     const int n = hud::activeBars(info, hud::kBarSlots);
+    const ULONGLONG now = GetTickCount64();
     static bool s_set = false;
     static float s_pos[3], s_fwd[2];  // the bar's anchor: stays put in the world (head turns never move it) until you walk away
-    if (!n || !g_ownBalloons.load(std::memory_order_relaxed) || !camera::bodyActive()) {
-        s_set = false;
+    static ULONGLONG s_seen = 0;      // last frame a bar was placed; a short gap keeps the anchor
+    // The last cards placed: shown again for a moment when the head or body isn't read this frame (no flicker).
+    static phone3d::Panel s_last[hud::kBarSlots];
+    static int s_lastCount = 0;
+    static int s_logs = 0;
+    auto reuse = [&]() {
+        static int logged = 0;
+        if (logged < 10) ++logged, LOG("Skill bar: head/body not read this frame; last cards %s", s_lastCount && now - s_seen <= 300 ? "kept" : "gone");
+        if (!s_lastCount || now - s_seen > 300) return 0;
+        const int k = std::min(s_lastCount, max);
+        std::copy(s_last, s_last + k, out);
+        return k;
+    };
+    if (!n || !g_ownBalloons.load(std::memory_order_relaxed)) {
+        if (s_set && now - s_seen > 3000) s_set = false, s_lastCount = 0;
         return 0;
     }
+    if (!camera::bodyActive()) return reuse();
     Config o;
     {
         std::lock_guard<std::mutex> lock(g_optionMutex);
         o = g_options;
     }
     camera::Vec3 hp{}, hr{}, hu{}, hb{};
-    if (!o.bubbleOwnFront || !camera::headInWorld(hp, hr, hu, hb)) return 0;
+    if (!o.bubbleOwnFront) return 0;
+    if (!camera::headInWorld(hp, hr, hu, hb)) return reuse();
+    if (s_set && now - s_seen > 3000) s_set = false;
     const uint64_t own = camera::bodyId();
     const float s = o.worldScale;
     // Head forward on the ground; the world's up is the camera's up axis (hu has the head's tilt).
@@ -595,13 +612,19 @@ int barCards(phone3d::Panel* out, int max) {
     const float fl = std::sqrt(fx * fx + fz * fz);
     if (fl < 0.2f) fx = s_set ? s_fwd[0] : 0, fz = s_set ? s_fwd[1] : -1;
     else fx /= fl, fz /= fl;
-    const float dx = hp.x - s_pos[0], dz = hp.z - s_pos[2];
-    if (!s_set || std::sqrt(dx * dx + dz * dz) > 0.35f * s) {
+    // Where the anchor was placed from: the head then (the bar sits ahead of it).
+    const float hx = s_pos[0] - s_fwd[0] * o.skillOwnPos[2] * s, hz = s_pos[2] - s_fwd[1] * o.skillOwnPos[2] * s;
+    const float dx = hp.x - hx, dz = hp.z - hz, walked = std::sqrt(dx * dx + dz * dz);
+    if (!s_set || walked > 1.0f * s) {
         // Viewer's right on the ground from the head's own right axis, so + Horizontal is always to your right.
         float rx = hr.x, rz = hr.z;
         const float rl = std::sqrt(rx * rx + rz * rz);
         if (rl < 0.2f) rx = -fz, rz = fx;
         else rx /= rl, rz /= rl;
+        if (s_logs < 20) {
+            ++s_logs;
+            LOG("Skill bar: placed in the world (%s, walked %.2f m)", s_set ? "walked away" : "new", walked / s);
+        }
         s_set = true;
         s_fwd[0] = fx;
         s_fwd[1] = fz;
@@ -609,10 +632,11 @@ int barCards(phone3d::Panel* out, int max) {
         s_pos[1] = hp.y + o.skillOwnPos[1] * s;
         s_pos[2] = hp.z + fz * o.skillOwnPos[2] * s + rz * o.skillOwnPos[0] * s;
     }
+    s_seen = now;
     // Faces you (billboard on the vertical axis).
     camera::Vec3 right{}, up{0, 1, 0};
     const float vx = hp.x - s_pos[0], vz = hp.z - s_pos[2], vl = std::sqrt(vx * vx + vz * vz);
-    if (vl < 0.01f) return 0;
+    if (vl < 0.01f) return reuse();
     right = {vz / vl, 0, -vx / vl};
     const float width = o.skillOwnSize * s;
     int written = 0;
@@ -638,6 +662,8 @@ int barCards(phone3d::Panel* out, int max) {
         p.crop[2] = (sx + hud::kBarSlot) / hud::kWidth;
         p.crop[3] = (sy + hud::kBarSlot) / hud::kHeight;
     }
+    s_lastCount = std::min(written, hud::kBarSlots);
+    std::copy(out, out + s_lastCount, s_last);
     return written;
 }
 
