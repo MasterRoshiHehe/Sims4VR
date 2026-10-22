@@ -496,12 +496,69 @@ void setOwnBalloons(bool on) {
     if (g_ownBalloons.exchange(on) != on) LOG("Bubbles: balloons %s", on ? "drawn by us from the game's AddBalloon" : "cut from the game's UI");
 }
 
+// Your own cards' anchor (user 2026-10-22, the skill bar): the head and its ground axes when placed. It stays
+// put in the world (head turns never move it) until you walk 1 m away or it was unused for 3 s; the menu's
+// offsets are applied to it every frame, so the position rows move the card live.
+struct OwnAnchor {
+    bool set = false;
+    float head[3]{}, fwd[2]{0, -1}, right[2]{1, 0};
+    ULONGLONG seen = 0;
+};
+
+void holdOwn(OwnAnchor& a, const camera::Vec3& hp, const camera::Vec3& hr, const camera::Vec3& hb, float s, ULONGLONG now,
+             const char* what) {
+    if (a.set && now - a.seen > 3000) a.set = false;
+    // Head forward on the ground; the world's up is the camera's up axis (hu has the head's tilt).
+    float fx = -hb.x, fz = -hb.z;
+    const float fl = std::sqrt(fx * fx + fz * fz);
+    if (fl < 0.2f) fx = a.fwd[0], fz = a.fwd[1];
+    else fx /= fl, fz /= fl;
+    const float dx = hp.x - a.head[0], dz = hp.z - a.head[2], walked = std::sqrt(dx * dx + dz * dz);
+    if (!a.set || walked > 1.0f * s) {
+        // Viewer's right on the ground from the head's own right axis, so + Horizontal is always to your right.
+        float rx = hr.x, rz = hr.z;
+        const float rl = std::sqrt(rx * rx + rz * rz);
+        if (rl < 0.2f) rx = -fz, rz = fx;
+        else rx /= rl, rz /= rl;
+        static int logs = 0;
+        if (logs < 30) {
+            ++logs;
+            LOG("%s: placed in the world (%s, walked %.2f m)", what, a.set ? "walked away" : "new", walked / s);
+        }
+        a.set = true;
+        a.fwd[0] = fx;
+        a.fwd[1] = fz;
+        a.right[0] = rx;
+        a.right[1] = rz;
+        std::copy(&hp.x, &hp.x + 3, a.head);
+    }
+    a.seen = now;
+}
+
+// Where an own card sits: the anchor plus `pos` (right, up, ahead; metres).
+camera::Vec3 ownSpot(const OwnAnchor& a, const float pos[3], float s) {
+    return {a.head[0] + (a.fwd[0] * pos[2] + a.right[0] * pos[0]) * s, a.head[1] + pos[1] * s,
+            a.head[2] + (a.fwd[1] * pos[2] + a.right[1] * pos[0]) * s};
+}
+
 // Balloon cards (hud.cpp kBalloons slots) over their Sims: the geometry the cut cards had (kBoxes[kBalloon]: 250x258
 // element units around the anchor, view offset -0.06, 0.13), our slot 256x264 with the bubble's top left at the box's.
 int balloonCards(const camera::View& view, phone3d::Panel* out, int max) {
     hud::BalloonInfo info[hud::kBalloonSlots];
     const int n = hud::activeBalloons(info, hud::kBalloonSlots);
-    if (!n || !g_ownBalloons.load(std::memory_order_relaxed) || !camera::bodyActive()) return 0;
+    const ULONGLONG now = GetTickCount64();
+    // The last cards placed: shown again for a moment when the Sims' anchors or your head aren't read this frame.
+    static phone3d::Panel s_last[12];
+    static int s_lastCount = 0;
+    static ULONGLONG s_lastAt = 0;
+    auto reuse = [&]() {
+        if (!s_lastCount || now - s_lastAt > 300) return 0;
+        const int k = std::min(s_lastCount, max);
+        std::copy(s_last, s_last + k, out);
+        return k;
+    };
+    if (!n || !g_ownBalloons.load(std::memory_order_relaxed)) return 0;
+    if (!camera::bodyActive()) return reuse();
     BalloonAnchor anchors[kMaxPieces];
     int anchorCount = 0;
     {
@@ -519,6 +576,11 @@ int balloonCards(const camera::View& view, phone3d::Panel* out, int max) {
     const camera::Vec3 fwd{-view.back.x, -view.back.y, -view.back.z};
     camera::Vec3 hp{}, hr{}, hu{}, hb{};
     const bool haveHead = camera::headInWorld(hp, hr, hu, hb);
+    if (!haveHead || !anchorCount) {
+        const int k = reuse();
+        if (k) return k;
+    }
+    static OwnAnchor s_own;
     const uint64_t own = camera::bodyId();
     const Box& box = kBoxes[kBalloon];
     int written = 0;
@@ -533,11 +595,13 @@ int balloonCards(const camera::View& view, phone3d::Panel* out, int max) {
             if (!o.bubbleOwnFront || !haveHead) continue;
             const float s = o.worldScale;
             k = o.bubbleOwnSize * s / kBalloonWidth;
-            centre = {hp.x + (hr.x * o.bubbleOwnPos[0] + hu.x * o.bubbleOwnPos[1] - hb.x * o.bubbleOwnPos[2]) * s,
-                      hp.y + (hr.y * o.bubbleOwnPos[0] + hu.y * o.bubbleOwnPos[1] - hb.y * o.bubbleOwnPos[2]) * s,
-                      hp.z + (hr.z * o.bubbleOwnPos[0] + hu.z * o.bubbleOwnPos[1] - hb.z * o.bubbleOwnPos[2]) * s};
-            right = hr;
-            up = hu;
+            // Kept in the world like the skill bar, facing you upright.
+            holdOwn(s_own, hp, hr, hb, s, now, "Your bubble");
+            centre = ownSpot(s_own, o.bubbleOwnPos, s);
+            const float vx = hp.x - centre.x, vz = hp.z - centre.z, vl = std::sqrt(vx * vx + vz * vz);
+            if (vl < 0.01f) continue;
+            right = {vz / vl, 0, -vx / vl};
+            up = {0, 1, 0};
         } else {
             const BalloonAnchor* a = nullptr;
             for (int j = 0; j < anchorCount; ++j)
@@ -569,6 +633,9 @@ int balloonCards(const camera::View& view, phone3d::Panel* out, int max) {
         p.crop[2] = (sx + hud::kBalloonW) / hud::kWidth;
         p.crop[3] = (sy + hud::kBalloonH) / hud::kHeight;
     }
+    s_lastCount = std::min(written, 12);
+    std::copy(out, out + s_lastCount, s_last);
+    s_lastAt = now;
     return written;
 }
 
@@ -576,25 +643,19 @@ int barCards(phone3d::Panel* out, int max) {
     hud::BarInfo info[hud::kBarSlots];
     const int n = hud::activeBars(info, hud::kBarSlots);
     const ULONGLONG now = GetTickCount64();
-    static bool s_set = false;
-    // The bar's anchor: the head and its ground axes when placed; stays put in the world (head turns never move it) until
-    // you walk away. The menu's offsets are applied to it every frame, so position rows move it live.
-    static float s_head[3], s_fwd[2], s_right[2];
-    static ULONGLONG s_seen = 0;      // last frame a bar was placed; a short gap keeps the anchor
+    static OwnAnchor s_anchor;
+    static ULONGLONG s_seen = 0;  // last frame a bar was placed
     // The last cards placed: shown again for a moment when the head or body isn't read this frame (no flicker).
     static phone3d::Panel s_last[hud::kBarSlots];
     static int s_lastCount = 0;
-    static int s_logs = 0;
     auto reuse = [&]() {
-        static int logged = 0;
-        if (logged < 10) ++logged, LOG("Skill bar: head/body not read this frame; last cards %s", s_lastCount && now - s_seen <= 300 ? "kept" : "gone");
         if (!s_lastCount || now - s_seen > 300) return 0;
         const int k = std::min(s_lastCount, max);
         std::copy(s_last, s_last + k, out);
         return k;
     };
     if (!n || !g_ownBalloons.load(std::memory_order_relaxed)) {
-        if (s_set && now - s_seen > 3000) s_set = false, s_lastCount = 0;
+        if (now - s_seen > 3000) s_lastCount = 0;
         return 0;
     }
     if (!camera::bodyActive()) return reuse();
@@ -606,37 +667,11 @@ int barCards(phone3d::Panel* out, int max) {
     camera::Vec3 hp{}, hr{}, hu{}, hb{};
     if (!o.bubbleOwnFront) return 0;
     if (!camera::headInWorld(hp, hr, hu, hb)) return reuse();
-    if (s_set && now - s_seen > 3000) s_set = false;
     const uint64_t own = camera::bodyId();
     const float s = o.worldScale;
-    // Head forward on the ground; the world's up is the camera's up axis (hu has the head's tilt).
-    float fx = -hb.x, fz = -hb.z;
-    const float fl = std::sqrt(fx * fx + fz * fz);
-    if (fl < 0.2f) fx = s_set ? s_fwd[0] : 0, fz = s_set ? s_fwd[1] : -1;
-    else fx /= fl, fz /= fl;
-    const float dx = hp.x - s_head[0], dz = hp.z - s_head[2], walked = std::sqrt(dx * dx + dz * dz);
-    if (!s_set || walked > 1.0f * s) {
-        // Viewer's right on the ground from the head's own right axis, so + Horizontal is always to your right.
-        float rx = hr.x, rz = hr.z;
-        const float rl = std::sqrt(rx * rx + rz * rz);
-        if (rl < 0.2f) rx = -fz, rz = fx;
-        else rx /= rl, rz /= rl;
-        if (s_logs < 20) {
-            ++s_logs;
-            LOG("Skill bar: placed in the world (%s, walked %.2f m)", s_set ? "walked away" : "new", walked / s);
-        }
-        s_set = true;
-        s_fwd[0] = fx;
-        s_fwd[1] = fz;
-        s_right[0] = rx;
-        s_right[1] = rz;
-        s_head[0] = hp.x;
-        s_head[1] = hp.y;
-        s_head[2] = hp.z;
-    }
-    const float* at = o.skillOwnPos;
-    const float s_pos[3] = {s_head[0] + (s_fwd[0] * at[2] + s_right[0] * at[0]) * s, s_head[1] + at[1] * s,
-                            s_head[2] + (s_fwd[1] * at[2] + s_right[1] * at[0]) * s};
+    holdOwn(s_anchor, hp, hr, hb, s, now, "Skill bar");
+    const camera::Vec3 spot = ownSpot(s_anchor, o.skillOwnPos, s);
+    const float s_pos[3] = {spot.x, spot.y, spot.z};
     s_seen = now;
     // Faces you (billboard on the vertical axis).
     camera::Vec3 right{}, up{0, 1, 0};

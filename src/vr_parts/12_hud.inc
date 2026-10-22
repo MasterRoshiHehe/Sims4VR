@@ -430,17 +430,24 @@ static void startNoteDrag(int hand, bool laser, const XrVector3f& held) {
     LOG("Notification card: moving it (%s, %s hand)", laser ? "laser" : "hand", hand ? "right" : "left");
 }
 
+// The card in front of you is kept in the world (holdAnchor): the head and facing it is placed from.
+static WorldAnchor g_noteAnchor;
+static XrVector3f g_noteEye{}, g_noteFlat{0, 0, -1};
+static bool g_noteAnchored = false;
+
 static void endNoteDrag(const XrPosef& head, bool headOk) {
     if (g_noteDrag.hand < 0) return;
     buzz(g_noteDrag.hand, 0.25f, 0.02f);
     g_noteDrag.hand = -1;
     g_noteDragEnded = GetTickCount64();
-    if (!headOk) return;
+    if (!headOk && !g_noteAnchored) return;
     XrVector3f f = rotate3(head.orientation, {0, 0, -1});
     f.y = 0;
     f = dot3(f, f) > 1e-4f ? normalize3(f) : XrVector3f{0, 0, -1};
+    XrVector3f from = head.position;
+    if (g_noteAnchored) f = g_noteFlat, from = g_noteEye;  // relative to where the card is anchored
     const XrVector3f r = cross3(f, XrVector3f{0, 1, 0});
-    const XrVector3f delta = sub3(sub3(g_noteDrag.held, g_noteDrag.offset), head.position);
+    const XrVector3f delta = sub3(sub3(g_noteDrag.held, g_noteDrag.offset), from);
     const float place[3] = {dot3(delta, r), delta.y, std::max(0.25f, dot3(delta, f))};
     settings::setNotePlacement(place);
 }
@@ -460,6 +467,7 @@ static void updateNoteCard(const camera::View& view, bool firstPerson, bool head
     const float used = hud::noteHeight();
     if (!n.id || !firstPerson || !headOk || !(used > 0)) {
         g_noteCardFront = false;
+        g_noteAnchored = false;
         g_noteDrag.hand = -1;
         hideHud(s);
         std::lock_guard<std::mutex> lock(g_armPlaceMutex);
@@ -473,6 +481,11 @@ static void updateNoteCard(const camera::View& view, bool firstPerson, bool head
         XrVector3f look = rotate3(head.orientation, {0, 0, -1});
         XrVector3f flat = normalize3({look.x, 0, look.z});
         if (!(dot3(flat, flat) > 0.5f)) flat = {0, 0, -1};
+        static uint64_t lastId = 0;
+        XrVector3f aEye;
+        holdAnchor(g_noteAnchor, view, eye, flat, n.id != lastId, "Notification card", aEye, flat);
+        lastId = n.id;
+        g_noteEye = aEye, g_noteFlat = flat, g_noteAnchored = true;
         const XrVector3f right = cross3(flat, XrVector3f{0, 1, 0});
         // Where you put it (right, up, forward of your head facing level), else 0.75 m ahead, a little low.
         float place[3] = {0, -0.12f, 0.75f};
@@ -480,8 +493,8 @@ static void updateNoteCard(const camera::View& view, bool firstPerson, bool head
         if (g_noteDrag.hand >= 0)
             at = sub3(g_noteDrag.held, g_noteDrag.offset);
         else
-            at = {eye.x + right.x * place[0] + flat.x * place[2], eye.y + place[1],
-                  eye.z + right.z * place[0] + flat.z * place[2]};
+            at = {aEye.x + right.x * place[0] + flat.x * place[2], aEye.y + place[1],
+                  aEye.z + right.z * place[0] + flat.z * place[2]};
         w = 0.42f;
     } else {
         XrVector3f headAt = worldToApp(view, n.at, false);
@@ -495,7 +508,7 @@ static void updateNoteCard(const camera::View& view, bool firstPerson, bool head
     g_noteCardFront = n.front;
     g_noteCardAt = at, g_noteCardX = x, g_noteCardY = y;
     g_noteCardW = w, g_noteCardH = w * used / hud::kNote.w;
-    if (!n.front) g_noteDrag.hand = -1;
+    if (!n.front) g_noteDrag.hand = -1, g_noteAnchored = false;
     s.onTop = true;
     placeHud(s, at, x, y, w, {hud::kNote.x, hud::kNote.y, hud::kNote.w, used});
     // Over a Sim: its world position, lifted; in front of you: app space (render thread, placeArmPieces).
@@ -556,7 +569,17 @@ static void updateTip() {
 static void updateHud(const armik::Hand hands[2], bool firstPerson, bool headOk, const XrPosef& head) {
     g_hudInput = hud::Frame{};
     camera::View view;
-    const bool viewOk = camera::lastView(view);
+    // The camera held through a missed frame too (no flicker).
+    static camera::View lastView;
+    static ULONGLONG lastViewAt = 0;
+    bool viewOk = camera::lastView(view);
+    if (viewOk) {
+        lastView = view;
+        lastViewAt = GetTickCount64();
+    } else if (lastViewAt && GetTickCount64() - lastViewAt <= 300) {
+        view = lastView;
+        viewOk = true;
+    }
     if (viewOk)
         updateNoteCard(view, firstPerson, headOk, head);
     else
@@ -623,47 +646,42 @@ static void updateHud(const armik::Hand hands[2], bool firstPerson, bool headOk,
         // Drawn over the world: tested against its depth, ceilings and walls
         // near you cut it up or hid it (user 18:44Z).
         wants.onTop = true;
-        static XrVector3f dir{0, 0, -1};
-        if (!wants.m.active)
-            dir = flat;
-        else if (dot3(dir, flat) < std::cos(40 * 0.0174533f))
-            dir = normalize3({dir.x + (flat.x - dir.x) * 0.05f, 0, dir.z + (flat.z - dir.z) * 0.05f});
-        if (c.wristWhims && !asleep && hud::hasItems(hud::kWantItems))
-            aroundYou(wants, eye, dir, eye, c.wristWhimsPos, c.wristWhimsTurn, c.wristWhimsSize, hud::kWants);
-        else
+        // Kept in the world (holdAnchor), not turning with you.
+        static WorldAnchor anchor;
+        if (c.wristWhims && !asleep && hud::hasItems(hud::kWantItems)) {
+            XrVector3f aEye, dir;
+            holdAnchor(anchor, view, eye, flat, !wants.m.active, "Wants", aEye, dir);
+            aroundYou(wants, aEye, dir, eye, c.wristWhimsPos, c.wristWhimsTurn, c.wristWhimsSize, hud::kWants);
+        } else
             hideHud(wants);
     }
 
-    // The money gained or lost, in front of you a little up and right, turning
-    // with you lazily; over the world.
+    // The money gained or lost, in front of you a little up and right, kept in
+    // the world (holdAnchor); over the world.
     {
         HudSheet& money = g_hud[kHudMoney];
         money.onTop = true;
-        static XrVector3f dir{0, 0, -1};
-        if (!money.m.active)
-            dir = flat;
-        else if (dot3(dir, flat) < std::cos(35 * 0.0174533f))
-            dir = normalize3({dir.x + (flat.x - dir.x) * 0.06f, 0, dir.z + (flat.z - dir.z) * 0.06f});
-        if (c.wristMoney && !asleep && hud::moneyShowing())
-            aroundYou(money, eye, dir, eye, c.wristMoneyPos, c.wristMoneyTurn, c.wristMoneySize, hud::kMoney);
-        else
+        static WorldAnchor anchor;
+        if (c.wristMoney && !asleep && hud::moneyShowing()) {
+            XrVector3f aEye, dir;
+            holdAnchor(anchor, view, eye, flat, !money.m.active, "Money", aEye, dir);
+            aroundYou(money, aEye, dir, eye, c.wristMoneyPos, c.wristMoneyTurn, c.wristMoneySize, hud::kMoney);
+        } else
             hideHud(money);
     }
 
     // The pause symbol, 30 cm under where popups show in front of you (under
-    // the popup itself while one is there), turning with you lazily. Not
+    // the popup itself while one is there), kept in the world. Not
     // pointable: it only shows that the game is paused.
     {
         HudSheet& pause = g_hud[kHudPause];
         pause.onTop = true;
-        static XrVector3f dir{0, 0, -1};
-        if (!pause.m.active)
-            dir = flat;
-        else if (dot3(dir, flat) < std::cos(30 * 0.0174533f))
-            dir = normalize3({dir.x + (flat.x - dir.x) * 0.06f, 0, dir.z + (flat.z - dir.z) * 0.06f});
+        static WorldAnchor anchor;
         if (c.wristPause && g_paused.load() && !asleep) {
+            XrVector3f aEye, dir;
+            holdAnchor(anchor, view, eye, flat, !pause.m.active, "Pause symbol", aEye, dir);
             float distance = std::max(0.3f, c.popupDistance);
-            XrVector3f at{eye.x + dir.x * distance, eye.y - 0.08f, eye.z + dir.z * distance};
+            XrVector3f at{aEye.x + dir.x * distance, aEye.y - 0.08f, aEye.z + dir.z * distance};
             int kind;
             {
                 std::lock_guard<std::mutex> lock(g_objMenuMutex);

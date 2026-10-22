@@ -386,7 +386,10 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
         XrSpaceLocation head{XR_TYPE_SPACE_LOCATION};
         bool headOk = XR_SUCCEEDED(xrLocateSpace(g_viewSpace, g_appSpace, time, &head)) &&
                       (head.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT);
-        updateObjectMenu(mode() == Mode::Stereo && camera::bodyActive(), headOk, head.pose);
+        static HeadHold hold;
+        XrPosef pose;
+        headOk = steadyHead(hold, headOk, head.pose, pose);
+        updateObjectMenu(mode() == Mode::Stereo && steadyBody(), headOk, pose);
     }
     updateSims1Screen(mode() == Mode::Stereo && camera::bodyActive());
     // The menus on your left wrist (first person, while no pie menu is open).
@@ -404,11 +407,14 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
     // Pieces of the UI on your arms and around you (first person).
     {
         XrSpaceLocation head{XR_TYPE_SPACE_LOCATION};
-        bool firstPerson = mode() == Mode::Stereo && camera::bodyActive();
+        bool firstPerson = mode() == Mode::Stereo && steadyBody();
         bool hudMode = g_config.uiFirstPerson == 1 || g_config.uiFirstPerson == 3;  // our HUD: "Wrist" or "Both"
         bool headOk = firstPerson && XR_SUCCEEDED(xrLocateSpace(g_viewSpace, g_appSpace, time, &head)) &&
                       (head.locationFlags & located) == located;
-        updateHud(hands, firstPerson && hudMode, headOk, head.pose);
+        static HeadHold hold;
+        XrPosef pose;
+        headOk = firstPerson && steadyHead(hold, headOk, head.pose, pose);
+        updateHud(hands, firstPerson && hudMode, headOk, pose);
         // The game's blue modal dimming never shows in first person: nodim takes it
         // out of the UI; the dialogs drawn over it keep everything but bare dimming.
         int boxes[3][4];

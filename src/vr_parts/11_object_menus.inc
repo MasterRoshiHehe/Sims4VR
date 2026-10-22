@@ -71,6 +71,79 @@ static XrVector3f worldToApp(const camera::View& view, const float* w, bool dire
     return {r.x * k, r.y * k, r.z * k};
 }
 
+// A head pose that survives a missed frame: the last good one for up to 300 ms (a one-frame miss
+// used to hide every card for that frame: flicker).
+struct HeadHold {
+    XrPosef pose{};
+    ULONGLONG at = 0;
+};
+static bool steadyHead(HeadHold& h, bool ok, const XrPosef& head, XrPosef& out) {
+    const ULONGLONG now = GetTickCount64();
+    if (ok) {
+        h.pose = head;
+        h.at = now;
+        out = head;
+        return true;
+    }
+    if (!h.at || now - h.at > 300) return false;
+    out = h.pose;
+    return true;
+}
+
+// First person held through a frame where the body isn't read (same reason).
+static bool steadyBody() {
+    static ULONGLONG lastOn = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (camera::bodyActive()) {
+        lastOn = now;
+        return true;
+    }
+    return lastOn && now - lastOn <= 300;
+}
+
+// A card's place kept in the world (user 2026-10-22, the skill bar): where your head was and which way it
+// faced when the card was placed. Head turns never move it; it is placed again after a 1 m walk, when
+// `reset` (a new card), or once unused for 3 s. Gives that head and facing in app space for this frame,
+// so the card's own offsets (menu rows) still apply live.
+struct WorldAnchor {
+    bool set = false;
+    float head[3]{}, flat[3]{};
+    ULONGLONG seen = 0;
+};
+static void holdAnchor(WorldAnchor& a, const camera::View& view, const XrVector3f& eye, const XrVector3f& flat, bool reset,
+                       const char* what, XrVector3f& outEye, XrVector3f& outFlat) {
+    const ULONGLONG now = GetTickCount64();
+    if (a.set && now - a.seen > 3000) a.set = false;
+    float walked = 0;
+    if (a.set) {
+        const XrVector3f was = worldToApp(view, a.head, false);
+        walked = std::sqrt((eye.x - was.x) * (eye.x - was.x) + (eye.z - was.z) * (eye.z - was.z));
+    }
+    if (!a.set || reset || walked > 1.0f) {
+        static int logged = 0;
+        if (logged < 40) {
+            ++logged;
+            LOG("%s: placed in the world (%s, walked %.2f m)", what, !a.set ? "new" : reset ? "new card" : "walked away", walked);
+        }
+        const float scale = view.scale > 0 ? view.scale : 1.0f;
+        const XrQuaternionf heading{view.heading.x, view.heading.y, view.heading.z, view.heading.w};
+        const XrVector3f w = rotate3(heading, {eye.x * scale, eye.y * scale, eye.z * scale});
+        const XrVector3f f = rotate3(heading, flat);
+        a.head[0] = view.anchor.x + w.x;
+        a.head[1] = view.anchor.y + w.y;
+        a.head[2] = view.anchor.z + w.z;
+        a.flat[0] = f.x;
+        a.flat[1] = f.y;
+        a.flat[2] = f.z;
+        a.set = true;
+    }
+    a.seen = now;
+    outEye = worldToApp(view, a.head, false);
+    XrVector3f f = worldToApp(view, a.flat, true);
+    f.y = 0;
+    outFlat = dot3(f, f) > 1e-4f ? normalize3(f) : flat;
+}
+
 // ---------------------------------------------------------------------------
 // Your own pie menu (first person, user 2026-10-17 13:44Z): poke your stomach
 // with the grip held (the trigger too or not), or point the laser (grip + A /
@@ -487,35 +560,13 @@ static bool updatePopupCard(const ObjectMenuRequest& r, bool firstPerson, bool h
         float h = w / std::max(aspect, 0.2f);
         at = {sim.x + right.x * (0.20f + w / 2), sim.y + h / 2 - 0.10f, sim.z + right.z * (0.20f + w / 2)};
     } else {
-        // In front of you, a little below your eyes, fixed in the world; put
-        // in front of you again once you have turned or walked away from it.
-        static float world[3] = {};
-        static ULONGLONG outSince = 0;
-        float distance = std::max(0.3f, g_config.popupDistance);
-        if (!g_popupPlace) {
-            XrVector3f was = worldToApp(view, world, false);
-            XrVector3f to{was.x - eye.x, 0, was.z - eye.z};
-            float gap = std::sqrt(dot3(to, to));
-            bool out = gap > distance + 1.5f || gap < 0.2f ||
-                       (gap > 0.01f && dot3(normalize3(to), flat) < std::cos(55 * 0.0174533f));
-            if (!out)
-                outSince = 0;
-            else if (!outSince)
-                outSince = now;
-            else if (now - outSince > 800)
-                g_popupPlace = true;
-        }
-        if (g_popupPlace) {
-            g_popupPlace = false;
-            outSince = 0;
-            XrVector3f a{eye.x + flat.x * distance, eye.y - 0.08f, eye.z + flat.z * distance};
-            XrQuaternionf heading{view.heading.x, view.heading.y, view.heading.z, view.heading.w};
-            XrVector3f wa = rotate3(heading, {a.x * scale, a.y * scale, a.z * scale});
-            world[0] = view.anchor.x + wa.x;
-            world[1] = view.anchor.y + wa.y;
-            world[2] = view.anchor.z + wa.z;
-        }
-        at = worldToApp(view, world, false);
+        // In front of you, a little below your eyes, kept in the world (holdAnchor): head turns don't move it.
+        static WorldAnchor anchor;
+        const float distance = std::max(0.3f, g_config.popupDistance);
+        XrVector3f aEye, aFlat;
+        holdAnchor(anchor, view, eye, flat, g_popupPlace, "Popup card", aEye, aFlat);
+        g_popupPlace = false;
+        at = {aEye.x + aFlat.x * distance, aEye.y - 0.08f, aEye.z + aFlat.z * distance};
         XrVector3f to{at.x - eye.x, at.y - eye.y, at.z - eye.z};
         w = std::max(0.15f, g_config.popupSize * std::sqrt(dot3(to, to)));
         onTop = true;
