@@ -177,12 +177,13 @@ void hookedUpdater(void* manager) {
     g_updater(manager);
     if (!manager) return;
     const bool wanted = g_wanted.load(std::memory_order_relaxed);
-    bool front, hideOwn, hideNpc;
+    bool front, hideOwn, hideNpc, cutOthers;
     {
         std::lock_guard<std::mutex> lock(g_optionMutex);
         front = g_options.bubbleOwnFront;
         hideOwn = g_options.bubbleHideOwn;
         hideNpc = g_options.bubbleHideNpc;
+        cutOthers = g_options.bubbleCutOthers;
     }
     const uint64_t own = camera::bodyId();
     const bool ownBalloons = g_ownBalloons.load(std::memory_order_relaxed) && camera::bodyActive();
@@ -288,6 +289,9 @@ void hookedUpdater(void* manager) {
                 anchors[anchorCount++] = {object, {p[0], p[1], p[2]}};
             continue;
         }
+        // Skill bars, stat flyaways and nameplates are still cut out of the game's UI (until they are drawn by us);
+        // that cut leaves stray boxes and square holes in menus, so it is off unless [bubbles] cut_others = 1.
+        if (type != kBalloon && !cutOthers) continue;
         if (!slots) {
             rec[kRecOccluded] = 1;  // the game hides it behind walls again
             continue;

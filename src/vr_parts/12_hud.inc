@@ -152,6 +152,11 @@ static ArmPlace g_armPlace[16];
 struct AppPlace {
     bool on = false;
     XrVector3f at{}, x{}, y{};
+    // A card over a Sim's head: its world position (game units) and how far above it (metres), put in the
+    // world again with the camera of the frame drawn; the app-space `at` of one frame's view would sit
+    // differently in each eye while you walk (user 2026-10-22: the notification card jittered).
+    bool world = false;
+    float wpos[3]{}, lift = 0;
 };
 static AppPlace g_appPlace[16];  // g_armPlaceMutex
 
@@ -210,8 +215,12 @@ static void placeArmPieces(phone3d::Panel* pieces, int count) {
         XrVector3f c, x, y;
         if (apps[p.tag].on) {
             const AppPlace& a = apps[p.tag];
-            c = rotate3(heading, {a.at.x * metres, a.at.y * metres, a.at.z * metres});
-            c = {view.anchor.x + c.x, view.anchor.y + c.y, view.anchor.z + c.z};
+            if (a.world) {
+                c = {a.wpos[0], a.wpos[1] + a.lift * metres, a.wpos[2]};
+            } else {
+                c = rotate3(heading, {a.at.x * metres, a.at.y * metres, a.at.z * metres});
+                c = {view.anchor.x + c.x, view.anchor.y + c.y, view.anchor.z + c.z};
+            }
             x = rotate3(heading, a.x);
             y = rotate3(heading, a.y);
         } else if (!places[p.tag].on || !armSheetWorld(places[p.tag], metres, c, x, y)) {
@@ -453,6 +462,8 @@ static void updateNoteCard(const camera::View& view, bool firstPerson, bool head
         g_noteCardFront = false;
         g_noteDrag.hand = -1;
         hideHud(s);
+        std::lock_guard<std::mutex> lock(g_armPlaceMutex);
+        g_appPlace[kHudNote].on = false;
         return;
     }
     const XrVector3f eye = head.position;
@@ -487,6 +498,15 @@ static void updateNoteCard(const camera::View& view, bool firstPerson, bool head
     if (!n.front) g_noteDrag.hand = -1;
     s.onTop = true;
     placeHud(s, at, x, y, w, {hud::kNote.x, hud::kNote.y, hud::kNote.w, used});
+    // Over a Sim: its world position, lifted; in front of you: app space (render thread, placeArmPieces).
+    std::lock_guard<std::mutex> lock(g_armPlaceMutex);
+    AppPlace& place = g_appPlace[kHudNote];
+    place = {true, at, x, y};
+    if (!n.front) {
+        place.world = true;
+        std::copy(n.at, n.at + 3, place.wpos);
+        place.lift = 0.28f + w * used / hud::kNote.w / 2;
+    }
 }
 
 // All but the popup, picker and notification cards (they show whatever the HUD setting).
