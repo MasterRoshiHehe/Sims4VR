@@ -350,7 +350,9 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
             openPie(head.pose.position);
         g_lastWorldClick.valid = false;
     }
-    if (g_pie.active && (!firstPerson || !g_uiFrame)) closePie("left first person");
+    if (g_pie.active && (!(mode() == Mode::Stereo && steadyBody() && g_config.pieAtHand) || !g_uiFrame))
+        closePie("left first person");
+    trimPie();
     if (g_pie.active && now - g_pie.opened > 120000) closePie("timed out");
     static bool escapeWas = false;
     if (menuButton && !escapeWas) closePie("escape");

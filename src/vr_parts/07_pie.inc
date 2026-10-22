@@ -93,6 +93,9 @@ static int pieNearPixels() {
     return static_cast<int>(kPieNearMiss * g_pie.cw / g_pie.width + 0.5f);
 }
 
+// The UI part the pie was opened on (x0, y0, w, h) and the pie's centre in it (the click), in UI pixels.
+static int32_t g_pieFull[4] = {}, g_pieCentre[2] = {};
+
 // Opens the pie quad for the last world click, seen from your head.
 static bool openPie(const XrVector3f& head) {
     const WorldClick& click = g_lastWorldClick;
@@ -101,7 +104,9 @@ static bool openPie(const XrVector3f& head) {
     g_uiFrame->GetDesc(&ui);
     int32_t W = static_cast<int32_t>(ui.Width), H = static_cast<int32_t>(ui.Height);
     int32_t cw = std::min(W, static_cast<int32_t>(H * g_config.pieCrop));
-    int32_t ch = std::min(H, cw * 2 / 3);
+    // PieMenuBase: the nubs sit at most 140 stage px above/below the centre (re/liveui/components/PieMenu.md),
+    // plus a button's height: about a quarter of the stage's height in all; trimPie fits the rest to what is drawn.
+    int32_t ch = std::min(H, std::min(cw * 2 / 3, H * 30 / 100));
     if (cw < 16 || ch < 16) return false;
     int32_t x0 = static_cast<int32_t>(click.u * W) - cw / 2, y0 = static_cast<int32_t>(click.v * H) - ch / 2;
     x0 = std::max(0, std::min(W - cw, x0));
@@ -131,11 +136,120 @@ static bool openPie(const XrVector3f& head) {
     g_pie.uiW = ui.Width;
     g_pie.uiH = ui.Height;
     g_pie.opened = GetTickCount64();
+    g_pieFull[0] = x0, g_pieFull[1] = y0, g_pieFull[2] = cw, g_pieFull[3] = ch;
+    g_pieCentre[0] = std::max(0, std::min(W - 1, static_cast<int32_t>(click.u * W)));
+    g_pieCentre[1] = std::max(0, std::min(H - 1, static_cast<int32_t>(click.v * H)));
     static int logged = 0;
     if (logged++ < 20)
         LOG("Pie menu at hand: opened %.2f m away (click %.0f m away), UI %dx%d at %d,%d of %dx%d", d, distance, cw,
             ch, x0, y0, W, H);
     return true;
+}
+
+// The pie's sheet fitted to what the game actually drew (user 2026-10-22: boxes in the screen's lower
+// corners bled into the cut): every 200 ms the opened part's alpha is read back (a frame late, no wait),
+// the opaque 8 px cells joined to the ring around the click are kept (gaps up to 2 cells, so labels stay
+// whole) and the sheet shrinks to their box, keeping its metres-per-pixel and where each pixel sits.
+static void trimPie() {
+    static ID3D11Texture2D* staging = nullptr;
+    static UINT stagingW = 0, stagingH = 0;
+    static bool pending = false;
+    static ULONGLONG lastCopy = 0;
+    static int32_t copied[4] = {};
+    if (!g_pie.active || !g_uiFrame || g_pie.tiles) {
+        pending = false;
+        return;
+    }
+    D3D11_TEXTURE2D_DESC desc;
+    g_uiFrame->GetDesc(&desc);
+    if (!alphaReadable(desc)) return;
+    ID3D11Device* device = nullptr;
+    g_uiFrame->GetDevice(&device);
+    ID3D11DeviceContext* context = nullptr;
+    device->GetImmediateContext(&context);
+    const int32_t* f = g_pieFull;
+    if (pending && staging) {
+        D3D11_MAPPED_SUBRESOURCE mapped;
+        if (SUCCEEDED(context->Map(staging, 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &mapped))) {
+            pending = false;
+            constexpr int kCell = 8;
+            const int gw = (copied[2] + kCell - 1) / kCell, gh = (copied[3] + kCell - 1) / kCell;
+            std::vector<uint8_t> cell(static_cast<size_t>(gw) * gh, 0);
+            const uint8_t* px = static_cast<const uint8_t*>(mapped.pData);
+            const uint8_t opaque = static_cast<uint8_t>(kPieOpaque * 255);
+            for (int y = 0; y < copied[3]; ++y)
+                for (int x = 0; x < copied[2]; ++x)
+                    if (px[y * mapped.RowPitch + x * 4 + 3] > opaque) cell[(y / kCell) * gw + x / kCell] = 1;
+            context->Unmap(staging, 0);
+            // Seeds: opaque cells within the ring (about 15% of the UI's height from the centre).
+            const int cx = (g_pieCentre[0] - copied[0]) / kCell, cy = (g_pieCentre[1] - copied[1]) / kCell;
+            const int ring = static_cast<int>(desc.Height * 0.15f) / kCell;
+            std::vector<int> stack;
+            for (int y = std::max(0, cy - ring); y <= std::min(gh - 1, cy + ring); ++y)
+                for (int x = std::max(0, cx - ring); x <= std::min(gw - 1, cx + ring); ++x)
+                    if (cell[y * gw + x] == 1) cell[y * gw + x] = 2, stack.push_back(y * gw + x);
+            int bx0 = gw, by0 = gh, bx1 = -1, by1 = -1;
+            while (!stack.empty()) {
+                const int i = stack.back();
+                stack.pop_back();
+                const int x = i % gw, y = i / gw;
+                bx0 = std::min(bx0, x), by0 = std::min(by0, y), bx1 = std::max(bx1, x), by1 = std::max(by1, y);
+                for (int dy = -3; dy <= 3; ++dy)
+                    for (int dx = -3; dx <= 3; ++dx) {
+                        const int nx = x + dx, ny = y + dy;
+                        if (nx < 0 || ny < 0 || nx >= gw || ny >= gh || cell[ny * gw + nx] != 1) continue;
+                        cell[ny * gw + nx] = 2;
+                        stack.push_back(ny * gw + nx);
+                    }
+            }
+            if (bx1 >= 0 && copied[0] == f[0] && copied[1] == f[1]) {
+                const int pad = 12;
+                int32_t nx0 = std::max(f[0], copied[0] + bx0 * kCell - pad), ny0 = std::max(f[1], copied[1] + by0 * kCell - pad);
+                int32_t nx1 = std::min(f[0] + f[2], copied[0] + (bx1 + 1) * kCell + pad);
+                int32_t ny1 = std::min(f[1] + f[3], copied[1] + (by1 + 1) * kCell + pad);
+                if (nx1 - nx0 >= 32 && ny1 - ny0 >= 32 &&
+                    (nx0 != g_pie.x0 || ny0 != g_pie.y0 || nx1 - nx0 != g_pie.cw || ny1 - ny0 != g_pie.ch)) {
+                    // Same metres per pixel; the sheet's centre moves with the part's centre.
+                    const float k = g_pie.width / std::max(1, g_pie.cw);
+                    const float sx = ((nx0 + nx1) * 0.5f - (g_pie.x0 + g_pie.cw * 0.5f)) * k;
+                    const float sy = ((ny0 + ny1) * 0.5f - (g_pie.y0 + g_pie.ch * 0.5f)) * k;
+                    XrVector3f& c = g_pie.pose.position;
+                    c = {c.x + g_pie.x.x * sx - g_pie.y.x * sy, c.y + g_pie.x.y * sx - g_pie.y.y * sy,
+                         c.z + g_pie.x.z * sx - g_pie.y.z * sy};
+                    g_pie.x0 = nx0, g_pie.y0 = ny0, g_pie.cw = nx1 - nx0, g_pie.ch = ny1 - ny0;
+                    g_pie.width = g_pie.cw * k;
+                    g_pie.height = g_pie.ch * k;
+                    static int logged = 0;
+                    if (logged++ < 20) LOG("Pie menu at hand: fitted to what is drawn, UI %dx%d at %d,%d", g_pie.cw, g_pie.ch, nx0, ny0);
+                }
+            }
+        }
+    }
+    const ULONGLONG now = GetTickCount64();
+    if (!pending && now - lastCopy >= 200 && f[2] > 0 && f[3] > 0) {
+        if (!staging || stagingW != static_cast<UINT>(f[2]) || stagingH != static_cast<UINT>(f[3]) ) {
+            if (staging) staging->Release(), staging = nullptr;
+            D3D11_TEXTURE2D_DESC sd{};
+            sd.Width = stagingW = static_cast<UINT>(f[2]);
+            sd.Height = stagingH = static_cast<UINT>(f[3]);
+            sd.MipLevels = sd.ArraySize = 1;
+            sd.Format = desc.Format;
+            sd.SampleDesc.Count = 1;
+            sd.Usage = D3D11_USAGE_STAGING;
+            sd.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+            device->CreateTexture2D(&sd, nullptr, &staging);
+        }
+        if (staging) {
+            D3D11_BOX box{static_cast<UINT>(f[0]), static_cast<UINT>(f[1]), 0, static_cast<UINT>(f[0] + f[2]),
+                          static_cast<UINT>(f[1] + f[3]), 1};
+            context->CopySubresourceRegion(staging, 0, 0, 0, 0, g_uiFrame, 0, &box);
+            std::copy(f, f + 4, copied);
+            pending = true;
+            lastCopy = now;
+        }
+    }
+    context->Release();
+    device->Release();
 }
 
 // A point in a sheet's frame: x right, y up, z toward you (metres).
