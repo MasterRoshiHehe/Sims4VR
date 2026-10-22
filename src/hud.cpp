@@ -180,6 +180,13 @@ struct Balloon {
     ULONGLONG start, until;
 };
 std::vector<Balloon> g_balloons;  // (g_itemMutex)
+struct Bar {
+    uint64_t sim, icon;
+    double start, end, current, rate;
+    int level, maxLevel, slot;
+    ULONGLONG at, until;
+};
+std::vector<Bar> g_bars;  // (g_itemMutex)
 std::vector<uint64_t> g_noteIcons;  // their pictures (g_itemMutex)
 bool g_phoneNotesOpen = false;  // the phone shows the notification list (present thread)
 int g_notesScroll = 0;
@@ -2080,6 +2087,34 @@ void drawBalloons() {
     }
 }
 
+// The skill bar (ActionHeadline's SkillBar.as): the dark pill with the level's progress filling it from the
+// bottom in green under the glass outline, and the skill's icon on a glass disc beside it. Element units x2.
+void drawSkillBars() {
+    std::vector<Bar> list;
+    {
+        const ULONGLONG now = GetTickCount64();
+        std::lock_guard<std::mutex> lock(g_itemMutex);
+        for (const Bar& b : g_bars)
+            if (b.until >= now) list.push_back(b);
+    }
+    ImDrawList* d = ImGui::GetBackgroundDrawList();
+    const ULONGLONG now = GetTickCount64();
+    for (const Bar& b : list) {
+        const float x = kBars.x + b.slot * kBarSlot, y = kBars.y;
+        const float k = 2.0f;
+        double points = b.current + (b.rate > 0 ? b.rate / 60.0 * (now - b.at) / 1000.0 : 0.0);
+        double progress = b.level >= b.maxLevel ? 1.0 : (points - b.start) / (b.end - b.start);
+        progress = std::max(0.0, std::min(1.0, progress));
+        pieceIn(d, art::kBarTrack, {x, y + 2 * k}, {x + 32 * k, y + 110 * k});
+        const float fillH = static_cast<float>(progress) * 98 * k, top = y + (5 + 98) * k + 2 * k - fillH;
+        if (fillH > 0.5f) pieceIn(d, art::kBarFill, {x + 6 * k, top}, {x + 26 * k, y + (5 + 98) * k + 2 * k});
+        pieceIn(d, art::kBarGlass, {x + 6 * k, y + 7 * k}, {x + 26 * k, y + 105 * k});
+        const ImVec2 c{x + 74 * k, y + 56 * k};
+        piece(d, art::kBarDisc, c, (69.0f * k) / art::kBarDisc.w);
+        icon(d, b.icon, c, 44 * k);
+    }
+}
+
 Action drawBuild() {
     ImDrawList* d = ImGui::GetBackgroundDrawList();
     const Rect r = kBuild;
@@ -2134,6 +2169,51 @@ bool balloonActive(uint64_t sim) {
     const ULONGLONG now = GetTickCount64();
     std::lock_guard<std::mutex> lock(g_itemMutex);
     for (const Balloon& b : g_balloons)
+        if (b.sim == sim && b.until >= now) return true;
+    return false;
+}
+
+void setSkillBar(uint64_t sim, uint64_t icon, double start, double end, double current, double rate, int level, int maxLevel, bool hide) {
+    const ULONGLONG now = GetTickCount64();
+    std::lock_guard<std::mutex> lock(g_itemMutex);
+    g_bars.erase(std::remove_if(g_bars.begin(), g_bars.end(), [&](const Bar& b) { return b.until < now || (hide && b.sim == sim); }),
+                 g_bars.end());
+    if (hide || !(end > start)) return;
+    // SkillBar.as: a growing skill keeps its bar (fresh updates keep coming), a still one hides after
+    // SKILL_BAR_HIDE_DELAY (2 s).
+    Bar n{sim, icon, start, end, current, rate, level, maxLevel, -1, now, now + (rate > 0 ? 60000 : 2300)};
+    for (Bar& b : g_bars) {
+        if (b.sim != sim) continue;
+        n.slot = b.slot;
+        b = n;
+        return;
+    }
+    bool used[kBarSlots] = {};
+    for (const Bar& b : g_bars) used[b.slot] = true;
+    for (int i = 0; i < kBarSlots && n.slot < 0; ++i)
+        if (!used[i]) n.slot = i;
+    if (n.slot < 0) return;
+    g_bars.push_back(n);
+    static int logged = 0;
+    if (logged++ < 12)
+        LOG("Skill bar: Sim %llu skill icon %llx level %d/%d points %.0f of %.0f..%.0f rate %.2f (slot %d)", static_cast<unsigned long long>(sim),
+            static_cast<unsigned long long>(icon), level, maxLevel, current, start, end, rate, n.slot);
+}
+
+int activeBars(BarInfo* out, int max) {
+    const ULONGLONG now = GetTickCount64();
+    std::lock_guard<std::mutex> lock(g_itemMutex);
+    g_bars.erase(std::remove_if(g_bars.begin(), g_bars.end(), [&](const Bar& b) { return b.until < now; }), g_bars.end());
+    int n = 0;
+    for (const Bar& b : g_bars)
+        if (n < max) out[n++] = {b.sim, b.slot};
+    return n;
+}
+
+bool barActive(uint64_t sim) {
+    const ULONGLONG now = GetTickCount64();
+    std::lock_guard<std::mutex> lock(g_itemMutex);
+    for (const Bar& b : g_bars)
         if (b.sim == sim && b.until >= now) return true;
     return false;
 }
@@ -2251,6 +2331,7 @@ int missingIcons(uint64_t* out, int max) {
     for (uint64_t id : g_phoneIcons) want(id);
     for (uint64_t id : g_noteIcons) want(id);
     for (const Balloon& b : g_balloons) want(b.picture), want(b.overlay), want(b.category);
+    for (const Bar& b : g_bars) want(b.icon);
     return n;
 }
 
@@ -2610,6 +2691,7 @@ Action render(ID3D11Device* device, ID3D11DeviceContext* context, const Frame& f
     if (f.wants) take(drawWants(items[kWantItems], counts[kWantItems], index));
     if (f.money) drawMoney();
     if (f.balloons) drawBalloons();
+    if (f.bars) drawSkillBars();
     {
         Tip tip;
         bool have = false;

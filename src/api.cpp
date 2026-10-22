@@ -298,6 +298,11 @@ S4VR_API void s4vr_hud_balloon(unsigned long long sim, unsigned long long pictur
                                unsigned long long category, int type, int priority, int durationMs) {
     s4vr::hud::addBalloon(sim, picture, overlay, category, type, priority, durationMs);
 }
+// A skill bar update (scripted.py SkillProgressUpdate; hud::setSkillBar).
+S4VR_API void s4vr_hud_skillbar(unsigned long long sim, unsigned long long icon, double start, double end, double current,
+                                double rate, int level, int maxLevel, int hide) {
+    s4vr::hud::setSkillBar(sim, icon, start, end, current, rate, level, maxLevel, hide != 0);
+}
 S4VR_API void s4vr_hud_icon(unsigned long long instance, const char* data, int size) {
     s4vr::hud::setIcon(instance, reinterpret_cast<const uint8_t*>(data), size > 0 ? static_cast<size_t>(size) : 0);
 }

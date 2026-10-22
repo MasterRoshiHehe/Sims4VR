@@ -52,6 +52,8 @@ void s4vr_hud_items(int kind, const char* data, int size);
 void s4vr_hud_icon(unsigned long long instance, const char* data, int size);
 void s4vr_hud_balloon(unsigned long long sim, unsigned long long picture, unsigned long long overlay,
                       unsigned long long category, int type, int priority, int durationMs);
+void s4vr_hud_skillbar(unsigned long long sim, unsigned long long icon, double start, double end, double current,
+                       double rate, int level, int maxLevel, int hide);
 void s4vr_popup_content(const char* data, int size);
 void s4vr_picker_content(const char* data, int size);
 void s4vr_phone_content(const char* data, int size);
@@ -345,6 +347,14 @@ PyObject* hudBalloon(PyObject*, PyObject* args) {
     int type = 0, priority = 0, duration = 0;
     if (!py.PyArg_ParseTuple(args, "KKKKiii", &sim, &picture, &overlay, &category, &type, &priority, &duration)) return nullptr;
     s4vr_hud_balloon(sim, picture, overlay, category, type, priority, duration);
+    return none();
+}
+PyObject* hudSkillBar(PyObject*, PyObject* args) {
+    unsigned long long sim = 0, icon = 0;
+    double start = 0, end = 0, current = 0, rate = 0;
+    int level = 0, maxLevel = 0, hide = 0;
+    if (!py.PyArg_ParseTuple(args, "KKddddiii", &sim, &icon, &start, &end, &current, &rate, &level, &maxLevel, &hide)) return nullptr;
+    s4vr_hud_skillbar(sim, icon, start, end, current, rate, level, maxLevel, hide);
     return none();
 }
 PyObject* hudIcon(PyObject*, PyObject* args) {
@@ -775,6 +785,7 @@ PyMethodDef methods[] = {
     {"set_paused", setPaused, METH_VARARGS, "set_paused(bool): the game clock is paused"},
     {"set_clock", setClock, METH_VARARGS, "set_clock(hour, minute, day, speed): the game clock, for the HUD"},
     {"hud_items", hudItems, METH_VARARGS, "hud_items(kind, packed): needs 0 / moodlets 1 / queue 2 / wants 3, 20-byte items"},
+    {"hud_skillbar", hudSkillBar, METH_VARARGS, "hud_skillbar(sim, icon, start, end, current, rate, level, max_level, hide): a skill bar"},
     {"hud_balloon", hudBalloon, METH_VARARGS, "hud_balloon(sim, picture, overlay, category, type, priority, duration_ms): a balloon over a Sim"},
     {"hud_icon", hudIcon, METH_VARARGS, "hud_icon(instance, image_bytes): an icon the HUD asked for"},
     {"hud_texts", hudTexts, METH_VARARGS, "hud_texts(kind, bytes): tooltips of the needs 0 / moodlets 1"},

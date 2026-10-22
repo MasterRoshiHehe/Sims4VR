@@ -280,6 +280,10 @@ void hookedUpdater(void* manager) {
             ++hidden;
             continue;
         }
+        if (type == kBar && ownBalloons && mine && hud::barActive(object)) {
+            setInfo(rec, kSetVisible, 0, 0, 0, false, 0);  // drawn by us (hud.cpp drawSkillBars)
+            continue;
+        }
         if (type == kBalloon && ownBalloons && hud::balloonActive(object) && (!mine || front)) {
             // Drawn by us from the game's AddBalloon: the game's piece stays out of the way, its anchor is all we need.
             setInfo(rec, kSetVisible, 0, 0, 0, false, 0);
@@ -564,6 +568,47 @@ int balloonCards(const camera::View& view, phone3d::Panel* out, int max) {
         p.crop[1] = sy / hud::kHeight;
         p.crop[2] = (sx + hud::kBalloonW) / hud::kWidth;
         p.crop[3] = (sy + hud::kBalloonH) / hud::kHeight;
+    }
+    return written;
+}
+
+int barCards(phone3d::Panel* out, int max) {
+    hud::BarInfo info[hud::kBarSlots];
+    const int n = hud::activeBars(info, hud::kBarSlots);
+    if (!n || !g_ownBalloons.load(std::memory_order_relaxed) || !camera::bodyActive()) return 0;
+    Config o;
+    {
+        std::lock_guard<std::mutex> lock(g_optionMutex);
+        o = g_options;
+    }
+    camera::Vec3 hp{}, hr{}, hu{}, hb{};
+    if (!o.bubbleOwnFront || !camera::headInWorld(hp, hr, hu, hb)) return 0;
+    const uint64_t own = camera::bodyId();
+    const float s = o.worldScale;
+    // The slot is drawn at 2 pixels per element unit; a balloon element unit is bubbleOwnSize / kBalloonWidth.
+    const float k = o.bubbleOwnSize * s / kBalloonWidth * 0.5f;
+    int written = 0;
+    for (int i = 0; i < n && written < max; ++i) {
+        if (!own || info[i].sim != own) continue;
+        const float off = (written++) * 0.5f * hud::kBarSlot * k;  // a second bar sits beside the first
+        phone3d::Panel& p = out[written - 1];
+        p = phone3d::Panel{};
+        p.show = true;
+        p.clear = true;
+        p.opacity = 1;
+        const float x = o.skillOwnPos[0] + off / s, y = o.skillOwnPos[1], z = o.skillOwnPos[2];
+        p.centre[0] = hp.x + (hr.x * x + hu.x * y - hb.x * z) * s;
+        p.centre[1] = hp.y + (hr.y * x + hu.y * y - hb.y * z) * s;
+        p.centre[2] = hp.z + (hr.z * x + hu.z * y - hb.z * z) * s;
+        std::copy(&hr.x, &hr.x + 3, p.x);
+        std::copy(&hu.x, &hu.x + 3, p.y);
+        p.width = hud::kBarSlot * k;
+        p.height = hud::kBarSlot * k;
+        const float sx = hud::kBars.x + info[i].slot * hud::kBarSlot, sy = static_cast<float>(hud::kBars.y);
+        p.crop[0] = sx / hud::kWidth;
+        p.crop[1] = sy / hud::kHeight;
+        p.crop[2] = (sx + hud::kBarSlot) / hud::kWidth;
+        p.crop[3] = (sy + hud::kBarSlot) / hud::kHeight;
     }
     return written;
 }

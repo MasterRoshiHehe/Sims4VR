@@ -371,6 +371,14 @@ def hud_balloon(sim, picture, overlay, category, balloon_type, priority, duratio
            int(category) & 0xffffffffffffffff, int(balloon_type), int(priority), int(duration_ms))
 
 
+def hud_skillbar(sim, icon, start, end, current, rate, level, max_level, hide):
+    """A skill bar update the game sends for a Sim (scripted.py): drawn by the DLL (hud.cpp drawSkillBars)."""
+    fn = _optional('hud_skillbar')
+    if fn is not None:
+        fn(int(sim) & 0xffffffffffffffff, int(icon) & 0xffffffffffffffff, float(start), float(end), float(current),
+           float(rate), int(level), int(max_level), 1 if hide else 0)
+
+
 def hud_icon(instance, data):
     """An icon the HUD asked for: its image bytes (empty: it could not be read)."""
     fn = _optional('hud_icon')

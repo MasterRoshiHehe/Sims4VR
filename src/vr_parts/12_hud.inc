@@ -843,10 +843,13 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
     // Balloons over Sims (first person): the HUD draws them into its atlas, phone3d puts them in the world.
     {
         static bool balloonsShown = false;
-        phone3d::Panel balloons[8];
+        phone3d::Panel balloons[12];
         camera::View view;
-        const int n = camera::lastView(view) ? bubbles::balloonCards(view, balloons, 8) : 0;
+        int n = camera::lastView(view) ? bubbles::balloonCards(view, balloons, 8) : 0;
         f.balloons = n > 0;
+        const int bars = bubbles::barCards(balloons + n, 12 - n);
+        f.bars = bars > 0;
+        n += bars;
         ID3D11Texture2D* atlas = hud::texture();
         if (n > 0 && atlas) {
             phone3d::setBalloons(balloons, n, atlas);
@@ -857,7 +860,7 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
         }
     }
     if (!f.watch && !f.pause && !f.build && !f.needs && !f.moodlets && !f.queue && !f.wants && !f.popup && !f.money &&
-        !f.picker && !f.phone && !f.note && !f.balloons)
+        !f.picker && !f.phone && !f.note && !f.balloons && !f.bars)
         return;
     ID3D11Device* device = nullptr;
     ID3D11DeviceContext* context = nullptr;

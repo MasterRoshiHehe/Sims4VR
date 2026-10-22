@@ -14,7 +14,7 @@
 // eyelids). Pointer input comes back in atlas pixels; buttons return actions.
 namespace s4vr::hud {
 
-constexpr int kWidth = 1024, kHeight = 5136;  // the atlas
+constexpr int kWidth = 1024, kHeight = 5360;  // the atlas
 struct Rect {
     float x, y, w, h;
 };
@@ -34,6 +34,8 @@ constexpr Rect kPicker{0, 2560, 1024, 1024};  // a game picker on its object (th
 constexpr Rect kPhone{0, 3584, 575, 1000};
 constexpr Rect kBalloons{0, 4608, 1024, 528};  // balloon slots over Sims' heads, 4 x 2 of kBalloonW x kBalloonH
 constexpr int kBalloonW = 256, kBalloonH = 264, kBalloonSlots = 8;
+constexpr Rect kBars{0, 5136, 1024, 224};  // skill bars over Sims' heads, 4 slots of kBarSlot x kBarSlot
+constexpr int kBarSlot = 224, kBarSlots = 4;
 constexpr Rect kNote{576, 3584, 448, 360};  // a notification card over a Sim's head (notify.py)
 
 // What the buttons ask for. kCancel: the queue item `index` (render's out);
@@ -171,6 +173,18 @@ struct BalloonInfo {
 int activeBalloons(BalloonInfo* out, int max);
 bool balloonActive(uint64_t sim);
 
+// Any thread (scripted.py via native.hud_skillbar): the game sends a SkillProgressUpdate for `sim` (its
+// ActionHeadline's SkillBar): the skill's icon (resource instance), the points range of its current level,
+// the points now and how fast they grow (points / game minute); hide = the bar is suppressed (NPC, hidden skill).
+// Like SkillBar.as: with a rate the bar stays and fills on by itself; at rate 0 it hides after 2 s.
+void setSkillBar(uint64_t sim, uint64_t icon, double start, double end, double current, double rate, int level, int maxLevel, bool hide);
+struct BarInfo {
+    uint64_t sim;
+    int slot;
+};
+int activeBars(BarInfo* out, int max);
+bool barActive(uint64_t sim);
+
 struct Frame {
     // Which elements are shown (others are not drawn).
     bool watch = false, pause = false, build = false, needs = false, moodlets = false, queue = false, wants = false;
@@ -180,7 +194,8 @@ struct Frame {
     bool picker = false;     // the picker card (on its object)
     bool money = false;      // the money gained / lost
     bool phone = false;      // the game's phone menu (kPhone)
-    bool balloons = false;   // the balloons over Sims' heads (addBalloon)
+    bool balloons = false;
+    bool bars = false;       // the skill bars over Sims' heads   // the balloons over Sims' heads (addBalloon)
     uint64_t note = 0;       // the notification drawn as a card in kNote (notify.py), 0: none
     float px = -1, py = -1;  // the pointer in atlas pixels; < 0: none
     bool down = false;       // pressing

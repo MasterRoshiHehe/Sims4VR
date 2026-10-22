@@ -61,6 +61,11 @@ PIECES = [
     ('kBalloonShout', 'liveui/art/ObjectBoundElements/143__BalloonBackground_62@shout.png'),
     ('kBalloonSentiment', 'liveui/art/ObjectBoundElements/145__BalloonBackground_62@sentiment.png'),
     ('kBalloonDisc', 'liveui/art/ObjectBoundElements/150.png'),
+    # The skill bar (SkillBar.as): track pill, green fill, glass outline, the skill icon's glass disc.
+    ('kBarTrack', 'liveui/art/ObjectBoundElements/6.png'),
+    ('kBarFill', 'liveui/art/ObjectBoundElements/257.png'),
+    ('kBarGlass', 'liveui/art/ObjectBoundElements/9.png'),
+    ('kBarDisc', 'liveui/art/ObjectBoundElements/235.png'),
     ('kPortraitRing', 'liveui/art/Dialog/64.png'),
     ('kSpeechBubble', 'liveui/art/Dialog/67.png'),
     ('kYourRing', 'liveui/art/Dialog/107.png'),

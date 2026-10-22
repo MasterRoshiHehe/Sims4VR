@@ -209,7 +209,7 @@ int g_bubbleCount = 0;
 ID3D11ShaderResourceView* g_bubbleView = nullptr;
 ID3D11Texture2D* g_bubbleTexture = nullptr;  // what g_bubbleView shows (not owned)
 // Balloons drawn by us (bubbles::balloonCards): cards from the HUD atlas.
-constexpr int kMaxBalloons = 8;
+constexpr int kMaxBalloons = 12;
 Panel g_balloons[kMaxBalloons];
 int g_balloonCount = 0;
 ID3D11ShaderResourceView* g_balloonView = nullptr;

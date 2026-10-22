@@ -34,6 +34,8 @@ void setOptions(const Config& config);
 void setOwnBalloons(bool on);
 // Present thread: the cards of the balloons showing now (panels into hud::texture()); returns how many.
 int balloonCards(const camera::View& view, phone3d::Panel* out, int max);
+// Your Sim's skill bars (hud.cpp kBars slots) in front of your face, at [bubbles] own_skill_position.
+int barCards(phone3d::Panel* out, int max);
 
 // One card: where it is on the UI texture and in the world.
 struct Card {

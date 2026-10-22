@@ -730,8 +730,52 @@ def _wrap_balloon_distribute():
     hooks.hook('scripted', BalloonRequest, 'distribute', distribute)
 
 
+def _send_skill_bar(sim_info, op):
+    """A SkillProgressUpdate for your Sim, drawn by the DLL in first person (hud.cpp drawSkillBars) as
+    SkillBar.as lays it out: icon, the points range of the current level, the points now and their rate."""
+    import services
+    from sims4.resources import Types
+    msg = op.op
+    skill = services.get_instance_manager(Types.STATISTIC).get(msg.skill_id)
+    levels = skill.get_level_list() if skill is not None else None
+    if not levels:
+        return
+    value = msg.curr_points
+    start = 0
+    level = 0
+    for threshold in levels:
+        if value < start + threshold:
+            break
+        start += threshold
+        level += 1
+    maximum = len(levels)
+    end = start + (levels[level] if level < maximum else 0)
+    icon = 0
+    key = getattr(skill, 'icon', None)
+    if key is not None and getattr(key, 'instance', 0):
+        from sims4vr import hudinfo
+        hudinfo._icon_types[key.instance] = key.type
+        icon = key.instance
+    native.hud_skillbar(sim_info.id, icon, start, end, value, msg.change_rate, level, maximum, msg.hide_progress_bar)
+
+
+def _wrap_skill_bar():
+    import distributor.ops as ops
+
+    def record(original, obj, op, *args, **kwargs):
+        result = original(obj, op, *args, **kwargs)
+        try:
+            if isinstance(op, ops.SkillProgressUpdate) and hooks.in_first_person() and _first_person(obj):
+                _send_skill_bar(obj, op)
+        except Exception as e:
+            _error('skill bar send', e)
+        return result
+
+    hooks.hook('scripted', ops, 'record', record)
+
+
 for _wrap in (_wrap_should_push_consume, _wrap_pick_up_and_consume, _wrap_queue_append, _wrap_social_init,
-              _wrap_balloon_distribute):
+              _wrap_balloon_distribute, _wrap_skill_bar):
     try:
         _wrap()
     except Exception as e:
