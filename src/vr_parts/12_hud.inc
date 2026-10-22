@@ -8,7 +8,7 @@
 // the eye images). Poke with your right index finger or point the laser.
 
 enum { kHudWatch, kHudPause, kHudSleep, kHudBuild, kHudNeeds, kHudMoodlets, kHudQueue, kHudWants, kHudPopup, kHudTip, kHudMoney,
-       kHudPicker, kHudNote, kHudCount };
+       kHudPicker, kHudNote, kHudPie, kHudCount };
 struct HudSheet {
     PieMenu m;  // x0, y0, cw, ch: its part of the atlas; uiW, uiH: the atlas
     bool onTop = false;
@@ -522,11 +522,32 @@ static void updateNoteCard(const camera::View& view, bool firstPerson, bool head
     }
 }
 
+// The pie drawn by us (hud kPie) in the pie's place at your hand (openPie): as many metres per game stage
+// pixel as the game's cut had (pie_width over ~1100 stage pixels), whatever scale kPie drew it at. The pie's
+// sheet takes its size, so shoving and clicking off it work as on the cut.
+static void updatePieHud() {
+    HudSheet& s = g_hud[kHudPie];
+    if (g_pie.active && g_pie.own && hud::pieState() == 3) {
+        g_pie.own = false;  // its texts weren't found: the game's cut after all
+        LOG("Pie menu at hand: not drawable, the game's pie cut out instead");
+    }
+    if (!g_pie.active || !g_pie.own || hud::pieState() != 2) {
+        hideHud(s);
+        return;
+    }
+    const float perStage = g_config.pieWidth / 1100.0f, scale = std::max(0.2f, hud::pieScale());
+    const float w = hud::kPie.w / scale * perStage;
+    s.onTop = true;
+    placeHud(s, g_pie.pose.position, g_pie.x, g_pie.y, w, {hud::kPie.x, hud::kPie.y, hud::kPie.w, hud::kPie.h});
+    g_pie.width = s.m.width;
+    g_pie.height = s.m.height;
+}
+
 // All but the popup, picker and notification cards (they show whatever the HUD setting).
 static void hideAllHud() {
     bool any = false;
     for (int i = 0; i < kHudCount; ++i) {
-        if (i == kHudPopup || i == kHudPicker || i == kHudNote || i == kHudTip) continue;  // the tip: updateTip
+        if (i == kHudPopup || i == kHudPicker || i == kHudNote || i == kHudTip || i == kHudPie) continue;  // the tip: updateTip
         any = any || g_hud[i].m.active;
         hideHud(g_hud[i]);
     }
@@ -580,6 +601,7 @@ static void updateHud(const armik::Hand hands[2], bool firstPerson, bool headOk,
         view = lastView;
         viewOk = true;
     }
+    updatePieHud();
     if (viewOk)
         updateNoteCard(view, firstPerson, headOk, head);
     else
@@ -589,10 +611,10 @@ static void updateHud(const armik::Hand hands[2], bool firstPerson, bool headOk,
         // The popup, picker and notification cards alone (taken away again once they are gone).
         static bool alone = false;
         ID3D11Texture2D* atlas = hud::texture();
-        phone3d::Panel panels[4];
+        phone3d::Panel panels[5];
         int count = 0;
         updateTip();
-        for (int i : {kHudPopup, kHudPicker, kHudNote, kHudTip})
+        for (int i : {kHudPopup, kHudPicker, kHudNote, kHudTip, kHudPie})
             if (viewOk && atlas && g_hud[i].m.active) {
                 panels[count] = hudPanel(g_hud[i], view);
                 panels[count++].tag = i;
@@ -858,6 +880,7 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
     f.picker = hud::pickerPending();
     f.phone = g_phoneSheet.m.active;
     f.note = noteShown();
+    f.pie = g_hud[kHudPie].m.active;
     // Balloons over Sims (first person): the HUD draws them into its atlas, phone3d puts them in the world.
     {
         static bool balloonsShown = false;
@@ -878,7 +901,7 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
         }
     }
     if (!f.watch && !f.pause && !f.build && !f.needs && !f.moodlets && !f.queue && !f.wants && !f.popup && !f.money &&
-        !f.picker && !f.phone && !f.note && !f.balloons && !f.bars)
+        !f.picker && !f.phone && !f.note && !f.balloons && !f.bars && !f.pie)
         return;
     ID3D11Device* device = nullptr;
     ID3D11DeviceContext* context = nullptr;
@@ -916,6 +939,16 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
             // controls.py: 50 + n answers the popup with its n-th button.
             if (index >= 0 && index < 10) grab::pushControl(50 + index);
             LOG("HUD: popup button %d", index);
+            break;
+        case hud::kPiePick:
+            // controls.py: 5000000 + n picks the pie's n-th option (pie.select_own: interactions.select); Escape
+            // closes the game's own pie, which stays open behind ours.
+            if (index >= 0) grab::pushControl(5000000 + index);
+            LOG("HUD: pie option %d picked", index);
+            dismissPie("picked on the pie");
+            break;
+        case hud::kPieClose:
+            dismissPie("closed on the pie");
             break;
         case hud::kPick:
             // controls.py: 1000 + row * 4 + the ingredient boxes picks the picker's row.

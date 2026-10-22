@@ -161,7 +161,7 @@ int onFrame(ID3D11Texture2D* backbuffer, HWND window, bool ownMirror) {
                         scene = true;
                         // One UI layer at most: the pie at your hand, the phone, a picker on its object,
                         // the wrist menus or the panel.
-                        bool showPie = g_pie.active, showPhone = !showPie && g_phone.active,
+                        bool showPie = g_pie.active && !g_pie.own, showPhone = !showPie && g_phone.active,
                              showObject = !showPie && !showPhone && g_objMenu.active,
                              showWrist = !showPie && !showPhone && !showObject && g_wrist.active,
                              showPanel = !showPie && !showPhone && !showObject && !showWrist && frontPanelShown();

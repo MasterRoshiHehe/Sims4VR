@@ -14,7 +14,7 @@
 // eyelids). Pointer input comes back in atlas pixels; buttons return actions.
 namespace s4vr::hud {
 
-constexpr int kWidth = 1024, kHeight = 5360;  // the atlas
+constexpr int kWidth = 1024, kHeight = 6000;  // the atlas
 struct Rect {
     float x, y, w, h;
 };
@@ -37,6 +37,8 @@ constexpr int kBalloonW = 256, kBalloonH = 264, kBalloonSlots = 8;
 constexpr Rect kBars{0, 5136, 1024, 224};  // skill bars over Sims' heads, 4 slots of kBarSlot x kBarSlot
 constexpr int kBarSlot = 224, kBarSlots = 4;
 constexpr Rect kNote{576, 3584, 448, 360};  // a notification card over a Sim's head (notify.py)
+// The pie menu drawn by us (first person), centred in it; pieScale() atlas pixels per game stage pixel.
+constexpr Rect kPie{0, 5360, 1024, 640};
 
 // What the buttons ask for. kCancel: the queue item `index` (render's out);
 // kDismissWant: the want `index` (the game's X on a want: a new one comes).
@@ -46,7 +48,8 @@ constexpr Rect kNote{576, 3584, 448, 360};  // a notification card over a Sim's 
 // `index` (phoneapp.py's node); kPhoneSilence: the phone's silence button;
 // kPhoneOptions: the Options app (the game menu); kPhoneColor: wallpaper colour `index`.
 enum Action { kNone = 0, kPausePressed = 1, kSpeed1, kSpeed2, kSpeed3, kFullUi, kBuildPressed, kCancel, kDismissWant, kAnswer,
-              kPick, kPickerClose, kPhonePick, kPhoneSilence, kPhoneOptions, kPhoneColor, kNotesOpened, kNotesClear, kNoteDelete, kNoteDismiss, kCalendarOpened, kNoteAnswer };
+              kPick, kPickerClose, kPhonePick, kPhoneSilence, kPhoneOptions, kPhoneColor, kNotesOpened, kNotesClear, kNoteDelete, kNoteDismiss, kCalendarOpened, kNoteAnswer,
+              kPiePick, kPieClose };
 
 // Python (controls.py), whenever it changes: the game's clock. speed is
 // ClockSpeedMode (0 paused, 1..3, 4 loading, 5 super speed); day 0 = Sunday.
@@ -105,6 +108,20 @@ void expectPicture(uint64_t id);
 void setPicture(uint64_t id, const uint32_t* rgba, int w, int h);
 // It is in the HUD's icon slots, or on its way there.
 bool hasPicture(uint64_t id);
+
+// Python (pie.py), when the game builds a pie menu in first person (empty: none): the game's PieMenuCreate,
+// records split by 0x1e, fields by 0x1f: "pie" front (1: the social front page), server reference; per
+// category the items name (up to the root) "cat" key, parent key (0 the root), collapsible, display
+// priority, always show disabled, icon, name (LocalizedString JSON with the menu's category tokens), the
+// name for the active Sim's mood ("" none); per item in the message's order "item" index, category key (0
+// the root), pie_menu_priority, score, mood (MOODS index, 0 none), mood intensity, label JSON, disabled
+// text JSON ("" enabled), its icon_infos' pictures (comma list). kPiePick: the item `index`; kPieClose: closed
+// on the pie (its back button on the first page, or a press off its buttons).
+void setPieContent(const char* data, size_t size);
+// 0 none, 1 its texts are being looked up, 2 drawn by us, 3 not drawable (the game's pie cut out instead).
+int pieState();
+float pieScale();
+void clearPie();
 
 // Python (objmenu.py), when a popup shows (empty: gone): its content from the
 // game's own message, records split by 0x1e, fields by 0x1f: first
@@ -192,6 +209,7 @@ struct Frame {
     bool uiButton = false;   // the watch has the UI button (game menus "Both")
     bool popup = false;      // the popup card
     bool picker = false;     // the picker card (on its object)
+    bool pie = false;        // the pie menu drawn by us (kPie)
     bool money = false;      // the money gained / lost
     bool phone = false;      // the game's phone menu (kPhone)
     bool balloons = false;

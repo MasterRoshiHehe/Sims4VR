@@ -417,6 +417,13 @@ def popup_content(packed):
         fn(bytes(packed))
 
 
+def pie_content(packed):
+    """The pie menu's options for our own pie card in first person (pie.py); b'': none."""
+    fn = _optional('pie_content')
+    if fn is not None:
+        fn(bytes(packed))
+
+
 def picker_content(packed):
     """The picker on its object from the game's message (objmenu.py); b'': gone."""
     fn = _optional('picker_content')

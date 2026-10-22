@@ -56,6 +56,7 @@ void s4vr_hud_skillbar(unsigned long long sim, unsigned long long icon, double s
                        double rate, int level, int maxLevel, int hide);
 void s4vr_popup_content(const char* data, int size);
 void s4vr_picker_content(const char* data, int size);
+void s4vr_pie_content(const char* data, int size);
 void s4vr_phone_content(const char* data, int size);
 void s4vr_phone_notes(const char* data, int size);
 void s4vr_phone_calendar(const char* data, int size);
@@ -384,6 +385,13 @@ PyObject* popupContent(PyObject*, PyObject* args) {
     int length = 0;
     if (!py.PyArg_ParseTuple(args, "y#", &data, &length)) return nullptr;
     s4vr_popup_content(data, length);
+    return none();
+}
+PyObject* pieContent(PyObject*, PyObject* args) {
+    const char* data = nullptr;
+    int length = 0;
+    if (!py.PyArg_ParseTuple(args, "y#", &data, &length)) return nullptr;
+    s4vr_pie_content(data, length);
     return none();
 }
 PyObject* pickerContent(PyObject*, PyObject* args) {
@@ -792,6 +800,7 @@ PyMethodDef methods[] = {
     {"trail_set", trailSet, METH_VARARGS, "trail_set(packed): the guiding trail's route (trail.h); b'' = none"},
     {"money_changed", moneyChanged, METH_VARARGS, "money_changed(amount): the household's money went up or down"},
     {"popup_content", popupContent, METH_VARARGS, "popup_content(bytes): the popup's texts and buttons from the game's message (b'': gone)"},
+    {"pie_content", pieContent, METH_VARARGS, "pie_content(bytes): the pie menu's options for our own pie in first person (b'': none)"},
     {"picker_content", pickerContent, METH_VARARGS, "picker_content(bytes): the picker on its object from the game's message (b'': gone)"},
     {"phone_notes", phoneNotes, METH_VARARGS, "phone_notes(bytes): the game's notifications for the phone (notify.py)"},
     {"phone_calendar", phoneCalendar, METH_VARARGS, "phone_calendar(bytes): the game's calendar for the phone (phonecal.py)"},

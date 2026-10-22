@@ -320,6 +320,9 @@ def _tick(_handle):
             elif what >= 10000000:
                 from sims4vr import notify
                 notify.answer((what - 10000000) // 8, (what - 10000000) % 8)
+            elif 5000000 <= what < 6000000:
+                from sims4vr import pie
+                pie.select_own(what - 5000000)
             elif what >= 100000:
                 from sims4vr import phoneapp
                 phoneapp.select(what - 100000)

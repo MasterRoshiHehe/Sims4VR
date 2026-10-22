@@ -152,6 +152,12 @@ PIECES = [
     ('kCalMoon7', 'liveui/art/Calendar/240__CalendarLunarPhaseIcon_29@waning_crescent.png', 1),
     ('kGameMenuDots', 'buildui/art/GameTray/235__EscapeMenuBtn@disabled__EscapeMenuBtn@selected_disabled.png'),
     ('kGameMenuDotsOver', 'buildui/art/GameTray/238.png'),
+    # The pie menu (PieMenu SWF): PieMenuButton / BackButton backgrounds (PickerButtonBackground 9-slice,
+    # its over and down frames) and the back button's arrow cap.
+    ('kPieButton', 'liveui/art/PieMenu/1__BackButton@disabled__PickerButtonBackground_6.png'),
+    ('kPieButtonOver', 'liveui/art/PieMenu/41__BackButton@over__PickerButtonBackgroundHighlighted_9.png'),
+    ('kPieButtonDown', 'liveui/art/PieMenu/46__BackButton@down__PickerButtonBackgroundDown_11.png'),
+    ('kPieBackArrow', 'liveui/art/PieMenu/75.png'),
 ]
 EXTRA = 'tools/hud_art_extra.txt'
 # Arrays of one piece per mood (MOODS order): the frames of a mood sprite,
@@ -163,6 +169,7 @@ EXTRA = 'tools/hud_art_extra.txt'
 MOOD_ARRAYS = [
     ('kQueueDisc', 'liveui/art/InteractionQueue', 'InteractionButtonEmotionBg_6'),
     ('kMixerDisc', 'liveui/art/InteractionQueue', 'MixerInteractionButtonEmotionBg_21'),
+    ('kPieMoodCap', 'liveui/art/PieMenu', 'MoodCap_24'),  # PieMenuButton's mood cap (left end of the pill)
 ]
 # The moods, in the order the script sends them (hudinfo.py MOODS); their
 # colour = the game's BuffBGClip_19@<mood> tile over the Fine tile.

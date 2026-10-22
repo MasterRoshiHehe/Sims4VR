@@ -22,6 +22,7 @@ struct PieMenu {
     // the same); 0 = the crop above. Places 0..1 from the top left, parts in UI pixels.
     int tiles = 0;
     float tileDst[phone3d::kMaxTiles][4]{}, tileSrc[phone3d::kMaxTiles][4]{};
+    bool own = false;  // the pie drawn by us (hud kPie, the HUD sheet kHudPie in its place), not the game's cut
 };
 static PieMenu g_pie;
 static std::atomic<bool> g_pieOpenRequest{false}, g_pieCloseRequest{false};
@@ -69,6 +70,8 @@ static void closePie(const char* why) {
     if (!g_pie.active) return;
     g_pie.active = false;
     g_pieShown.store(false, std::memory_order_relaxed);
+    if (g_pie.own) hud::clearPie();
+    g_pie.own = false;
     static int logged = 0;
     if (logged++ < 20) LOG("Pie menu at hand: closed (%s)", why);
 }
@@ -137,6 +140,8 @@ static bool openPie(const XrVector3f& head) {
     g_pie.uiH = ui.Height;
     g_pie.opened = GetTickCount64();
     g_pieFull[0] = x0, g_pieFull[1] = y0, g_pieFull[2] = cw, g_pieFull[3] = ch;
+    // Drawn by us when pie.py sent the game's options for it (its texts may still be looked up).
+    g_pie.own = hud::pieState() == 1 || hud::pieState() == 2;
     g_pieCentre[0] = std::max(0, std::min(W - 1, static_cast<int32_t>(click.u * W)));
     g_pieCentre[1] = std::max(0, std::min(H - 1, static_cast<int32_t>(click.v * H)));
     static int logged = 0;
@@ -156,7 +161,7 @@ static void trimPie() {
     static bool pending = false;
     static ULONGLONG lastCopy = 0;
     static int32_t copied[4] = {};
-    if (!g_pie.active || !g_uiFrame || g_pie.tiles) {
+    if (!g_pie.active || !g_uiFrame || g_pie.tiles || g_pie.own) {
         pending = false;
         return;
     }
@@ -402,7 +407,7 @@ static bool pokeSheet(PieMenu& m, const armik::Hand hands[2], const bool use[2],
         // fingers before the palm is fast enough to count as a shove) flings it.
         const XrVector3f& hv = g_handVelocity[best];
         if (pie && emptyHand(best) && dot3(hv, hv) > kSlapThrough * kSlapThrough) {
-            flingPie(hv);
+            if (!g_pie.own) flingPie(hv);
             dismissPie("slapped through");
             buzz(best, 0.4f, 0.04f);
         } else {

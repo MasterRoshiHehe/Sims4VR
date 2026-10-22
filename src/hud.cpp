@@ -9,6 +9,8 @@
 #include <cstdlib>
 #include <mutex>
 #include <map>
+#include <memory>
+#include <random>
 #include <set>
 #include <string>
 #include <cmath>
@@ -125,6 +127,7 @@ std::atomic<int> g_pickerState{0};  // as g_popupState
 int g_pickerPage = 0, g_pickerTab = -1, g_pickerOpen = -1;
 bool g_pickerFresh = false, g_pickerPrepped = false;
 std::vector<uint64_t> g_pickerIcons;  // the icons it shows (g_itemMutex)
+std::vector<uint64_t> g_pieIcons;     // the own-drawn pie's icons (g_itemMutex; hud_pie.inc)
 std::vector<uint64_t> g_popupIcons;   // the popup's pictures (g_itemMutex)
 
 // The game's phone menu (phoneapp.py; user 2026-10-18 20:35Z: the game's own
@@ -2333,6 +2336,7 @@ int missingIcons(uint64_t* out, int max) {
     for (int k = 0; k < kKinds; ++k)
         for (int i = 0; i < g_counts[k]; ++i) want(g_items[k][i].icon);
     for (uint64_t id : g_pickerIcons) want(id);
+    for (uint64_t id : g_pieIcons) want(id);
     for (uint64_t id : g_popupIcons) want(id);
     for (uint64_t id : g_phoneIcons) want(id);
     for (uint64_t id : g_noteIcons) want(id);
@@ -2649,6 +2653,8 @@ void setClock(int hour, int minute, int day, int speed) {
     g_speed = speed;
 }
 
+#include "hud_pie.inc"
+
 Action render(ID3D11Device* device, ID3D11DeviceContext* context, const Frame& f, int* index) {
     if (g_failed) return kNone;
     if (!g_imgui && !init(device, context)) {
@@ -2716,6 +2722,8 @@ Action render(ID3D11Device* device, ID3D11DeviceContext* context, const Frame& f
     if (f.picker && g_pickerOn && g_picker.resolved && g_picker.valid) take(drawPicker(index));
     resolvePhone();
     if (f.phone && g_phoneOn && g_phone.resolved) take(drawPhone(index));
+    resolvePie();
+    if (f.pie && g_pieMenu.valid) take(drawPie(index));
     if (f.note) take(drawNote(f.note, index));
     else g_noteHeight = 0;
     ImGui::End();

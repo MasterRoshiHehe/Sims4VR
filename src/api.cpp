@@ -318,6 +318,11 @@ S4VR_API void s4vr_popup_content(const char* data, int size) {
     s4vr::strings::start();
     s4vr::hud::setPopupContent(data, size > 0 ? static_cast<size_t>(size) : 0);
 }
+// The pie menu's options for our own pie in first person (hud::setPieContent); empty: none.
+S4VR_API void s4vr_pie_content(const char* data, int size) {
+    s4vr::strings::start();
+    s4vr::hud::setPieContent(data, size > 0 ? static_cast<size_t>(size) : 0);
+}
 // The picker on its object, from the game's message (hud::setPickerContent); empty: gone.
 S4VR_API void s4vr_picker_content(const char* data, int size) {
     s4vr::strings::start();

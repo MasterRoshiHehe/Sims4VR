@@ -697,7 +697,9 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
         c.leftButton = c.rightButton = false;
         c.hasTarget = false;
     }
-    bool poking = pokingSims1 || (laserHand < 0 && ((g_pie.active && pokeSheet(g_pie, hands, bothHands, triggerDown, pulled, c, camera::bodyActive())) ||
+    bool poking = pokingSims1 || (laserHand < 0 && ((g_pie.active && (g_pie.own ? pokeHud(g_hud[kHudPie], hands, bothHands)
+                                                                               : pokeSheet(g_pie, hands, bothHands, triggerDown, pulled, c,
+                                                                                           camera::bodyActive()))) ||
                                     (g_phone.active && pokeSheet(g_phone, hands, freeHand, triggerDown, pulled, c, true)) ||
                                     (g_phoneSheet.m.active && pokeHud(g_phoneSheet, hands, freeHand)) ||
                                     (g_objMenu.active && pokeSheet(g_objMenu, hands, bothHands, triggerDown, pulled, c)) ||
@@ -792,6 +794,17 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
             // The phone's screen in your hand, in front of a popup card behind it.
             onPanel = onPie = true;
             onTabletBlank = true;
+        } else if (g_pie.active && g_pie.own) {
+            // The pie drawn by us: our HUD's buttons take the trigger; off it a click closes it (below).
+            const PieMenu& m = g_hud[kHudPie].m;
+            float u, v;
+            if (m.active && hitSheet(m, o, d, panelHit, u, v)) {
+                g_hudInput.px = u * hud::kWidth;
+                g_hudInput.py = v * hud::kHeight;
+                g_hudInput.down = c.leftButton;
+                onPanel = onPie = true;
+                onTabletBlank = true;
+            }
         } else if (g_pie.active || g_phone.active || g_objMenu.active || g_wrist.active) {
             // The pie, the phone, a picker on its object or the wrist menus replace the panel;
             // transparent parts let the laser through.
