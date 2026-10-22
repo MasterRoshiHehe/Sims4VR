@@ -673,6 +673,37 @@ def _wrap_pick_up_and_consume():
 _balloon_logs = 0
 
 
+def _send_balloon(request):
+    """A balloon the game sends over a Sim, drawn by the DLL in first person (hud.cpp drawBalloons) as the game's
+    Balloon.as lays it out, instead of cutting the flat UI's picture of it. Pictures as the game's UI loads them:
+    the icon resource, else the thumbnail of its Sim / object (Balloon.Show); relationship sentiments
+    (rel_track) keep the game's own."""
+    if request.rel_track is not None or native._optional('hud_balloon') is None:
+        return
+    from sims4vr import hudinfo
+    sim = request._sim
+    if sim is None:
+        return
+
+    def resource(key):
+        if key is not None and getattr(key, 'instance', 0):
+            hudinfo._icon_types[key.instance] = key.type
+            return key.instance
+        return 0
+
+    picture = resource(request.icon)
+    if not picture and request.icon_object is not None:
+        object_id, manager_id = request.icon_object.icon_info
+        if object_id:
+            if manager_id == 3:  # ManagerObjectId.MGR_SIM_INFO
+                picture = hudinfo._thumb('sims/f_{}_m_0'.format(object_id))
+            else:
+                picture = hudinfo._thumb('objects/{}_m'.format(object_id))
+    category = hudinfo._picture(request.category_icon) if request.category_icon is not None else 0
+    native.hud_balloon(sim.id, picture, resource(request.overlay), category, int(request.balloon_type),
+                       int(request.priority), int(float(request.duration) * 1000))
+
+
 def _wrap_balloon_distribute():
     """Diagnostics (bubbles thread): logs balloons the game sends for your Sim in first person."""
     from balloon.balloon_request import BalloonRequest
@@ -680,6 +711,11 @@ def _wrap_balloon_distribute():
     def distribute(original, self, *args, **kwargs):
         global _balloon_logs
         result = original(self, *args, **kwargs)
+        try:
+            if result and hooks.in_first_person():
+                _send_balloon(self)
+        except Exception as e:
+            _error('balloon send', e)
         try:
             sim = self._sim
             if _balloon_logs < 40 and _first_person(sim):

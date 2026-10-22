@@ -50,6 +50,8 @@ void s4vr_set_paused(int paused);
 void s4vr_set_clock(int hour, int minute, int day, int speed);
 void s4vr_hud_items(int kind, const char* data, int size);
 void s4vr_hud_icon(unsigned long long instance, const char* data, int size);
+void s4vr_hud_balloon(unsigned long long sim, unsigned long long picture, unsigned long long overlay,
+                      unsigned long long category, int type, int priority, int durationMs);
 void s4vr_popup_content(const char* data, int size);
 void s4vr_picker_content(const char* data, int size);
 void s4vr_phone_content(const char* data, int size);
@@ -336,6 +338,13 @@ PyObject* hudItems(PyObject*, PyObject* args) {
     int length = 0;  // y# without PY_SSIZE_T_CLEAN: int length
     if (!py.PyArg_ParseTuple(args, "iy#", &kind, &data, &length)) return nullptr;
     s4vr_hud_items(kind, data, length);
+    return none();
+}
+PyObject* hudBalloon(PyObject*, PyObject* args) {
+    unsigned long long sim = 0, picture = 0, overlay = 0, category = 0;
+    int type = 0, priority = 0, duration = 0;
+    if (!py.PyArg_ParseTuple(args, "KKKKiii", &sim, &picture, &overlay, &category, &type, &priority, &duration)) return nullptr;
+    s4vr_hud_balloon(sim, picture, overlay, category, type, priority, duration);
     return none();
 }
 PyObject* hudIcon(PyObject*, PyObject* args) {
@@ -766,6 +775,7 @@ PyMethodDef methods[] = {
     {"set_paused", setPaused, METH_VARARGS, "set_paused(bool): the game clock is paused"},
     {"set_clock", setClock, METH_VARARGS, "set_clock(hour, minute, day, speed): the game clock, for the HUD"},
     {"hud_items", hudItems, METH_VARARGS, "hud_items(kind, packed): needs 0 / moodlets 1 / queue 2 / wants 3, 20-byte items"},
+    {"hud_balloon", hudBalloon, METH_VARARGS, "hud_balloon(sim, picture, overlay, category, type, priority, duration_ms): a balloon over a Sim"},
     {"hud_icon", hudIcon, METH_VARARGS, "hud_icon(instance, image_bytes): an icon the HUD asked for"},
     {"hud_texts", hudTexts, METH_VARARGS, "hud_texts(kind, bytes): tooltips of the needs 0 / moodlets 1"},
     {"trail_set", trailSet, METH_VARARGS, "trail_set(packed): the guiding trail's route (trail.h); b'' = none"},

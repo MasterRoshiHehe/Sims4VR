@@ -208,6 +208,12 @@ Panel g_bubbles[kMaxBubbles];
 int g_bubbleCount = 0;
 ID3D11ShaderResourceView* g_bubbleView = nullptr;
 ID3D11Texture2D* g_bubbleTexture = nullptr;  // what g_bubbleView shows (not owned)
+// Balloons drawn by us (bubbles::balloonCards): cards from the HUD atlas.
+constexpr int kMaxBalloons = 8;
+Panel g_balloons[kMaxBalloons];
+int g_balloonCount = 0;
+ID3D11ShaderResourceView* g_balloonView = nullptr;
+ID3D11Texture2D* g_balloonTexture = nullptr;
 // The guiding trail's footprint (trail.h): its texture, made once per device.
 ID3D11ShaderResourceView* g_trailView = nullptr;
 // Pieces of the UI on your arms (setPieces).
@@ -272,6 +278,8 @@ void releaseAll() {
     g_pieTexture = nullptr;
     safeRelease(g_bubbleView);
     g_bubbleTexture = nullptr;
+    safeRelease(g_balloonView);
+    g_balloonTexture = nullptr;
     safeRelease(g_pieceView);
     g_pieceTexture = nullptr;
     safeRelease(g_trailView);
@@ -706,6 +714,14 @@ void setBubbles(const Panel* bubbles, int count, ID3D11Texture2D* atlas) {
     if (!g_bubbleView) g_bubbleCount = 0;
 }
 
+void setBalloons(const Panel* balloons, int count, ID3D11Texture2D* atlas) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    g_balloonCount = atlas && balloons ? std::max(0, std::min(count, kMaxBalloons)) : 0;
+    for (int i = 0; i < g_balloonCount; ++i) g_balloons[i] = balloons[i];
+    if (g_balloonCount) viewOf(atlas, g_balloonView, g_balloonTexture);
+    if (!g_balloonView) g_balloonCount = 0;
+}
+
 std::atomic<void (*)(Panel*, int)> g_piecePlacer{nullptr};
 
 void setPiecePlacer(void (*placer)(Panel* pieces, int count)) { g_piecePlacer = placer; }
@@ -1044,25 +1060,25 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
     if (!camera::lastView(view)) return;
     std::unique_lock<std::mutex> lock(g_mutex);
     bool showPhone = g_phone.show, showPanel = g_panel.show, showPie = g_pie.show, showSims1 = g_sims1.show;
-    int bubbleCount = g_bubbleCount, pieceCount = g_pieceCount;
+    int bubbleCount = g_bubbleCount, pieceCount = g_pieceCount, balloonCount = g_balloonCount;
     // The guiding trail (first person only): footprints from the route the game planned.
     Panel prints[trail::kMaxPrints];
     int printCount = camera::bodyActive() && trail::active()
                          ? trail::build(prints, trail::kMaxPrints, view.position.x, view.position.z, view.scale)
                          : 0;
-    if (!showPhone && !showPanel && !showPie && !showSims1 && !bubbleCount && !pieceCount && !printCount) return;
+    if (!showPhone && !showPanel && !showPie && !showSims1 && !bubbleCount && !balloonCount && !pieceCount && !printCount) return;
     ID3D11Device* device = nullptr;
     context->GetDevice(&device);
     if (device) device->Release();  // only used here, while the context holds it
     if (!device || !init(device)) return;
     if (showPhone && !buildMesh(device, g_phone)) showPhone = false;
-    if ((showPanel || showPie || showSims1 || bubbleCount || pieceCount || printCount) && !buildPanelMesh(device)) {
+    if ((showPanel || showPie || showSims1 || bubbleCount || balloonCount || pieceCount || printCount) && !buildPanelMesh(device)) {
         showPanel = showPie = showSims1 = false;
-        bubbleCount = pieceCount = printCount = 0;
+        bubbleCount = balloonCount = pieceCount = printCount = 0;
     }
     ID3D11ShaderResourceView* trailView = printCount ? trailTexture(device) : nullptr;
     if (!trailView) printCount = 0;
-    if (!showPhone && !showPanel && !showPie && !showSims1 && !bubbleCount && !pieceCount && !printCount) return;
+    if (!showPhone && !showPanel && !showPie && !showSims1 && !bubbleCount && !balloonCount && !pieceCount && !printCount) return;
     if (showPhone && g_phone.wallpaper) makeWallpaper(device);
     const Phone p = g_phone;
     Panel q = g_panel, pie = g_pie;
@@ -1079,6 +1095,10 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
     std::copy(g_bubbles, g_bubbles + bubbleCount, bubbles);
     ID3D11ShaderResourceView* bubbleView = bubbleCount ? g_bubbleView : nullptr;
     if (bubbleView) bubbleView->AddRef();
+    Panel balloons[kMaxBalloons];
+    std::copy(g_balloons, g_balloons + balloonCount, balloons);
+    ID3D11ShaderResourceView* balloonView = balloonCount ? g_balloonView : nullptr;
+    if (balloonView) balloonView->AddRef();
     Panel pieces[kMaxPieces];
     std::copy(g_pieces, g_pieces + pieceCount, pieces);
     ID3D11ShaderResourceView* pieceView = pieceCount ? g_pieceView : nullptr;
@@ -1113,6 +1133,7 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
         if (panelView) panelView->Release();
         if (pieView) pieView->Release();
         if (bubbleView) bubbleView->Release();
+        if (balloonView) balloonView->Release();
         if (pieceView) pieceView->Release();
         return;
     }
@@ -1303,7 +1324,7 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
     if (showPhone) {
         // The phone is solid: it writes its depth when floor footprints or
         // bubbles come after it, so they don't show through it.
-        const bool solid = (printCount || bubbleCount) && g_depthWrite[reversed ? 1 : 0];
+        const bool solid = (printCount || bubbleCount || balloonCount) && g_depthWrite[reversed ? 1 : 0];
         if (solid) context->OMSetDepthStencilState(g_depthWrite[reversed ? 1 : 0], 0);
         context->UpdateSubresource(g_constants, 0, nullptr, &k, 0, 0);
         context->IASetVertexBuffers(0, 1, &g_vertices, &stride, &offset);
@@ -1385,6 +1406,29 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
         static int logged = 0;
         if (logged++ < 3) LOG("Bubbles: %d drawn in the world", bubbleCount);
     }
+    if (balloonView) {
+        // Balloons drawn by us: as the bubbles above, farthest first, hidden by anything nearer.
+        int order[kMaxBalloons];
+        float ahead[kMaxBalloons];
+        for (int i = 0; i < balloonCount; ++i) {
+            order[i] = i;
+            ahead[i] = (balloons[i].centre[0] - view.position.x) * forward.x +
+                       (balloons[i].centre[1] - view.position.y) * forward.y +
+                       (balloons[i].centre[2] - view.position.z) * forward.z;
+        }
+        std::sort(order, order + balloonCount, [&](int a, int b) { return ahead[a] > ahead[b]; });
+        context->OMSetBlendState(g_premultiplied, nullptr, 0xffffffff);
+        context->PSSetShaderResources(0, 1, &balloonView);
+        context->IASetVertexBuffers(0, 1, &g_panelVertices, &stride, &offset);
+        for (int j = 0; j < balloonCount; ++j) {
+            Constants kBalloon{};
+            panelConstants(balloons[order[j]], kBalloon, balloonView);
+            context->UpdateSubresource(g_constants, 0, nullptr, &kBalloon, 0, 0);
+            context->Draw(6, 0);
+        }
+        context->OMSetBlendState(nullptr, nullptr, 0xffffffff);
+        context->PSSetShaderResources(0, 1, &uiView);
+    }
     if (pieceView) {
         // Pieces of the UI on your arms: depth-tested (your arm's own surface
         // is just under them), the ones marked onTop over the world.
@@ -1433,6 +1477,7 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
     if (panelView) panelView->Release();
     if (pieView) pieView->Release();
     if (bubbleView) bubbleView->Release();
+    if (balloonView) balloonView->Release();
     if (pieceView) pieceView->Release();
     if (showPhone) g_drawnAt.store(GetTickCount64(), std::memory_order_relaxed);
     if (showPanel) g_panelDrawnAt.store(GetTickCount64(), std::memory_order_relaxed);

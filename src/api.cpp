@@ -293,6 +293,11 @@ S4VR_API void s4vr_hud_items(int kind, const char* data, int size) {
     }
     s4vr::hud::setItems(kind, items, count);
 }
+// A balloon the game is sending over a Sim (scripted.py BalloonRequest.distribute; hud::addBalloon).
+S4VR_API void s4vr_hud_balloon(unsigned long long sim, unsigned long long picture, unsigned long long overlay,
+                               unsigned long long category, int type, int priority, int durationMs) {
+    s4vr::hud::addBalloon(sim, picture, overlay, category, type, priority, durationMs);
+}
 S4VR_API void s4vr_hud_icon(unsigned long long instance, const char* data, int size) {
     s4vr::hud::setIcon(instance, reinterpret_cast<const uint8_t*>(data), size > 0 ? static_cast<size_t>(size) : 0);
 }

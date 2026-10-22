@@ -363,6 +363,14 @@ def hud_items(kind, packed):
         fn(int(kind), bytes(packed))
 
 
+def hud_balloon(sim, picture, overlay, category, balloon_type, priority, duration_ms):
+    """A balloon the game sends over a Sim (scripted.py): drawn by the DLL (hud.cpp drawBalloons)."""
+    fn = _optional('hud_balloon')
+    if fn is not None:
+        fn(int(sim) & 0xffffffffffffffff, int(picture) & 0xffffffffffffffff, int(overlay) & 0xffffffffffffffff,
+           int(category) & 0xffffffffffffffff, int(balloon_type), int(priority), int(duration_ms))
+
+
 def hud_icon(instance, data):
     """An icon the HUD asked for: its image bytes (empty: it could not be read)."""
     fn = _optional('hud_icon')

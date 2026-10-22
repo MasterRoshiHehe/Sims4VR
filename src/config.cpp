@@ -160,6 +160,7 @@ Config loadConfig(const std::wstring& ini) {
     c.bubbleNpcSize = readFloat(ini, "bubbles", "npc_size", c.bubbleNpcSize);
     c.bubbleHideOwn = readInt(ini, "bubbles", "hide_own", 0) != 0;
     c.bubbleHideNpc = readInt(ini, "bubbles", "hide_npc", 0) != 0;
+    c.bubbleOwnDraw = readInt(ini, "bubbles", "own_balloons", 1) != 0;
     c.popups3d = readInt(ini, "ui", "popups_3d", 1) != 0;
     c.popupDistance = readFloat(ini, "ui", "popup_distance", c.popupDistance);
     c.popupSize = readFloat(ini, "ui", "popup_size", c.popupSize);

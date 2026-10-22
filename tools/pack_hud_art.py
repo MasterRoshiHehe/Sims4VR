@@ -54,6 +54,13 @@ PIECES = [
     # the other Sim's portrait ring and blue speech bubble, your portrait ring
     # and the light answer bubble; the dialog's button (out / over) and the
     # plain dialog's panel (DialogHeaderBackground_9@default).
+    # Balloons (ObjectBoundElements Balloon.as, mcBackground frames): the bubble over a Sim's head
+    # (speech / thought, shout, sentiment) and the category badge's disc.
+    ('kBalloonSpeech', 'liveui/art/ObjectBoundElements/139__BalloonBackground_62@speech.png'),
+    ('kBalloonThought', 'liveui/art/ObjectBoundElements/141__BalloonBackground_62@infantSentiment__BalloonBackground_62@thought.png'),
+    ('kBalloonShout', 'liveui/art/ObjectBoundElements/143__BalloonBackground_62@shout.png'),
+    ('kBalloonSentiment', 'liveui/art/ObjectBoundElements/145__BalloonBackground_62@sentiment.png'),
+    ('kBalloonDisc', 'liveui/art/ObjectBoundElements/150.png'),
     ('kPortraitRing', 'liveui/art/Dialog/64.png'),
     ('kSpeechBubble', 'liveui/art/Dialog/67.png'),
     ('kYourRing', 'liveui/art/Dialog/107.png'),

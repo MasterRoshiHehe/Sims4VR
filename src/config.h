@@ -158,6 +158,7 @@ struct Config {
     float bubbleOwnSize = 0.14f;                       // own_size: a bubble's width in front of you (metres)
     float bubbleNpcSize = 0.5f;                        // npc_size: a bubble's width over other Sims (game units)
     bool bubbleHideOwn = false;                        // hide_own: your Sim's bubbles (first person)
+    bool bubbleOwnDraw = true;                         // own_balloons: balloons drawn by us from the game's AddBalloon (not cut from the UI)
     bool bubbleHideNpc = false;                        // hide_npc: everyone else's bubbles
     bool popups3d = true;          // first person: game popups as cards in the world ([ui] popups_3d)
     float popupDistance = 0.75f;   // metres in front of you

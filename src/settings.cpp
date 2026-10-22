@@ -586,6 +586,7 @@ std::vector<Row> makeRows() {
                100, L"%.0f cm wide"),
         toggle(L"Bubbles", L"Hide your Sim's bubbles", "bubbles", "hide_own", &Config::bubbleHideOwn),
         toggle(L"Bubbles", L"Hide other Sims' bubbles", "bubbles", "hide_npc", &Config::bubbleHideNpc),
+        toggle(L"Bubbles", L"Balloons drawn by the mod (off: cut from the game's UI)", "bubbles", "own_balloons", &Config::bubbleOwnDraw),
         link(L"Bubbles", L"Where yours sit", L"Bubbles yours"),
         component(L"Bubbles yours", L"Your bubble: right", "bubbles", "own_bubble_position", &Config::bubbleOwnPos, 0, -0.5f,
                   0.5f, 0.01f, 100, L"%+.0f cm"),

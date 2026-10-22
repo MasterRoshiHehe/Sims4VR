@@ -14,7 +14,7 @@
 // eyelids). Pointer input comes back in atlas pixels; buttons return actions.
 namespace s4vr::hud {
 
-constexpr int kWidth = 1024, kHeight = 4608;  // the atlas
+constexpr int kWidth = 1024, kHeight = 5136;  // the atlas
 struct Rect {
     float x, y, w, h;
 };
@@ -32,6 +32,8 @@ constexpr Rect kPicker{0, 2560, 1024, 1024};  // a game picker on its object (th
 // The game's phone menu on our phone's screen: the game's PhonePanel screen
 // (230 x 400 Flash pixels) at 2.5 atlas pixels each.
 constexpr Rect kPhone{0, 3584, 575, 1000};
+constexpr Rect kBalloons{0, 4608, 1024, 528};  // balloon slots over Sims' heads, 4 x 2 of kBalloonW x kBalloonH
+constexpr int kBalloonW = 256, kBalloonH = 264, kBalloonSlots = 8;
 constexpr Rect kNote{576, 3584, 448, 360};  // a notification card over a Sim's head (notify.py)
 
 // What the buttons ask for. kCancel: the queue item `index` (render's out);
@@ -153,6 +155,22 @@ float noteHeight();
 // Present thread: the phone shows its home screen again (taken out).
 void phoneHome();
 
+// Any thread (hudinfo / scripted.py via native.hud_balloon): the game is sending an AddBalloon for `sim`
+// (BalloonRequest): the pictures (icon resource instance or thumbnail id; 0: none), the balloon type
+// (0 thought, 1 speech, 2 distress/shout, 3 sentiment, 4 infant sentiment), its priority (lower = more
+// important) and how long it stays (ms). Same rules as SimBalloon.HandleAddBalloon: dropped when this Sim's
+// shown balloon is more important; else it takes its slot. Expires by itself.
+void addBalloon(uint64_t sim, uint64_t picture, uint64_t overlay, uint64_t category, int type, int priority, int durationMs);
+struct BalloonInfo {
+    uint64_t sim;
+    int slot;   // 0..kBalloonSlots-1: its place in kBalloons
+    int type;
+    float age;  // seconds since it was added
+};
+// The balloons still showing (expired ones are dropped here).
+int activeBalloons(BalloonInfo* out, int max);
+bool balloonActive(uint64_t sim);
+
 struct Frame {
     // Which elements are shown (others are not drawn).
     bool watch = false, pause = false, build = false, needs = false, moodlets = false, queue = false, wants = false;
@@ -162,6 +180,7 @@ struct Frame {
     bool picker = false;     // the picker card (on its object)
     bool money = false;      // the money gained / lost
     bool phone = false;      // the game's phone menu (kPhone)
+    bool balloons = false;   // the balloons over Sims' heads (addBalloon)
     uint64_t note = 0;       // the notification drawn as a card in kNote (notify.py), 0: none
     float px = -1, py = -1;  // the pointer in atlas pixels; < 0: none
     bool down = false;       // pressing

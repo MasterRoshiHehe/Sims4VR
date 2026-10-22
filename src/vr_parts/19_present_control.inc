@@ -51,6 +51,7 @@ int onFrame(ID3D11Texture2D* backbuffer, HWND window, bool ownMirror) {
     // The UI drawn this frame went to the panel texture if redirection was on.
     const bool uiOwnLayer = g_config.uiPanel && g_session && g_sessionRunning && mode() == Mode::Stereo && camera::available();
     bubbles::setOptions(g_config);
+    bubbles::setOwnBalloons(g_config.bubbleOwnDraw);
     bubbles::setWanted(uiOwnLayer && g_config.bubbles3d);
     g_uiFrame = uihook::onPresent(backbuffer, uiOwnLayer);
     ID3D11Device* device = nullptr;

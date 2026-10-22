@@ -174,6 +174,12 @@ std::mutex g_notesMutex;
 NotesContent g_notesIn;  // g_notesMutex
 bool g_notesNew = false;  // g_notesMutex
 NotesContent g_notes;     // present thread
+struct Balloon {
+    uint64_t sim, picture, overlay, category;
+    int type, priority, slot;
+    ULONGLONG start, until;
+};
+std::vector<Balloon> g_balloons;  // (g_itemMutex)
 std::vector<uint64_t> g_noteIcons;  // their pictures (g_itemMutex)
 bool g_phoneNotesOpen = false;  // the phone shows the notification list (present thread)
 int g_notesScroll = 0;
@@ -2046,6 +2052,34 @@ Action drawNote(uint64_t id, int* index) {
     return pressed ? kNoteDismiss : kNone;
 }
 
+// Balloons over Sims' heads, drawn as Balloon.as lays them out (ObjectBoundElements): the bubble background
+// for its type with the icon in it, the small overlay and the category badge. Each in its own slot of kBalloons;
+// the slot's top left is the bubble's top left (element -210,-230 around the Sim's anchor).
+void drawBalloons() {
+    std::vector<Balloon> list;
+    {
+        const ULONGLONG now = GetTickCount64();
+        std::lock_guard<std::mutex> lock(g_itemMutex);
+        for (const Balloon& b : g_balloons)
+            if (b.until >= now) list.push_back(b);
+    }
+    ImDrawList* d = ImGui::GetBackgroundDrawList();
+    for (const Balloon& b : list) {
+        const float x = kBalloons.x + (b.slot % 4) * kBalloonW, y = kBalloons.y + (b.slot / 4) * kBalloonH;
+        const art::Piece& bg = b.type == 1 ? art::kBalloonSpeech
+                               : b.type == 2 ? art::kBalloonShout
+                               : b.type == 3 ? art::kBalloonSentiment
+                                             : art::kBalloonThought;
+        pieceIn(d, bg, {x, y}, {x + 245, y + 245});
+        icon(d, b.picture, {x + 122, y + 108}, 120);
+        if (b.overlay) icon(d, b.overlay, {x + 190, y + 172}, 56);
+        if (b.category) {
+            piece(d, art::kBalloonDisc, {x + 49, y + 166}, 78.0f / art::kBalloonDisc.w);
+            icon(d, b.category, {x + 49, y + 166}, 52);
+        }
+    }
+}
+
 Action drawBuild() {
     ImDrawList* d = ImGui::GetBackgroundDrawList();
     const Rect r = kBuild;
@@ -2059,6 +2093,50 @@ Action drawBuild() {
 }
 
 }  // namespace
+
+void addBalloon(uint64_t sim, uint64_t picture, uint64_t overlay, uint64_t category, int type, int priority, int durationMs) {
+    const ULONGLONG now = GetTickCount64();
+    std::lock_guard<std::mutex> lock(g_itemMutex);
+    g_balloons.erase(std::remove_if(g_balloons.begin(), g_balloons.end(), [&](const Balloon& b) { return b.until < now; }),
+                     g_balloons.end());
+    Balloon n{sim, picture, overlay, category, type, priority, -1, now, now + 300 + std::max(durationMs, 500) + 200};
+    for (Balloon& b : g_balloons) {
+        if (b.sim != sim) continue;
+        if (b.priority < priority) return;  // the shown one is more important: this one is dropped
+        n.slot = b.slot;
+        b = n;
+        return;
+    }
+    bool used[kBalloonSlots] = {};
+    for (const Balloon& b : g_balloons) used[b.slot] = true;
+    for (int i = 0; i < kBalloonSlots && n.slot < 0; ++i)
+        if (!used[i]) n.slot = i;
+    if (n.slot < 0) return;  // no room: the oldest stays
+    g_balloons.push_back(n);
+    static int logged = 0;
+    if (logged++ < 12)
+        LOG("Balloon: Sim %llu type %d priority %d icon %llx overlay %llx for %d ms (slot %d)", static_cast<unsigned long long>(sim),
+            type, priority, static_cast<unsigned long long>(picture), static_cast<unsigned long long>(overlay), durationMs, n.slot);
+}
+
+int activeBalloons(BalloonInfo* out, int max) {
+    const ULONGLONG now = GetTickCount64();
+    std::lock_guard<std::mutex> lock(g_itemMutex);
+    g_balloons.erase(std::remove_if(g_balloons.begin(), g_balloons.end(), [&](const Balloon& b) { return b.until < now; }),
+                     g_balloons.end());
+    int n = 0;
+    for (const Balloon& b : g_balloons)
+        if (n < max) out[n++] = {b.sim, b.slot, b.type, (now - b.start) / 1000.0f};
+    return n;
+}
+
+bool balloonActive(uint64_t sim) {
+    const ULONGLONG now = GetTickCount64();
+    std::lock_guard<std::mutex> lock(g_itemMutex);
+    for (const Balloon& b : g_balloons)
+        if (b.sim == sim && b.until >= now) return true;
+    return false;
+}
 
 void setItems(int kind, const Item* items, int count) {
     if (kind < 0 || kind >= kKinds) return;
@@ -2172,6 +2250,7 @@ int missingIcons(uint64_t* out, int max) {
     for (uint64_t id : g_popupIcons) want(id);
     for (uint64_t id : g_phoneIcons) want(id);
     for (uint64_t id : g_noteIcons) want(id);
+    for (const Balloon& b : g_balloons) want(b.picture), want(b.overlay), want(b.category);
     return n;
 }
 
@@ -2530,6 +2609,7 @@ Action render(ID3D11Device* device, ID3D11DeviceContext* context, const Frame& f
     if (f.queue) take(drawQueue(items[kQueueItems], items[kQueueBadges], counts[kQueueItems], index));
     if (f.wants) take(drawWants(items[kWantItems], counts[kWantItems], index));
     if (f.money) drawMoney();
+    if (f.balloons) drawBalloons();
     {
         Tip tip;
         bool have = false;

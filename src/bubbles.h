@@ -18,6 +18,7 @@
 // Your own Sim's (first person) are held in front of your head instead. The
 // hide switches make balloons invisible in the game itself. RE notes:
 // re/bubbles/NOTES.md, re/liveui/components/ObjectBoundElements.md.
+namespace s4vr::phone3d { struct Panel; }
 namespace s4vr::bubbles {
 
 // Hooks the game. Call once at start; false in the DX9 game or another game version.
@@ -28,6 +29,11 @@ void setWanted(bool wanted);
 bool wanted();
 // Any thread, once a frame: the [bubbles] settings (sizes, positions, hiding).
 void setOptions(const Config& config);
+
+// Any thread: balloons drawn by us (hud.cpp drawBalloons, from the game's AddBalloon) instead of cut from the UI.
+void setOwnBalloons(bool on);
+// Present thread: the cards of the balloons showing now (panels into hud::texture()); returns how many.
+int balloonCards(const camera::View& view, phone3d::Panel* out, int max);
 
 // One card: where it is on the UI texture and in the world.
 struct Card {

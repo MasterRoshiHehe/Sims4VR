@@ -117,6 +117,8 @@ bool pieDrawnRecently();
 // Present thread; count 0 (or no atlas): none.
 constexpr int kMaxBubbles = 24;
 void setBubbles(const Panel* bubbles, int count, ID3D11Texture2D* atlas);
+// Balloons drawn by us (bubbles::balloonCards): clear panels cropping the HUD atlas, drawn like the bubbles. At most 8.
+void setBalloons(const Panel* balloons, int count, ID3D11Texture2D* atlas);
 // Pieces of the game's UI on your arms and around you (first person, vr.cpp
 // "Wrist pieces"): clear panels taking `crop` from the UI texture, drawn after
 // the bubbles; depth-tested, or over the world when onTop. Present thread.

@@ -11,7 +11,9 @@
 #include "config.h"
 #include "addrs.h"
 #include "gameaddr.h"
+#include "hud.h"
 #include "log.h"
+#include "phone3d.h"
 
 namespace s4vr::bubbles {
 
@@ -114,6 +116,18 @@ Piece g_pieces[kMaxPieces];
 int g_pieceCount = 0;
 ULONGLONG g_piecesAt = 0;
 
+// Balloons drawn by us (hud.cpp drawBalloons, from the game's AddBalloon): the game's own piece is hidden and
+// only its anchor is kept. Switch [ui] own_balloons, first person only.
+std::atomic<bool> g_ownBalloons{true};
+struct BalloonAnchor {
+    uint64_t object;
+    float p[3];
+};
+std::mutex g_anchorMutex;
+BalloonAnchor g_anchors[kMaxPieces];
+int g_anchorCount = 0;
+ULONGLONG g_anchorsAt = 0;
+
 template <typename T>
 T at(const void* base, size_t offset) {
     T value;
@@ -171,6 +185,9 @@ void hookedUpdater(void* manager) {
         hideNpc = g_options.bubbleHideNpc;
     }
     const uint64_t own = camera::bodyId();
+    const bool ownBalloons = g_ownBalloons.load(std::memory_order_relaxed) && camera::bodyActive();
+    BalloonAnchor anchors[kMaxPieces];
+    int anchorCount = 0;
     // Stage size, as the updater works it out.
     float stageW = 0, stageH = 0;
     if (wanted) {
@@ -262,6 +279,15 @@ void hookedUpdater(void* manager) {
             ++hidden;
             continue;
         }
+        if (type == kBalloon && ownBalloons && hud::balloonActive(object) && (!mine || front)) {
+            // Drawn by us from the game's AddBalloon: the game's piece stays out of the way, its anchor is all we need.
+            setInfo(rec, kSetVisible, 0, 0, 0, false, 0);
+            float p[4] = {};
+            if (!mine && anchorCount < kMaxPieces && g_anchor(manager, p, rec) && std::isfinite(p[0]) &&
+                std::isfinite(p[1]) && std::isfinite(p[2]))
+                anchors[anchorCount++] = {object, {p[0], p[1], p[2]}};
+            continue;
+        }
         if (!slots) {
             rec[kRecOccluded] = 1;  // the game hides it behind walls again
             continue;
@@ -318,6 +344,12 @@ void hookedUpdater(void* manager) {
         LOG("Bubbles: %d lifted into the world (%s in front of you), %d hidden; stage %.0fx%.0f", count,
             std::any_of(found, found + count, [](const Piece& p) { return p.front; }) ? "yours" : "none",
             hidden, stageW, stageH);
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_anchorMutex);
+        std::copy(anchors, anchors + anchorCount, g_anchors);
+        g_anchorCount = anchorCount;
+        g_anchorsAt = GetTickCount64();
     }
     std::lock_guard<std::mutex> lock(g_pieceMutex);
     std::copy(found, found + count, g_pieces);
@@ -447,6 +479,87 @@ int frameCards(const camera::View& view, int textureWidth, int textureHeight, Ca
         ++logged;
         LOG("Bubbles: %d cards; first rect %d,%d-%d,%d on a %dx%d UI, %.2f x %.2f units", written, out[0].rect[0],
             out[0].rect[1], out[0].rect[2], out[0].rect[3], textureWidth, textureHeight, out[0].width, out[0].height);
+    }
+    return written;
+}
+
+
+void setOwnBalloons(bool on) {
+    if (g_ownBalloons.exchange(on) != on) LOG("Bubbles: balloons %s", on ? "drawn by us from the game's AddBalloon" : "cut from the game's UI");
+}
+
+// Balloon cards (hud.cpp kBalloons slots) over their Sims: the geometry the cut cards had (kBoxes[kBalloon]: 250x258
+// element units around the anchor, view offset -0.06, 0.13), our slot 256x264 with the bubble's top left at the box's.
+int balloonCards(const camera::View& view, phone3d::Panel* out, int max) {
+    hud::BalloonInfo info[hud::kBalloonSlots];
+    const int n = hud::activeBalloons(info, hud::kBalloonSlots);
+    if (!n || !g_ownBalloons.load(std::memory_order_relaxed) || !camera::bodyActive()) return 0;
+    BalloonAnchor anchors[kMaxPieces];
+    int anchorCount = 0;
+    {
+        std::lock_guard<std::mutex> lock(g_anchorMutex);
+        if (GetTickCount64() - g_anchorsAt < 300) {
+            anchorCount = g_anchorCount;
+            std::copy(g_anchors, g_anchors + anchorCount, anchors);
+        }
+    }
+    Config o;
+    {
+        std::lock_guard<std::mutex> lock(g_optionMutex);
+        o = g_options;
+    }
+    const camera::Vec3 fwd{-view.back.x, -view.back.y, -view.back.z};
+    camera::Vec3 hp{}, hr{}, hu{}, hb{};
+    const bool haveHead = camera::headInWorld(hp, hr, hu, hb);
+    const uint64_t own = camera::bodyId();
+    const Box& box = kBoxes[kBalloon];
+    int written = 0;
+    for (int i = 0; i < n && written < max; ++i) {
+        const bool mine = own && info[i].sim == own;
+        if (mine ? o.bubbleHideOwn : o.bubbleHideNpc) continue;
+        camera::Vec3 centre, right, up;
+        float k;
+        // The slot's middle from the anchor, in element units (y down): the box's top left is the slot's.
+        const float cx = box.l + hud::kBalloonW * 0.5f - box.ax, cy = box.t + hud::kBalloonH * 0.5f - box.ay;
+        if (mine) {
+            if (!o.bubbleOwnFront || !haveHead) continue;
+            const float s = o.worldScale;
+            k = o.bubbleOwnSize * s / kBalloonWidth;
+            centre = {hp.x + (hr.x * o.bubbleOwnPos[0] + hu.x * o.bubbleOwnPos[1] - hb.x * o.bubbleOwnPos[2]) * s,
+                      hp.y + (hr.y * o.bubbleOwnPos[0] + hu.y * o.bubbleOwnPos[1] - hb.y * o.bubbleOwnPos[2]) * s,
+                      hp.z + (hr.z * o.bubbleOwnPos[0] + hu.z * o.bubbleOwnPos[1] - hb.z * o.bubbleOwnPos[2]) * s};
+            right = hr;
+            up = hu;
+        } else {
+            const BalloonAnchor* a = nullptr;
+            for (int j = 0; j < anchorCount; ++j)
+                if (anchors[j].object == info[i].sim) a = &anchors[j];
+            if (!a) continue;
+            camera::Vec3 p{a->p[0] - 0.06f * view.right.x + 0.13f * view.up.x, a->p[1] - 0.06f * view.right.y + 0.13f * view.up.y,
+                           a->p[2] - 0.06f * view.right.z + 0.13f * view.up.z};
+            const float d = (p.x - view.position.x) * fwd.x + (p.y - view.position.y) * fwd.y + (p.z - view.position.z) * fwd.z;
+            if (d < 0.3f) continue;
+            k = o.bubbleNpcSize / kBalloonWidth;
+            centre = {p.x + (view.right.x * cx - view.up.x * cy) * k, p.y + (view.right.y * cx - view.up.y * cy) * k,
+                      p.z + (view.right.z * cx - view.up.z * cy) * k};
+            right = view.right;
+            up = view.up;
+        }
+        phone3d::Panel& p = out[written++];
+        p = phone3d::Panel{};
+        p.show = true;
+        p.clear = true;
+        p.opacity = 1;
+        std::copy(&centre.x, &centre.x + 3, p.centre);
+        std::copy(&right.x, &right.x + 3, p.x);
+        std::copy(&up.x, &up.x + 3, p.y);
+        p.width = hud::kBalloonW * k;
+        p.height = hud::kBalloonH * k;
+        const float sx = hud::kBalloons.x + (info[i].slot % 4) * hud::kBalloonW, sy = hud::kBalloons.y + (info[i].slot / 4) * hud::kBalloonH;
+        p.crop[0] = sx / hud::kWidth;
+        p.crop[1] = sy / hud::kHeight;
+        p.crop[2] = (sx + hud::kBalloonW) / hud::kWidth;
+        p.crop[3] = (sy + hud::kBalloonH) / hud::kHeight;
     }
     return written;
 }
