@@ -2397,19 +2397,25 @@ void hookedProjection(void* camera) {
         // (+0x280 = 1) at the mirrors and narrowed to their tangent extents about its axis (width 2 * the largest
         // |x/z|). The eye's lens shift came along and slid that window off the mirrors (0.242 across, 0.208 down):
         // each eye culled reflected objects on one side, flickering with the head (user 2026-10-22: right with the
-        // lopsided eye off). Any look-at camera other than the eye's that still holds an eye's centre gets 0 0.
+        // lopsided eye off). Only that camera: a look-at camera holding an eye's centre whose size was narrowed
+        // away from the eye's. The scene camera the mirror pass copies (also look-at, the eye's size) keeps its
+        // centre: 331 zeroed it too and every reflection slid sideways, opposite per eye.
         uint8_t* cam = static_cast<uint8_t*>(camera);
         float* at = reinterpret_cast<float*>(cam + kCentreOffset);
-        if (reinterpret_cast<uintptr_t>(camera) != g_writtenCamera.load(std::memory_order_relaxed) && cam[0x280] == 1 &&
-            (at[0] != 0 || at[1] != 0) && !std::isnan(g_appliedCentre[0].load(std::memory_order_relaxed))) {
+        const uint8_t* eyeCam = reinterpret_cast<const uint8_t*>(g_writtenCamera.load(std::memory_order_relaxed));
+        auto sizeOf = [](const uint8_t* c, size_t off) { return *reinterpret_cast<const float*>(c + off); };
+        const bool narrowed = eyeCam && (std::fabs(sizeOf(cam, 0x14) - sizeOf(eyeCam, 0x14)) > 1e-4f ||
+                                         std::fabs(sizeOf(cam, 0x18) - sizeOf(eyeCam, 0x18)) > 1e-4f);
+        if (eyeCam && cam != eyeCam && cam[0x280] == 1 && narrowed && (at[0] != 0 || at[1] != 0) &&
+            !std::isnan(g_appliedCentre[0].load(std::memory_order_relaxed))) {
             for (const auto& eye : g_eyeCentre) {
                 if (at[0] != eye[0].load(std::memory_order_relaxed) || at[1] != eye[1].load(std::memory_order_relaxed))
                     continue;
                 static int logs = 0;
-                if (logs < 3) {
+                if (logs < 6) {
                     ++logs;
-                    LOG("Mirror cull: look-at camera %p had the eye's centre %.3f %.3f; centred so the mirror's cull "
-                        "window covers the glass", camera, at[0], at[1]);
+                    LOG("Mirror cull: look-at camera %p (narrowed to %.3f %.3f) had the eye's centre %.3f %.3f; centred",
+                        camera, sizeOf(cam, 0x14), sizeOf(cam, 0x18), at[0], at[1]);
                 }
                 at[0] = at[1] = 0;
                 break;
