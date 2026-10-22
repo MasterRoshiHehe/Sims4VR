@@ -575,7 +575,12 @@ int balloonCards(const camera::View& view, phone3d::Panel* out, int max) {
 int barCards(phone3d::Panel* out, int max) {
     hud::BarInfo info[hud::kBarSlots];
     const int n = hud::activeBars(info, hud::kBarSlots);
-    if (!n || !g_ownBalloons.load(std::memory_order_relaxed) || !camera::bodyActive()) return 0;
+    static bool s_set = false;
+    static float s_pos[3], s_fwd[2];  // the bar's anchor: stays in the world until you walk or turn well away
+    if (!n || !g_ownBalloons.load(std::memory_order_relaxed) || !camera::bodyActive()) {
+        s_set = false;
+        return 0;
+    }
     Config o;
     {
         std::lock_guard<std::mutex> lock(g_optionMutex);
@@ -585,25 +590,43 @@ int barCards(phone3d::Panel* out, int max) {
     if (!o.bubbleOwnFront || !camera::headInWorld(hp, hr, hu, hb)) return 0;
     const uint64_t own = camera::bodyId();
     const float s = o.worldScale;
-    // The slot is drawn at 2 pixels per element unit; a balloon element unit is bubbleOwnSize / kBalloonWidth.
-    const float k = o.bubbleOwnSize * s / kBalloonWidth * 0.5f;
+    // Head forward on the ground; the world's up is the camera's up axis (hu has the head's tilt).
+    float fx = -hb.x, fz = -hb.z;
+    const float fl = std::sqrt(fx * fx + fz * fz);
+    if (fl < 0.2f) fx = s_set ? s_fwd[0] : 0, fz = s_set ? s_fwd[1] : -1;
+    else fx /= fl, fz /= fl;
+    const float dx = hp.x - s_pos[0], dz = hp.z - s_pos[2];
+    if (!s_set || std::sqrt(dx * dx + dz * dz) > 0.35f * s || fx * s_fwd[0] + fz * s_fwd[1] < 0.5f) {
+        s_set = true;
+        s_fwd[0] = fx;
+        s_fwd[1] = fz;
+        s_pos[0] = hp.x + fx * o.skillOwnPos[2] * s + fz * o.skillOwnPos[0] * s;
+        s_pos[1] = hp.y + o.skillOwnPos[1] * s;
+        s_pos[2] = hp.z + fz * o.skillOwnPos[2] * s - fx * o.skillOwnPos[0] * s;
+    }
+    // Faces you (billboard on the vertical axis).
+    camera::Vec3 right{}, up{0, 1, 0};
+    const float vx = hp.x - s_pos[0], vz = hp.z - s_pos[2], vl = std::sqrt(vx * vx + vz * vz);
+    if (vl < 0.01f) return 0;
+    right = {vz / vl, 0, -vx / vl};
+    const float width = o.skillOwnSize * s;
     int written = 0;
     for (int i = 0; i < n && written < max; ++i) {
         if (!own || info[i].sim != own) continue;
-        const float off = (written++) * 0.5f * hud::kBarSlot * k;  // a second bar sits beside the first
-        phone3d::Panel& p = out[written - 1];
+        phone3d::Panel& p = out[written];
         p = phone3d::Panel{};
         p.show = true;
         p.clear = true;
         p.opacity = 1;
-        const float x = o.skillOwnPos[0] + off / s, y = o.skillOwnPos[1], z = o.skillOwnPos[2];
-        p.centre[0] = hp.x + (hr.x * x + hu.x * y - hb.x * z) * s;
-        p.centre[1] = hp.y + (hr.y * x + hu.y * y - hb.y * z) * s;
-        p.centre[2] = hp.z + (hr.z * x + hu.z * y - hb.z * z) * s;
-        std::copy(&hr.x, &hr.x + 3, p.x);
-        std::copy(&hu.x, &hu.x + 3, p.y);
-        p.width = hud::kBarSlot * k;
-        p.height = hud::kBarSlot * k;
+        const float off = written * width * 1.1f;
+        p.centre[0] = s_pos[0] + right.x * off;
+        p.centre[1] = s_pos[1];
+        p.centre[2] = s_pos[2] + right.z * off;
+        std::copy(&right.x, &right.x + 3, p.x);
+        std::copy(&up.x, &up.x + 3, p.y);
+        p.width = width;
+        p.height = width;
+        ++written;
         const float sx = hud::kBars.x + info[i].slot * hud::kBarSlot, sy = static_cast<float>(hud::kBars.y);
         p.crop[0] = sx / hud::kWidth;
         p.crop[1] = sy / hud::kHeight;

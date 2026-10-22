@@ -149,8 +149,9 @@ Config loadConfig(const std::wstring& ini) {
     c.objectMenuWidth = readFloat(ini, "ui", "object_menu_width", c.objectMenuWidth);
     c.bubbles3d = readInt(ini, "ui", "bubbles_3d", 1) != 0;
     c.bubbleOwnFront = readInt(ini, "bubbles", "own_in_front", 1) != 0;
+    c.skillOwnSize = readFloat(ini, "bubbles", "skill_size", c.skillOwnSize);
     for (auto [key, out] : {std::pair<const char*, float*>{"own_bubble_position", c.bubbleOwnPos},
-                            std::pair<const char*, float*>{"own_skill_position", c.skillOwnPos}}) {
+                            std::pair<const char*, float*>{"skill_position", c.skillOwnPos}}) {
         std::string s = readString(ini, "bubbles", key, "");
         float v[3];
         if (sscanf(s.c_str(), "%f %f %f", &v[0], &v[1], &v[2]) == 3)

@@ -2107,7 +2107,13 @@ void drawSkillBars() {
         progress = std::max(0.0, std::min(1.0, progress));
         pieceIn(d, art::kBarTrack, {x, y + 2 * k}, {x + 32 * k, y + 110 * k});
         const float fillH = static_cast<float>(progress) * 98 * k, top = y + (5 + 98) * k + 2 * k - fillH;
-        if (fillH > 0.5f) pieceIn(d, art::kBarFill, {x + 6 * k, top}, {x + 26 * k, y + (5 + 98) * k + 2 * k});
+        if (fillH > 0.5f && uikit::res().art) {  // rounded like the pill it fills
+            const art::Piece& f = art::kBarFill;
+            d->AddImageRounded(uikit::res().art, {x + 6 * k, top}, {x + 26 * k, y + (5 + 98) * k + 2 * k},
+                               {static_cast<float>(f.x) / art::kAtlasW, static_cast<float>(f.y) / art::kAtlasH},
+                               {static_cast<float>(f.x + f.w) / art::kAtlasW, static_cast<float>(f.y + f.h) / art::kAtlasH},
+                               IM_COL32_WHITE, std::min(10.0f * k, fillH * 0.5f), ImDrawFlags_RoundCornersAll);
+        }
         pieceIn(d, art::kBarGlass, {x + 6 * k, y + 7 * k}, {x + 26 * k, y + 105 * k});
         const ImVec2 c{x + 74 * k, y + 56 * k};
         piece(d, art::kBarDisc, c, (69.0f * k) / art::kBarDisc.w);
