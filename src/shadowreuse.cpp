@@ -165,6 +165,32 @@ int64_t now() {
     return t.QuadPart;
 }
 
+// The kinds of calls (flag, mask) seen, with the highest index and per-eye counts, logged with the
+// 10 s line. Only the sun shadow job's calls (flag 1) are left out of the right eye: the Sims' calls
+// (flag 0, mask 0x200000) also feed the mirror's view, and leaving them out lost Sims, plumbobs
+// and other objects from the right eye's mirror (326 screenshots, user 2026-10-22).
+struct ListKind {
+    std::atomic<uint64_t> key{0};  // flag << 32 | mask, 0 = free
+    std::atomic<uint32_t> maxIndex{0};
+    std::atomic<uint32_t> runs[2] = {}, skipped{0};
+};
+ListKind g_kinds[8];
+
+void countKind(uint64_t flag, uint64_t mask, uint64_t extra, bool second, bool skipped) {
+    const uint64_t key = (flag & 0xff) << 32 | (mask & 0xffffffffull) | 1ull << 40;
+    for (ListKind& k : g_kinds) {
+        uint64_t have = k.key.load(std::memory_order_relaxed);
+        if (have == 0 && k.key.compare_exchange_strong(have, key)) have = key;
+        if (have != key) continue;
+        const uint32_t index = static_cast<uint32_t>(extra);
+        uint32_t m = k.maxIndex.load(std::memory_order_relaxed);
+        while (index > m && index < 1000 && !k.maxIndex.compare_exchange_weak(m, index)) {
+        }
+        (skipped ? k.skipped : k.runs[second]).fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+}
+
 void logLists() {
     const ULONGLONG at = GetTickCount64();
     ULONGLONG last = g_listLog.load(std::memory_order_relaxed);
@@ -182,11 +208,21 @@ void logLists() {
     LOG("Shadow lists (last 10 s): left eye %u runs %.2f ms each, right eye %u runs %.2f ms each, %u left out of "
         "the right eye",
         runs[0], each[0], runs[1], each[1], g_listSkips.exchange(0));
+    for (ListKind& k : g_kinds) {
+        const uint64_t key = k.key.load(std::memory_order_relaxed);
+        if (!key) continue;
+        LOG("Shadow lists kind: flag %u mask %08x (index up to %u): left eye %u, right eye %u, %u left out",
+            static_cast<unsigned>((key >> 32) & 0xff), static_cast<unsigned>(key & 0xffffffffull), k.maxIndex.load(),
+            k.runs[0].exchange(0), k.runs[1].exchange(0), k.skipped.exchange(0));
+    }
 }
 
 void hookedLists(void* renderer, uint64_t flag, uint64_t mask, uint64_t extra) {
     const bool second = singleview::inSecond();
-    if (second && g_skipLists.load(std::memory_order_relaxed) && on()) {
+    const bool sunJob = (flag & 0xff) == 1;
+    const bool skip = second && sunJob && g_skipLists.load(std::memory_order_relaxed) && on();
+    countKind(flag, mask, extra, second, skip);
+    if (skip) {
         g_listSkips.fetch_add(1, std::memory_order_relaxed);
         logLists();
         return;
