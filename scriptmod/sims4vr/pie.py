@@ -75,6 +75,9 @@ def _wrap_create():
     hooks.hook('pie', interaction_commands, 'create_pie_menu_message', create_pie_menu_message)
 
 
+_bad_categories = set()  # mod categories whose name couldn't be made (logged once)
+
+
 def _send_own(msg, local):
     """The pie as our own card in first person (hud.cpp drawPie; user 2026-10-22: the cut of the game's pie took
     in other boxes): the game's own PieMenuCreate, plus what the PieMenu widget gets from the game service
@@ -114,22 +117,37 @@ def _send_own(msg, local):
                 if cat is None:
                     return
                 sent.add(key)
-                name = cat._display_name()
                 try:
-                    del name.tokens[:]
-                    name.tokens.extend(msg.category_tokens)
-                except Exception:
-                    pass
+                    name = cat._display_name()
+                    try:
+                        del name.tokens[:]
+                        name.tokens.extend(msg.category_tokens)
+                    except Exception:
+                        pass
+                    name_json = objmenu._loc(name)
+                except Exception as e:
+                    # A mod's category with a string key too big for a LocalizedString (user 2026-10-23: "Value
+                    # out of range: 58290212367" lost the whole pie to the cut): its key's low 32 bits, as the
+                    # game's string tables are keyed.
+                    string_id = int(getattr(cat._display_name, '_string_id', 0) or 0) & 0xffffffff
+                    name_json = '{{"hash": {}}}'.format(string_id)
+                    if key not in _bad_categories:
+                        _bad_categories.add(key)
+                        native._log('pie: category {} ({}) name not made ({!r}); key {:#x} used'.format(
+                            key, getattr(cat, '__name__', '?'), e, string_id))
                 override = ''
-                if mood is not None:
-                    data = (getattr(cat, 'mood_overrides', None) or {}).get(mood)
-                    if data is not None and getattr(data, 'name_override', None) is not None:
-                        override = objmenu._loc(data.name_override())
+                try:
+                    if mood is not None:
+                        data = (getattr(cat, 'mood_overrides', None) or {}).get(mood)
+                        if data is not None and getattr(data, 'name_override', None) is not None:
+                            override = objmenu._loc(data.name_override())
+                except Exception:
+                    override = ''
                 parent = cat._parent.guid64 if cat._parent is not None else 0
                 icon = hudinfo._icon(cat._icon) if cat._icon is not None else 0
                 records.append('cat\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}'.format(
                     key, parent, 1 if cat._collapsible else 0, int(cat._display_priority),
-                    1 if cat.always_show_disabled_interactions else 0, icon, objmenu._loc(name), override))
+                    1 if cat.always_show_disabled_interactions else 0, icon, name_json, override))
                 key = parent
 
         for i, item in enumerate(msg.items):
