@@ -448,7 +448,7 @@ static bool updateObjectMenu(bool firstPerson, bool headOk, const XrPosef& head)
         return true;
     }
     hidePickerHud();
-    if (!g_objMenu.active) {
+    if (!g_objMenu.active && drawn <= 0) {
         g_objMenu.opened = now;
         static int logged = 0;
         if (logged++ < 30)
@@ -456,19 +456,20 @@ static bool updateObjectMenu(bool firstPerson, bool headOk, const XrPosef& head)
                 r.kind >= 2 ? "screen" : "front", crop[2], crop[3], crop[0], crop[1],
                 fitted && g_menuFitOk ? "measured" : "not found, the middle");
     }
-    g_objMenu.active = true;
-    g_objMenu.x = x;
-    g_objMenu.y = y;
-    g_objMenu.z = z;
-    g_objMenu.pose = {fromAxes(x, y, z), at};
-    g_objMenu.width = w;
-    g_objMenu.height = h;
-    g_objMenu.x0 = crop[0];
-    g_objMenu.y0 = crop[1];
-    g_objMenu.cw = crop[2];
-    g_objMenu.ch = crop[3];
-    g_objMenu.uiW = ui.Width;
-    g_objMenu.uiH = ui.Height;
+    if (drawn <= 0) {
+        g_objMenu.active = true;
+        g_objMenu.x = x;
+        g_objMenu.y = y;
+        g_objMenu.z = z;
+        g_objMenu.pose = {fromAxes(x, y, z), at};
+        g_objMenu.width = w;
+        g_objMenu.height = h;
+        g_objMenu.x0 = crop[0];
+        g_objMenu.y0 = crop[1];
+        g_objMenu.cw = crop[2];
+        g_objMenu.ch = crop[3];
+        g_objMenu.uiW = ui.Width;
+        g_objMenu.uiH = ui.Height;
     // Drawn inside the game's 3D view (phone3d), so your hands and anything
     // nearer pass in front of it; the flat layer only if that can't be drawn.
     // Back to world units: world = anchor + heading * (app * scale).
@@ -559,31 +560,41 @@ static bool updatePopupCard(const ObjectMenuRequest& r, bool firstPerson, bool h
     XrVector3f y = normalize3({up.x - z.x * z.y, up.y - z.y * z.y, up.z - z.z * z.y});
     if (!(dot3(y, y) > 0.5f)) y = up;
     XrVector3f x = cross3(y, z);
+    // Drawn by us: the HUD sheet takes the laser and pokes; the card itself is drawn as the cut one was (the
+    // panel, placed with each drawn frame's camera; user 2026-10-23: as a HUD piece it flickered in the left eye).
+    ID3D11Texture2D* source = g_uiFrame;
     if (drawn > 0) {
-        if (g_objMenu.active) hideObjectMenu();
-        return popupOnHud(at, x, y, w, onTop);
+        if (!popupOnHud(at, x, y, w, onTop)) {
+            phone3d::setPanel(phone3d::Panel{}, nullptr);
+            return false;
+        }
+        source = hud::texture();
+        if (!source) return false;
+    } else {
+        hidePopupHud();
     }
-    hidePopupHud();
-    if (!g_objMenu.active) {
+    if (!g_objMenu.active && drawn <= 0) {
         g_objMenu.opened = now;
         static int logged = 0;
         if (logged++ < 30)
             LOG("Popup: shown %.2f x %.2f m %s (UI %dx%d at %d,%d)", w, h,
                 r.kind == 5 ? "beside the Sim" : "in front of you", crop[2], crop[3], crop[0], crop[1]);
     }
-    g_objMenu.active = true;
-    g_objMenu.x = x;
-    g_objMenu.y = y;
-    g_objMenu.z = z;
-    g_objMenu.pose = {fromAxes(x, y, z), at};
-    g_objMenu.width = w;
-    g_objMenu.height = h;
-    g_objMenu.x0 = crop[0];
-    g_objMenu.y0 = crop[1];
-    g_objMenu.cw = crop[2];
-    g_objMenu.ch = crop[3];
-    g_objMenu.uiW = ui.Width;
-    g_objMenu.uiH = ui.Height;
+    if (drawn <= 0) {
+        g_objMenu.active = true;
+        g_objMenu.x = x;
+        g_objMenu.y = y;
+        g_objMenu.z = z;
+        g_objMenu.pose = {fromAxes(x, y, z), at};
+        g_objMenu.width = w;
+        g_objMenu.height = h;
+        g_objMenu.x0 = crop[0];
+        g_objMenu.y0 = crop[1];
+        g_objMenu.cw = crop[2];
+        g_objMenu.ch = crop[3];
+        g_objMenu.uiW = ui.Width;
+        g_objMenu.uiH = ui.Height;
+    }
     phone3d::Panel panel;
     panel.show = true;
     panel.clear = true;
@@ -612,12 +623,20 @@ static bool updatePopupCard(const ObjectMenuRequest& r, bool firstPerson, bool h
         panel.appW = w;
         panel.appH = h;
     }
-    float W = static_cast<float>(ui.Width), H = static_cast<float>(ui.Height);
-    panel.crop[0] = crop[0] / W;
-    panel.crop[1] = crop[1] / H;
-    panel.crop[2] = (crop[0] + crop[2]) / W;
-    panel.crop[3] = (crop[1] + crop[3]) / H;
-    phone3d::setPanel(panel, g_uiFrame);
+    if (drawn > 0) {
+        const float W = static_cast<float>(hud::kWidth), H = static_cast<float>(hud::kHeight);
+        panel.crop[0] = hud::kPopup.x / W;
+        panel.crop[1] = hud::kPopup.y / H;
+        panel.crop[2] = (hud::kPopup.x + hud::kPopup.w) / W;
+        panel.crop[3] = (hud::kPopup.y + drawn) / H;
+    } else {
+        float W = static_cast<float>(ui.Width), H = static_cast<float>(ui.Height);
+        panel.crop[0] = crop[0] / W;
+        panel.crop[1] = crop[1] / H;
+        panel.crop[2] = (crop[0] + crop[2]) / W;
+        panel.crop[3] = (crop[1] + crop[3]) / H;
+    }
+    phone3d::setPanel(panel, source);
     return true;
 }
 

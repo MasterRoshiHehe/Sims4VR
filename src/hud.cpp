@@ -813,7 +813,7 @@ void resolvePopup() {
     }
     // Its words must be there: an unknown text (a string we don't have) keeps
     // the cut of the game's own dialog.
-    bool textOk = p.textJson.empty() || !p.text.empty();
+    bool textOk = p.textJson.empty() || !p.text.empty() || !p.title.empty();  // a title-only warning (2026-10-23)
     p.valid = textOk && (!p.text.empty() || !p.title.empty()) &&
               (p.buttonJson.empty() || named > 0 || p.buttonJson.size() <= 2);
     {

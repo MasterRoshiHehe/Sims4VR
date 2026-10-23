@@ -601,17 +601,6 @@ static void updateHud(const armik::Hand hands[2], bool firstPerson, bool headOk,
         viewOk = true;
     }
     updatePieHud();
-    {
-        // The popup card in front of you: placed again with each drawn frame's camera (placeArmPieces), as the pie.
-        int kind;
-        {
-            std::lock_guard<std::mutex> lock(g_objMenuMutex);
-            kind = g_objMenuRequest.kind;
-        }
-        const PieMenu& m = g_hud[kHudPopup].m;
-        std::lock_guard<std::mutex> lock(g_armPlaceMutex);
-        g_appPlace[kHudPopup] = {m.active && kind == 4, m.pose.position, m.x, m.y};
-    }
     if (viewOk)
         updateNoteCard(view, firstPerson, headOk, head);
     else
@@ -624,7 +613,7 @@ static void updateHud(const armik::Hand hands[2], bool firstPerson, bool headOk,
         phone3d::Panel panels[5];
         int count = 0;
         updateTip();
-        for (int i : {kHudPopup, kHudPicker, kHudNote, kHudTip})  // the pie: pieInWorld
+        for (int i : {kHudPicker, kHudNote, kHudTip})  // the pie: pieInWorld; the popup: updatePopupCard's panel
             if (viewOk && atlas && g_hud[i].m.active) {
                 panels[count] = hudPanel(g_hud[i], view);
                 panels[count++].tag = i;
@@ -756,7 +745,7 @@ static void updateHud(const armik::Hand hands[2], bool firstPerson, bool headOk,
     ID3D11Texture2D* atlas = hud::texture();
     if (atlas)
         for (int i = 0; i < kHudCount; ++i)
-            if (i != kHudSleep && i != kHudPie && g_hud[i].m.active) {  // the pie: pieInWorld (app space, hands in front)
+            if (i != kHudSleep && i != kHudPie && i != kHudPopup && g_hud[i].m.active) {  // the popup: updatePopupCard's panel  // the pie: pieInWorld (app space, hands in front)
                 panels[count] = hudPanel(g_hud[i], view);
                 panels[count++].tag = i;
             }

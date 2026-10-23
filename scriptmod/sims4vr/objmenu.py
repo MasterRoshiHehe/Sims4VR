@@ -820,7 +820,11 @@ def _send_list_content(msg):
     global _list_options, _list_picked
     _list_options = []
     _list_picked = []
-    if not msg.HasField('picker_data') or getattr(msg, 'validation_command', ''):
+    if not msg.HasField('picker_data'):
+        _log('picker without picker data: the cut of the game\'s picker')
+        return False
+    if getattr(msg, 'validation_command', ''):
+        _log('picker with a validation command: the cut of the game\'s picker')
         return False
     picker = msg.picker_data
     if picker.type not in _LIST_TYPES:
@@ -869,6 +873,7 @@ def _send_list_content(msg):
                                      '1' if b.is_selected else '0']))
         _list_options.append(b.option_id or sim_id)
     if not _list_options:
+        _log('picker type {} without rows: the cut of the game\'s picker'.format(picker.type))
         return False
     native.popup_content('\x1e'.join(records).encode('utf-8'))
     _log('list picker card from the game\'s message: type {}, {} rows, {} ({} to {})'.format(
