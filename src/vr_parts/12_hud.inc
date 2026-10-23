@@ -30,6 +30,22 @@ void setPaused(bool paused) {
 
 void setClock(int hour, int minute, int day, int speed) { hud::setClock(hour, minute, day, speed); }
 
+// The HUD piece the open settings page places (user 2026-10-23: a green box behind it, so it can be placed even
+// when it isn't showing): -1 none.
+static int previewSheet() {
+    const wchar_t* page = settings::openPage();
+    if (!page) return -1;
+    static const struct {
+        const wchar_t* page;
+        int sheet;
+    } kPages[] = {{L"HUD watch", kHudWatch}, {L"HUD needs", kHudNeeds}, {L"HUD moodlets", kHudMoodlets},
+                  {L"HUD queue", kHudQueue}, {L"HUD build", kHudBuild},     {L"HUD wants", kHudWants},
+                  {L"HUD pause", kHudPause}};
+    for (const auto& k : kPages)
+        if (!wcscmp(page, k.page)) return k.sheet;
+    return -1;
+}
+
 static void hideHud(HudSheet& s) {
     s.m.active = false;
     s.m.armed[0] = s.m.armed[1] = false;
@@ -870,22 +886,6 @@ static bool laserHud(const XrVector3f& o, const XrVector3f& d, bool trigger, XrV
         return true;
     }
     return false;
-}
-
-// The HUD piece the open settings page places (user 2026-10-23: a green box behind it, so it can be placed even
-// when it isn't showing): -1 none.
-static int previewSheet() {
-    const wchar_t* page = settings::openPage();
-    if (!page) return -1;
-    static const struct {
-        const wchar_t* page;
-        int sheet;
-    } kPages[] = {{L"HUD watch", kHudWatch}, {L"HUD needs", kHudNeeds}, {L"HUD moodlets", kHudMoodlets},
-                  {L"HUD queue", kHudQueue}, {L"HUD build", kHudBuild},     {L"HUD wants", kHudWants},
-                  {L"HUD pause", kHudPause}};
-    for (const auto& k : kPages)
-        if (!wcscmp(page, k.page)) return k.sheet;
-    return -1;
 }
 
 static hud::Rect previewArea() {
