@@ -391,7 +391,8 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
         static HeadHold hold;
         XrPosef pose;
         headOk = steadyHead(hold, headOk, head.pose, pose);
-        clientdlg::setWanted(mode() == Mode::Stereo && steadyBody() && g_config.popups3d);
+        clientdlg::setWanted(mode() == Mode::Stereo && steadyBody() && g_config.popups3d &&
+                             (g_config.uiFirstPerson == 1 || g_config.uiFirstPerson == 3));
         updateObjectMenu(mode() == Mode::Stereo && steadyBody(), headOk, pose);
     }
     updateSims1Screen(mode() == Mode::Stereo && camera::bodyActive());

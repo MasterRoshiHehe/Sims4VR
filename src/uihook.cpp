@@ -84,6 +84,7 @@ std::atomic<int> g_rendering{0};  // UI renders in progress (any thread): binds 
 std::atomic<bool> g_clearPending{true};
 std::atomic<bool> g_phonePending{true};  // the phone goes into the 3D view once a frame
 std::atomic<bool> g_secondPass{false};    // beginSecondPass .. endSecondPass
+std::atomic<ULONGLONG> g_lastSecondPass{0};  // when the last right-eye pass ended
 std::atomic<uint32_t> g_uiRenders{0}, g_uiSecondRenders{0};
 std::atomic<bool> g_drawn{false};
 std::atomic<uint64_t> g_renders{0};
@@ -687,7 +688,9 @@ ID3D11Texture2D* onPresent(ID3D11Texture2D* backbuffer, bool enabled) {
         g_bubblesShown = false;
     }
     g_clearPending = true;
-    g_phonePending = true;
+    // Both real eyes: the passes re-arm it themselves (endSecondPass), since the next frame's left eye can be
+    // recorded before this frame's Present (its pieces went missing then: the left-eye flicker, 2026-10-23).
+    if (GetTickCount64() - g_lastSecondPass.load(std::memory_order_relaxed) > 500) g_phonePending = true;
     g_enabled.store(enabled && g_contextHooked.load(), std::memory_order_release);
     return result;
 }
@@ -697,7 +700,11 @@ void beginSecondPass() {
     g_secondPass.store(true, std::memory_order_release);
 }
 
-void endSecondPass() { g_secondPass.store(false, std::memory_order_release); }
+void endSecondPass() {
+    g_secondPass.store(false, std::memory_order_release);
+    g_lastSecondPass.store(GetTickCount64(), std::memory_order_relaxed);
+    g_phonePending.store(true, std::memory_order_relaxed);  // the next frame's left eye
+}
 
 void takeRenders(uint32_t& all, uint32_t& second) {
     all = g_uiRenders.exchange(0, std::memory_order_relaxed);

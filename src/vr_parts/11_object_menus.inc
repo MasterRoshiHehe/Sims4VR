@@ -322,7 +322,10 @@ static bool updateObjectMenu(bool firstPerson, bool headOk, const XrPosef& head)
             refitAt = now + 2500;
         }
     }
-    bool want = r.kind > 0 && (r.kind >= 4 ? g_config.popups3d : g_config.objectMenus) && firstPerson && g_uiFrame &&
+    // Popup cards only with our HUD ("Wrist HUD only" / "Both"; user 2026-10-23: not with "Hidden" or the game's UI in front).
+    const bool ourHud = g_config.uiFirstPerson == 1 || g_config.uiFirstPerson == 3;
+    bool want = r.kind > 0 && (r.kind >= 4 ? g_config.popups3d && ourHud : g_config.objectMenus) && firstPerson &&
+                (g_uiFrame || (r.kind >= 4 && hud::popupHeight() > 0)) &&
                 !g_pie.active && !(g_phoneOut && (g_tablet || g_phoneOptions));  // the phone's apps: popups stay in front of you
     camera::View view;
     if (!want || !camera::lastView(view)) {
@@ -343,9 +346,10 @@ static bool updateObjectMenu(bool firstPerson, bool headOk, const XrPosef& head)
         refitAt = now + 2500;
     }
     bool fitted = g_menuFitDone != fitsAtOpen;
-    if (!(card > 0) && !fitted && now - since < 1500) return false;  // not measured yet
-    D3D11_TEXTURE2D_DESC ui;
-    g_uiFrame->GetDesc(&ui);
+    const bool ownPopup = r.kind >= 4 && hud::popupHeight() > 0;  // drawn by us: no measuring, no UI frame needed
+    if (!(card > 0) && !ownPopup && !fitted && now - since < 1500) return false;  // not measured yet
+    D3D11_TEXTURE2D_DESC ui{};
+    if (g_uiFrame) g_uiFrame->GetDesc(&ui);
     int32_t W = static_cast<int32_t>(ui.Width), H = static_cast<int32_t>(ui.Height);
     int32_t crop[4] = {W / 5, H / 5, W * 3 / 5, H * 3 / 5};  // not found: the middle of the UI
     if (fitted && g_menuFitOk) std::memcpy(crop, g_phoneCrop, sizeof(crop));
@@ -508,14 +512,16 @@ static bool updateObjectMenu(bool firstPerson, bool headOk, const XrPosef& head)
 // not the game's blue dimming around it. Point or poke it like the pie.
 static bool updatePopupCard(const ObjectMenuRequest& r, bool firstPerson, bool headOk, const XrPosef& head) {
     camera::View view;
-    if (!firstPerson || !headOk || !g_uiFrame || !camera::lastView(view)) {
+    // Drawn by us (hud.cpp): the game's UI frame isn't needed, only for the cut.
+    const bool ours = hud::popupHeight() > 0;
+    if (!firstPerson || !headOk || (!g_uiFrame && !ours) || !camera::lastView(view)) {
         hideObjectMenu();
         return false;
     }
     ULONGLONG now = GetTickCount64();
     float scale = view.scale > 0 ? view.scale : 1.0f;
-    D3D11_TEXTURE2D_DESC ui;
-    g_uiFrame->GetDesc(&ui);
+    D3D11_TEXTURE2D_DESC ui{};
+    if (g_uiFrame) g_uiFrame->GetDesc(&ui);
     const int32_t* crop = g_popupCrop;
     float aspect = static_cast<float>(crop[2]) / static_cast<float>(std::max(1, crop[3]));
     // Drawn from the game's own message in its dialog art (hud.cpp), once its

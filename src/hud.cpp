@@ -90,6 +90,7 @@ struct PopupContent {
     int minSel = 0, maxSel = 1;
 };
 int g_listPage = 0;                 // the list picker's page (present thread)
+int g_textPage = 0;                 // a long popup text's page (present thread)
 std::vector<char> g_listChosen;     // its rows ticked (several to pick)
 std::vector<int> g_listPicked;      // what Done sent
 std::mutex g_popupMutex;
@@ -757,6 +758,7 @@ void resolvePopup() {
                         !g_popupIn.rows.empty();
             g_popupNew = false;
             g_listPage = 0;
+            g_textPage = 0;
             g_listChosen.assign(g_popup.rows.size(), 0);
             for (size_t i = 0; i < g_popup.rows.size(); ++i) g_listChosen[i] = g_popup.rows[i].selected && g_popup.multi;
             g_popupHeight = 0;
@@ -1034,13 +1036,40 @@ Action drawPopup(int* index) {
         bool row = n == 2 && p.buttons[0].size() < 18 && p.buttons[1].size() < 18;
         const float bh = 76, bgap = 16;
         float buttonsH = n == 0 ? 0 : row ? bh : n * bh + (n - 1) * bgap;
-        float h = 44 + tt.y + (tt.y > 0 && xs.y > 0 ? 20 : 0) + xs.y + (n ? 40 : 0) + buttonsH + 50;
+        // A text longer than the card holds (a mod's release notes): shown a page at a time with arrows under it,
+        // so the buttons always stay on the card.
+        const float arrowsH = 76, fixedH = 44 + tt.y + (tt.y > 0 && xs.y > 0 ? 20 : 0) + (n ? 40 : 0) + buttonsH + 50 + 20;
+        float textH = xs.y;
+        int pages = 1;
+        if (xs.y > 0 && fixedH + xs.y > r.h) {
+            textH = std::max(120.0f, r.h - fixedH - arrowsH - 20);
+            const float line = g_text->FontSize * 1.2f, step = std::max(line, std::floor((textH - line) / line) * line);
+            pages = 1 + static_cast<int>(std::ceil((xs.y - textH) / step));
+            textH = std::floor(textH / line) * line;
+            g_textPage = std::max(0, std::min(g_textPage, pages - 1));
+        }
+        float h = fixedH - 20 + textH + (pages > 1 ? arrowsH + 20 : 0);
         uikit::dialogPanel(d, {x0, r.y + 8}, {x1, r.y + 8 + h});
         if (tt.y > 0) {
             d->AddText(g_title, g_title->FontSize, {(x0 + x1 - tt.x) / 2, y}, kTitle, p.title.c_str(), nullptr, wrap);
             y += tt.y + (xs.y > 0 ? 20 : 0);
         }
-        if (xs.y > 0) {
+        if (xs.y > 0 && pages > 1) {
+            const float line = g_text->FontSize * 1.2f, step = std::max(line, std::floor((textH - line) / line) * line);
+            d->PushClipRect({x0, y}, {x1, y + textH}, true);
+            d->AddText(g_text, g_text->FontSize, {x0 + pad, y - g_textPage * step}, kBody, p.text.c_str(), nullptr, wrap);
+            d->PopClipRect();
+            y += textH + 20;
+            const float bw = 104;
+            char where[32];
+            std::snprintf(where, sizeof where, "%d / %d", g_textPage + 1, pages);
+            ImVec2 ws = g_text->CalcTextSizeA(g_text->FontSize, FLT_MAX, 0, where);
+            const float nx = x1 - pad - bw, px = nx - 24 - ws.x - 24 - bw;
+            if (dialogButton(d, 66, "<", {px, y}, {px + bw, y + arrowsH})) g_textPage = (g_textPage + pages - 1) % pages;
+            d->AddText(g_text, g_text->FontSize, {px + bw + 24, y + (arrowsH - 10 - ws.y) / 2}, kBody, where);
+            if (dialogButton(d, 67, ">", {nx, y}, {nx + bw, y + arrowsH})) g_textPage = (g_textPage + 1) % pages;
+            y += arrowsH;
+        } else if (xs.y > 0) {
             d->AddText(g_text, g_text->FontSize, {x0 + pad, y}, kBody, p.text.c_str(), nullptr, wrap);
             y += xs.y;
         }
