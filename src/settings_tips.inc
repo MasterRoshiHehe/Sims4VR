@@ -195,6 +195,7 @@ const TipText kTips[] = {
     {"phone.hand_offset", L"Moves the hand away from the phone, one direction per row."},
     {"phone.hand_turn", L"Turns the hand on the phone, one axis per row."},
     {"book.book", L"A notebook rests at your left hip; bring your hand there to take it out. It shows what the game's notebook shows."},
+    {"book.poke", L"Poke the notebook's pages with your finger, or point the laser at them, to open categories, open entries and turn pages."},
     {"book.hip_drop", L"How far below your eyes your hand must be to take out the notebook."},
     {"book.tilt", L"Tilts the notebook sideways in your hand."},
     {"book.yaw", L"Turns the notebook flat in your hand."},

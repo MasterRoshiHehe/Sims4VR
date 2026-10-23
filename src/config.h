@@ -318,6 +318,7 @@ struct Config {
     float bookCurl = 0.5f, bookThumbBend = 0.3f, bookThumbSpread = 0;
     float bookHandOffset[3] = {0, 0, 0};
     float bookHandTurn[3] = {0, 0, 0};
+    bool bookPoke = true;         // poke and laser work on the notebook's pages
     float bookOpenSeconds = 0.7f;  // the cover swinging open
     float bookSwipe = 0.10f;       // metres your other hand sweeps along the book to turn a page
     // [tablet] In first-person build/buy the phone gesture brings out a tablet

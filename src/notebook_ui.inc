@@ -36,6 +36,9 @@ NbContent g_nbIn, g_nb;             // g_nbMutex / present thread
 std::mutex g_nbMutex;
 bool g_nbNew = false;               // g_nbMutex
 std::atomic<int> g_nbSpreads{1};
+std::atomic<int> g_nbWant{-1};      // a spread a poke or the laser asked for (notebookTakeSpread)
+std::vector<std::string> g_nbOpen;  // the entries opened (their texts): an expandable entry shows its list when open
+std::vector<int> g_nbCatPage;       // the page each category starts on
 
 // One thing on a page, placed top-down. kind: 0 the category's title block, 1 a subcategory's heading,
 // 2 an entry, 3 an entry's list item.
@@ -77,6 +80,15 @@ float nbTextHeight(ImFont* font, float size, float wrap, const std::string& text
     return font->CalcTextSizeA(size, FLT_MAX, wrap, text.c_str()).y;
 }
 
+std::string nbKey(const NbEntry& e) { return e.textJson + "|" + e.descJson; }
+bool nbIsOpen(const NbEntry& e) { return std::find(g_nbOpen.begin(), g_nbOpen.end(), nbKey(e)) != g_nbOpen.end(); }
+void nbToggle(const NbEntry& e) {
+    auto it = std::find(g_nbOpen.begin(), g_nbOpen.end(), nbKey(e));
+    if (it != g_nbOpen.end()) g_nbOpen.erase(it);
+    else g_nbOpen.push_back(nbKey(e));
+    g_nbBuilt = false;
+}
+
 // A category's lines (after its title block on the first page).
 void nbCategoryLines(const NbCat& cat, std::vector<NbLine>& lines) {
     NbLine head;
@@ -102,7 +114,7 @@ void nbCategoryLines(const NbCat& cat, std::vector<NbLine>& lines) {
             l.h = std::max(48.0f, 8 + nbTextHeight(g_title, kNbBody, tw, nbFound(e.textJson)) +
                                       nbTextHeight(g_text, kNbSmall, tw, nbFound(e.descJson)) + 6);
             lines.push_back(l);
-            for (const NbItem& it : e.items) {
+            if (nbIsOpen(e)) for (const NbItem& it : e.items) {
                 NbLine i;
                 i.kind = 3;
                 i.cat = &cat;
@@ -124,9 +136,11 @@ void nbBuild() {
     grid.kind = 1;
     g_nbPages.push_back(home);
     g_nbPages.push_back(grid);
+    g_nbCatPage.clear();
     const float room = kNbBottom - kNbTop;
     for (const NbCat& cat : g_nb.cats) {
         if (g_nbPages.size() % 2 == 1) g_nbPages.push_back(NbPage{});  // a category starts on a left page
+        g_nbCatPage.push_back(static_cast<int>(g_nbPages.size()));
         std::vector<NbLine> lines;
         nbCategoryLines(cat, lines);
         NbPage page;
@@ -194,7 +208,13 @@ void nbCategories(ImDrawList* d, const Rect& r) {
     for (int i = 0; i < n && i < 12; ++i) {
         const NbCat& c = g_nb.cats[i];
         const float x = x0 + (i % 2) * (cw + gap), y = 72 + (i / 2) * (ch + gap);
-        pieceIn(d, art::kNbCell, at(x, y), at(x + cw, y + ch));
+        ImGui::SetCursorScreenPos(at(x, y));
+        ImGui::PushID(2000 + i);
+        const bool pressed = ImGui::InvisibleButton("nbcat", {cw, ch});
+        const bool hover = ImGui::IsItemHovered();
+        ImGui::PopID();
+        if (pressed && i < static_cast<int>(g_nbCatPage.size())) g_nbWant = g_nbCatPage[i] / 2;
+        pieceIn(d, hover ? art::kNbCellOver : art::kNbCell, at(x, y), at(x + cw, y + ch));
         if (c.icon) icon(d, c.icon, at(x + 40, y + ch / 2), 64);
         const std::string& name = nbFound(c.nameJson);
         const float wrap = cw - 88;
@@ -223,7 +243,18 @@ void nbBody(ImDrawList* d, const Rect& r, const NbPage& page, bool right) {
             d->AddLine({l, top + 40}, {l + w, top + 40}, IM_COL32(120, 80, 40, 90), 2);
         } else if (line.kind == 2) {
             const NbEntry& e = *line.entry;
-            d->AddRectFilled({l, top + 2}, {l + w, top + line.h - 2}, IM_COL32(255, 252, 240, 70), 6);
+            ImGui::SetCursorScreenPos({l, top + 2});
+            ImGui::PushID(static_cast<int>(reinterpret_cast<uintptr_t>(&e) & 0x7fffffff));
+            const bool pressed = ImGui::InvisibleButton("nbentry", {w, line.h - 4});
+            const bool hover = ImGui::IsItemHovered();
+            ImGui::PopID();
+            if (pressed && !e.items.empty()) nbToggle(e);
+            d->AddRectFilled({l, top + 2}, {l + w, top + line.h - 2}, hover ? IM_COL32(255, 255, 255, 120) : IM_COL32(255, 252, 240, 70), 6);
+            if (!e.items.empty()) {  // opens its list
+                const float cx = l + w - 22, cy = top + 14;
+                if (nbIsOpen(e)) d->AddTriangleFilled({cx - 7, cy - 4}, {cx + 7, cy - 4}, {cx, cy + 6}, kNbBlue);
+                else d->AddTriangleFilled({cx - 4, cy - 7}, {cx - 4, cy + 7}, {cx + 6, cy}, kNbBlue);
+            }
             if (e.icon) icon(d, e.icon, {l + 26, top + line.h / 2}, 40);
             const std::string& text = nbFound(e.textJson);
             const float tw = w - 56;
@@ -367,8 +398,24 @@ void drawNotebook(const Frame& f) {
         }
     }
     // The page's curled corner while there are more pages.
-    if (spread + 1 < static_cast<int>(g_nbPages.size() / 2))
-        pieceIn(d, art::kNbCurl, {rr.x + rr.w - 112, rr.y + rr.h - 130}, {rr.x + rr.w - 22, rr.y + rr.h - 40});
+    if (spread + 1 < static_cast<int>(g_nbPages.size() / 2)) {
+        ImGui::SetCursorScreenPos({rr.x + rr.w - 120, rr.y + rr.h - 140});
+        ImGui::PushID(3001);
+        if (ImGui::InvisibleButton("nbnext", {100, 100})) g_nbWant = spread + 1;
+        const bool hover = ImGui::IsItemHovered();
+        ImGui::PopID();
+        const float k = hover ? 1.15f : 1.0f;
+        pieceIn(d, art::kNbCurl, {rr.x + rr.w - 112, rr.y + rr.h - 130}, {rr.x + rr.w - 112 + 90 * k, rr.y + rr.h - 130 + 90 * k});
+    }
+    if (spread > 0) {
+        ImGui::SetCursorScreenPos({lr.x + 24, lr.y + lr.h - 110});
+        ImGui::PushID(3002);
+        if (ImGui::InvisibleButton("nbprev", {90, 80})) g_nbWant = spread - 1;
+        const bool hover = ImGui::IsItemHovered();
+        ImGui::PopID();
+        const ImU32 c = hover ? kNbBlue : IM_COL32(20, 70, 150, 150);
+        d->AddTriangleFilled({lr.x + 100, lr.y + lr.h - 100}, {lr.x + 100, lr.y + lr.h - 40}, {lr.x + 56, lr.y + lr.h - 70}, c);
+    }
     // The icons of the spreads near this one are read ahead.
     std::vector<uint64_t> icons;
     for (const NbCat& c : g_nb.cats) icons.push_back(c.icon), icons.push_back(c.large);

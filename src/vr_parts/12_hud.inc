@@ -14,6 +14,7 @@ struct HudSheet {
     bool onTop = false;
 };
 static HudSheet g_hud[kHudCount];
+static HudSheet g_bookSheet[2];  // the notebook's left and right page, while it lies open in your hand (14b_notebook.inc)
 static HudSheet g_phoneSheet;  // the phone's screen with the game's phone menu (hud::kPhone), while it shows
 static bool g_fullUi = false;  // the full UI over your palm, shown with the watch's button
 static std::atomic<bool> g_paused{false};
@@ -875,7 +876,8 @@ static bool pokeHud(HudSheet& s, const armik::Hand hands[2], const bool use[2]) 
 // never reach the game.
 static bool pokeHuds(const armik::Hand hands[2]) {
     static const bool right[2] = {false, true}, both[2] = {true, true};
-    return pokeHud(g_hud[kHudPopup], hands, both) || pokeHud(g_hud[kHudPicker], hands, both) ||
+    const bool other[2] = {g_bookHand != 0, g_bookHand != 1};  // the hand holding the book doesn't poke it
+    return pokeHud(g_bookSheet[0], hands, other) || pokeHud(g_bookSheet[1], hands, other) || pokeHud(g_hud[kHudPopup], hands, both) || pokeHud(g_hud[kHudPicker], hands, both) ||
            pokeHud(g_hud[kHudNote], hands, both) ||
            pokeHud(g_hud[kHudWatch], hands, right) ||
            pokeHud(g_hud[kHudBuild], hands, right) ||
@@ -895,7 +897,22 @@ static bool laserPhone(const XrVector3f& o, const XrVector3f& d, bool trigger, X
     return true;
 }
 
+// The laser on the notebook's pages in your hand.
+static bool laserBook(const XrVector3f& o, const XrVector3f& d, bool trigger, XrVector3f& hit) {
+    for (int i = 0; i < 2; ++i) {
+        const PieMenu& m = g_bookSheet[i].m;
+        float u, v;
+        if (!m.active || !hitSheet(m, o, d, hit, u, v)) continue;
+        g_hudInput.px = u * hud::kWidth;
+        g_hudInput.py = v * hud::kHeight;
+        g_hudInput.down = trigger;
+        return true;
+    }
+    return false;
+}
+
 static bool laserHud(const XrVector3f& o, const XrVector3f& d, bool trigger, XrVector3f& hit) {
+    if (laserBook(o, d, trigger, hit)) return true;
     if (laserPhone(o, d, trigger, hit)) return true;  // the phone's screen first (in your hand, in front of the rest)
     for (int i : {kHudPopup, kHudPicker, kHudNote, kHudSleep, kHudWatch, kHudBuild, kHudQueue, kHudWants, kHudNeeds,
                   kHudMoodlets}) {
@@ -945,6 +962,7 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
     f.note = noteShown();
     f.pie = g_hud[kHudPie].m.active;
     f.book = g_bookOut;
+    bookApplyPick();
     f.bookSpread = g_bookSpread;
     updateBookLeaves();
     // Balloons over Sims (first person): the HUD draws them into its atlas, phone3d puts them in the world.

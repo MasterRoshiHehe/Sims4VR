@@ -304,6 +304,7 @@ Config loadConfig(const std::wstring& ini) {
     if (!(c.bookThumbBend >= 0 && c.bookThumbBend <= 1)) c.bookThumbBend = 0.3f;
     c.bookThumbSpread = readFloat(ini, "book", "thumb_spread", c.bookThumbSpread);
     if (!(c.bookThumbSpread >= -90 && c.bookThumbSpread <= 90)) c.bookThumbSpread = 0;
+    c.bookPoke = readBool(ini, "book", "poke", c.bookPoke);
     c.bookOpenSeconds = readFloat(ini, "book", "open_seconds", c.bookOpenSeconds);
     if (!(c.bookOpenSeconds >= 0.1f && c.bookOpenSeconds <= 3)) c.bookOpenSeconds = 0.7f;
     c.bookSwipe = readFloat(ini, "book", "swipe", c.bookSwipe);

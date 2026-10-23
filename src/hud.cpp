@@ -3359,6 +3359,7 @@ void setNotebookContent(const char* data, size_t size) {
 }
 
 int notebookSpreads() { return g_nbSpreads.load(); }
+int notebookTakeSpread() { return g_nbWant.exchange(-1); }
 
 Action render(ID3D11Device* device, ID3D11DeviceContext* context, const Frame& f, int* index) {
     if (g_failed) return kNone;

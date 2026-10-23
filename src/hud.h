@@ -186,6 +186,8 @@ void setPhoneContent(const char* data, size_t size);
 void setNotebookContent(const char* data, size_t size);
 // How many spreads the notebook has as drawn last (render thread's layout; 0 before the first draw).
 int notebookSpreads();
+// A spread the pointer asked for (a category cell, the page corners) since the last call; -1 none.
+int notebookTakeSpread();
 // Any thread (notify.py): the game's notifications for the phone's bell and
 // list: "notes" <unread>, then "note" <id> <read> <picture> <title json> <text json> <time>.
 void setPhoneNotes(const char* data, size_t size);

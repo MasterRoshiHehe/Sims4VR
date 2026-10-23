@@ -41,6 +41,8 @@ static void bookOpen(int hand) {
 static void bookClose(const char* why) {
     if (!g_bookOut) return;
     g_bookOut = false;
+    hideHud(g_bookSheet[0]);
+    hideHud(g_bookSheet[1]);
     phone3d::setBook(nullptr, 0, nullptr);
     grab::pushControl(84);
     static int logged = 0;
@@ -252,7 +254,9 @@ static void updateBookSwipe(const armik::Hand hands[2]) {
     camera::View view;
     float c[3], metre = 1;
     XrVector3f wx, wy, wz;
-    if (!g_bookOut || !hands[other].valid || !camera::lastView(view) || !bookFrameWorld(g_bookHand, c, wx, wy, wz, metre)) {
+    if (!g_bookOut || !camera::lastView(view) || !bookFrameWorld(g_bookHand, c, wx, wy, wz, metre)) {
+        hideHud(g_bookSheet[0]);
+        hideHud(g_bookSheet[1]);
         over = false;
         return;
     }
@@ -260,6 +264,28 @@ static void updateBookSwipe(const armik::Hand hands[2]) {
     const float dx[3] = {wx.x, wx.y, wx.z}, dy[3] = {wy.x, wy.y, wy.z}, dz[3] = {wz.x, wz.y, wz.z};
     const XrVector3f x = normalize3(worldToApp(view, dx, true)), y = normalize3(worldToApp(view, dy, true)),
                      z = normalize3(worldToApp(view, dz, true));
+    // The pages as pokeable sheets (app space), once the cover is open: poke and laser reach their buttons.
+    {
+        const float pw = g_config.bookWidth / 2;
+        const hud::Rect* areas[2] = {&hud::kBookLeft, &hud::kBookRight};
+        for (int i = 0; i < 2; ++i) {
+            if (!g_config.bookPoke || g_bookAnim < 1) {
+                hideHud(g_bookSheet[i]);
+                continue;
+            }
+            const float k = i ? 0.5f * pw : -0.5f * pw;
+            placeHud(g_bookSheet[i], {centre.x + x.x * k, centre.y + x.y * k, centre.z + x.z * k}, x, y, pw, *areas[i]);
+        }
+    }
+    if (!hands[other].valid) {
+        over = false;
+        return;
+    }
+    if (g_bookSheet[0].m.pressing >= 0 || g_bookSheet[1].m.pressing >= 0 || g_bookSheet[0].m.armed[other] ||
+        g_bookSheet[1].m.armed[other]) {  // a finger at a page is poking, not sweeping
+        over = false;
+        return;
+    }
     const XrVector3f rel = sub3({hands[other].position.x, hands[other].position.y, hands[other].position.z}, centre);
     const float u = dot3(rel, x), v = dot3(rel, y), n = dot3(rel, z);
     const float halfW = g_config.bookWidth / 2, halfH = halfW * kBookPageAspect / 2;
@@ -289,5 +315,15 @@ static void updateBookSwipe(const armik::Hand hands[2]) {
         buzz(other, 0.3f, 0.04f);
         static int logged = 0;
         if (logged++ < 40) LOG("Book: turned to spread %d of %d", g_bookSpread + 1, spreads);
+    }
+}
+
+// Present thread: a spread the pointer picked (a category cell, a page corner).
+static void bookApplyPick() {
+    if (!g_bookOut) return;
+    const int want = hud::notebookTakeSpread();
+    if (want >= 0) {
+        g_bookSpread = std::max(0, std::min(std::max(1, hud::notebookSpreads()) - 1, want));
+        LOG("Book: pointer turned to spread %d", g_bookSpread + 1);
     }
 }

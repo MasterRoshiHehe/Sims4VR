@@ -870,6 +870,10 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
             // The phone's screen in your hand, in front of a popup card behind it.
             onPanel = onPie = true;
             onTabletBlank = true;
+        } else if (!g_pie.active && g_bookSheet[0].m.active && laserBook(o, d, c.leftButton, panelHit)) {
+            // The notebook's pages in your hand.
+            onPanel = onPie = true;
+            onTabletBlank = true;
         } else if (g_pie.active && g_pie.own) {
             // The pie drawn by us: our HUD's buttons take the trigger; off it a click closes it (below).
             const PieMenu& m = g_hud[kHudPie].m;

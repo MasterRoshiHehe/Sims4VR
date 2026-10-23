@@ -729,6 +729,7 @@ std::vector<Row> makeRows() {
         component(phoneHand, L"Hand roll", "phone", "hand_turn", &Config::phoneHandTurn, 2, -90, 90, 5, 1,
                   L"%+.0f\u00b0"),
         toggle(notebook, L"Notebook at your left hip", "book", "book", &Config::book),
+        toggle(notebook, L"Poke and laser on the pages", "book", "poke", &Config::bookPoke),
         number(notebook, L"Hip: hand below your eyes", "book", "hip_drop", &Config::bookHipDrop, 0.1f, 0.9f, 0.02f, 100,
                L"%.0f cm"),
         link(notebook, L"Position", notebookPosition),

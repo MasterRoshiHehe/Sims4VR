@@ -74,6 +74,7 @@ static int g_bookSpread = 0;
 static float g_bookAnim = 0;
 static void bookHandShift(int side, camera::Vec3& move, camera::Quat& turn);
 static void updateBookLeaves();
+static void bookApplyPick();
 static bool g_tablet = false;  // what's out is the tablet (first-person build/buy), not the phone
 static float g_tabletAspect = 1;  // its screen's width / height (the palette's, or the whole UI's)
 static void phoneSize(float& w, float& h, float& d);
