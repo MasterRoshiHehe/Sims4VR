@@ -271,6 +271,36 @@ static void pollEvents() {
     }
 }
 
+// Where you looked in the app space (yaw, radians, + left), sampled every frame: a recentre while walking freely
+// turns your body by the yaw you had a moment before (the runtime's own recentre moves the spaces under us first).
+static float g_headYawHistory[32] = {};
+static ULONGLONG g_headYawTick[32] = {};
+static int g_headYawNext = 0;
+static void sampleHeadYaw(XrTime time) {
+    if (!g_appSpace) return;
+    XrSpaceLocation head{XR_TYPE_SPACE_LOCATION};
+    if (!XR_SUCCEEDED(xrLocateSpace(g_viewSpace, g_appSpace, time, &head)) ||
+        !(head.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT))
+        return;
+    const XrQuaternionf& q = head.pose.orientation;
+    const float fx = -2.0f * (q.x * q.z + q.w * q.y), fz = -1.0f + 2.0f * (q.x * q.x + q.y * q.y);
+    g_headYawHistory[g_headYawNext] = std::atan2(-fx, -fz);
+    g_headYawTick[g_headYawNext] = GetTickCount64();
+    g_headYawNext = (g_headYawNext + 1) % 32;
+}
+// The yaw sampled about `ago` ms back (the oldest newer than that), or false.
+static bool headYawAgo(ULONGLONG ago, float& yaw) {
+    const ULONGLONG now = GetTickCount64();
+    bool found = false;
+    ULONGLONG best = 0;
+    for (int i = 0; i < 32; ++i) {
+        const ULONGLONG t = g_headYawTick[i];
+        if (!t || now - t < ago || now - t > ago + 1000) continue;
+        if (!found || t > best) best = t, yaw = g_headYawHistory[i], found = true;
+    }
+    return found;
+}
+
 // Re-origin the app space at the current head position, facing the head's yaw
 // (pitch and roll ignored so the horizon stays level).
 static void recenter(XrTime time) {
@@ -302,6 +332,18 @@ static void recenter(XrTime time) {
     info.poseInReferenceSpace.position = head.pose.position;
     XrSpace space = XR_NULL_HANDLE;
     if (!check(xrCreateReferenceSpace(g_session, &info, &space), "xrCreateReferenceSpace(recenter)")) return;
+    // Walking freely (user 2026-10-23): your body turns to where you looked, so the world stays as you saw it and
+    // the body, the stick and what hangs on it face your view; in an action (not free) the view goes to the body.
+    float turn = 0;
+    float bodyPose[8];
+    const bool freeWalk = g_appSpace && g_config.recenterTurnsBody && mode() == Mode::Stereo && camera::bodyActive() &&
+                          player::pose(bodyPose) && bodyPose[5] > 0.5f;
+    if (freeWalk && headYawAgo(250, turn) && std::isfinite(turn)) {
+        camera::turnBody(turn);
+        LOG("Recenter: walking freely, your body turned %.0f deg to where you looked", turn * 57.2958f);
+    } else if (g_appSpace) {
+        LOG("Recenter: %s, the view to your body", freeWalk ? "no recent view" : "in an action or not walking freely");
+    }
     if (g_appSpace) xrDestroySpace(g_appSpace);
     g_appSpace = space;
     resetStereo();

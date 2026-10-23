@@ -127,6 +127,10 @@ struct Config {
     bool gamepad = false;
     bool snapTurn = true;   // [controls] snap_turn: right stick turns in fixed steps instead of smoothly (first person)
     float snapAngle = 30;   // [controls] snap_angle: degrees per snap
+    bool recenterTurnsBody = true;  // [controls] recenter_turns_body: recentring while walking freely turns your body
+                                    // (and what hangs on it) to where you look; in an action the view goes to it
+    float trailArrive = 0.8f;         // [body] trail_arrive: metres from the trail's end that start the action
+    float trailArriveContact = 0.35f; // [body] trail_arrive_contact: the same for a social with hand contact
     float snapAngleBig = 90;  // [controls] snap_angle_big: degrees per snap with the stick all the way over (0: off)
     float turnSpeed = 900;  // right stick: mouse pixels per second at full deflection
 

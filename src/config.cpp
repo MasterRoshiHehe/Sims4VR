@@ -230,6 +230,9 @@ Config loadConfig(const std::wstring& ini) {
     c.snapTurn = readBool(ini, "controls", "snap_turn", c.snapTurn);
     c.snapAngle = readFloat(ini, "controls", "snap_angle", c.snapAngle);
     c.snapAngleBig = readFloat(ini, "controls", "snap_angle_big", c.snapAngleBig);
+    c.recenterTurnsBody = readBool(ini, "controls", "recenter_turns_body", c.recenterTurnsBody);
+    c.trailArrive = readFloat(ini, "body", "trail_arrive", c.trailArrive);
+    c.trailArriveContact = readFloat(ini, "body", "trail_arrive_contact", c.trailArriveContact);
     c.turnSpeed = readFloat(ini, "controls", "turn_speed", c.turnSpeed);
     c.audioFollowsHead = readInt(ini, "audio", "follow_head", 1) != 0;
     c.audioPanAnyDistance = readInt(ini, "audio", "pan_any_distance", 1) != 0;

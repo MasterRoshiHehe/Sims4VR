@@ -128,6 +128,7 @@ int onFrame(ID3D11Texture2D* backbuffer, HWND window, bool ownMirror) {
             g_displayPeriod = frame.predictedDisplayPeriod;
             linkSample(frame.predictedDisplayTime);
             if (g_recenterRequested.exchange(false) || !g_appSpace) recenter(frame.predictedDisplayTime);
+            else sampleHeadYaw(frame.predictedDisplayTime);
 
             D3D11_TEXTURE2D_DESC desc;
             backbuffer->GetDesc(&desc);

@@ -84,14 +84,26 @@ SAMPLE = 1.0  # m between floor samples along the trail
 STEP_RISE = 0.25  # m: one stair step (the game's straight stairs: rise = tread, 16 steps per 4 m level)
 REPLAN_MOVE = 1.0  # m you move before the game plans the trail again from where you are
 REPLAN_EVERY = 1.0  # s at least between plans
-ARRIVE = 0.5  # m from the spot where the action starts at which it carries on (C3)
+ARRIVE = 0.8  # m from the spot where the action starts at which it carries on (C3)
 ARRIVE_HEIGHT = 1.0  # m: and on its level
-ARRIVE_CONTACT = 0.2  # m: for a social with hand contact (scripted.contact): the game's own
+ARRIVE_CONTACT = 0.35  # m: for a social with hand contact (scripted.contact): the game's own
                       # line-up from further was cut short and left you a metre off (v0.13.218)
 ARRIVE_PUSH_MAX = 5.0  # s: the stick pushed from walking onto the spot is ignored this long at most
 FOLLOW_MOVE = 1.0  # m the Sim you walk to moves before the game plans the way to them again (C6)
 RECHECK = 5.0  # m: FollowPath.DISTANCE_TO_RECHECK_INUSE (its tuned value is read when there)
 MAX_POINTS = 256  # trail.cpp kMaxPoints
+
+
+
+def _arrive_radius(contact):
+    """How near the spot starts the action: [body] trail_arrive / trail_arrive_contact (debug menu; user
+    2026-10-23: 0.5 m took small steps to hit), ARRIVE / ARRIVE_CONTACT without them."""
+    key, default = ('trail_arrive_contact', ARRIVE_CONTACT) if contact else ('trail_arrive', ARRIVE)
+    try:
+        return max(0.05, float(native.setting('body', key, default)))
+    except (TypeError, ValueError):
+        return default
+
 
 _holds = {}  # sim id -> dict(interaction, goal, level, nodes, started)
 _arrived_at = None  # when you last walked onto a spot (the stick may still be pushed)
@@ -327,7 +339,7 @@ def _should_hold(agent, path, interaction):
     straight = math.hypot(end.x - here.x, end.z - here.z)
     # Hand contact: even the short line-up is yours to walk (the game's own was
     # cut short on the client and left you a metre off, v0.13.218).
-    if max(length, straight) <= (ARRIVE_CONTACT if getattr(interaction, '_sims4vr_touch', None) else LINE_UP):
+    if max(length, straight) <= (_arrive_radius(True) if getattr(interaction, '_sims4vr_touch', None) else LINE_UP):
         return None
     return '{:.1f} m'.format(max(length, straight))
 
@@ -472,7 +484,7 @@ def _hold_gen(timeline, sim, path, interaction, why, callback_fn=None):
             # (the line-up there is under LINE_UP, so it plays) and the action goes on.
             you = _you(sim)
             gx, gy, gz = hold['goal']
-            arrive = ARRIVE_CONTACT if getattr(interaction, '_sims4vr_touch', None) else ARRIVE
+            arrive = _arrive_radius(bool(getattr(interaction, '_sims4vr_touch', None)))
             if math.hypot(you[0] - gx, you[2] - gz) <= arrive and abs(you[1] - gy) <= ARRIVE_HEIGHT:
                 _arrived_at = time.monotonic()
                 _arrive(sim)

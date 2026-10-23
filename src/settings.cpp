@@ -353,6 +353,12 @@ std::vector<Row> makeRows() {
         number(front, L"Snap turn angle (stick all the way, 0 = same)", "controls", "snap_angle_big", &Config::snapAngleBig, 0,
                180, 15, 1, L"%.0f°"),
         flag(front, L"Walk there yourself (footprint trail)", "body", "trail", true, kLive),  // trail.py
+        number(front, L"Trail: how near its end starts the action", "body", "trail_arrive", &Config::trailArrive, 0.3f, 2,
+               0.1f, 100, L"%.0f cm"),  // trail.py
+        number(front, L"Trail: the same for touching socials", "body", "trail_arrive_contact", &Config::trailArriveContact,
+               0.1f, 1, 0.05f, 100, L"%.0f cm"),  // trail.py
+        toggle(front, L"Recenter turns your body to your view (in actions: view to the body)", "controls",
+               "recenter_turns_body", &Config::recenterTurnsBody),
         flag(front, L"Start with eyes closed and time paused until you can move", "body", "load_eyes_closed", true,
              kLive),  // loadshut.py
         flag(front, L"Eyes closed while saving on exit", "body", "exit_eyes_closed", true, kLive),  // loadshut.py
