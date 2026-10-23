@@ -107,11 +107,16 @@ float4 psMain(Out i) : SV_Target {
     float3 n = normalize(i.normal);
     if (dot(n, i.view) > 0) discard;  // a face turned away (no culling: works for either handedness)
     float3 toEye = normalize(-i.view);
+    // How fast the picture's place changes across pixels (before any discard): a card seen small takes the
+    // HUD atlas's smaller copies (the game's UI has none, so it stays sharp as before).
+    float2 cardM = (i.local - menuRect.xy) / menuRect.zw + 0.5;
+    float2 cardUv = lerp(crop.xy, crop.zw, float2(cardM.x, 1 - cardM.y));
+    float2 cardDx = ddx(cardUv), cardDy = ddy(cardUv);
     if (i.kind > 0.5 && i.kind < 1.5 && misc.w > 0) {
         // A clear panel: only what the UI draws there (premultiplied alpha).
-        float2 m = (i.local - menuRect.xy) / menuRect.zw + 0.5;
+        float2 m = cardM;
         if (misc.x < 0.5 || any(m < 0) || any(m > 1)) discard;
-        float4 u = ui.SampleLevel(linearClamp, lerp(crop.xy, crop.zw, float2(m.x, 1 - m.y)), 0) * misc.w;
+        float4 u = ui.SampleGrad(linearClamp, cardUv, cardDx, cardDy) * misc.w;
         if (u.a < 0.004) discard;
         if (misc.z > 0.5 && misc.z < 1.5 && length(m - 0.5) > 0.5) discard;  // a round piece
         if (misc.z > 1.5 && u.a < (misc.z - 2) * misc.w) discard;        // only the solid parts
@@ -669,7 +674,7 @@ static void viewOf(ID3D11Texture2D* ui, ID3D11ShaderResourceView*& view, ID3D11T
                 D3D11_SHADER_RESOURCE_VIEW_DESC sv{};
                 sv.Format = viewFormat(desc.Format);
                 sv.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-                sv.Texture2D.MipLevels = 1;
+                sv.Texture2D.MipLevels = desc.MipLevels ? desc.MipLevels : 1;  // the HUD atlas has smaller copies
                 if (SUCCEEDED(device->CreateShaderResourceView(ui, &sv, &view))) {
                     texture = ui;
                 } else {

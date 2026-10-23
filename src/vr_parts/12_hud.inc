@@ -667,14 +667,24 @@ static void updateHud(const armik::Hand hands[2], bool firstPerson, bool headOk,
         // Drawn over the world: tested against its depth, ceilings and walls
         // near you cut it up or hid it (user 18:44Z).
         wants.onTop = true;
-        // Kept in the world (holdAnchor), not turning with you.
-        static WorldAnchor anchor;
+        // Placed as the pie is (user 2026-10-23: "follow me the same way the pie menu does, keep their
+        // place"): where your head was and which way it faced when they showed, kept in app space (it goes
+        // with you as you walk and turn), put into the world with each drawn frame's camera
+        // (placeArmPieces). The menu rows' offsets still apply live.
+        static bool placed = false;
+        static XrVector3f placedEye, placedDir;
         if (c.wristWhims && !asleep && hud::hasItems(hud::kWantItems)) {
-            XrVector3f aEye, dir;
-            holdAnchor(anchor, view, eye, flat, !wants.m.active, "Wants", aEye, dir);
-            aroundYou(wants, aEye, dir, eye, c.wristWhimsPos, c.wristWhimsTurn, c.wristWhimsSize, hud::kWants);
-        } else
+            if (!wants.m.active || !placed) {
+                placedEye = eye;
+                placedDir = flat;
+                placed = true;
+                LOG("Wants: placed where you look (kept in place like the pie)");
+            }
+            aroundYou(wants, placedEye, placedDir, placedEye, c.wristWhimsPos, c.wristWhimsTurn, c.wristWhimsSize, hud::kWants);
+        } else {
+            placed = false;
             hideHud(wants);
+        }
     }
 
     // The money gained or lost, in front of you a little up and right, kept in

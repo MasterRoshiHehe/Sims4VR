@@ -58,6 +58,8 @@ ImGuiContext* g_imgui = nullptr;
 ID3D11Device* g_device = nullptr;
 ID3D11Texture2D* g_texture = nullptr;
 ID3D11RenderTargetView* g_target = nullptr;
+ID3D11ShaderResourceView* g_atlasView = nullptr;  // all its levels, for GenerateMips
+constexpr UINT kAtlasMips = 4;
 ImFont* g_big = nullptr;    // the time
 ImFont* g_small = nullptr;  // the day, labels
 ImFont* g_text = nullptr;   // popup text (regular)
@@ -313,14 +315,19 @@ bool init(ID3D11Device* device, ID3D11DeviceContext* context) {
     D3D11_TEXTURE2D_DESC desc{};
     desc.Width = kWidth;
     desc.Height = kHeight;
-    desc.MipLevels = 1;
+    // Smaller copies of it (mipmaps, user 2026-10-23: the cards looked low quality): a card seen smaller
+    // than its pixels is drawn from them instead of skipping pixels (jagged, shimmering). Four levels: a
+    // level-3 texel is 8 atlas pixels, so neighbouring areas bleed in at most a few pixels.
+    desc.MipLevels = kAtlasMips;
     desc.ArraySize = 1;
     desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
     desc.SampleDesc.Count = 1;
     desc.Usage = D3D11_USAGE_DEFAULT;
     desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+    desc.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
     if (FAILED(device->CreateTexture2D(&desc, nullptr, &g_texture)) ||
-        FAILED(device->CreateRenderTargetView(g_texture, nullptr, &g_target))) {
+        FAILED(device->CreateRenderTargetView(g_texture, nullptr, &g_target)) ||
+        FAILED(device->CreateShaderResourceView(g_texture, nullptr, &g_atlasView))) {
         LOG("HUD: could not make its texture");
         release();
         return false;
@@ -2744,6 +2751,7 @@ Action render(ID3D11Device* device, ID3D11DeviceContext* context, const Frame& f
     context->OMSetRenderTargets(1, &g_target, nullptr);
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
     context->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, targets, depth);
+    if (g_atlasView) context->GenerateMips(g_atlasView);
     for (ID3D11RenderTargetView* t : targets)
         if (t) t->Release();
     if (depth) depth->Release();
@@ -2772,6 +2780,8 @@ void release() {
         g_loadedIcons.clear();
     }
     for (IconSlot& slot : g_slots) slot = IconSlot{};
+    if (g_atlasView) g_atlasView->Release();
+    g_atlasView = nullptr;
     if (g_target) g_target->Release();
     if (g_texture) g_texture->Release();
     if (g_device) g_device->Release();
