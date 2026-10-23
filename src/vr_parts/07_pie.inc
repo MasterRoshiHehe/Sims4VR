@@ -532,6 +532,7 @@ static XrVector3f turnAbout(const XrVector3f& v, const XrVector3f& a, float angl
 // phone and the menus on objects; then, shoved away, its still flying off.
 // Elsewhere, or when it can't be drawn there, it stays the flat layer.
 // Present thread, each frame.
+static bool steadyBody();  // 11_object_menus.inc: first person, held through a missed read
 static bool pieInWorld(bool show) {
     camera::View view;
     float t = g_fling.active ? (GetTickCount64() - g_fling.start) / 1000.0f : 0.0f;
@@ -540,7 +541,7 @@ static bool pieInWorld(bool show) {
     // The pie drawn by us comes from the HUD atlas (hud::kPie), the game's cut from its UI.
     const bool own = show && g_pie.own;
     ID3D11Texture2D* source = own ? hud::texture() : g_uiFrame;
-    if ((!show && !flying) || !camera::bodyActive() || !camera::lastView(view) ||
+    if ((!show && !flying) || !steadyBody() || !camera::lastView(view) ||
         (show && (!source || (!own && (!g_pie.uiW || !g_pie.uiH)) || !(g_pie.width > 0)))) {
         phone3d::setPie(phone3d::Panel{}, nullptr);
         return false;
@@ -570,15 +571,18 @@ static bool pieInWorld(bool show) {
     XrQuaternionf heading{view.heading.x, view.heading.y, view.heading.z, view.heading.w};
     XrVector3f wc = rotate3(heading, {at.x * scale, at.y * scale, at.z * scale});
     XrVector3f wx = rotate3(heading, ax), wy = rotate3(heading, ay);
-    // Open (not flying): held in the world where it first showed (user 2026-10-22 on 344: a two-step
-    // shake when a turn stops, app space put into the world with a camera a frame or two off the
-    // scene's). Drawn in world coordinates it moves with the scene exactly; its app-space pose (laser,
-    // pokes, shove, the HUD sheet) follows from this frame's camera.
-    static XrVector3f worldAt, worldX, worldY;
+    // Open (not flying): its facing held in the world where it first showed (user 2026-10-22 on 344: a
+    // two-step shake when a turn stops: the headset's frames are turned on by the stick since drawn, and
+    // the pie, drawn into them, turned with them). It follows you as you walk (user 2026-10-23 on 345:
+    // it was left behind): kept at the same world offset from where you stand. Its app-space pose
+    // (laser, pokes, shove, the HUD sheet) follows from this frame's camera.
+    static XrVector3f worldAt, worldX, worldY, offset;
     static float worldScale = 1;
     const bool held = show && !flying && g_pieWorldSet;
+    if (held) worldAt = {view.anchor.x + offset.x, view.anchor.y + offset.y, view.anchor.z + offset.z};
     if (show && !flying && !held) {
         worldAt = {view.anchor.x + wc.x, view.anchor.y + wc.y, view.anchor.z + wc.z};
+        offset = wc;
         worldX = wx;
         worldY = wy;
         worldScale = scale;

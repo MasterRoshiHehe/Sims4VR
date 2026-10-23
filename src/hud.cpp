@@ -2005,10 +2005,17 @@ Action drawNote(uint64_t id, int* index) {
     const Note* n = nullptr;
     for (const Note& k : g_notes.notes)
         if (k.id == id) n = &k;
-    g_noteHeight = 0;
-    if (!n) return kNone;
+    // g_noteHeight is read by the card's placement on another thread: never 0 for a moment mid-draw
+    // (user 2026-10-23: the card blinked out now and then).
+    if (!n) {
+        g_noteHeight = 0;
+        return kNone;
+    }
     const std::string &title = found(n->titleJson), &text = found(n->textJson);
-    if (title.empty() && text.empty()) return kNone;
+    if (title.empty() && text.empty()) {
+        g_noteHeight = 0;
+        return kNone;
+    }
     ImDrawList* d = ImGui::GetBackgroundDrawList();
     const Rect r = kNote;
     const float pad = 22, pic = 96, x0 = r.x + 4, x1 = r.x + r.w - 4, wrap = x1 - x0 - 3 * pad - pic;
