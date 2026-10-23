@@ -229,6 +229,7 @@ Config loadConfig(const std::wstring& ini) {
     c.gamepad = readInt(ini, "controls", "gamepad", 0) != 0;
     c.snapTurn = readBool(ini, "controls", "snap_turn", c.snapTurn);
     c.snapAngle = readFloat(ini, "controls", "snap_angle", c.snapAngle);
+    c.snapAngleBig = readFloat(ini, "controls", "snap_angle_big", c.snapAngleBig);
     c.turnSpeed = readFloat(ini, "controls", "turn_speed", c.turnSpeed);
     c.audioFollowsHead = readInt(ini, "audio", "follow_head", 1) != 0;
     c.audioPanAnyDistance = readInt(ini, "audio", "pan_any_distance", 1) != 0;

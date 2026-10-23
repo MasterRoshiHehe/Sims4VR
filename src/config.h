@@ -127,6 +127,7 @@ struct Config {
     bool gamepad = false;
     bool snapTurn = true;   // [controls] snap_turn: right stick turns in fixed steps instead of smoothly (first person)
     float snapAngle = 30;   // [controls] snap_angle: degrees per snap
+    float snapAngleBig = 90;  // [controls] snap_angle_big: degrees per snap with the stick all the way over (0: off)
     float turnSpeed = 900;  // right stick: mouse pixels per second at full deflection
 
     // UI panel (stereo): the game's UI on a floating panel, in metres from the recentered head

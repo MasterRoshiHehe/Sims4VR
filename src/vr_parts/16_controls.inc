@@ -644,13 +644,28 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
             benchmark::missedRefreshes(refreshes - 1);
         }
         static bool snapArmed = true;
+        static ULONGLONG snapSince = 0;
+        static float snapPeak = 0;
         if (g_config.snapTurn) {
-            // Snap turning: one fixed step per push past 0.6, re-armed when the stick comes back under 0.3.
-            // No smooth turning, so the world never slides under you.
-            if (a < 0.3f) snapArmed = true;
+            // Snap turning: one fixed step per push, re-armed when the stick comes back under 0.3. No smooth
+            // turning, so the world never slides under you. Two angles (user 2026-10-23): a push all the way to
+            // the side (past 0.92) turns snap_angle_big; a smaller push (past 0.6, held 150 ms or let back without
+            // going further) turns snap_angle. snap_angle_big 0: every push turns snap_angle.
+            if (a < 0.3f) snapArmed = true, snapSince = 0;
+            const bool two = g_config.snapAngleBig >= 5.f;
+            float angle = 0;
             if (snapArmed && a > 0.6f) {
+                const ULONGLONG t = GetTickCount64();
+                if (!snapSince) snapSince = t, snapPeak = a;
+                snapPeak = std::max(snapPeak, a);
+                if (!two) angle = g_config.snapAngle;
+                else if (a > 0.92f) angle = g_config.snapAngleBig;
+                else if (t - snapSince > 150 || a < snapPeak - 0.08f) angle = g_config.snapAngle;
+            }
+            if (angle > 0) {
                 snapArmed = false;
-                const float step = std::clamp(g_config.snapAngle, 5.f, 180.f) * 0.0174533f * (right.x > 0 ? -1 : 1);
+                snapSince = 0;
+                const float step = std::clamp(angle, 5.f, 180.f) * 0.0174533f * (right.x > 0 ? -1 : 1);
                 camera::turnBody(step);
                 benchmark::turned(step);
             }
