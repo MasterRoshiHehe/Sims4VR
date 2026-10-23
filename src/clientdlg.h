@@ -27,5 +27,7 @@ void press(int index);
 // Any thread: closes the game's own pie menu widget (on the UI thread), as its own pick does.
 // False when the game isn't hooked.
 bool closeGamePie();
+// Any thread: a server popup (picker: a picker) answered on our card closes on the game's UI too (UI thread).
+bool closeGameDialog(bool picker);
 
 }  // namespace s4vr::clientdlg

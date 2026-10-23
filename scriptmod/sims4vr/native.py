@@ -424,6 +424,13 @@ def popup_content(packed):
         fn(bytes(packed))
 
 
+def close_game_dialog(picker):
+    """A popup (picker: a picker) answered on our card closes on the game's UI too (clientdlg.cpp)."""
+    fn = _optional('close_game_dialog')
+    if fn is not None:
+        fn(1 if picker else 0)
+
+
 def dialog_pie():
     """The next pie (pie_content, pie_menu) holds a popup's answers: on your palm."""
     fn = _optional('dialog_pie')

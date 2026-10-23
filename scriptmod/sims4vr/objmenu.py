@@ -956,6 +956,8 @@ def _close_on_game_ui(dialog_id, what):
         close = Dialog_pb2.UiDialogCloseRequest()
         close.dialog_id = dialog_id
         Distributor.instance().add_event(Consts_pb2.MSG_UI_DIALOG_CLOSE, close)
+        # The message alone left them open (user 19:22Z): the DLL closes the game's widget too.
+        native.close_game_dialog('picker' in what)
         _log('{} answered on our card: closed on the game UI too'.format(what))
     except Exception as e:
         _log('closing the {} on the game UI failed: {!r}'.format(what, e))
@@ -1077,6 +1079,7 @@ def answer_picker(code):
         service.dialog_respond(dialog_id, ButtonType.DIALOG_RESPONSE_OK)
         _log('picker answered with row {} (option {}, ingredients {}, prepped {})'.format(
             index, option, bool(code & 1), bool(code & 2)))
+        _close_on_game_ui(dialog_id, 'picker')
     except Exception as e:
         _log('answering the picker failed: {!r}'.format(e))
 
@@ -1094,6 +1097,7 @@ def cancel_picker():
         service.dialog_pick_result(dialog_id, picked_results=[])
         service.dialog_respond(dialog_id, ButtonType.DIALOG_RESPONSE_CANCEL)
         _log('picker closed (cancel)')
+        _close_on_game_ui(dialog_id, 'picker')
     except Exception as e:
         _log('closing the picker failed: {!r}'.format(e))
 

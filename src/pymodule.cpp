@@ -79,6 +79,7 @@ void s4vr_set_phone_prop(float w, float h, float d);
 void s4vr_set_held(const unsigned long long* ids, int count);
 void s4vr_pie_menu(int items);
 void s4vr_dialog_pie();
+void s4vr_close_game_dialog(int picker);
 int s4vr_click_hand();
 int s4vr_pie_shown();
 void s4vr_set_testing_cheats(int on);
@@ -551,6 +552,12 @@ PyObject* pieMenu(PyObject*, PyObject* args) {
     s4vr_pie_menu(items);
     return none();
 }
+PyObject* closeGameDialog(PyObject*, PyObject* args) {
+    int picker = 0;
+    if (!py.PyArg_ParseTuple(args, "i", &picker)) return nullptr;
+    s4vr_close_game_dialog(picker);
+    return none();
+}
 PyObject* dialogPie(PyObject*, PyObject*) {
     s4vr_dialog_pie();
     return none();
@@ -795,6 +802,7 @@ PyMethodDef methods[] = {
      "set_eyes_held(bool): eyes held shut (load start, exit save) until released"},
     {"set_body_view", setBodyView, METH_VARARGS, "set_body_view(bool): straight ahead lies the way the Sim's body does"},
     {"pie_menu", pieMenu, METH_VARARGS, "pie_menu(items): a pie menu opened for a world click (0: picked from it)"},
+    {"close_game_dialog", closeGameDialog, METH_VARARGS, "close_game_dialog(picker): a popup answered on our card closes on the game's UI"},
     {"dialog_pie", dialogPie, METH_NOARGS, "dialog_pie(): the next pie holds a popup's answers (on your palm)"},
     {"set_testing_cheats", setTestingCheats, METH_VARARGS,
      "set_testing_cheats(int): the debug menu's testing cheats (1) and cheat pie menus (2) switches as the game has them"},

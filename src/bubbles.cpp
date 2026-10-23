@@ -497,25 +497,28 @@ void setOwnBalloons(bool on) {
     if (g_ownBalloons.exchange(on) != on) LOG("Bubbles: balloons %s", on ? "drawn by us from the game's AddBalloon" : "cut from the game's UI");
 }
 
-// Your own cards' anchor (user 2026-10-22, the skill bar): the head and its ground axes when placed. It stays
-// put in the world (head turns never move it) until you walk 1 m away or it was unused for 3 s; the menu's
+// Your own cards' anchor (the pie's placement, sims4vr-ui-recipe; user 2026-10-23 19:24Z: no more "follows after
+// 1 m"): its facing is fixed when it shows (head turns never move it) and turns with the view's heading (stick and
+// snap turns); it moves with your head every frame. Unused for 3 s, it faces where you look again. The menu's
 // offsets are applied to it every frame, so the position rows move the card live.
 struct OwnAnchor {
     bool set = false;
     float head[3]{}, fwd[2]{0, -1}, right[2]{1, 0};
+    float yaw = NAN;  // the view's heading the axes were last turned to
     ULONGLONG seen = 0;
 };
 
 void holdOwn(OwnAnchor& a, const camera::Vec3& hp, const camera::Vec3& hr, const camera::Vec3& hb, float s, ULONGLONG now,
              const char* what) {
+    (void)s;
     if (a.set && now - a.seen > 3000) a.set = false;
-    // Head forward on the ground; the world's up is the camera's up axis (hu has the head's tilt).
-    float fx = -hb.x, fz = -hb.z;
-    const float fl = std::sqrt(fx * fx + fz * fz);
-    if (fl < 0.2f) fx = a.fwd[0], fz = a.fwd[1];
-    else fx /= fl, fz /= fl;
-    const float dx = hp.x - a.head[0], dz = hp.z - a.head[2], walked = std::sqrt(dx * dx + dz * dz);
-    if (!a.set || walked > 1.0f * s) {
+    const float yaw = camera::viewYaw();
+    if (!a.set) {
+        // Head forward on the ground; the world's up is the camera's up axis (hu has the head's tilt).
+        float fx = -hb.x, fz = -hb.z;
+        const float fl = std::sqrt(fx * fx + fz * fz);
+        if (fl < 0.2f) fx = a.fwd[0], fz = a.fwd[1];
+        else fx /= fl, fz /= fl;
         // Viewer's right on the ground from the head's own right axis, so + Horizontal is always to your right.
         float rx = hr.x, rz = hr.z;
         const float rl = std::sqrt(rx * rx + rz * rz);
@@ -524,15 +527,29 @@ void holdOwn(OwnAnchor& a, const camera::Vec3& hp, const camera::Vec3& hr, const
         static int logs = 0;
         if (logs < 30) {
             ++logs;
-            LOG("%s: placed in the world (%s, walked %.2f m)", what, a.set ? "walked away" : "new", walked / s);
+            LOG("%s: placed where you look (follows you, turns with your turns)", what);
         }
         a.set = true;
         a.fwd[0] = fx;
         a.fwd[1] = fz;
         a.right[0] = rx;
         a.right[1] = rz;
-        std::copy(&hp.x, &hp.x + 3, a.head);
+        a.yaw = yaw;
+    } else if (std::isfinite(yaw) && std::isfinite(a.yaw) && yaw != a.yaw) {
+        // The view turned (camera.cpp heading = yaw about +Y): the axes turn with it.
+        const float d = std::remainder(yaw - a.yaw, 6.2831853f), c = std::cos(d), sn = std::sin(d);
+        auto turn = [&](float v[2]) {
+            const float x = v[0] * c + v[1] * sn, z = -v[0] * sn + v[1] * c;
+            v[0] = x;
+            v[1] = z;
+        };
+        turn(a.fwd);
+        turn(a.right);
+        a.yaw = yaw;
+    } else if (!std::isfinite(a.yaw)) {
+        a.yaw = yaw;
     }
+    std::copy(&hp.x, &hp.x + 3, a.head);
     a.seen = now;
 }
 

@@ -49,6 +49,7 @@ std::atomic<bool> g_wanted{false};
 std::atomic<bool> g_showing{false};
 std::atomic<int> g_press{-1};
 std::atomic<bool> g_hidePie{false};
+std::atomic<int> g_closeGameUi{0};  // 1: a server popup answered on our card, 2: a picker
 std::string g_shownId;   // UI thread only
 std::string g_skippedId;
 
@@ -161,6 +162,41 @@ void hideGamePie() {
     if (logged++ < 20) LOG("Pie: the game's pie menu %s", sent ? "closed (HidePieMenu)" : "not closed (SendMessage failed)");
 }
 
+// A server popup or picker answered on our card closes on the game's UI too, as its debug "close all"
+// (UIContainerMain.DebugDialogCloseAll): DialogManager.CancelCurrentRequest(false) while the current request is
+// the server's, and SendUIMessage("HidePickers") for a picker. The server's own UiDialogCloseRequest didn't close
+// them (user 2026-10-23 19:22Z).
+void closeGameUi(int what) {
+    Held comms;
+    if (what == 2) {
+        bool sent = false;
+        if (definition("olympus.io.CommunicationManager", comms)) {
+            Value args[2];
+            args[0].type = kString;
+            args[0].data = const_cast<char*>("HidePickers");
+            args[1].type = kNull;
+            sent = callMember(comms.v, "SendUIMessage", args, 2, nullptr);
+        }
+        LOG("Popup: the game's picker %s", sent ? "closed on its UI (HidePickers)" : "not closed (SendUIMessage failed)");
+        return;
+    }
+    Held manager, request, data, server;
+    if (!dialogManager(manager) || !callMember(manager.v, "GetCurrentRequest", nullptr, 0, &request) ||
+        !request.ok() || !member(request.v, "data", data)) {
+        LOG("Popup: none left open on the game's UI");
+        return;
+    }
+    if (!member(data.v, "dialogMessage", server)) {
+        LOG("Popup: the game's UI shows its own dialog now, left open");
+        return;
+    }
+    Value no;
+    no.type = kBool;
+    no.data = nullptr;
+    bool closed = callMember(manager.v, "CancelCurrentRequest", &no, 1, nullptr);
+    LOG("Popup: still open on the game's UI, %s", closed ? "closed (CancelCurrentRequest)" : "not closed (call failed)");
+}
+
 void hide() {
     if (!g_showing.exchange(false)) return;
     hud::setPopupContent(nullptr, 0);
@@ -188,6 +224,7 @@ void answer(const Value& manager, const Value& data, int index) {
 
 void poll() {
     if (g_hidePie.exchange(false)) hideGamePie();
+    if (int what = g_closeGameUi.exchange(0)) closeGameUi(what);
     int pressed = g_press.exchange(-1);
     static int tick = 0;
     if (pressed < 0 && (++tick % 4)) return;
@@ -296,6 +333,12 @@ void setWanted(bool wanted) {
 bool showing() { return g_showing.load(); }
 
 void press(int index) { g_press = index; }
+
+bool closeGameDialog(bool picker) {
+    if (!g_update) return false;
+    g_closeGameUi = picker ? 2 : 1;
+    return true;
+}
 
 bool closeGamePie() {
     if (!g_update) return false;
