@@ -151,7 +151,8 @@ Config loadConfig(const std::wstring& ini) {
     c.bubbleOwnFront = readInt(ini, "bubbles", "own_in_front", 1) != 0;
     c.skillOwnSize = readFloat(ini, "bubbles", "skill_size", c.skillOwnSize);
     for (auto [key, out] : {std::pair<const char*, float*>{"own_bubble_position", c.bubbleOwnPos},
-                            std::pair<const char*, float*>{"skill_position", c.skillOwnPos}}) {
+                            std::pair<const char*, float*>{"skill_position", c.skillOwnPos},
+                            std::pair<const char*, float*>{"pop_position", c.popOwnPos}}) {
         std::string s = readString(ini, "bubbles", key, "");
         float v[3];
         if (sscanf(s.c_str(), "%f %f %f", &v[0], &v[1], &v[2]) == 3)
@@ -165,6 +166,8 @@ Config loadConfig(const std::wstring& ini) {
     }
     c.noteSize = readFloat(ini, "phone", "note_size", c.noteSize);
     c.bubbleOwnSize = readFloat(ini, "bubbles", "own_size", c.bubbleOwnSize);
+    c.popOwnSize = readFloat(ini, "bubbles", "pop_size", c.popOwnSize);
+    c.popHideOwn = readInt(ini, "bubbles", "hide_pops", 0) != 0;
     c.bubbleNpcSize = readFloat(ini, "bubbles", "npc_size", c.bubbleNpcSize);
     c.bubbleHideOwn = readInt(ini, "bubbles", "hide_own", 0) != 0;
     c.bubbleHideNpc = readInt(ini, "bubbles", "hide_npc", 0) != 0;

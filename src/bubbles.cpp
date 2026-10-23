@@ -441,9 +441,10 @@ int frameCards(const camera::View& view, int textureWidth, int textureHeight, Ca
             }
             const float s = o.worldScale;
             float pos[3];
-            std::memcpy(pos, piece.type == kBalloon ? o.bubbleOwnPos : o.skillOwnPos, sizeof(pos));
-            if (piece.type == kFlyaway) pos[1] += 0.07f;  // over the skill bar's place
-            k = o.bubbleOwnSize * s / kBalloonWidth;
+            if (piece.type == kFlyaway && o.popHideOwn) continue;
+            std::memcpy(pos, piece.type == kBalloon ? o.bubbleOwnPos : piece.type == kFlyaway ? o.popOwnPos : o.skillOwnPos,
+                        sizeof(pos));
+            k = (piece.type == kFlyaway ? o.popOwnSize : o.bubbleOwnSize) * s / kBalloonWidth;
             centre = {hp.x + (hr.x * pos[0] + hu.x * pos[1] - hb.x * pos[2]) * s,
                       hp.y + (hr.y * pos[0] + hu.y * pos[1] - hb.y * pos[2]) * s,
                       hp.z + (hr.z * pos[0] + hu.z * pos[1] - hb.z * pos[2]) * s};

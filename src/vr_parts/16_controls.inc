@@ -197,8 +197,9 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
             if (grab::takeHaptic(i, amplitude, seconds)) buzz(i, amplitude, seconds);
         }
         // Your phone: either hand closing at your right hip (and not on
-        // something to pick up) takes it out into that hand; opening that
-        // hand puts it away.
+        // something to pick up) takes it out into that hand; it stays there
+        // with the grip let go, and that hand pressing the grip back at the
+        // hip puts it away.
         static bool closed[2] = {false, false};
         const bool closedWas[2] = {closed[0], closed[1]};
         for (int i = 0; i < 2; ++i) closed[i] = closed[i] ? hands[i].grip > 0.35f : hands[i].grip > 0.6f;
@@ -218,8 +219,10 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
         if (callHold && !g_phoneOut && head.valid) {
             phoneOpen(1);  // the call brings the phone out in your right hand
         } else if (g_phoneOut && !callHold &&
-                   (!closed[g_phoneHand] || !firstPerson || !g_config.phone || g_tablet != tabletNow)) {
-            phoneClose(!firstPerson ? "left first person" : g_tablet != tabletNow ? "build/buy changed" : "hand opened");
+                   ((closed[g_phoneHand] && !closedWas[g_phoneHand] && hands[g_phoneHand].valid && head.valid &&
+                     atRightHip(hands[g_phoneHand], g_phoneHand, head)) ||
+                    !firstPerson || !g_config.phone || g_tablet != tabletNow)) {
+            phoneClose(!firstPerson ? "left first person" : g_tablet != tabletNow ? "build/buy changed" : "back at the hip");
         } else if (!g_phoneOut && !callHold && firstPerson && g_config.phone && head.valid) {
             for (int i : {1, 0}) {
                 if (closed[i] && !closedWas[i] && hands[i].valid && !grab::holding(i) && !armik::holding(i) &&
@@ -808,6 +811,12 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
                 onPanel = onPie = true;
                 onTabletBlank = true;
             }
+        } else if (!g_pie.active && (g_hud[kHudPopup].m.active || g_hud[kHudPicker].m.active) &&
+                   laserHud(o, d, c.leftButton, panelHit)) {
+            // Our popup or picker card in front of you (a Save / Exit question from the phone's Options too):
+            // before the phone's game menu, which took the laser while the card was up.
+            onPanel = onPie = true;
+            onTabletBlank = true;
         } else if (g_pie.active || g_phone.active || g_objMenu.active || g_wrist.active) {
             // The pie, the phone, a picker on its object or the wrist menus replace the panel;
             // transparent parts let the laser through.

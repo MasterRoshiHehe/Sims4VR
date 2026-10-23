@@ -392,8 +392,13 @@ void hookedRender(void* rm, void* movie) {
         return;
     }
     // Cleared once a frame (a loading screen may draw twice), in the UI's own
-    // command list so the clear lands in order.
-    if (g_clearPending.exchange(false)) {
+    // command list so the clear lands in order. Both real eyes: in the left eye's pass alone, every frame (the
+    // next frame's left eye can be recorded before this frame's Present: the flag then reached the right eye's
+    // pass, which cleared the UI and drew none, and the panel flickered empty, 2026-10-23).
+    const bool bothEyes = GetTickCount64() - g_lastSecondPass.load(std::memory_order_relaxed) <= 500;
+    const bool rightPass = g_secondPass.load(std::memory_order_acquire);
+    if (bothEyes ? !rightPass : g_clearPending.exchange(false)) {
+        g_clearPending = false;
         const float transparent[4] = {0, 0, 0, 0};
         context->ClearRenderTargetView(ui, transparent);
     }

@@ -158,6 +158,9 @@ struct Config {
     float notePlace[3] = {0.0f, -0.12f, 0.75f};          // [phone] note_place: the notification card in front of you (right, up, ahead)
     float noteSize = 0.42f;                               // [phone] note_size: its width        // skill_position: horizontal (+ = your right) / up (world) / ahead of you; kept in the world
     float skillOwnSize = 0.14f;                        // skill_size: the skill bar's width (metres)
+    float popOwnPos[3] = {0.0f, 0.52f, 0.5f};          // pop_position: your stat/relationship pops (the "!"): right / up / ahead
+    float popOwnSize = 0.14f;                          // pop_size: their width (metres)
+    bool popHideOwn = false;                           // hide_pops: not shown at all
     float bubbleOwnSize = 0.14f;                       // own_size: a bubble's width in front of you (metres)
     float bubbleNpcSize = 0.5f;                        // npc_size: a bubble's width over other Sims (game units)
     bool bubbleHideOwn = false;                        // hide_own: your Sim's bubbles (first person)
