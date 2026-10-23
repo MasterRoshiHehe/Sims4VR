@@ -85,6 +85,9 @@ def _send_own(msg, local):
     try:
         if not native.setting_flag('ui', 'own_pie', True) or not hooks.in_first_person() or not msg.items or \
                 msg.HasField('disabled_tooltip'):
+            if msg.items:
+                native._log('pie: own pie not sent (setting {}, first person {})'.format(
+                    native.setting_flag('ui', 'own_pie', True), hooks.in_first_person()))
             native.pie_content(b'')
             return
         from sims4vr import hudinfo, objmenu

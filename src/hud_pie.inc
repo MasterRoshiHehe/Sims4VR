@@ -41,6 +41,7 @@ PieContent g_pieIn, g_pieMenu;
 bool g_pieNew = false;              // g_pieMutex
 std::atomic<int> g_pieState{0};     // 0 none, 1 texts pending, 2 ready, 3 not drawable (the game's cut stays)
 std::atomic<float> g_pieScale{1.0f};
+unsigned g_pieSerial = 0;  // g_pieMutex
 std::vector<PieNode> g_pieNodes;    // present thread
 int g_pieCurrent = -1;
 std::vector<int> g_pieStack;
@@ -619,12 +620,22 @@ void setPieContent(const char* data, size_t size) {
     g_pieIn = c;
     g_pieNew = true;
     g_pieState = c.items.empty() ? 0 : 1;
+    ++g_pieSerial;
 }
 
 int pieState() { return g_pieState.load(); }
 float pieScale() { return g_pieScale.load(); }
-void clearPie() {
+unsigned pieSerial() {
     std::lock_guard<std::mutex> lock(g_pieMutex);
+    return g_pieSerial;
+}
+void clearPie(unsigned serial) {
+    std::lock_guard<std::mutex> lock(g_pieMutex);
+    if (serial != g_pieSerial) {
+        static int logged = 0;
+        if (logged++ < 10) LOG("HUD: pie menu closed after the next one's options came; those kept");
+        return;
+    }
     g_pieIn = PieContent{};
     g_pieNew = true;
     g_pieState = 0;

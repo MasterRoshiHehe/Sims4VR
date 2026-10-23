@@ -22,6 +22,7 @@ struct PieMenu {
     // the same); 0 = the crop above. Places 0..1 from the top left, parts in UI pixels.
     int tiles = 0;
     float tileDst[phone3d::kMaxTiles][4]{}, tileSrc[phone3d::kMaxTiles][4]{};
+    unsigned serial = 0;  // hud::pieSerial of its options
     bool own = false;  // the pie drawn by us (hud kPie, the HUD sheet kHudPie in its place), not the game's cut
 };
 static PieMenu g_pie;
@@ -70,7 +71,7 @@ static void closePie(const char* why) {
     if (!g_pie.active) return;
     g_pie.active = false;
     g_pieShown.store(false, std::memory_order_relaxed);
-    if (g_pie.own) hud::clearPie();
+    if (g_pie.own) hud::clearPie(g_pie.serial);
     g_pie.own = false;
     static int logged = 0;
     if (logged++ < 20) LOG("Pie menu at hand: closed (%s)", why);
@@ -142,6 +143,11 @@ static bool openPie(const XrVector3f& head) {
     g_pieFull[0] = x0, g_pieFull[1] = y0, g_pieFull[2] = cw, g_pieFull[3] = ch;
     // Drawn by us when pie.py sent the game's options for it (its texts may still be looked up).
     g_pie.own = hud::pieState() == 1 || hud::pieState() == 2;
+    g_pie.serial = hud::pieSerial();
+    if (!g_pie.own) {
+        static int logged = 0;
+        if (logged++ < 20) LOG("Pie menu at hand: no options from the game for our own pie (state %d): the game's pie cut out", hud::pieState());
+    }
     g_pieCentre[0] = std::max(0, std::min(W - 1, static_cast<int32_t>(click.u * W)));
     g_pieCentre[1] = std::max(0, std::min(H - 1, static_cast<int32_t>(click.v * H)));
     static int logged = 0;

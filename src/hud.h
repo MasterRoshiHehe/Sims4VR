@@ -121,7 +121,10 @@ void setPieContent(const char* data, size_t size);
 // 0 none, 1 its texts are being looked up, 2 drawn by us, 3 not drawable (the game's pie cut out instead).
 int pieState();
 float pieScale();
-void clearPie();
+// Which content the pie shows (a new one each setPieContent); clearPie(serial) clears only that one, so a
+// closing pie never wipes the next pie's options sent meanwhile (user 2026-10-23: the old cut showed).
+unsigned pieSerial();
+void clearPie(unsigned serial);
 
 // Python (objmenu.py), when a popup shows (empty: gone): its content from the
 // game's own message, records split by 0x1e, fields by 0x1f: first
