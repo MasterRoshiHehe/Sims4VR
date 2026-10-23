@@ -157,6 +157,13 @@ Config loadConfig(const std::wstring& ini) {
         if (sscanf(s.c_str(), "%f %f %f", &v[0], &v[1], &v[2]) == 3)
             for (int i = 0; i < 3; ++i) out[i] = v[i];
     }
+    {
+        std::string s = readString(ini, "phone", "note_place", "");
+        float v[3];
+        if (sscanf(s.c_str(), "%f %f %f", &v[0], &v[1], &v[2]) == 3)
+            for (int i = 0; i < 3; ++i) c.notePlace[i] = v[i];
+    }
+    c.noteSize = readFloat(ini, "phone", "note_size", c.noteSize);
     c.bubbleOwnSize = readFloat(ini, "bubbles", "own_size", c.bubbleOwnSize);
     c.bubbleNpcSize = readFloat(ini, "bubbles", "npc_size", c.bubbleNpcSize);
     c.bubbleHideOwn = readInt(ini, "bubbles", "hide_own", 0) != 0;

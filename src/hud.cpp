@@ -2260,7 +2260,7 @@ Action drawNote(uint64_t id, int* index) {
     }
     ImDrawList* d = ImGui::GetBackgroundDrawList();
     const Rect r = kNote;
-    const float pad = 22, pic = 96, x0 = r.x + 4, x1 = r.x + r.w - 4, wrap = x1 - x0 - 3 * pad - pic;
+    const float pad = 22, pic = 96, x0 = r.x + 4, x1 = r.x + r.w - 4, wrap = x1 - x0 - 3 * pad - pic - 44;  // room for the X
     const ImU32 kTitle = kWhite, kBody = kWhite;
     ImVec2 ts = title.empty() ? ImVec2{0, 0} : g_title->CalcTextSizeA(30, FLT_MAX, wrap, title.c_str());
     ImVec2 xs = text.empty() ? ImVec2{0, 0} : g_text->CalcTextSizeA(26, FLT_MAX, wrap, text.c_str());
@@ -2304,8 +2304,18 @@ Action drawNote(uint64_t id, int* index) {
             if (index) *index = static_cast<int>(n->id * 8 + i);
         }
     }
+    // Its close button, top right (user 2026-10-23); a press anywhere above the answers closes it as well.
+    bool closed = false;
+    {
+        const float s = 52;
+        const ImVec2 c{x1 - 10 - s / 2, r.y + 4 + 10 + s / 2};
+        ImGui::SetCursorScreenPos({c.x - s / 2, c.y - s / 2});
+        closed = ImGui::InvisibleButton("noteX", {s, s});
+        const bool hover = ImGui::IsItemHovered();
+        piece(d, art::kCancel, c, (hover ? s * 1.08f : s) / art::kCancel.w);
+    }
     ImGui::SetCursorScreenPos({x0, r.y + 4});
-    bool pressed = ImGui::InvisibleButton("note", {x1 - x0, nb ? by0 - (r.y + 4) : h});
+    bool pressed = ImGui::InvisibleButton("note", {x1 - x0, nb ? by0 - (r.y + 4) : h}) || closed;
     g_noteHeight = h + 8;
     if (action != kNone) return action;
     return pressed ? kNoteDismiss : kNone;

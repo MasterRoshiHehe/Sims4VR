@@ -495,7 +495,7 @@ static void updateNoteCard(const camera::View& view, bool firstPerson, bool head
         else
             at = {aEye.x + right.x * place[0] + flat.x * place[2], aEye.y + place[1],
                   aEye.z + right.z * place[0] + flat.z * place[2]};
-        w = 0.42f;
+        w = std::max(0.1f, g_config.noteSize);
     } else {
         XrVector3f headAt = worldToApp(view, n.at, false);
         XrVector3f to = sub3(headAt, eye);

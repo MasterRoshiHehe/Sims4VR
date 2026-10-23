@@ -107,6 +107,7 @@ const Page kFixedPages[] = {
     {L"HUD wants", L"Wants", L"HUD"},
     {L"HUD pause", L"Pause symbol", L"HUD"},
     {L"HUD sleep", L"Clock while asleep", L"HUD"},
+    {L"HUD note", L"Notification card", L"HUD"},
     {L"Bubbles", L"Speech bubbles and skill bars", L"Advanced"},
     {L"Bubbles yours", L"Where yours sit", L"Bubbles"},
     {L"Phone", L"Phone", L"Advanced"},
@@ -569,6 +570,16 @@ std::vector<Row> makeRows() {
         // Our own HUD (first person, hud.cpp: drawn with Dear ImGui).
         number(L"HUD", L"Game UI on the wrist (UI button): size", "ui", "wrist_width", &Config::wristWidth, 0.2f, 0.8f,
                0.02f, 100, L"%.0f cm"),
+        // The notification card in front of you (user 2026-10-23): where it sits and its size; also set by dragging it.
+        link(L"HUD", L"Notification card", L"HUD note"),
+        component(L"HUD note", L"Notification card: right", "phone", "note_place", &Config::notePlace, 0, -1, 1, 0.02f, 100,
+                  L"%+.0f cm"),
+        component(L"HUD note", L"Notification card: up", "phone", "note_place", &Config::notePlace, 1, -1, 1, 0.02f, 100,
+                  L"%+.0f cm"),
+        component(L"HUD note", L"Notification card: ahead", "phone", "note_place", &Config::notePlace, 2, 0.25f, 2, 0.05f,
+                  100, L"%.0f cm"),
+        number(L"HUD note", L"Notification card: size", "phone", "note_size", &Config::noteSize, 0.2f, 1, 0.02f, 100,
+               L"%.0f cm wide"),
         toggle(L"HUD watch", L"Watch on your left wrist", "wrist", "watch", &Config::wristTime),
         toggle(L"HUD pause", L"Pause symbol while paused", "wrist", "pause", &Config::wristPause),
         toggle(L"HUD sleep", L"Clock in view while asleep", "wrist", "sleep_clock", &Config::wristSleepClock),
@@ -590,12 +601,12 @@ std::vector<Row> makeRows() {
         toggle(L"Bubbles", L"Skill bars, flyaways, nameplates (old cut, stray boxes)", "bubbles", "cut_others", &Config::bubbleCutOthers),
         toggle(L"Bubbles", L"Balloons drawn by the mod (off: cut from the game's UI)", "bubbles", "own_balloons", &Config::bubbleOwnDraw),
         link(L"Bubbles", L"Where yours sit", L"Bubbles yours"),
-        component(L"Bubbles yours", L"Your bubble: right", "bubbles", "own_bubble_position", &Config::bubbleOwnPos, 0, -0.5f,
-                  0.5f, 0.05f, 100, L"%+.0f cm"),
-        component(L"Bubbles yours", L"Your bubble: up", "bubbles", "own_bubble_position", &Config::bubbleOwnPos, 1, -0.5f, 0.5f,
+        component(L"Bubbles yours", L"Your bubble: right", "bubbles", "own_bubble_position", &Config::bubbleOwnPos, 0, -1,
+                  1, 0.05f, 100, L"%+.0f cm"),
+        component(L"Bubbles yours", L"Your bubble: up", "bubbles", "own_bubble_position", &Config::bubbleOwnPos, 1, -1, 1,
                   0.05f, 100, L"%+.0f cm"),
-        component(L"Bubbles yours", L"Your bubble: ahead", "bubbles", "own_bubble_position", &Config::bubbleOwnPos, 2, 0.2f,
-                  2, 0.05f, 100, L"%.0f cm"),
+        component(L"Bubbles yours", L"Your bubble: ahead", "bubbles", "own_bubble_position", &Config::bubbleOwnPos, 2, 0.1f,
+                  4, 0.05f, 100, L"%.0f cm"),
         component(L"Bubbles yours", L"Your skill bar: horizontal", "bubbles", "skill_position", &Config::skillOwnPos, 0, -0.5f,
                   0.5f, 0.05f, 100, L"%+.0f cm"),
         component(L"Bubbles yours", L"Your skill bar: up", "bubbles", "skill_position", &Config::skillOwnPos, 1, -0.5f,
@@ -1934,6 +1945,10 @@ void setPlacement(const float place[4]) {
 }
 
 bool notePlacement(float place[3]) {
+    if (g_live) {  // the menu's rows (HUD > Notification card), which dragging the card sets too
+        std::copy(g_live->notePlace, g_live->notePlace + 3, place);
+        return true;
+    }
     if (!g_hasNotePlace) return false;
     std::copy(g_notePlace, g_notePlace + 3, place);
     return true;
@@ -1942,6 +1957,7 @@ bool notePlacement(float place[3]) {
 void setNotePlacement(const float place[3]) {
     std::copy(place, place + 3, g_notePlace);
     g_hasNotePlace = true;
+    if (g_live) std::copy(place, place + 3, g_live->notePlace);
     char text[96];
     snprintf(text, sizeof(text), "%.3f %.3f %.3f", place[0], place[1], place[2]);
     LOG("Notification card moved; [phone] note_place = %s (right, up, forward of your head)", text);
