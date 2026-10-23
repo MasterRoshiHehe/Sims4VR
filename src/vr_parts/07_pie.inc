@@ -25,7 +25,6 @@ struct PieMenu {
     bool own = false;  // the pie drawn by us (hud kPie, the HUD sheet kHudPie in its place), not the game's cut
 };
 static PieMenu g_pie;
-static bool g_pieWorldSet = false;  // pieInWorld holds the open pie in the world
 static std::atomic<bool> g_pieOpenRequest{false}, g_pieCloseRequest{false};
 
 // The last left click into the world (not on the UI): where the mouse was and
@@ -126,7 +125,6 @@ static bool openPie(const XrVector3f& head) {
     XrVector3f y = cross3(z, x);
 
     g_pie.active = true;
-    g_pieWorldSet = false;
     g_pieShown.store(true, std::memory_order_relaxed);
     g_pie.x = x;
     g_pie.y = y;
@@ -571,30 +569,6 @@ static bool pieInWorld(bool show) {
     XrQuaternionf heading{view.heading.x, view.heading.y, view.heading.z, view.heading.w};
     XrVector3f wc = rotate3(heading, {at.x * scale, at.y * scale, at.z * scale});
     XrVector3f wx = rotate3(heading, ax), wy = rotate3(heading, ay);
-    // Open (not flying): its facing held in the world where it first showed (user 2026-10-22 on 344: a
-    // two-step shake when a turn stops: the headset's frames are turned on by the stick since drawn, and
-    // the pie, drawn into them, turned with them). It follows you as you walk (user 2026-10-23 on 345:
-    // it was left behind): kept at the same world offset from where you stand. Its app-space pose
-    // (laser, pokes, shove, the HUD sheet) follows from this frame's camera.
-    static XrVector3f worldAt, worldX, worldY, offset;
-    static float worldScale = 1;
-    const bool held = show && !flying && g_pieWorldSet;
-    if (held) worldAt = {view.anchor.x + offset.x, view.anchor.y + offset.y, view.anchor.z + offset.z};
-    if (show && !flying && !held) {
-        worldAt = {view.anchor.x + wc.x, view.anchor.y + wc.y, view.anchor.z + wc.z};
-        offset = wc;
-        worldX = wx;
-        worldY = wy;
-        worldScale = scale;
-        g_pieWorldSet = true;
-    } else if (held && scale > 0) {
-        const XrQuaternionf back{-heading.x, -heading.y, -heading.z, heading.w};
-        const XrVector3f rel = rotate3(back, {worldAt.x - view.anchor.x, worldAt.y - view.anchor.y, worldAt.z - view.anchor.z});
-        g_pie.x = rotate3(back, worldX);
-        g_pie.y = rotate3(back, worldY);
-        g_pie.z = cross3(g_pie.x, g_pie.y);
-        g_pie.pose = {fromAxes(g_pie.x, g_pie.y, g_pie.z), {rel.x / scale, rel.y / scale, rel.z / scale}};
-    }
     phone3d::Panel panel;
     panel.show = true;
     panel.clear = true;
@@ -610,16 +584,7 @@ static bool pieInWorld(bool show) {
     panel.y[2] = wy.z;
     panel.width = width * scale;
     panel.height = height * scale;
-    if (show && !flying) {
-        // In the world as held (the size too: a scale change doesn't resize it under your hand).
-        const float k = scale > 0 ? worldScale / scale : 1.0f;
-        panel.centre[0] = worldAt.x, panel.centre[1] = worldAt.y, panel.centre[2] = worldAt.z;
-        panel.x[0] = worldX.x, panel.x[1] = worldX.y, panel.x[2] = worldX.z;
-        panel.y[0] = worldY.x, panel.y[1] = worldY.y, panel.y[2] = worldY.z;
-        panel.width = width * scale * k;
-        panel.height = height * scale * k;
-    } else
-        panel.app = true;
+    panel.app = true;
     panel.appAt[0] = at.x, panel.appAt[1] = at.y, panel.appAt[2] = at.z;
     panel.appX[0] = ax.x, panel.appX[1] = ax.y, panel.appX[2] = ax.z;
     panel.appY[0] = ay.x, panel.appY[1] = ay.y, panel.appY[2] = ay.z;
