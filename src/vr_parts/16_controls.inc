@@ -424,6 +424,10 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
             openSettings(time);
     }
     cancelWas = cancel;
+    if (g_vrOptionsAsked) {
+        g_vrOptionsAsked = false;
+        if (!settings::isOpen()) openSettings(time);
+    }
     // While the settings menu is open it has the right stick (no turning or
     // zooming) and A (no right click), except A held with the grip for the laser.
     if (settings::isOpen()) {

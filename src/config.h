@@ -149,7 +149,8 @@ struct Config {
     bool selfPiePalm = true;
     float pieDistance = 0.45f;  // metres from your eyes at most
     float pieWidth = 0.96f;     // metres
-    int scandalSpot = 0;        // [bubbles] scandal_spot: your scandal aura (Royalty & Legacy) on 0 head, 1 chest, 2 hips, 3 left hand, 4 right hand, 5 hidden (scandal.py)
+    bool scandalHide = false;     // [bubbles] scandal_hide
+    float scandalPos[3] = {0, 0, 0};  // [bubbles] scandal_position: right / up / ahead offset of the aura from the head joint (m)
     int pieMode = 0;            // [ui] pie_mode: 0 in front, 1 on your other palm, 2 dynamic (front; palm for the laser on it)
     float piePalmSize = 0.45f;  // [ui] pie_palm_size: the pie on a palm against its size in front
     float piePalmLift = 0.10f;  // [ui] pie_palm_lift: metres above the palm
@@ -289,6 +290,7 @@ struct Config {
     // Sim holds its phone, with the game menu on its screen (game not paused)
     bool phone = true;
     float phoneHipDrop = 0.40f;   // metres below your eyes your hand must be
+    int phoneTextSize = 1;        // the phone's texts: 0 small (as before v0.13.380), 1 medium, 2 large
     bool phonePopupBuzz = true;   // the controllers buzz like a phone when the game shows a popup
     float phoneWidth = 0.102f;    // our phone's size, metres
     float phoneHeight = 0.190f;

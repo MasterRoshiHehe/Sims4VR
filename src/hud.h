@@ -56,7 +56,8 @@ constexpr Rect kBookCover{0, 6688, 512, 688};
 // kPhoneOptions: the Options app (the game menu); kPhoneColor: wallpaper colour `index`.
 enum Action { kNone = 0, kPausePressed = 1, kSpeed1, kSpeed2, kSpeed3, kFullUi, kBuildPressed, kCancel, kDismissWant, kAnswer,
               kPick, kPickerClose, kPhonePick, kPhoneSilence, kPhoneOptions, kPhoneColor, kNotesOpened, kNotesClear, kNoteDelete, kNoteDismiss, kCalendarOpened, kNoteAnswer,
-              kPiePick, kPieClose, kListPick, kListDone, kListClose };
+              kPiePick, kPieClose, kListPick, kListDone, kListClose, kVrOptions };
+// kVrOptions: the phone's Settings > VR Options (opens the VR debug menu).
 // kListPick: the list picker's row `index` (one pick); kListDone: Done with listPicked(); kListClose: its X.
 // The rows picked on the list picker when kListDone came (render's thread).
 std::vector<int> listPicked();
@@ -234,6 +235,7 @@ struct Frame {
     int bookSpread = 0;      // the spread to draw (0 = the owner and the categories)
     bool money = false;      // the money gained / lost
     bool phone = false;      // the game's phone menu (kPhone)
+    float phoneText = 1;     // the phone's text size ([phone] text_size)
     bool phoneWait = false;  // something the phone's screen needs is still coming (the wallpaper, Options' menu): it waits covered
     bool balloons = false;
     bool bars = false;       // the skill bars over Sims' heads   // the balloons over Sims' heads (addBalloon)

@@ -12,6 +12,7 @@ static PieMenu g_phone;
 static constexpr float kPhoneChin = 0.035f;  // the bands above and below the screen, x the phone's height
 static std::atomic<bool> g_gameMenuOpen{false}, g_gameMenuReported{false};
 static bool g_phoneOpenedMenu = false;   // our Escape opened the menu (for when Python can't say)
+static bool g_vrOptionsAsked = false;   // the phone's VR Options app was pressed: open the debug menu (16_controls)
 static bool g_phoneOptions = false;      // the Options app is open: the game menu on the screen (else the game's phone menu)
 static bool g_phoneOptionsSeen = false;  // the game menu has been open since Options was pressed
 static ULONGLONG g_phoneMenuAt = 0;      // an Escape to open the menu, once the pie's own has gone

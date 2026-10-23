@@ -653,9 +653,13 @@ std::vector<Row> makeRows() {
         link(L"Bubbles", L"Your scandal mark (Royalty & Legacy)", L"Bubbles scandal"),
         // Your Sim's stat / relationship pops (user 2026-10-23): their own place and size.
         link(L"Bubbles", L"Your stat and relationship pops", L"Bubbles pops"),
-        choice(L"Bubbles scandal", L"Your purple scandal \"!\" (Royalty & Legacy) sits on", "bubbles", "scandal_spot",
-               &Config::scandalSpot, {L"Your head (game)", L"Your chest", L"Your hips", L"Your left hand", L"Your right hand",
-                                      L"Hidden"}),  // scandal.py
+        toggle(L"Bubbles scandal", L"Hide your scandal mark", "bubbles", "scandal_hide", &Config::scandalHide),  // scandal.py
+        component(L"Bubbles scandal", L"Your scandal mark: right", "bubbles", "scandal_position", &Config::scandalPos, 0, -1, 1,
+                  0.05f, 100, L"%+.0f cm"),
+        component(L"Bubbles scandal", L"Your scandal mark: up", "bubbles", "scandal_position", &Config::scandalPos, 1, -1, 1,
+                  0.05f, 100, L"%+.0f cm"),
+        component(L"Bubbles scandal", L"Your scandal mark: ahead", "bubbles", "scandal_position", &Config::scandalPos, 2, -1, 1,
+                  0.05f, 100, L"%+.0f cm"),
         toggle(L"Bubbles pops", L"Hide your pops", "bubbles", "hide_pops", &Config::popHideOwn),
         component(L"Bubbles pops", L"Your pops: right", "bubbles", "pop_position", &Config::popOwnPos, 0, -1, 1, 0.05f, 100,
                   L"%+.0f cm"),
@@ -683,6 +687,7 @@ std::vector<Row> makeRows() {
         number(phone, L"Hip: hand below your eyes", "phone", "hip_drop", &Config::phoneHipDrop, 0.1f, 0.9f, 0.02f, 100,
                L"%.0f cm"),
         toggle(phone, L"Buzz when the game shows a popup", "phone", "popup_buzz", &Config::phonePopupBuzz),
+        choice(phone, L"Text size on the phone", "phone", "text_size", &Config::phoneTextSize, {L"Small", L"Medium", L"Large"}),
         link(phone, L"Position", phonePosition),
         link(phone, L"Hand", phoneHand),
         link(phone, L"Size and screen", phoneSize),
@@ -888,7 +893,7 @@ ULONGLONG g_selectedAt = 0;  // when the picked row changed (its tip shows a mom
 constexpr int kCloseRow = -2;
 bool g_closeWanted = false;
 bool g_tipDrawn = false;
-constexpr ULONGLONG kTipDelay = 500;
+constexpr ULONGLONG kTipDelay = 1000;
 const wchar_t* const kCloseTip = L"Closes the menu and saves your changes. B closes it too.";
 int g_top = 0;  // first line shown
 ULONGLONG g_resetArmed = 0;
@@ -2183,6 +2188,46 @@ void queueSave(std::vector<Entry> entries) {
 }
 
 }  // namespace
+
+std::vector<PageRow> pageRows(const wchar_t* group, std::wstring* title, std::wstring* parent) {
+    std::vector<PageRow> out;
+    const int page = pageOf(group);
+    if (page <= 0) return out;
+    if (title) *title = g_pages[page].name;
+    if (parent) *parent = g_pages[page].parent ? g_pages[page].parent : L"";
+    for (size_t i = 0; i < g_rows.size(); ++i) {
+        const Row& r = g_rows[i];
+        if (r.page != page || r.kind == Kind::Back || r.kind == Kind::Reset) continue;
+        PageRow p;
+        p.label = r.label;
+        p.row = static_cast<int>(i);
+        if (r.kind == Kind::Link) {
+            if (!pageShown(r.linkPage) || !linkOpen(r)) continue;
+            p.kind = 2;
+            p.target = r.target ? r.target : L"";
+        } else if (r.kind == Kind::Toggle) {
+            p.kind = 1;
+            p.value = toggleValue(i) ? L"On" : L"Off";
+        } else if (r.kind == Kind::Action) {
+            p.kind = 3;
+        } else {
+            wchar_t v[96];
+            shownValue(i, v, 96);
+            p.value = v;
+        }
+        out.push_back(std::move(p));
+    }
+    return out;
+}
+
+bool pageChange(int row, int dir) {
+    if (row < 0 || row >= static_cast<int>(g_rows.size())) return false;
+    const Kind k = g_rows[row].kind;
+    if (k == Kind::Link || k == Kind::Back || k == Kind::Reset) return false;
+    const bool done = change(static_cast<size_t>(row), dir);
+    if (done && !g_open) flush();  // the menu isn't open to save it a second later
+    return done;
+}
 
 bool close() {
     if (!g_open) return false;

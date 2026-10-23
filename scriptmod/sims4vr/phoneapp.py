@@ -177,7 +177,7 @@ def set_color(index):
 _job = None  # the phone menu being built a slice a tick: [client, sim, context, choice menu, aops, next, live]
 _BUDGET = 0.012  # seconds of aop tests a tick (the whole menu at once stalled the game 140-280 ms)
 _IDLE_BUDGET = 0.004  # the same while the phone is away (a menu made ahead, user 2026-10-23: no waiting)
-_AHEAD_EVERY = 20.0  # seconds: a menu made ahead is made again this often while the phone is away
+_AHEAD_EVERY = 60.0  # seconds: a menu made ahead is made again this often while the phone is away
 _last = None  # (sim id, records) of the menu sent last: shown at once while the fresh one is tested
 _built_at = 0.0  # time.monotonic() the last menu was finished
 _live = False  # _choice_ids belong to a menu set on the client (a press can be picked now)

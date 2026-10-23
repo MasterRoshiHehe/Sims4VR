@@ -1,15 +1,14 @@
 # Your Sim's scandal aura in first person (user 2026-10-23 19:46Z: the purple "!" is a scandal from Royalty &
 # Legacy). It is no UI piece but a world effect: buff_ScandalSecret_ScandalVFX (493236) plays ep21_scandal_aura on
 # the b__head__ slot (buffs/buff.py _start_vfx, vfx.PlayEffect), so in first person it hangs in front of your eyes.
-# Effects have no offset of their own (VFXStart: a joint, or a fixed transform), so the menu picks the joint it
-# plays on ([bubbles] scandal_spot: 0 head as the game, 1 chest, 2 hips, 3 left hand, 4 right hand, 5 hidden).
-# The buff keeps our effect in its _vfx, so the game stops it as its own. Other Sims and god view stay as the game.
+# Placement = [bubbles] scandal_position (right / up / ahead, m) sent as VFXStart.target_joint_offset on the head
+# joint (vfx/__init__.py write); scandal_hide hides it. The buff keeps our effect in its _vfx, so the game stops it
+# as its own. Other Sims and god view stay as the game.
 import time
 
 from sims4vr import native
 
 EFFECT = 'ep21_scandal_aura'
-JOINTS = (None, 'b__Spine2__', 'b__Pelvis__', 'b__L_Hand__', 'b__R_Hand__')
 EVERY = 0.5
 
 _last = 0.0
@@ -20,11 +19,15 @@ _logs = 0
 
 
 def _spot():
+    """(hidden, (right, up, ahead)); (False, None) = the game's own place."""
+    hide = native.setting('bubbles', 'scandal_hide', '0') not in ('0', 'false', 'off', 'no')
     try:
-        spot = int(native.setting('bubbles', 'scandal_spot', '0'))
+        v = tuple(float(x) for x in native.setting('bubbles', 'scandal_position', '0 0 0').split())
+        if len(v) != 3 or not any(v):
+            v = None
     except (TypeError, ValueError):
-        spot = 0
-    return spot if 0 <= spot <= 5 else 0
+        v = None
+    return hide, v
 
 
 def _auras(sim):
@@ -38,21 +41,22 @@ def _auras(sim):
 
 
 def _replay(buff, sim, spot):
-    """The buff's aura stopped and played again on the spot's joint (none: hidden)."""
-    from vfx import PlayEffect
+    """The buff's aura stopped and played again with the spot's offset (hidden: not played)."""
     old = buff._vfx
     old.stop(immediate=True)
-    if spot == 0:
-        new = buff.vfx(sim)  # the game's own, on the head
+    hide, off = spot
+    if off is None:
+        new = buff.vfx(sim)  # the game's own
     else:
+        from vfx import PlayEffect
+        from sims4.math import Vector3
         import sims4.hash_util
-        joint = sims4.hash_util.hash32(JOINTS[spot]) if spot < len(JOINTS) else 0
-        new = PlayEffect(sim, effect_name=EFFECT, joint_name=joint)
+        new = PlayEffect(sim, effect_name=EFFECT, joint_name=sims4.hash_util.hash32('b__head__'),
+                         target_joint_offset=Vector3(off[0], off[1], off[2]))
     buff._vfx = new
     _ours.pop(id(old), None)
-    if spot != 0:
-        _ours[id(new)] = spot
-    if spot != 5:
+    _ours[id(new)] = spot
+    if not hide:
         new.start()
 
 
@@ -73,21 +77,19 @@ def tick():
             wanted[you.id] = spot
         for sim_id in list(_placed):
             if sim_id not in wanted:
-                wanted[sim_id] = 0  # out of first person (or another Sim now): the game's head again
+                wanted[sim_id] = (False, None)  # out of first person (or another Sim now): the game's head again
         for sim_id, want in wanted.items():
             sim = services.object_manager().get(sim_id)
             if sim is None:
                 _placed.pop(sim_id, None)
                 continue
             for buff, vfx in _auras(sim):
-                if _ours.get(id(vfx), 0) != want or (want not in (0, 5) and not vfx.is_attached):
+                if _ours.get(id(vfx), (False, None)) != want or (not want[0] and not vfx.is_attached):
                     _replay(buff, sim, want)
                     _logs += 1
                     if _logs <= 30:
-                        native._log('scandal: your aura {}'.format(
-                            ('on your head (game)', 'on your chest', 'on your hips', 'on your left hand',
-                             'on your right hand', 'hidden')[want]))
-            if want:
+                        native._log('scandal: your aura {}'.format('hidden' if want[0] else want[1] or 'as the game'))
+            if want != (False, None):
                 _placed[sim_id] = want
             else:
                 _placed.pop(sim_id, None)

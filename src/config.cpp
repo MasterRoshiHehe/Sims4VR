@@ -145,7 +145,7 @@ Config loadConfig(const std::wstring& ini) {
     c.pieDistance = readFloat(ini, "ui", "pie_distance", c.pieDistance);
     c.pieWidth = readFloat(ini, "ui", "pie_width", c.pieWidth);
     c.pieMode = readInt(ini, "ui", "pie_mode", c.pieMode);
-    c.scandalSpot = readInt(ini, "bubbles", "scandal_spot", c.scandalSpot);
+    c.scandalHide = readInt(ini, "bubbles", "scandal_hide", 0) != 0;
     c.piePalmSize = readFloat(ini, "ui", "pie_palm_size", c.piePalmSize);
     c.piePalmLift = readFloat(ini, "ui", "pie_palm_lift", c.piePalmLift);
     c.pieCrop = readFloat(ini, "ui", "pie_crop", c.pieCrop);
@@ -156,7 +156,8 @@ Config loadConfig(const std::wstring& ini) {
     c.skillOwnSize = readFloat(ini, "bubbles", "skill_size", c.skillOwnSize);
     for (auto [key, out] : {std::pair<const char*, float*>{"own_bubble_position", c.bubbleOwnPos},
                             std::pair<const char*, float*>{"skill_position", c.skillOwnPos},
-                            std::pair<const char*, float*>{"pop_position", c.popOwnPos}}) {
+                            std::pair<const char*, float*>{"pop_position", c.popOwnPos},
+                            std::pair<const char*, float*>{"scandal_position", c.scandalPos}}) {
         std::string s = readString(ini, "bubbles", key, "");
         float v[3];
         if (sscanf(s.c_str(), "%f %f %f", &v[0], &v[1], &v[2]) == 3)
@@ -224,7 +225,6 @@ Config loadConfig(const std::wstring& ini) {
     if (!(c.pieCrop >= 0.2f && c.pieCrop <= 3.0f)) c.pieCrop = 0.75f;
     if (!(c.pieWidth >= 0.1f && c.pieWidth <= 1.5f)) c.pieWidth = 0.96f;
     if (c.pieMode < 0 || c.pieMode > 2) c.pieMode = 0;
-    if (c.scandalSpot < 0 || c.scandalSpot > 5) c.scandalSpot = 0;
     if (!(c.piePalmSize >= 0.15f && c.piePalmSize <= 1.0f)) c.piePalmSize = 0.45f;
     if (!(c.piePalmLift >= 0.0f && c.piePalmLift <= 0.4f)) c.piePalmLift = 0.10f;
     if (!(c.pieDistance >= 0.2f && c.pieDistance <= 3.0f)) c.pieDistance = 0.45f;
@@ -255,6 +255,7 @@ Config loadConfig(const std::wstring& ini) {
     c.phone = readBool(ini, "phone", "phone", true);
     c.phoneHipDrop = readFloat(ini, "phone", "hip_drop", c.phoneHipDrop);
     c.phonePopupBuzz = readBool(ini, "phone", "popup_buzz", c.phonePopupBuzz);
+    c.phoneTextSize = readInt(ini, "phone", "text_size", c.phoneTextSize);
     c.phoneWidth = readFloat(ini, "phone", "phone_width", c.phoneWidth);
     if (!(c.phoneWidth >= 0.03f && c.phoneWidth <= 0.5f)) c.phoneWidth = 0.102f;
     c.phoneHeight = readFloat(ini, "phone", "phone_height", c.phoneHeight);

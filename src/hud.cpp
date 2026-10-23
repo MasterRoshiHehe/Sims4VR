@@ -24,6 +24,7 @@
 #include "imgui_impl_dx11.h"
 #include "log.h"
 #include "phone3d.h"
+#include "settings.h"
 #include "strings.h"
 #include "uikit.h"
 
@@ -247,6 +248,12 @@ struct PhoneDrag {
 PhoneDrag g_drag;  // present thread
 int g_calWeek = 0, g_calSel = -1, g_calScroll = 0;
 int g_phoneApp = -1, g_phoneRoot = -1, g_phonePage = 0, g_phoneScroll = 0;
+// The phone's Settings app (user 2026-10-23 20:55Z): its screen of apps (Game Options, Phone Options,
+// VR Options), and Phone Options: the debug menu's phone pages on the phone (settings::pageRows).
+bool g_phoneSettingsOpen = false;
+std::wstring g_phoneOptsGroup;  // the debug menu page Phone Options shows ("" closed)
+int g_phoneOptsScroll = 0;
+float g_phoneText = 1;          // the phone's text size (Frame.phoneText)
 std::vector<uint64_t> g_phonePreload;  // every picture the phone can show (apps, colours, notifications), read ahead (g_itemMutex)
 std::vector<uint64_t> g_notesPreload;  // the notifications' pictures, read ahead (g_itemMutex)
 std::string g_phoneRaw;                // the menu as Python sent it last (g_phoneMutex): the same again changes nothing
@@ -273,7 +280,8 @@ ID3D11BlendState* g_premultiplied = nullptr;  // the still is premultiplied (as 
 ID3D11DeviceContext* g_drawContext = nullptr;  // render(): for the draw callbacks
 constexpr float kCoverFade = 0.22f;      // seconds from the cover to the screen
 constexpr ULONGLONG kCoverMaxWait = 4000;  // ms: then shown as it is (a picture that never comes)
-constexpr ULONGLONG kSpinAfter = 150;      // ms waiting before the plumbob shows (no flash when it is quick)
+constexpr ULONGLONG kSpinAfter = 150;
+constexpr ULONGLONG kPictureWait = 700;    // ms a screen waits for its pictures      // ms waiting before the plumbob shows (no flash when it is quick)
 
 // The tooltips of the needs and moodlets (hudinfo.py), and their texts once found.
 struct Tip {
@@ -1881,6 +1889,15 @@ void drawCalendar(ImDrawList* d, const Rect& r, Button& button, std::vector<uint
 // The game's phone screen (SimInfoTray: PhonePanel's PhoneCategoryScreen and
 // PhoneInteractionScreen, their places from the SWF), 2.5 atlas pixels to the
 // game's one. The background picture is the phone's glass (phone3d), not drawn here.
+// A menu text (wide) for ImGui.
+std::string utf8(const std::wstring& w) {
+    if (w.empty()) return std::string();
+    const int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), static_cast<int>(w.size()), nullptr, 0, nullptr, nullptr);
+    std::string out(static_cast<size_t>(std::max(0, n)), '\0');
+    if (n > 0) WideCharToMultiByte(CP_UTF8, 0, w.c_str(), static_cast<int>(w.size()), &out[0], n, nullptr, nullptr);
+    return out;
+}
+
 Action drawPhone(ImDrawList* d, int* index) {
     const PhoneContent& p = g_phone;
     const Rect r = kPhone;
@@ -1924,6 +1941,15 @@ Action drawPhone(ImDrawList* d, int* index) {
     std::vector<uint64_t> shown;
     // An app's picture: its category icon, 64 game pixels (mcImage at 0.64).
     auto appIcon = [&](int node, ImVec2 c, ImU32 tint = kWhite) {
+        // Our apps: our own icons in the game's phone app style (tools/make_phone_icons.py).
+        const art::Piece* own = node == -1 ? &art::kAppSettings : node == -2 ? &art::kAppCalendar : node == -3 ? &art::kAppBuild
+                              : node == -10 ? &art::kAppGameOptions : node == -11 ? &art::kAppPhoneOptions
+                              : node == -12 ? &art::kAppVrOptions : nullptr;
+        if (own) {
+            const float h = 32 * S;
+            pieceIn(d, *own, {c.x - h, c.y - h}, {c.x + h, c.y + h}, tint);
+            return;
+        }
         if (node < 0) {
             // Options (the game menu): the game menu button's dots on a dark tile;
             // Calendar (-2): the HUD's calendar button on one.
@@ -1951,8 +1977,8 @@ Action drawPhone(ImDrawList* d, int* index) {
     };
     if (g_phoneHomeAsked.exchange(false))
         g_phoneApp = g_phoneRoot = -1, g_phonePage = 0, g_phoneScroll = 0, g_phoneColorsOpen = false, g_phoneNotesOpen = false,
-        g_phoneCalOpen = false;
-    if (g_phoneApp >= 0) g_phoneNotesOpen = g_phoneCalOpen = false;
+        g_phoneCalOpen = false, g_phoneSettingsOpen = false, g_phoneOptsGroup.clear();
+    if (g_phoneApp >= 0) g_phoneNotesOpen = g_phoneCalOpen = g_phoneSettingsOpen = false, g_phoneOptsGroup.clear();
     if (g_phoneApp >= 0 || p.colors.empty()) g_phoneColorsOpen = false;
 
     if (!p.disabled.empty() || (p.nodes.empty() && !p.disabledJson.empty())) {
@@ -2074,6 +2100,123 @@ Action drawPhone(ImDrawList* d, int* index) {
         bool over = false;
         if (button(at(96, 361), at(129, 392), &over)) g_phoneNotesOpen = false;
         piece(d, over ? art::kPhoneBackOver : art::kPhoneBack, at(96 + 16.5f, 361 + 15.5f), A);
+    } else if (!g_phoneOptsGroup.empty()) {
+        // Phone Options: the debug menu's phone page (and its pages) on the phone, in the
+        // phone's list style: the setting on the left, its value with arrows on the right.
+        std::wstring title, parent;
+        const std::vector<settings::PageRow> rows = settings::pageRows(g_phoneOptsGroup.c_str(), &title, &parent);
+        pieceIn(d, art::kPhoneTint, at(0, 0), at(230, 44));
+        {
+            const std::string head = utf8(title.empty() ? std::wstring(L"Phone Options") : title == L"Phone" ? L"Phone Options" : title);
+            ImVec2 hs = g_title->CalcTextSizeA(34, FLT_MAX, 0, head.c_str());
+            const float k = std::min(1.0f, 210 * S / std::max(1.0f, hs.x));
+            shadowText(d, g_title, 34 * k, {at(115, 22).x - hs.x * k / 2, at(115, 22).y - hs.y * k / 2}, kWhite, head.c_str());
+        }
+        const float top = 50, bottom = 352, left = 6, right = 206, rowH = 50;
+        const int shownRows = static_cast<int>((bottom - top) / rowH), total = static_cast<int>(rows.size());
+        if (swipeY) g_phoneOptsScroll = drag.scroll - static_cast<int>(std::lround(dy / rowH));
+        g_phoneOptsScroll = std::max(0, std::min(std::max(0, total - shownRows), g_phoneOptsScroll));
+        const float ts = 24 * g_phoneText;
+        for (int k = 0; k < shownRows; ++k) {
+            const int i = g_phoneOptsScroll + k;
+            if (i >= total) break;
+            const settings::PageRow& row = rows[i];
+            const float y = top + k * rowH;
+            const ImVec2 ra = at(left, y + 2), rb = at(right, y + rowH - 2);
+            d->AddRectFilled(ra, rb, IM_COL32(255, 255, 255, 225), 6 * S);
+            const std::string label = utf8(row.label), value = utf8(row.value);
+            // The value's part on the right: arrows around it (a value), a switch, or a chevron (a page).
+            const float valueW = row.kind == 0 ? 74 : row.kind == 1 ? 40 : 14;
+            const float wrap = (right - left - valueW - 12) * S;
+            ImVec2 ls = g_text->CalcTextSizeA(ts, FLT_MAX, wrap, label.c_str());
+            float lk = 1;
+            if (ls.y > (rowH - 8) * S) lk = std::max(0.6f, (rowH - 8) * S / ls.y);
+            d->AddText(g_text, ts * lk, {at(left + 5, 0).x, (ra.y + rb.y - ls.y * lk) / 2}, kBlue, label.c_str(), nullptr, wrap);
+            const float vx = right - valueW - 3, cy = y + rowH / 2;
+            bool over = false;
+            if (row.kind == 0) {
+                // < value >
+                const ImVec2 la = at(vx, cy - 11), lb = at(vx + 20, cy + 11), ga = at(right - 23, cy - 11), gb = at(right - 3, cy + 11);
+                if (button(la, lb, &over)) settings::pageChange(row.row, -1);
+                d->AddRectFilled(la, lb, over ? IM_COL32(60, 140, 230, 255) : IM_COL32(9, 73, 171, 255), 5 * S);
+                d->AddTriangleFilled({la.x + 13 * S, la.y + 5 * S}, {la.x + 13 * S, lb.y - 5 * S}, {la.x + 6 * S, (la.y + lb.y) / 2}, kWhite);
+                over = false;
+                if (button(ga, gb, &over)) settings::pageChange(row.row, 1);
+                d->AddRectFilled(ga, gb, over ? IM_COL32(60, 140, 230, 255) : IM_COL32(9, 73, 171, 255), 5 * S);
+                d->AddTriangleFilled({ga.x + 7 * S, ga.y + 5 * S}, {ga.x + 7 * S, gb.y - 5 * S}, {ga.x + 14 * S, (ga.y + gb.y) / 2}, kWhite);
+                const float vw = (right - 26) - (vx + 22);
+                ImVec2 vs = g_text->CalcTextSizeA(ts, FLT_MAX, 0, value.c_str());
+                const float vk = vs.x > vw * S ? std::max(0.5f, vw * S / vs.x) : 1;
+                d->AddText(g_text, ts * vk, {at(vx + 22 + vw / 2, 0).x - vs.x * vk / 2, at(0, cy).y - vs.y * vk / 2}, kBlue, value.c_str());
+            } else if (row.kind == 1) {
+                // A switch: the press flips it.
+                const bool on = row.value == L"On";
+                const ImVec2 sa = at(vx, cy - 9), sb = at(vx + 36, cy + 9);
+                if (button(ra, rb, &over)) settings::pageChange(row.row, 0);
+                d->AddRectFilled(sa, sb, on ? IM_COL32(70, 170, 60, 255) : IM_COL32(150, 158, 170, 255), 9 * S);
+                const float kx = on ? sb.x - 9 * S : sa.x + 9 * S;
+                d->AddCircleFilled({kx, (sa.y + sb.y) / 2}, 7 * S, kWhite);
+                if (over) d->AddRect(ra, rb, IM_COL32(9, 73, 171, 180), 6 * S, 0, 1.2f * S);
+            } else {
+                // A page (or a button): the press opens it.
+                if (button(ra, rb, &over)) {
+                    if (row.kind == 2 && !row.target.empty()) g_phoneOptsGroup = row.target, g_phoneOptsScroll = 0;
+                    else settings::pageChange(row.row, 0);
+                }
+                if (row.kind == 2) {
+                    const ImVec2 c = at(right - 9, cy);
+                    d->AddTriangleFilled({c.x - 3 * S, c.y - 6 * S}, {c.x - 3 * S, c.y + 6 * S}, {c.x + 4 * S, c.y}, kBlue);
+                }
+                if (over) d->AddRect(ra, rb, IM_COL32(9, 73, 171, 180), 6 * S, 0, 1.2f * S);
+            }
+        }
+        if (total > shownRows) {
+            const float trackH = bottom - top, thumbH = std::max(24.0f, trackH * shownRows / total);
+            const float thumbY = top + (trackH - thumbH) * g_phoneOptsScroll / std::max(1, total - shownRows);
+            d->AddRectFilled(at(214, top), at(218, bottom), IM_COL32(255, 255, 255, 60), 2 * S);
+            pieceIn(d, art::kPhoneSlider, at(210, thumbY), at(222, thumbY + thumbH));
+            bool o = false;
+            if (button(at(206, top), at(228, thumbY), &o)) g_phoneOptsScroll -= shownRows;
+            if (button(at(206, thumbY + thumbH), at(228, bottom), &o)) g_phoneOptsScroll += shownRows;
+        }
+        bool over = false;
+        if (button(at(96, 361), at(129, 392), &over)) {
+            // Back: the page above, or the Settings screen from the phone's own page.
+            if (g_phoneOptsGroup == L"Phone" || parent.empty() || parent == L"Interface") g_phoneOptsGroup.clear();
+            else g_phoneOptsGroup = parent;
+            g_phoneOptsScroll = 0;
+        }
+        piece(d, over ? art::kPhoneBackOver : art::kPhoneBack, at(96 + 16.5f, 361 + 15.5f), A);
+    } else if (g_phoneSettingsOpen) {
+        // Settings: its apps (Game Options: the game's Escape menu, as the old Options app;
+        // Phone Options: this phone's settings; VR Options: the VR debug menu), named under them.
+        pieceIn(d, art::kPhoneTint, at(0, 0), at(230, 44));
+        {
+            const char* head = "Settings";
+            ImVec2 hs = g_title->CalcTextSizeA(34, FLT_MAX, 0, head);
+            shadowText(d, g_title, 34, {at(115, 22).x - hs.x / 2, at(115, 22).y - hs.y / 2}, kWhite, head);
+        }
+        static const int kApps[3] = {-10, -11, -12};
+        static const char* kNames[3] = {"Game Options", "Phone Options", "VR Options"};
+        for (int k = 0; k < 3; ++k) {
+            const float x = 13 + k * 68 + 4, y = 101 + 6;
+            const ImVec2 c = at(x + 32, y + 32);
+            bool over = false;
+            if (button(at(x, y), at(x + 64, y + 64), &over)) {
+                if (kApps[k] == -10) action = kPhoneOptions;
+                else if (kApps[k] == -11) g_phoneOptsGroup = L"Phone", g_phoneOptsScroll = 0;
+                else action = kVrOptions;
+            }
+            if (over) piece(d, art::kPhoneAppOver, c, A);
+            appIcon(kApps[k], c);
+            const float ns = 22 * g_phoneText;
+            ImVec2 size = g_small->CalcTextSizeA(ns, FLT_MAX, 0, kNames[k]);
+            const float fit = std::min(1.0f, 66 * S / std::max(1.0f, size.x));
+            shadowText(d, g_small, ns * fit, {c.x - size.x * fit / 2, at(0, y + 68).y}, kWhite, kNames[k]);
+        }
+        bool over = false;
+        if (button(at(96, 361), at(129, 392), &over)) g_phoneSettingsOpen = false;
+        piece(d, over ? art::kPhoneBackOver : art::kPhoneBack, at(96 + 16.5f, 361 + 15.5f), A);
     } else if (g_phoneCalOpen) {
         drawCalendar(d, r, button, shown, action);
         bool over = false;
@@ -2167,7 +2310,7 @@ Action drawPhone(ImDrawList* d, int* index) {
                     g_calSel = -1;
                     action = kCalendarOpened;
                 } else if (node < 0) {
-                    action = kPhoneOptions;
+                    g_phoneSettingsOpen = true;  // Settings: its own screen of apps
                 } else {
                     g_phoneApp = g_phoneRoot = node;
                     g_phoneScroll = 0;
@@ -2183,11 +2326,11 @@ Action drawPhone(ImDrawList* d, int* index) {
         if (slide != 0) d->PopClipRect();
         // mcCategoryName: the app pointed at.
         if (hovered != -100) {
-            std::string name = hovered == -2 ? found("{\"hash\": 1444123214}") : hovered < 0 ? std::string("Options") : p.nodes[hovered].name;
-            if (hovered == -2 && name.empty()) name = "Calendar";
-            if (hovered == -3) name = "Build Mode";
-            ImVec2 size = g_small->CalcTextSizeA(34, FLT_MAX, 0, name.c_str());
-            float scale = std::min(1.0f, 206 * S / std::max(1.0f, size.x));
+            std::string name = hovered == -1 ? std::string("Settings") : hovered == -2 ? std::string("Calendar")
+                             : hovered == -3 ? std::string("Build Mode") : p.nodes[hovered].name;
+            ImVec2 size = g_small->CalcTextSizeA(34 * g_phoneText, FLT_MAX, 0, name.c_str());
+            float scale = g_phoneText * std::min(1.0f, 206 * S / std::max(1.0f, size.x));
+            size.x /= g_phoneText, size.y /= g_phoneText;
             ImVec2 a = at(12 + 103, 46 + 10);
             shadowText(d, g_small, 34 * scale, {a.x - size.x * scale / 2, a.y - size.y * scale / 2}, kWhite, name.c_str());
         }
@@ -2302,7 +2445,7 @@ Action drawPhone(ImDrawList* d, int* index) {
             if (enabled && (rowOver || held)) pieceIn(d, held ? art::kPhoneRowDown : art::kPhoneRowOver, at(left, y + 12), at(right - 3, y + 46));
             if (i + 1 < total) d->AddLine(at(left + 2, y + rowH - 0.5f), at(left + 194, y + rowH - 0.5f), IM_COL32(255, 255, 255, 120), S);
             const std::string& text = e.name;
-            const float wrap = 180 * S, size = 30;
+            const float wrap = 180 * S, size = 30 * g_phoneText;
             ImVec2 ts = g_text->CalcTextSizeA(size, FLT_MAX, wrap, text.c_str());
             ImFont* font = e.notification ? g_title : g_text;  // the .notif style: bold
             const ImU32 colour = enabled ? kBlue : kGrey;
@@ -2310,7 +2453,7 @@ Action drawPhone(ImDrawList* d, int* index) {
             d->AddText(font, size, {a.x, a.y - ts.y / 2}, colour, text.c_str(), nullptr, wrap);
             if (!enabled && (rowOver || held) && !e.disabled.empty()) {
                 // The disabled reason (its tooltip), under the name.
-                d->AddText(g_text, 24, {a.x, a.y + ts.y / 2}, kGrey, e.disabled.c_str(), nullptr, wrap);
+                d->AddText(g_text, 24 * g_phoneText, {a.x, a.y + ts.y / 2}, kGrey, e.disabled.c_str(), nullptr, wrap);
             }
         }
         if (total > rows) {
@@ -2349,7 +2492,9 @@ bool phonePicturesIn() {
 
 // Which screen the phone is on (a change fades over from the last one).
 int phoneScreenKey() {
-    return ((g_phoneApp + 2) * 4 + (g_phoneNotesOpen ? 1 : 0) + (g_phoneCalOpen ? 2 : 0)) * 1000003 + g_phoneSerial;
+    const int opts = static_cast<int>(std::hash<std::wstring>()(g_phoneOptsGroup) & 0xffff);
+    return (((g_phoneApp + 2) * 8 + (g_phoneNotesOpen ? 1 : 0) + (g_phoneCalOpen ? 2 : 0) + (g_phoneSettingsOpen ? 4 : 0)) *
+                65537 + opts) * 31 + g_phoneSerial;
 }
 
 // The still and the cover's blend: premultiplied colours (the atlas's), drawn with ImGui's straight blend otherwise.
@@ -2395,7 +2540,8 @@ Action drawPhoneScreen(bool wait, float dt, int* index) {
     }
     const bool changed = phoneScreenKey() != key;  // pressed this frame: this frame still shows the old screen
     const ULONGLONG now = GetTickCount64();
-    bool ready = drawn && !wait && phonePicturesIn();
+    // Pictures are waited for a moment only (one that never comes doesn't hold the screen).
+    bool ready = drawn && !wait && (phonePicturesIn() || (c.waiting && now - c.waiting > kPictureWait));
     if (ready || changed) {
         c.waiting = changed ? now : 0;
         c.gaveUp = false;
@@ -2444,7 +2590,8 @@ Action drawPhoneScreen(bool wait, float dt, int* index) {
                 black ? "the loading screen" : "the last screen kept");
         holdSince = 0;
     }
-    return c.blocked ? kNone : action;
+    // (drawPhone already took no presses while the cover was up: a press that opens a screen counts.)
+    return action;
 }
 
 // A notification as a card over a Sim's head (notify.py): the dialog panel,
@@ -3291,6 +3438,7 @@ Action render(ID3D11Device* device, ID3D11DeviceContext* context, const Frame& f
     resolvePhone();
     g_drawContext = context;
     const bool phoneShown = f.phone && g_phoneList && g_coverList;
+    g_phoneText = f.phoneText;
     if (phoneShown) take(drawPhoneScreen(f.phoneWait, io.DeltaTime, index));
     resolvePie();
     if (f.pie && g_pieMenu.valid) take(drawPie(index));

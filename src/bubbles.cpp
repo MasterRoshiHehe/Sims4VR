@@ -680,6 +680,8 @@ int previewCards(phone3d::Panel* out, int max) {
         spots[n++] = {o.bubbleOwnPos, o.bubbleOwnSize};
     } else if (which == 3) {
         spots[n++] = {o.skillOwnPos, o.skillOwnSize};
+    } else if (which == 4) {
+        spots[n++] = {o.scandalPos, 0.1f};
     } else {
         spots[n++] = {o.popOwnPos, o.popOwnSize};
     }

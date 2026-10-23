@@ -921,7 +921,7 @@ static hud::Rect previewArea() {
 static void drawHud(ID3D11Texture2D* backbuffer) {
     {
         const wchar_t* page = settings::openPage();
-        bubbles::setPreview(!page ? 0 : !wcscmp(page, L"Bubbles yours") ? 1 : !wcscmp(page, L"Bubbles skill") ? 3 : !wcscmp(page, L"Bubbles pops") ? 2 : 0);
+        bubbles::setPreview(!page ? 0 : !wcscmp(page, L"Bubbles yours") ? 1 : !wcscmp(page, L"Bubbles skill") ? 3 : !wcscmp(page, L"Bubbles pops") ? 2 : !wcscmp(page, L"Bubbles scandal") ? 4 : 0);
     }
     hud::Frame f = g_hudInput;
     f.watch = g_hud[kHudWatch].m.active || g_hud[kHudSleep].m.active;
@@ -938,6 +938,7 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
     f.popup = hud::popupPending();
     f.picker = hud::pickerPending();
     f.phone = g_phoneSheet.m.active;
+    f.phoneText = g_config.phoneTextSize <= 0 ? 1.0f : g_config.phoneTextSize == 1 ? 1.2f : 1.4f;
     // The phone's screen waits covered for Options' menu, and just after it comes out for its wallpaper.
     f.phoneWait = (g_phoneOptions && !g_optionsShown) ||
                   (!phone3d::wallpaperReady() && GetTickCount64() - g_phoneMenuSince < 1500);
@@ -1107,6 +1108,10 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
         case hud::kPhoneSilence:
             grab::pushControl(77);  // controls.py: the phone's silence (ui.toggle_silence_phone)
             LOG("Phone: silence button");
+            break;
+        case hud::kVrOptions:
+            g_vrOptionsAsked = true;  // opened in updateControls (it needs the frame time)
+            LOG("Phone: VR Options (debug menu)");
             break;
         case hud::kPhoneOptions:
             // The Options app: the game menu (Escape) on the phone's screen, as before.

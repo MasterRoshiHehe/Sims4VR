@@ -91,6 +91,12 @@ PIECES = [
     ('kPhoneBadgeGlow', 'liveui/art/SimInfoTray/7__MotivesVampireSunlightOverlay@intro__PhoneCategoryCellView@up.png'),
     ('kPhoneArrow', 'liveui/art/SimInfoTray/20__PhoneArrowButton@out__PhoneArrowButton@release.png'),
     ('kPhoneArrowOver', 'liveui/art/SimInfoTray/23__PhoneArrowButton@controller_over__PhoneArrowButton@over.png'),
+    ('kAppSettings', '../art/phone_icons/settings.png', 2),  # our phone apps (tools/make_phone_icons.py)
+    ('kAppCalendar', '../art/phone_icons/calendar.png', 2),  # our phone apps (tools/make_phone_icons.py)
+    ('kAppBuild', '../art/phone_icons/build.png', 2),  # our phone apps (tools/make_phone_icons.py)
+    ('kAppGameOptions', '../art/phone_icons/game_options.png', 2),  # our phone apps (tools/make_phone_icons.py)
+    ('kAppPhoneOptions', '../art/phone_icons/phone_options.png', 2),  # our phone apps (tools/make_phone_icons.py)
+    ('kAppVrOptions', '../art/phone_icons/vr_options.png', 2),  # our phone apps (tools/make_phone_icons.py)
     ('kSpin0', 'liveui/art/ExchangeDetail/152.png'),  # the game's spinning plumbob (DetailLoadingAnimation)
     ('kSpin1', 'liveui/art/ExchangeDetail/154.png'),  # the game's spinning plumbob (DetailLoadingAnimation)
     ('kSpin2', 'liveui/art/ExchangeDetail/156.png'),  # the game's spinning plumbob (DetailLoadingAnimation)

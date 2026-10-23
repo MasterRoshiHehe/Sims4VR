@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "config.h"
 
@@ -25,6 +26,18 @@ void setTestingCheats(int state);  // 1: testing cheats on, 2: cheat pie menus o
 
 // B / Y: up a page. False on the first page (B / Y close the menu there).
 bool back();
+
+// The phone's Phone Options app (hud.cpp): a page's rows as text (its group, as kFixedPages names
+// it), without Back. kind: 0 a value with arrows, 1 a switch (value On / Off), 2 a link (target: the
+// page it opens), 3 a button. title: the page's name; parent: its parent page's group ("" the first).
+struct PageRow {
+    std::wstring label, value, target;
+    int kind = 0;
+    int row = -1;  // for pageChange
+};
+std::vector<PageRow> pageRows(const wchar_t* group, std::wstring* title = nullptr, std::wstring* parent = nullptr);
+// A press (dir 0) or an arrow (-1 / 1) on a row pageRows gave: as on the menu (applied, saved). True if it changed.
+bool pageChange(int row, int dir);
 
 bool isOpen();
 // The open page's name (its group, as kFixedPages names it), null on the first page or closed. Any thread.
