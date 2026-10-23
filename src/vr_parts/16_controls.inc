@@ -222,6 +222,8 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
                    ((closed[g_phoneHand] && !closedWas[g_phoneHand] && hands[g_phoneHand].valid && head.valid &&
                      atRightHip(hands[g_phoneHand], g_phoneHand, head)) ||
                     !firstPerson || !g_config.phone || g_tablet != tabletNow)) {
+            const bool atHip = firstPerson && g_config.phone && g_tablet == tabletNow;
+            if (atHip) buzz(g_phoneHand, 0.3f, 0.04f);  // put back at the hip: a small buzz (user 2026-10-23)
             phoneClose(!firstPerson ? "left first person" : g_tablet != tabletNow ? "build/buy changed" : "back at the hip");
         } else if (!g_phoneOut && !callHold && firstPerson && g_config.phone && head.valid) {
             for (int i : {1, 0}) {
