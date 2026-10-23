@@ -347,8 +347,9 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
     bool firstPerson = mode() == Mode::Stereo && camera::bodyActive() && g_config.pieAtHand;
     ULONGLONG now = GetTickCount64();
     if (g_pieCloseRequest.exchange(false)) closePie("picked");
+    // Up to 8 s after the click: a big social pie made while the game is paused came 3.5 s after it (2026-10-23).
     if (g_pieOpenRequest.exchange(false) && firstPerson && g_lastWorldClick.valid &&
-        now - g_lastWorldClick.tick < 3000) {
+        now - g_lastWorldClick.tick < 8000) {
         XrSpaceLocation head{XR_TYPE_SPACE_LOCATION};
         if (XR_SUCCEEDED(xrLocateSpace(g_viewSpace, g_appSpace, time, &head)) &&
             (head.locationFlags & located) == located && openPie(head.pose.position))

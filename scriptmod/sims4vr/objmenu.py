@@ -902,18 +902,25 @@ def list_control(code):
             service.dialog_respond(dialog_id, ButtonType.DIALOG_RESPONSE_OK if code == 1 else
                                    ButtonType.DIALOG_RESPONSE_CANCEL)
             _log('list picker {} ({} picked)'.format('answered' if code == 1 else 'cancelled', len(picked)))
-            if dialog_id in getattr(service, '_active_dialogs', {}):
-                # Its answer didn't close it (a mod's respond returned False): the game's own picker would have
-                # closed itself on that click, so it is closed on the game's UI too (user 2026-10-23: it stayed
-                # open there), as the service closes dialogs (UiDialogCloseRequest), the dialog kept for its mod.
-                from protocolbuffers import Dialog_pb2, Consts_pb2
-                from distributor.system import Distributor
-                close = Dialog_pb2.UiDialogCloseRequest()
-                close.dialog_id = dialog_id
-                Distributor.instance().add_event(Consts_pb2.MSG_UI_DIALOG_CLOSE, close)
-                _log('list picker still open after its answer: closed on the game UI')
+            _close_on_game_ui(dialog_id, 'list picker')
     except Exception as e:
         _log('the list picker failed: {!r}'.format(e))
+
+
+def _close_on_game_ui(dialog_id, what):
+    """Answered on our card, the game's own widget for it closes too, as the service closes dialogs
+    (UiDialogCloseRequest): the game's widget only closes itself when clicked there (user 2026-10-23, twice: mod
+    settings menus stayed open on the game's UI). Sent whatever the answer did (the service tells the UI nothing
+    when an answer from the scripts closes it, and nothing when a mod's respond keeps the dialog)."""
+    try:
+        from protocolbuffers import Dialog_pb2, Consts_pb2
+        from distributor.system import Distributor
+        close = Dialog_pb2.UiDialogCloseRequest()
+        close.dialog_id = dialog_id
+        Distributor.instance().add_event(Consts_pb2.MSG_UI_DIALOG_CLOSE, close)
+        _log('{} answered on our card: closed on the game UI too'.format(what))
+    except Exception as e:
+        _log('closing the {} on the game UI failed: {!r}'.format(what, e))
 
 
 def _send_picker_content(dialog):
@@ -1063,6 +1070,7 @@ def answer_popup(index):
         dialog_id, choice = _popup[0], _popup_choices[index]
         services.ui_dialog_service().dialog_respond(dialog_id, choice)
         _log('popup answered with button {} (choice {})'.format(index, choice))
+        _close_on_game_ui(dialog_id, 'popup')
     except Exception as e:
         _log('answering the popup failed: {!r}'.format(e))
 
