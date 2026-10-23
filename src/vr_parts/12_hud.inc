@@ -964,6 +964,10 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
     f.book = g_bookOut;
     bookApplyPick();
     f.bookSpread = g_bookSpread;
+    f.bookCrop[0] = g_config.bookCropOuter;
+    f.bookCrop[1] = g_config.bookCropSpine;
+    f.bookCrop[2] = g_config.bookCropTop;
+    f.bookCrop[3] = g_config.bookCropBottom;
     updateBookLeaves();
     // Balloons over Sims (first person): the HUD draws them into its atlas, phone3d puts them in the world.
     {
@@ -1098,6 +1102,9 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
                 setNoteOver(0, none, false);
             }
             LOG("Notification %d: button %d", index / 8, index % 8);
+            break;
+        case hud::kMySimOpened:
+            grab::pushControl(85);  // phonesim.send
             break;
         case hud::kCalendarOpened:
             grab::pushControl(81);  // phonecal.send

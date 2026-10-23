@@ -59,7 +59,7 @@ constexpr Rect kBookPaper{256, 7376, 128, 128};        // the boards' endpapers
 // `index` (phoneapp.py's node); kPhoneSilence: the phone's silence button;
 // kPhoneOptions: the Options app (the game menu); kPhoneColor: wallpaper colour `index`.
 enum Action { kNone = 0, kPausePressed = 1, kSpeed1, kSpeed2, kSpeed3, kFullUi, kBuildPressed, kCancel, kDismissWant, kAnswer,
-              kPick, kPickerClose, kPhonePick, kPhoneSilence, kPhoneOptions, kPhoneColor, kNotesOpened, kNotesClear, kNoteDelete, kNoteDismiss, kCalendarOpened, kNoteAnswer,
+              kPick, kPickerClose, kPhonePick, kPhoneSilence, kPhoneOptions, kPhoneColor, kNotesOpened, kNotesClear, kNoteDelete, kNoteDismiss, kCalendarOpened, kMySimOpened, kNoteAnswer,
               kPiePick, kPieClose, kListPick, kListDone, kListClose, kVrOptions };
 // kVrOptions: the phone's Settings > VR Options (opens the VR debug menu).
 // kListPick: the list picker's row `index` (one pick); kListDone: Done with listPicked(); kListClose: its X.
@@ -193,6 +193,8 @@ int notebookTakeSpread();
 void setPhoneNotes(const char* data, size_t size);
 // The calendar app's days and entries (phonecal.py records).
 void setPhoneCalendar(const char* data, size_t size);
+// The My Sim app's values (phonesim.py records).
+void setPhoneSim(const char* data, size_t size);
 // Present thread: the height of the notification card drawn in kNote (Frame.note), 0 while not drawn.
 float noteHeight();
 // Present thread: the phone shows its home screen again (Options closed: fades over from the last screen).
@@ -238,6 +240,7 @@ struct Frame {
     bool picker = false;     // the picker card (on its object)
     bool pie = false;        // the pie menu drawn by us (kPie)
     bool book = false;       // the notebook's pages (kBookLeft / kBookRight) and cover (kBookCover)
+    float bookCrop[4] = {0.07f, 0.04f, 0.02f, 0.05f};  // the page art's outer, spine, top and bottom edges cut off (fractions)
     int bookSpread = 0;      // the spread to draw (0 = the owner and the categories)
     bool money = false;      // the money gained / lost
     bool phone = false;      // the game's phone menu (kPhone)

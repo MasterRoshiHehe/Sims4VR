@@ -349,6 +349,10 @@ S4VR_API void s4vr_phone_calendar(const char* data, int size) {
     s4vr::strings::start();
     s4vr::hud::setPhoneCalendar(data, size > 0 ? static_cast<size_t>(size) : 0);
 }
+S4VR_API void s4vr_phone_sim(const char* data, int size) {
+    s4vr::strings::start();
+    s4vr::hud::setPhoneSim(data, size > 0 ? static_cast<size_t>(size) : 0);
+}
 S4VR_API void s4vr_note_over(unsigned long long id, float x, float y, float z, int front) {
     const float at[3] = {x, y, z};
     s4vr::vr::setNoteOver(id, at, front != 0);

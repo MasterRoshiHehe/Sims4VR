@@ -61,6 +61,7 @@ void s4vr_phone_content(const char* data, int size);
 void s4vr_notebook_content(const char* data, int size);
 void s4vr_phone_notes(const char* data, int size);
 void s4vr_phone_calendar(const char* data, int size);
+void s4vr_phone_sim(const char* data, int size);
 void s4vr_note_over(unsigned long long id, float x, float y, float z, int front);
 void s4vr_hud_texts(int kind, const char* data, int size);
 void s4vr_money_changed(long long amount);
@@ -436,6 +437,13 @@ PyObject* phoneCalendar(PyObject*, PyObject* args) {
     int length = 0;
     if (!py.PyArg_ParseTuple(args, "y#", &data, &length)) return nullptr;
     s4vr_phone_calendar(data, length);
+    return none();
+}
+PyObject* phoneSim(PyObject*, PyObject* args) {
+    const char* data = nullptr;
+    int length = 0;
+    if (!py.PyArg_ParseTuple(args, "y#", &data, &length)) return nullptr;
+    s4vr_phone_sim(data, length);
     return none();
 }
 PyObject* noteOver(PyObject*, PyObject* args) {
@@ -833,6 +841,7 @@ PyMethodDef methods[] = {
     {"pie_content", pieContent, METH_VARARGS, "pie_content(bytes): the pie menu's options for our own pie in first person (b'': none)"},
     {"picker_content", pickerContent, METH_VARARGS, "picker_content(bytes): the picker on its object from the game's message (b'': gone)"},
     {"phone_notes", phoneNotes, METH_VARARGS, "phone_notes(bytes): the game's notifications for the phone (notify.py)"},
+    {"phone_sim", phoneSim, METH_VARARGS, "phone_sim(bytes): the played Sim's skills for the phone's My Sim app (phonesim.py)"},
     {"phone_calendar", phoneCalendar, METH_VARARGS, "phone_calendar(bytes): the game's calendar for the phone (phonecal.py)"},
     {"note_over", noteOver, METH_VARARGS, "note_over(id, x, y, z, front): a notification card over a Sim's head; 0: none"},
     {"notebook_content", notebookContent, METH_VARARGS, "notebook_content(bytes): the game's notebook for the book in your hand (b'': gone)"},

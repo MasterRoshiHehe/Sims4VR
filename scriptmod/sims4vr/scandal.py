@@ -26,12 +26,11 @@ def _spot():
         if len(v) != 3 or not any(v):
             v = None
         else:
-            axes = int(native.setting('bubbles', 'scandal_axes', '0'))
-            order = ((0, 1, 2), (0, 2, 1), (1, 0, 2), (1, 2, 0), (2, 0, 1), (2, 1, 0))[axes if 0 <= axes <= 5 else 0]
+            order = (0, 2, 1)  # right/up/ahead -> head joint axes x, z, y (user test 2026-10-23)
             out = [0.0, 0.0, 0.0]
             for i, axis in enumerate(order):
                 out[axis] = v[i]  # right/up/ahead -> joint axis
-            v = (tuple(out), axes)
+            v = (tuple(out), order)
     except (TypeError, ValueError):
         v = None
     return hide, v

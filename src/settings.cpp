@@ -654,8 +654,6 @@ std::vector<Row> makeRows() {
         // Your Sim's stat / relationship pops (user 2026-10-23): their own place and size.
         link(L"Bubbles", L"Your stat and relationship pops", L"Bubbles pops"),
         toggle(L"Bubbles scandal", L"Hide your scandal mark", "bubbles", "scandal_hide", &Config::scandalHide),  // scandal.py
-        choice(L"Bubbles scandal", L"Scandal mark: joint axes (try until right/up/ahead match)", "bubbles", "scandal_axes",
-               &Config::scandalAxes, {L"x y z", L"x z y", L"y x z", L"y z x", L"z x y", L"z y x"}),  // scandal.py
         component(L"Bubbles scandal", L"Your scandal mark: right", "bubbles", "scandal_position", &Config::scandalPos, 0, -1, 1,
                   0.05f, 100, L"%+.0f cm"),
         component(L"Bubbles scandal", L"Your scandal mark: up", "bubbles", "scandal_position", &Config::scandalPos, 1, -1, 1,
@@ -762,6 +760,14 @@ std::vector<Row> makeRows() {
                   L"%+.0f\u00b0"),
         number(notebookSize, L"Width (both pages)", "book", "book_width", &Config::bookWidth, 0.1f, 0.6f, 0.01f, 100,
                L"%.0f cm"),
+        number(notebookSize, L"Page art crop: outer edge", "book", "crop_outer", &Config::bookCropOuter, 0, 0.3f, 0.005f, 100,
+               L"%.1f%%"),
+        number(notebookSize, L"Page art crop: spine edge", "book", "crop_spine", &Config::bookCropSpine, 0, 0.3f, 0.005f, 100,
+               L"%.1f%%"),
+        number(notebookSize, L"Page art crop: top", "book", "crop_top", &Config::bookCropTop, 0, 0.3f, 0.005f, 100,
+               L"%.1f%%"),
+        number(notebookSize, L"Page art crop: bottom", "book", "crop_bottom", &Config::bookCropBottom, 0, 0.3f, 0.005f, 100,
+               L"%.1f%%"),
         number(notebookSize, L"Cover opening time", "book", "open_seconds", &Config::bookOpenSeconds, 0.1f, 3, 0.1f, 1,
                L"%.1f s"),
         number(notebookSize, L"Page turn: swipe length", "book", "swipe", &Config::bookSwipe, 0.03f, 0.3f, 0.01f, 100,

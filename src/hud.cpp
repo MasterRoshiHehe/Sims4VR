@@ -237,6 +237,26 @@ CalendarContent g_calIn;  // g_calMutex
 bool g_calNew = false;    // g_calMutex
 CalendarContent g_cal;    // present thread
 bool g_phoneCalOpen = false;  // the phone shows the calendar (present thread)
+// The My Sim app (phonesim.py; user 2026-10-23 21:35Z: the HUD's lower right panels on the phone).
+struct SimSkill {
+    int category = 0, level = 0, maxLevel = 0;
+    uint64_t icon = 0;
+    float progress = 0;
+    bool mastered = false, rising = false;
+    std::string nameJson;
+};
+struct SimContent {
+    int age = 0;  // sims.sim_info_types.Age (0: not sent)
+    std::vector<std::pair<int, std::string>> categories;  // skill category, its title json
+    std::vector<SimSkill> skills;
+};
+std::mutex g_simMutex;
+SimContent g_simIn;      // g_simMutex
+bool g_simNew = false;   // g_simMutex
+SimContent g_sim;        // present thread
+int g_mySim = -1;        // present thread: -1 closed, 0 its apps, 1 + k sub-app k (kMySimApps)
+float g_mySimScroll = 0; // game pixels the list is scrolled
+ULONGLONG g_mySimAsked = 0;
 // A press held and moved on the phone (laser or finger, user 2026-10-18 23:43Z):
 // a swipe. Pages and lists follow it while held; a swipe presses no button.
 struct PhoneDrag {
@@ -244,6 +264,7 @@ struct PhoneDrag {
     ImVec2 start{};
     float startY = 0;  // game pixels down the screen where it began
     int page = 0, scroll = 0, notes = 0, cal = 0, week = 0;
+    float sim = 0;
 };
 PhoneDrag g_drag;  // present thread
 int g_calWeek = 0, g_calSel = -1, g_calScroll = 0;
@@ -1585,6 +1606,13 @@ void resolvePhone() {
         }
     }
     {
+        std::lock_guard<std::mutex> lock(g_simMutex);
+        if (g_simNew) {
+            g_sim = g_simIn;
+            g_simNew = false;
+        }
+    }
+    {
         std::lock_guard<std::mutex> lock(g_phoneMutex);
         if (g_phoneNew) {
             // A node's place in the tree (the names above it and its own): the screen you are on is
@@ -1886,6 +1914,181 @@ void drawCalendar(ImDrawList* d, const Rect& r, Button& button, std::vector<uint
     (void)action;
 }
 
+// The My Sim app's sub-apps, in its grid's order (user 2026-10-23 21:35Z); their icons are kApp*.
+constexpr int kMySimApps = 9;
+const char* const kMySimNames[kMySimApps] = {"Aspirations", "Career", "Skills", "Relationships", "Inventory",
+                                             "Needs", "Social Groups", "Owned Businesses", "Household"};
+constexpr int kSimSkills = 2, kSimNeeds = 5, kSimCareer = 1;
+bool mySimBuilt(int k) { return k == kSimSkills || k == kSimNeeds; }
+// The age's name for the Career app: School for children and teens (sims.sim_info_types.Age), none younger.
+const char* careerName(int age) {
+    if (age == 4 || age == 8) return "School";
+    if (age != 0 && age < 4) return nullptr;
+    if (age == 128) return nullptr;  // infants
+    return "Career";
+}
+
+// The phone's clock: the game's time (controls.py _report_clock), in the header's middle.
+void drawPhoneClock(ImDrawList* d, const Rect& r, bool home) {
+    constexpr float S = 2.5f;
+    const int hour = g_hour.load(), minute = g_minute.load();
+    if (hour < 0) return;
+    char text[16];
+    std::snprintf(text, sizeof text, "%d:%02d %s", hour % 12 == 0 ? 12 : hour % 12, minute, hour < 12 ? "AM" : "PM");
+    const float size = home ? 30.0f : 19.0f, y = home ? 20.5f : 6.0f;
+    ImVec2 ts = g_title->CalcTextSizeA(size, FLT_MAX, 0, text);
+    shadowText(d, g_title, size, {r.x + 115 * S - ts.x / 2, r.y + y * S - ts.y / 2}, kWhite, text);
+}
+
+// My Sim: its apps (named under them, the ones still to come dimmed), Skills (the game's
+// SimInfoSkillPanel: per category its title, each skill's icon, name, level and its progress
+// through the level, gold once mastered, an arrow while rising) and Needs (the wrist's needs,
+// hudinfo.py: each one's icon, name and bar in its state's colours).
+template <class Button>
+void drawMySim(ImDrawList* d, const Rect& r, Button& button, std::vector<uint64_t>& shown, Action& action, bool swipeY,
+               float dy, const PhoneDrag& drag) {
+    constexpr float S = 2.5f, A = S / art::kScale;
+    auto at = [&](float x, float y) { return ImVec2{r.x + x * S, r.y + y * S}; };
+    const ImU32 kBlue = IM_COL32(9, 73, 171, 255);
+    static const art::Piece* const kIcons[kMySimApps] = {&art::kAppAspirations, &art::kAppCareer, &art::kAppSkills,
+                                                         &art::kAppRelationships, &art::kAppInventory, &art::kAppNeeds,
+                                                         &art::kAppSocialGroups, &art::kAppBusinesses, &art::kAppHousehold};
+    auto header = [&](const char* head) {
+        pieceIn(d, art::kPhoneTint, at(0, 0), at(230, 44));
+        ImVec2 hs = g_title->CalcTextSizeA(34, FLT_MAX, 0, head);
+        shadowText(d, g_title, 34, {at(115, 24).x - hs.x / 2, at(115, 24).y - hs.y / 2}, kWhite, head);
+    };
+    const ULONGLONG now = GetTickCount64();
+    if (now - g_mySimAsked > 2000 && action == kNone) action = kMySimOpened, g_mySimAsked = now;  // fresh values while open
+    if (g_mySim == 0) {
+        header("My Sim");
+        std::vector<int> apps;
+        for (int k = 0; k < kMySimApps; ++k)
+            if (k != kSimCareer || careerName(g_sim.age)) apps.push_back(k);
+        for (size_t i = 0; i < apps.size(); ++i) {
+            const int k = apps[i];
+            const float x = 13 + (i % 3) * 68 + 4, y = 58 + (i / 3) * 94;
+            const ImVec2 c = at(x + 32, y + 32);
+            const bool built = mySimBuilt(k);
+            bool over = false;
+            if (button(at(x, y), at(x + 64, y + 64), &over) && built) g_mySim = 1 + k, g_mySimScroll = 0;
+            if (over && built) piece(d, art::kPhoneAppOver, c, A);
+            const ImU32 tint = built ? kWhite : IM_COL32(255, 255, 255, 110);
+            pieceIn(d, *kIcons[k], {c.x - 32 * S, c.y - 32 * S}, {c.x + 32 * S, c.y + 32 * S}, tint);
+            const char* name = k == kSimCareer ? careerName(g_sim.age) : kMySimNames[k];
+            const float ns = 21 * g_phoneText;
+            ImVec2 size = g_small->CalcTextSizeA(ns, FLT_MAX, 0, name);
+            const float fit = std::min(1.0f, 68 * S / std::max(1.0f, size.x));
+            shadowText(d, g_small, ns * fit, {c.x - size.x * fit / 2, at(0, y + 67).y}, tint, name);
+        }
+        return;
+    }
+    const int k = g_mySim - 1;
+    header(k == kSimCareer ? careerName(g_sim.age) : kMySimNames[k]);
+    const float top = 48, bottom = 354, left = 6, right = 206;
+    float y = top - g_mySimScroll;
+    d->PushClipRect(at(0, top), at(230, bottom), true);
+    const float ts = 22 * g_phoneText;
+    auto bar = [&](float x0, float x1, float by, float h, float fraction, ImU32 back, ImU32 fill) {
+        d->AddRectFilled(at(x0, by), at(x1, by + h), back, h / 2 * S);
+        const float f = std::max(0.06f, std::min(1.0f, fraction));
+        d->AddRectFilled(at(x0, by), at(x0 + (x1 - x0) * f, by + h), fill, h / 2 * S);
+        d->AddRectFilled(at(x0 + 1.5f, by + 1), at(std::max(x0 + 1.5f, x0 + (x1 - x0) * f - 1.5f), by + h * 0.45f),
+                         IM_COL32(255, 255, 255, 70), h / 4 * S);
+    };
+    if (k == kSimSkills) {
+        if (g_sim.skills.empty()) {
+            const char* none = g_sim.age ? "No skills yet." : "...";
+            ImVec2 ns = g_text->CalcTextSizeA(26, FLT_MAX, 0, none);
+            shadowText(d, g_text, 26, {at(115, 180).x - ns.x / 2, at(115, 180).y - ns.y / 2}, kWhite, none);
+        }
+        int lastCategory = -1000;
+        const float rowH = 40 * std::max(1.0f, g_phoneText / 1.2f);
+        for (const SimSkill& sk : g_sim.skills) {
+            if (sk.category != lastCategory) {
+                lastCategory = sk.category;
+                std::string title;
+                for (const auto& c : g_sim.categories)
+                    if (c.first == sk.category) title = found(c.second);
+                if (!title.empty() && g_sim.categories.size() > 1) {
+                    shadowText(d, g_title, 24 * g_phoneText, {at(left + 2, 0).x, at(0, y + 3).y}, kWhite, title.c_str());
+                    y += 20 * g_phoneText;
+                }
+            }
+            if (y + rowH > top - 60 && y < bottom + 10) {
+                const ImVec2 ra = at(left, y + 2), rb = at(right, y + rowH - 2);
+                d->AddRectFilled(ra, rb, IM_COL32(255, 255, 255, 225), 6 * S);
+                if (sk.icon) {
+                    shown.push_back(sk.icon);
+                    icon(d, sk.icon, at(left + 18, y + rowH / 2), 30 * S);
+                }
+                const std::string& name = found(sk.nameJson);
+                const ImU32 ink = sk.mastered ? IM_COL32(170, 110, 0, 255) : kBlue;
+                d->AddText(g_text, ts, at(left + 37, y + 5), ink, name.c_str());
+                const float by = y + rowH - 13;
+                bar(left + 37, right - 30, by, 6, sk.progress, IM_COL32(200, 206, 214, 255),
+                    sk.mastered ? IM_COL32(235, 175, 30, 255) : IM_COL32(88, 200, 56, 255));
+                // The level on its disc (the game's txtLevel), an arrow above while rising (mcHighlight).
+                const ImVec2 c = at(right - 14, y + rowH / 2);
+                d->AddCircleFilled(c, 11 * S, sk.mastered ? IM_COL32(235, 175, 30, 255) : kBlue);
+                char lv[8];
+                std::snprintf(lv, sizeof lv, "%d", sk.level);
+                ImVec2 ls = g_title->CalcTextSizeA(28, FLT_MAX, 0, lv);
+                d->AddText(g_title, 28, {c.x - ls.x / 2, c.y - ls.y / 2}, kWhite, lv);
+                if (sk.rising) {
+                    const ImVec2 t = at(right - 31, y + 10);
+                    d->AddTriangleFilled({t.x, t.y - 4 * S}, {t.x + 4 * S, t.y + 2 * S}, {t.x - 4 * S, t.y + 2 * S},
+                                         IM_COL32(60, 180, 40, 255));
+                }
+            }
+            y += rowH;
+        }
+    } else if (k == kSimNeeds) {
+        Item items[kMaxItems];
+        std::vector<Tip> tips;
+        int count = 0;
+        {
+            std::lock_guard<std::mutex> lock(g_itemMutex);
+            count = std::min(kMaxItems, g_counts[kNeedItems]);
+            std::copy(g_items[kNeedItems], g_items[kNeedItems] + count, items);
+            tips = g_tips[kNeedItems];
+        }
+        const float rowH = 40 * std::max(1.0f, g_phoneText / 1.2f);
+        for (int i = 0; i < count; ++i, y += rowH) {
+            const Item& it = items[i];
+            const ImVec2 ra = at(left, y + 2), rb = at(right, y + rowH - 2);
+            d->AddRectFilled(ra, rb, IM_COL32(255, 255, 255, 225), 6 * S);
+            if (it.icon) {
+                shown.push_back(it.icon);
+                icon(d, it.icon, at(left + 18, y + rowH / 2), 32 * S);
+            }
+            const std::string& name = i < static_cast<int>(tips.size()) ? found(tips[i].json[0]) : std::string();
+            d->AddText(g_text, ts, at(left + 38, y + 4), kBlue, name.c_str());
+            const ImU32 back = (it.flags >> 24) ? fromArgb(it.flags) : IM_COL32(60, 66, 76, 255);
+            bar(left + 38, right - 6, y + rowH - 16, 9, 0.07f + 0.93f * it.value, back, fromArgb(it.colour | 0xff000000u));
+        }
+        if (!count) {
+            const char* none = "...";
+            ImVec2 ns = g_text->CalcTextSizeA(26, FLT_MAX, 0, none);
+            shadowText(d, g_text, 26, {at(115, 180).x - ns.x / 2, at(115, 180).y - ns.y / 2}, kWhite, none);
+        }
+    }
+    d->PopClipRect();
+    // A swipe up or down scrolls (held back at the ends).
+    const float total = y + g_mySimScroll - top, room = bottom - top;
+    if (swipeY) g_mySimScroll = drag.sim - dy;
+    g_mySimScroll = std::max(0.0f, std::min(std::max(0.0f, total - room), g_mySimScroll));
+    if (total > room) {
+        const float thumbH = std::max(24.0f, room * room / total);
+        const float thumbY = top + (room - thumbH) * g_mySimScroll / std::max(1.0f, total - room);
+        d->AddRectFilled(at(214, top), at(218, bottom), IM_COL32(255, 255, 255, 60), 2 * S);
+        pieceIn(d, art::kPhoneSlider, at(210, thumbY), at(222, thumbY + thumbH));
+        bool o = false;
+        if (button(at(206, top), at(228, thumbY), &o)) g_mySimScroll -= room * 0.8f;
+        if (button(at(206, thumbY + thumbH), at(228, bottom), &o)) g_mySimScroll += room * 0.8f;
+    }
+}
+
 // The game's phone screen (SimInfoTray: PhonePanel's PhoneCategoryScreen and
 // PhoneInteractionScreen, their places from the SWF), 2.5 atlas pixels to the
 // game's one. The background picture is the phone's glass (phone3d), not drawn here.
@@ -1919,7 +2122,7 @@ Action drawPhone(ImDrawList* d, int* index) {
         drag.start = mouse;
         drag.startY = (mouse.y - r.y) / S;
         drag.page = g_phonePage, drag.scroll = g_phoneScroll, drag.notes = g_notesScroll, drag.cal = g_calScroll,
-        drag.week = g_calWeek;
+        drag.week = g_calWeek, drag.sim = g_mySimScroll;
     }
     const float dx = drag.on ? (mouse.x - drag.start.x) / S : 0, dy = drag.on ? (mouse.y - drag.start.y) / S : 0;
     if (drag.on && !drag.moved && std::max(std::fabs(dx), std::fabs(dy)) > 6) {
@@ -1944,7 +2147,7 @@ Action drawPhone(ImDrawList* d, int* index) {
         // Our apps: our own icons in the game's phone app style (tools/make_phone_icons.py).
         const art::Piece* own = node == -1 ? &art::kAppSettings : node == -2 ? &art::kAppCalendar : node == -3 ? &art::kAppBuild
                               : node == -10 ? &art::kAppGameOptions : node == -11 ? &art::kAppPhoneOptions
-                              : node == -12 ? &art::kAppVrOptions : nullptr;
+                              : node == -12 ? &art::kAppVrOptions : node == -4 ? &art::kAppMySim : nullptr;
         if (own) {
             const float h = 32 * S;
             pieceIn(d, *own, {c.x - h, c.y - h}, {c.x + h, c.y + h}, tint);
@@ -1977,8 +2180,8 @@ Action drawPhone(ImDrawList* d, int* index) {
     };
     if (g_phoneHomeAsked.exchange(false))
         g_phoneApp = g_phoneRoot = -1, g_phonePage = 0, g_phoneScroll = 0, g_phoneColorsOpen = false, g_phoneNotesOpen = false,
-        g_phoneCalOpen = false, g_phoneSettingsOpen = false, g_phoneOptsGroup.clear();
-    if (g_phoneApp >= 0) g_phoneNotesOpen = g_phoneCalOpen = g_phoneSettingsOpen = false, g_phoneOptsGroup.clear();
+        g_phoneCalOpen = false, g_phoneSettingsOpen = false, g_phoneOptsGroup.clear(), g_mySim = -1;
+    if (g_phoneApp >= 0) g_phoneNotesOpen = g_phoneCalOpen = g_phoneSettingsOpen = false, g_phoneOptsGroup.clear(), g_mySim = -1;
     if (g_phoneApp >= 0 || p.colors.empty()) g_phoneColorsOpen = false;
 
     if (!p.disabled.empty() || (p.nodes.empty() && !p.disabledJson.empty())) {
@@ -2217,6 +2420,11 @@ Action drawPhone(ImDrawList* d, int* index) {
         bool over = false;
         if (button(at(96, 361), at(129, 392), &over)) g_phoneSettingsOpen = false;
         piece(d, over ? art::kPhoneBackOver : art::kPhoneBack, at(96 + 16.5f, 361 + 15.5f), A);
+    } else if (g_mySim >= 0) {
+        drawMySim(d, r, button, shown, action, swipeY, dy, drag);
+        bool over = false;
+        if (button(at(96, 361), at(129, 392), &over)) g_mySim = g_mySim > 0 ? 0 : -1, g_mySimScroll = 0;
+        piece(d, over ? art::kPhoneBackOver : art::kPhoneBack, at(96 + 16.5f, 361 + 15.5f), A);
     } else if (g_phoneCalOpen) {
         drawCalendar(d, r, button, shown, action);
         bool over = false;
@@ -2278,6 +2486,7 @@ Action drawPhone(ImDrawList* d, int* index) {
         apps.push_back(-1);  // Options
         apps.push_back(-2);  // Calendar
         apps.push_back(-3);  // Build Mode (as the wrist's build button: F2)
+    apps.push_back(-4);  // My Sim (phonesim.py)
         apps.insert(apps.end(), p.home.begin(), p.home.end());
         const int perPage = 9, pages = static_cast<int>((apps.size() + perPage - 1) / perPage);
         g_phonePage = std::max(0, std::min(pages - 1, g_phonePage));
@@ -2302,7 +2511,10 @@ Action drawPhone(ImDrawList* d, int* index) {
             const ImVec2 c = at(x + 32, y + 32);
             bool over = false;
             if (!open && button(at(x, y), at(x + 64, y + 64), &over)) {
-                if (node == -3) {
+                if (node == -4) {
+                    g_mySim = 0, g_mySimScroll = 0, g_mySimAsked = GetTickCount64();
+                    action = kMySimOpened;
+                } else if (node == -3) {
                     action = kBuildPressed;
                 } else if (node == -2) {
                     g_phoneCalOpen = true;
@@ -2327,7 +2539,8 @@ Action drawPhone(ImDrawList* d, int* index) {
         // mcCategoryName: the app pointed at.
         if (hovered != -100) {
             std::string name = hovered == -1 ? std::string("Settings") : hovered == -2 ? std::string("Calendar")
-                             : hovered == -3 ? std::string("Build Mode") : p.nodes[hovered].name;
+                             : hovered == -3 ? std::string("Build Mode") : hovered == -4 ? std::string("My Sim")
+                             : p.nodes[hovered].name;
             ImVec2 size = g_small->CalcTextSizeA(34 * g_phoneText, FLT_MAX, 0, name.c_str());
             float scale = g_phoneText * std::min(1.0f, 206 * S / std::max(1.0f, size.x));
             size.x /= g_phoneText, size.y /= g_phoneText;
@@ -2474,6 +2687,11 @@ Action drawPhone(ImDrawList* d, int* index) {
         }
         piece(d, over ? art::kPhoneBackOver : art::kPhoneBack, at(96 + 16.5f, 361 + 15.5f), A);
     }
+    // The clock in the header's middle (user 2026-10-23 21:35Z): between the home screen's
+    // buttons and the battery, small over the other screens' titles.
+    if (!g_phoneColorsOpen)
+        drawPhoneClock(d, r, g_phoneApp < 0 && !g_phoneNotesOpen && g_phoneOptsGroup.empty() && !g_phoneSettingsOpen &&
+                                 g_mySim < 0 && !g_phoneCalOpen && p.disabled.empty());
     {
         std::lock_guard<std::mutex> lock(g_itemMutex);
         g_phoneIcons.swap(shown);
@@ -2494,7 +2712,7 @@ bool phonePicturesIn() {
 int phoneScreenKey() {
     const int opts = static_cast<int>(std::hash<std::wstring>()(g_phoneOptsGroup) & 0xffff);
     return (((g_phoneApp + 2) * 8 + (g_phoneNotesOpen ? 1 : 0) + (g_phoneCalOpen ? 2 : 0) + (g_phoneSettingsOpen ? 4 : 0)) *
-                65537 + opts) * 31 + g_phoneSerial;
+                65537 + opts) * 31 + g_phoneSerial + (g_mySim + 1) * 7919;
 }
 
 // The still and the cover's blend: premultiplied colours (the atlas's), drawn with ImGui's straight blend otherwise.
@@ -3107,6 +3325,37 @@ void setPhoneCalendar(const char* data, size_t size) {
     std::lock_guard<std::mutex> lock(g_calMutex);
     g_calIn = c;
     g_calNew = true;
+}
+
+void setPhoneSim(const char* data, size_t size) {
+    SimContent c;
+    std::string all(data ? data : "", data ? size : 0);
+    size_t at = 0;
+    while (!all.empty() && at <= all.size()) {
+        size_t end = all.find('\x1e', at);
+        std::vector<std::string> f = fieldsOf(all.substr(at, end == std::string::npos ? std::string::npos : end - at));
+        if (f[0] == "sim" && f.size() >= 2) {
+            c.age = std::atoi(f[1].c_str());
+        } else if (f[0] == "cat" && f.size() >= 3) {
+            c.categories.emplace_back(std::atoi(f[1].c_str()), f[2]);
+        } else if (f[0] == "skill" && f.size() >= 9 && c.skills.size() < 100) {
+            SimSkill k;
+            k.category = std::atoi(f[1].c_str());
+            k.icon = std::strtoull(f[2].c_str(), nullptr, 10);
+            k.nameJson = f[3];
+            k.level = std::atoi(f[4].c_str());
+            k.maxLevel = std::atoi(f[5].c_str());
+            k.progress = static_cast<float>(std::atof(f[6].c_str()));
+            k.mastered = f[7] == "1";
+            k.rising = f[8] == "1";
+            c.skills.push_back(k);
+        }
+        if (end == std::string::npos) break;
+        at = end + 1;
+    }
+    std::lock_guard<std::mutex> lock(g_simMutex);
+    g_simIn = c;
+    g_simNew = true;
 }
 
 void setPickerContent(const char* data, size_t size) {

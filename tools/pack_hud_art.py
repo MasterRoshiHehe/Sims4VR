@@ -97,6 +97,17 @@ PIECES = [
     ('kAppGameOptions', '../art/phone_icons/game_options.png', 2),  # our phone apps (tools/make_phone_icons.py)
     ('kAppPhoneOptions', '../art/phone_icons/phone_options.png', 2),  # our phone apps (tools/make_phone_icons.py)
     ('kAppVrOptions', '../art/phone_icons/vr_options.png', 2),  # our phone apps (tools/make_phone_icons.py)
+    ('kAppMySim', '../art/phone_icons/my_sim.png', 2),
+    ('kAppAspirations', '../art/phone_icons/aspirations.png', 2),
+    ('kAppCareer', '../art/phone_icons/career.png', 2),
+    ('kAppSkills', '../art/phone_icons/skills.png', 2),
+    ('kAppRelationships', '../art/phone_icons/relationships.png', 2),
+    ('kAppInventory', '../art/phone_icons/inventory.png', 2),
+    ('kAppNeeds', '../art/phone_icons/needs.png', 2),
+    ('kAppSocialGroups', '../art/phone_icons/social_groups.png', 2),
+    ('kAppBusinesses', '../art/phone_icons/owned_businesses.png', 2),
+    ('kAppHousehold', '../art/phone_icons/household.png', 2),
+    ('kAppWeather', '../art/phone_icons/weather.png', 2),
     ('kSpin0', 'liveui/art/ExchangeDetail/152.png'),  # the game's spinning plumbob (DetailLoadingAnimation)
     ('kSpin1', 'liveui/art/ExchangeDetail/154.png'),  # the game's spinning plumbob (DetailLoadingAnimation)
     ('kSpin2', 'liveui/art/ExchangeDetail/156.png'),  # the game's spinning plumbob (DetailLoadingAnimation)

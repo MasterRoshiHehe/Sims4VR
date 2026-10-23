@@ -466,6 +466,13 @@ def phone_calendar(packed):
         fn(bytes(packed))
 
 
+def phone_sim(packed):
+    """The played Sim's skills (and more) for the phone's My Sim app (phonesim.py)."""
+    fn = _optional('phone_sim')
+    if fn is not None:
+        fn(bytes(packed))
+
+
 def note_over(note_id, x, y, z, front):
     """Notification `note_id` as a card over a Sim's head at x, y, z (world), or in front of you; 0: none."""
     fn = _optional('note_over')

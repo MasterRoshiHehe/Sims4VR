@@ -251,8 +251,201 @@ def vr_options():
     finish(img, inner, 'vr_options')
 
 
+def person(cx, cy, s):
+    """A Sim's head and shoulders (mask)."""
+    return mask_of(lambda d: (d.ellipse((cx - 34 * s, cy - 90 * s, cx + 34 * s, cy - 22 * s), fill=255),
+                              d.rounded_rectangle((cx - 62 * s, cy - 12 * s, cx + 62 * s, cy + 70 * s), radius=int(40 * s), fill=255)))
+
+
+def my_sim():
+    img, inner = tile((170, 245, 200), (40, 150, 110), (20, 95, 65, 255))
+    tinted(img, person(400, 410, 0.9), (20, 100, 70))
+    plumbob(img, 240, 245, 360)
+    finish(img, inner, 'my_sim')
+
+
+def aspirations():
+    img, inner = tile((255, 220, 250), (175, 85, 200), (110, 40, 130, 255))
+    tinted(img, mask_of(lambda d: d.polygon([(400, 330), (420, 380), (470, 385), (430, 415), (445, 465), (400, 438),
+                                                 (355, 465), (370, 415), (330, 385), (380, 380)], fill=255)), (110, 40, 135))
+    cloud = mask_of(lambda d: (d.ellipse((90, 170, 250, 330), fill=255), d.ellipse((170, 110, 350, 290), fill=255),
+                               d.ellipse((270, 170, 420, 320), fill=255), d.rounded_rectangle((120, 230, 400, 340), radius=55, fill=255)))
+    shadow(img, cloud)
+    fill(img, cloud, (255, 255, 255), (215, 200, 235), 90, outline=(95, 45, 120, 255), width=7)
+    for (x, y, r) in ((150, 380, 26), (105, 425, 15)):
+        b = mask_of(lambda d, x=x, y=y, r=r: d.ellipse((x - r, y - r, x + r, y + r), fill=255))
+        fill(img, b, (255, 255, 255), (215, 200, 235), 90, outline=(95, 45, 120, 255), width=5, shade=False)
+    star = mask_of(lambda d: d.polygon([(255, 160), (275, 215), (332, 218), (288, 252), (303, 305), (255, 275),
+                                        (207, 305), (222, 252), (178, 218), (235, 215)], fill=255))
+    fill(img, star, (255, 235, 110), (240, 150, 30), 90, outline=(150, 80, 20, 255), width=5)
+    gloss(img, cloud, (100, 100, 360, 240), 110)
+    finish(img, inner, 'aspirations')
+
+
+def career():
+    img, inner = tile((255, 230, 170), (215, 140, 50), (130, 75, 20, 255))
+    tinted(img, mask_of(lambda d: (d.rectangle((345, 380, 375, 470), fill=255), d.rectangle((390, 340, 420, 470), fill=255),
+                                   d.rectangle((435, 300, 465, 470), fill=255))), (130, 70, 20))
+    handle = mask_of(lambda d: d.rounded_rectangle((190, 110, 320, 190), radius=26, outline=255, width=24))
+    fill(img, handle, (110, 80, 60), (60, 40, 30), 90, outline=(40, 25, 15, 255), width=4, shade=False)
+    case = mask_of(lambda d: d.rounded_rectangle((90, 170, 420, 390), radius=34, fill=255))
+    shadow(img, case)
+    fill(img, case, (175, 115, 70), (110, 65, 35), 90, outline=(60, 35, 15, 255), width=7)
+    band = ImageChops.multiply(case, mask_of(lambda d: d.rectangle((0, 255, N, 285), fill=255)))
+    tinted(img, band, (80, 45, 20), 160)
+    clasp = mask_of(lambda d: d.rounded_rectangle((225, 245, 285, 300), radius=10, fill=255))
+    fill(img, clasp, (255, 230, 140), (200, 150, 40), 90, outline=(110, 75, 15, 255), width=4, shade=False)
+    gloss(img, case, (100, 150, 380, 270), 110)
+    finish(img, inner, 'career')
+
+
+def skills():
+    img, inner = tile((175, 230, 255), (40, 120, 200), (20, 65, 130, 255))
+    tinted(img, mask_of(lambda d: d.ellipse((350, 340, 470, 460), outline=255, width=20)), (20, 60, 130))
+    for k, (x, top) in enumerate(((110, 300), (205, 230), (300, 150))):
+        bar = mask_of(lambda d, x=x, top=top: d.rounded_rectangle((x, top, x + 80, 410), radius=14, fill=255))
+        shadow(img, bar, 8, 10, 70)
+        fill(img, bar, (150, 240, 90), (40, 160, 40), 0, outline=(20, 80, 30, 255), width=6)
+    arrow = mask_of(lambda d: (d.line((95, 260, 200, 180, 290, 120, 360, 80), fill=255, width=24, joint='curve'),
+                               d.polygon([(330, 50), (410, 55), (385, 130)], fill=255)))
+    fill(img, arrow, (255, 240, 140), (240, 170, 40), 90, outline=(130, 80, 20, 255), width=5, shade=False)
+    gloss(img, inner, (60, 40, 330, 200), 90)
+    finish(img, inner, 'skills')
+
+
+def heart_mask(cx, cy, r):
+    return mask_of(lambda d: (d.ellipse((cx - r, cy - r * 0.9, cx + r * 0.05, cy + r * 0.15), fill=255),
+                              d.ellipse((cx - r * 0.05, cy - r * 0.9, cx + r, cy + r * 0.15), fill=255),
+                              d.polygon([(cx - r * 0.97, cy - r * 0.2), (cx + r * 0.97, cy - r * 0.2), (cx, cy + r)], fill=255)))
+
+
+def relationships():
+    img, inner = tile((255, 205, 215), (225, 80, 110), (140, 30, 60, 255))
+    tinted(img, heart_mask(405, 400, 62), (140, 30, 60))
+    h2 = heart_mask(310, 230, 115)
+    shadow(img, h2)
+    fill(img, h2, (255, 160, 190), (200, 60, 100), 90, outline=(120, 25, 55, 255), width=6)
+    h1 = heart_mask(200, 290, 130)
+    shadow(img, h1)
+    fill(img, h1, (255, 120, 140), (205, 25, 55), 90, outline=(110, 15, 35, 255), width=7)
+    gloss(img, h1, (90, 190, 220, 300), 150)
+    finish(img, inner, 'relationships')
+
+
+def inventory():
+    img, inner = tile((215, 240, 200), (110, 160, 80), (55, 95, 35, 255))
+    tinted(img, mask_of(lambda d: d.rounded_rectangle((350, 350, 465, 465), radius=16, fill=255)), (55, 95, 35))
+    flap = mask_of(lambda d: d.rounded_rectangle((180, 90, 330, 170), radius=40, outline=255, width=22))
+    fill(img, flap, (170, 110, 60), (110, 65, 30), 90, outline=(60, 35, 15, 255), width=4, shade=False)
+    bag = mask_of(lambda d: d.rounded_rectangle((110, 140, 400, 430), radius=80, fill=255))
+    shadow(img, bag)
+    fill(img, bag, (230, 160, 90), (160, 90, 40), 90, outline=(80, 45, 15, 255), width=7)
+    top = ImageChops.multiply(bag, mask_of(lambda d: d.rounded_rectangle((110, 140, 400, 260), radius=60, fill=255)))
+    fill(img, top, (200, 125, 60), (150, 85, 35), 90, shade=False)
+    pocket = mask_of(lambda d: d.rounded_rectangle((180, 290, 330, 390), radius=24, fill=255))
+    fill(img, pocket, (210, 140, 75), (150, 85, 35), 90, outline=(80, 45, 15, 255), width=5, shade=False)
+    buckle = mask_of(lambda d: d.rounded_rectangle((235, 235, 275, 285), radius=8, fill=255))
+    fill(img, buckle, (255, 230, 140), (200, 150, 40), 90, outline=(110, 75, 15, 255), width=4, shade=False)
+    gloss(img, bag, (120, 150, 350, 280), 110)
+    finish(img, inner, 'inventory')
+
+
+def needs():
+    img, inner = tile((210, 255, 200), (70, 180, 80), (30, 110, 40, 255))
+    tinted(img, heart_mask(405, 400, 58), (30, 105, 40))
+    for k in range(3):
+        y = 130 + k * 95
+        back = mask_of(lambda d, y=y: d.rounded_rectangle((90, y, 420, y + 56), radius=28, fill=255))
+        shadow(img, back, 6, 8, 70)
+        fill(img, back, (60, 70, 80), (30, 35, 45), 90, outline=(20, 50, 25, 255), width=5, shade=False)
+        w = (380, 300, 210)[k]
+        c0, c1 = ((150, 240, 90), (40, 160, 40)) if k < 2 else ((255, 230, 100), (230, 150, 30))
+        bar = mask_of(lambda d, y=y, w=w: d.rounded_rectangle((96, y + 6, 96 + w, y + 50), radius=22, fill=255))
+        fill(img, bar, c0, c1, 90, shade=False)
+        gloss(img, bar, (96, y, 96 + w, y + 28), 150)
+    finish(img, inner, 'needs')
+
+
+def social_groups():
+    img, inner = tile((200, 230, 255), (90, 130, 230), (40, 60, 150, 255))
+    tinted(img, mask_of(lambda d: d.polygon([(330, 360), (470, 360), (470, 470), (330, 470)], fill=0)), (0, 0, 0))
+    for (cx, cy, s, c0, c1) in ((150, 300, 0.9, (255, 200, 120), (225, 130, 50)),
+                                (362, 300, 0.9, (200, 160, 255), (130, 80, 210)),
+                                (256, 330, 1.15, (130, 230, 255), (40, 140, 220))):
+        m = person(cx, cy, s)
+        shadow(img, m)
+        fill(img, m, c0, c1, 90, outline=(30, 40, 90, 255), width=6)
+    gloss(img, inner, (60, 40, 330, 200), 80)
+    finish(img, inner, 'social_groups')
+
+
+def owned_businesses():
+    img, inner = tile((255, 240, 190), (230, 175, 60), (140, 95, 20, 255))
+    coin = mask_of(lambda d: d.ellipse((345, 345, 465, 465), outline=255, width=20))
+    tinted(img, coin, (140, 90, 15))
+    shop = mask_of(lambda d: d.rectangle((110, 200, 400, 420), fill=255))
+    shadow(img, shop)
+    fill(img, shop, (255, 255, 255), (215, 220, 230), 90, outline=(90, 60, 25, 255), width=7)
+    door = mask_of(lambda d: d.rectangle((215, 300, 295, 420), fill=255))
+    fill(img, door, (120, 190, 255), (50, 110, 200), 90, outline=(40, 50, 80, 255), width=5, shade=False)
+    win = mask_of(lambda d: (d.rectangle((130, 300, 195, 365), fill=255), d.rectangle((315, 300, 380, 365), fill=255)))
+    fill(img, win, (170, 225, 255), (70, 140, 220), 90, outline=(40, 50, 80, 255), width=4, shade=False)
+    stripes = Image.new('L', (N, N), 0)
+    sd = ImageDraw.Draw(stripes)
+    for k in range(6):
+        x0 = 90 + k * 55
+        sd.polygon([(x0, 150), (x0 + 55, 150), (x0 + 55, 250), (x0, 250)], fill=255 if k % 2 == 0 else 0)
+    awning = mask_of(lambda d: (d.polygon([(90, 250), (420, 250), (400, 150), (110, 150)], fill=255),
+                                *[d.ellipse((90 + k * 55, 222, 145 + k * 55, 278), fill=255) for k in range(6)]))
+    shadow(img, awning)
+    fill(img, awning, (255, 255, 255), (230, 230, 235), 90, outline=(110, 30, 30, 255), width=6, shade=False)
+    fill(img, ImageChops.multiply(awning, stripes), (255, 90, 80), (200, 35, 35), 90, shade=False)
+    gloss(img, awning, (100, 120, 400, 220), 120)
+    finish(img, inner, 'owned_businesses')
+
+
+def household():
+    img, inner = tile((255, 225, 200), (215, 120, 80), (130, 60, 35, 255))
+    tinted(img, heart_mask(410, 405, 52), (130, 55, 30))
+    roof = mask_of(lambda d: d.polygon([(70, 250), (256, 85), (442, 250)], fill=255))
+    body = mask_of(lambda d: d.rectangle((115, 225, 397, 430), fill=255))
+    shadow(img, ImageChops.lighter(roof, body))
+    fill(img, body, (255, 250, 240), (220, 205, 190), 90, outline=(90, 45, 25, 255), width=7)
+    fill(img, roof, (235, 95, 70), (175, 45, 30), 90, outline=(90, 25, 15, 255), width=7)
+    for (cx, cy, s) in ((205, 410, 0.75), (305, 410, 0.75), (256, 425, 0.5)):
+        m = person(cx, cy, s)
+        fill(img, ImageChops.multiply(m, body), (110, 190, 255), (40, 110, 210), 90, shade=False)
+    gloss(img, roof, (110, 90, 330, 230), 120)
+    finish(img, inner, 'household')
+
+
+def weather():
+    img, inner = tile((175, 225, 255), (60, 140, 235), (30, 75, 160, 255))
+    tinted(img, mask_of(lambda d: [d.line((380 + k * 32, 360, 365 + k * 32, 420), fill=255, width=14) for k in range(3)]),
+           (25, 70, 160))
+    sun = mask_of(lambda d: d.ellipse((150, 90, 330, 270), fill=255))
+    rays = Image.new('L', (N, N), 0)
+    rd = ImageDraw.Draw(rays)
+    for k in range(10):
+        a = 2 * math.pi * k / 10
+        rd.polygon([(240 + 105 * math.cos(a - 0.12), 180 + 105 * math.sin(a - 0.12)),
+                    (240 + 150 * math.cos(a), 180 + 150 * math.sin(a)),
+                    (240 + 105 * math.cos(a + 0.12), 180 + 105 * math.sin(a + 0.12))], fill=255)
+    fill(img, rays, (255, 225, 90), (245, 160, 30), 90, shade=False)
+    shadow(img, sun)
+    fill(img, sun, (255, 240, 120), (245, 160, 30), 90, outline=(170, 95, 15, 255), width=6)
+    cloud = mask_of(lambda d: (d.ellipse((90, 250, 230, 390), fill=255), d.ellipse((170, 190, 340, 360), fill=255),
+                               d.ellipse((270, 250, 410, 390), fill=255), d.rounded_rectangle((110, 300, 390, 395), radius=45, fill=255)))
+    shadow(img, cloud)
+    fill(img, cloud, (255, 255, 255), (200, 215, 235), 90, outline=(40, 70, 130, 255), width=7)
+    gloss(img, cloud, (110, 200, 360, 320), 120)
+    gloss(img, sun, (160, 95, 280, 180), 150)
+    finish(img, inner, 'weather')
+
+
 if __name__ == '__main__':
     os.makedirs(OUT, exist_ok=True)
-    for f in (settings, calendar, build, game_options, phone_options, vr_options):
+    for f in (settings, calendar, build, game_options, phone_options, vr_options, my_sim, aspirations, career, skills,
+              relationships, inventory, needs, social_groups, owned_businesses, household, weather):
         f()
     print('phone icons in', OUT)

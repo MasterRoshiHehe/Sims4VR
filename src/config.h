@@ -149,7 +149,6 @@ struct Config {
     bool selfPiePalm = true;
     float pieDistance = 0.45f;  // metres from your eyes at most
     float pieWidth = 0.96f;     // metres
-    int scandalAxes = 0;          // [bubbles] scandal_axes: which joint axes right/up/ahead go to (permutation 0-5, scandal.py)
     bool scandalHide = false;     // [bubbles] scandal_hide
     float scandalPos[3] = {0, 0, 0};  // [bubbles] scandal_position: right / up / ahead offset of the aura from the head joint (m)
     int pieMode = 0;            // [ui] pie_mode: 0 in front, 1 on your other palm, 2 dynamic (front; palm for the laser on it)
@@ -318,6 +317,7 @@ struct Config {
     float bookCurl = 0.5f, bookThumbBend = 0.3f, bookThumbSpread = 0;
     float bookHandOffset[3] = {0, 0, 0};
     float bookHandTurn[3] = {0, 0, 0};
+    float bookCropOuter = 0.07f, bookCropSpine = 0.04f, bookCropTop = 0.02f, bookCropBottom = 0.05f;  // the page art's edges cut off (fractions), the rest zoomed to fill the page
     bool bookPoke = true;         // poke and laser work on the notebook's pages
     float bookOpenSeconds = 0.7f;  // the cover swinging open
     float bookSwipe = 0.10f;       // metres your other hand sweeps along the book to turn a page

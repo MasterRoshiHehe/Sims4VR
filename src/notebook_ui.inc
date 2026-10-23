@@ -172,10 +172,14 @@ void nbBuild() {
 }
 
 // The page art as drawn: the left page as it is, the right page mirrored.
+float g_nbCrop[4] = {0.07f, 0.04f, 0.02f, 0.05f};  // outer, spine, top, bottom (this frame's)
+
 void nbPageArt(ImDrawList* d, const Rect& r, bool right) {
     const art::Piece& p = art::kNbPage;
-    const float u0 = static_cast<float>(p.x) / art::kAtlasW, u1 = static_cast<float>(p.x + p.w) / art::kAtlasW;
-    const float v0 = static_cast<float>(p.y) / art::kAtlasH, v1 = static_cast<float>(p.y + p.h) / art::kAtlasH;
+    // The art is the left page: its outer edge on the left, the spine's on the right; the crop is zoomed to fill.
+    const float cx0 = p.w * g_nbCrop[0], cx1 = p.w * g_nbCrop[1], cy0 = p.h * g_nbCrop[2], cy1 = p.h * g_nbCrop[3];
+    const float u0 = (p.x + cx0) / art::kAtlasW, u1 = (p.x + p.w - cx1) / art::kAtlasW;
+    const float v0 = (p.y + cy0) / art::kAtlasH, v1 = (p.y + p.h - cy1) / art::kAtlasH;
     d->AddImage(reinterpret_cast<ImTextureID>(g_art), {r.x, r.y}, {r.x + r.w, r.y + r.h}, {right ? u1 : u0, v0},
                 {right ? u0 : u1, v1});
 }
@@ -356,6 +360,7 @@ void nbSolids(ImDrawList* d) {
 }
 
 void drawNotebook(const Frame& f) {
+    std::copy(f.bookCrop, f.bookCrop + 4, g_nbCrop);
     nbSolids(ImGui::GetBackgroundDrawList());
     {
         std::lock_guard<std::mutex> lock(g_nbMutex);

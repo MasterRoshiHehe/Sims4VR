@@ -145,8 +145,6 @@ Config loadConfig(const std::wstring& ini) {
     c.pieDistance = readFloat(ini, "ui", "pie_distance", c.pieDistance);
     c.pieWidth = readFloat(ini, "ui", "pie_width", c.pieWidth);
     c.pieMode = readInt(ini, "ui", "pie_mode", c.pieMode);
-    c.scandalAxes = readInt(ini, "bubbles", "scandal_axes", 0);
-    if (c.scandalAxes < 0 || c.scandalAxes > 5) c.scandalAxes = 0;
     c.scandalHide = readInt(ini, "bubbles", "scandal_hide", 0) != 0;
     c.piePalmSize = readFloat(ini, "ui", "pie_palm_size", c.piePalmSize);
     c.piePalmLift = readFloat(ini, "ui", "pie_palm_lift", c.piePalmLift);
@@ -304,6 +302,14 @@ Config loadConfig(const std::wstring& ini) {
     if (!(c.bookThumbBend >= 0 && c.bookThumbBend <= 1)) c.bookThumbBend = 0.3f;
     c.bookThumbSpread = readFloat(ini, "book", "thumb_spread", c.bookThumbSpread);
     if (!(c.bookThumbSpread >= -90 && c.bookThumbSpread <= 90)) c.bookThumbSpread = 0;
+    auto crop = [&](const char* key, float& v, float def) {
+        v = readFloat(ini, "book", key, def);
+        if (!(v >= 0 && v <= 0.3f)) v = def;
+    };
+    crop("crop_outer", c.bookCropOuter, 0.07f);
+    crop("crop_spine", c.bookCropSpine, 0.04f);
+    crop("crop_top", c.bookCropTop, 0.02f);
+    crop("crop_bottom", c.bookCropBottom, 0.05f);
     c.bookPoke = readBool(ini, "book", "poke", c.bookPoke);
     c.bookOpenSeconds = readFloat(ini, "book", "open_seconds", c.bookOpenSeconds);
     if (!(c.bookOpenSeconds >= 0.1f && c.bookOpenSeconds <= 3)) c.bookOpenSeconds = 0.7f;
