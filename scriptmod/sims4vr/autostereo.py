@@ -25,6 +25,8 @@ def _wrap(name, playing):
             if native.on_gameplay(playing) == 2:
                 from sims4vr import body
                 native._log('play_mode body: first person on {}'.format(body.enable()))
+                from sims4vr import loadshut
+                loadshut.begin()
         except Exception as e:
             native._log('autostereo {}: {!r}'.format(name, e))
         return original(self, *args, **kwargs)

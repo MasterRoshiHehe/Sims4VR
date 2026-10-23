@@ -321,6 +321,13 @@ def set_eyes_covered(covered):
         fn(bool(covered))
 
 
+def set_eyes_held(held):
+    """Hold the eyelids shut until released (loadshut.py)."""
+    fn = _optional('set_eyes_held')  # absent in a DLL older than the script
+    if fn is not None:
+        fn(bool(held))
+
+
 def set_body_view(on):
     """An animation in [body] body_view_anims plays: the view lies with the body."""
     fn = _optional('set_body_view')  # absent in a DLL older than the script

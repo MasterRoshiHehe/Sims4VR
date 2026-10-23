@@ -14,6 +14,7 @@ State g_state;
 // Your Sim faded out (setCovered): quicker than sleep, and on its own.
 std::atomic<bool> g_covered{false};
 std::atomic<ULONGLONG> g_coveredAt{0}, g_uncoveredAt{0};
+std::atomic<bool> g_held{false};
 State g_cover;
 float g_waited = 0;  // seconds asleep before the lids start to close
 LARGE_INTEGER g_freq{}, g_last{};
@@ -47,6 +48,10 @@ void setSleeping(bool sleeping) {
 
 bool sleeping() { return g_sleeping.load(std::memory_order_relaxed); }
 
+void setHeld(bool held) {
+    if (g_held.exchange(held) != held) LOG("Eyelids: %s", held ? "held shut" : "released, opening");
+}
+
 void setCovered(bool covered) {
     const ULONGLONG now = GetTickCount64();
     (covered ? g_coveredAt : g_uncoveredAt).store(now, std::memory_order_relaxed);
@@ -79,6 +84,7 @@ State advance() {
         shut = false;
     }
     if (!shut && ms - g_uncoveredAt.load(std::memory_order_relaxed) < kCoverHoldMs && g_cover.closure > 0) shut = true;
+    if (g_held.load(std::memory_order_relaxed)) shut = true;
     if (shut) {
         g_cover.closure = approach(g_cover.closure, 1, dt / kCoverClose);
         if (g_cover.closure >= 1) g_cover.dark = approach(g_cover.dark, 1, dt / kCoverDarken);

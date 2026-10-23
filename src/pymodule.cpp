@@ -305,6 +305,12 @@ PyObject* setEyesCovered(PyObject*, PyObject* args) {
     s4vr::eyelids::setCovered(covered != 0);
     return none();
 }
+PyObject* setEyesHeld(PyObject*, PyObject* args) {
+    int held = 0;
+    if (!py.PyArg_ParseTuple(args, "p", &held)) return nullptr;
+    s4vr::eyelids::setHeld(held != 0);
+    return none();
+}
 PyObject* setBodyView(PyObject*, PyObject* args) {
     int on = 0;
     if (!py.PyArg_ParseTuple(args, "p", &on)) return nullptr;
@@ -780,6 +786,8 @@ PyMethodDef methods[] = {
     {"set_sleeping", setSleeping, METH_VARARGS, "set_sleeping(bool): close the eyelids over the view (sleep, naps)"},
     {"set_eyes_covered", setEyesCovered, METH_VARARGS,
      "set_eyes_covered(bool): close the eyelids quickly while the game fades your Sim out"},
+    {"set_eyes_held", setEyesHeld, METH_VARARGS,
+     "set_eyes_held(bool): eyes held shut (load start, exit save) until released"},
     {"set_body_view", setBodyView, METH_VARARGS, "set_body_view(bool): straight ahead lies the way the Sim's body does"},
     {"pie_menu", pieMenu, METH_VARARGS, "pie_menu(items): a pie menu opened for a world click (0: picked from it)"},
     {"set_testing_cheats", setTestingCheats, METH_VARARGS,

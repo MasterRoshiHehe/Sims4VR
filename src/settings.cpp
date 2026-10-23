@@ -353,6 +353,9 @@ std::vector<Row> makeRows() {
         number(front, L"Snap turn angle (stick all the way, 0 = same)", "controls", "snap_angle_big", &Config::snapAngleBig, 0,
                180, 15, 1, L"%.0f°"),
         flag(front, L"Walk there yourself (footprint trail)", "body", "trail", true, kLive),  // trail.py
+        flag(front, L"Start with eyes closed and time paused until you can move", "body", "load_eyes_closed", true,
+             kLive),  // loadshut.py
+        flag(front, L"Eyes closed while saving on exit", "body", "exit_eyes_closed", true, kLive),  // loadshut.py
         toggle(front, L"Pick things up", "hands", "grab", &Config::grab, kNextStart),
         toggle(front, L"Touch to click", "body", "touch", &Config::touch, kNextStart),
         toggle(front, L"Pie menu at your hand", "ui", "pie_at_hand", &Config::pieAtHand),

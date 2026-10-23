@@ -23,5 +23,8 @@ bool sleeping();
 // close quickly and open again once it is back (user 2026-10-18 22:10Z). Opens
 // by itself after a few seconds if the fade-in never comes.
 void setCovered(bool covered);
+// Python (loadshut.py): eyes held shut until told otherwise, for the start of a load into first person and
+// the save when leaving the game. Same look as setCovered, but no timeout.
+void setHeld(bool held);
 
 }  // namespace s4vr::eyelids

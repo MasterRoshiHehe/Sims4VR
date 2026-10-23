@@ -798,6 +798,8 @@ def _tick(_handle):
             _scene_seen = 0.0  # the stick ends the wait for a scene's next step
         game = _game_has_sim(sim)
         _body_view(sim, game)
+        from sims4vr import loadshut
+        loadshut.update(game, pushing)  # eyes shut and time paused since the load until you can move
         carried.update(sim)
         # The stick still pushed from walking onto a trail's spot isn't a cancel (trail.py).
         late = trail.arrival_push(pushing)

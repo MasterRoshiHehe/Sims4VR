@@ -153,6 +153,11 @@ def disable():
     walk.stop()
     walk.reset_sleep()
     try:
+        from sims4vr import loadshut
+        loadshut.reset()
+    except Exception as e:
+        native._log('loadshut reset failed: {!r}'.format(e))
+    try:
         from sims4vr import fades
         fades.reset()
     except Exception as e:
