@@ -119,12 +119,52 @@ static void bookHandShift(int side, camera::Vec3& move, camera::Quat& turn) {
     }
 }
 
-// The leaves' places, render thread (phone3d::setBookPlacer): 0 the right page, 1 the cover's leather, 2 its
-// inside. The cover hinges on the spine (the book frame's y axis) by g_bookAngle (0 closed .. pi open).
+// The book as a real object made of flat faces (a hardcover: a back board, a spine, a page block under each
+// side, and a front board that hinges on the spine carrying the left block), each a textured quad of the HUD
+// atlas. Faces turned away are not drawn (phone3d), the rest write depth, so the pieces hide each other right.
+// Book frame (metres): x across the spread from the spine, y up the spine, z out of the pages toward you; the
+// pages' plane is z = 0. The cover swings by g_bookAngle (0 closed .. pi open) about the spine.
 static std::atomic<float> g_bookAngle{0};
 static std::atomic<int> g_bookSide{0};
 constexpr float kBookPageAspect = 568.0f / 422.0f;  // the game's page art, height over width
-constexpr float kBookLeaf = 0.0015f;                 // half the cover's thickness, metres
+enum BookCrop { kCropRight, kCropLeft, kCropLeather, kCropPlain, kCropPaper, kCropEdge };
+struct BookLeaf {
+    bool turns;       // rides on the front board (turned by the angle) or stays with the back board
+    float c[3];       // its centre (the board's frame when it turns)
+    float ax[3], ay[3];
+    float w, h;       // along ax, along ay
+    int crop;
+};
+constexpr int kBookLeaves = 19;
+
+// Leaf i of the book for page width pw, height ph and cover angle: the numbers are what the comments at each
+// face say. Normal = ax x ay.
+static BookLeaf bookLeaf(int i, float pw, float ph) {
+    const float m = pw * 0.05f, t = pw * 0.028f, pb = pw * 0.10f, W = pw + m, H = ph + 2 * m;
+    switch (i) {
+        // The front board and the left block under it (they turn).
+        case 0: return {true, {W / 2, 0, t}, {1, 0, 0}, {0, 1, 0}, W, H, kCropLeather};              // outside
+        case 1: return {true, {W / 2, 0, 0}, {-1, 0, 0}, {0, 1, 0}, W, H, kCropPaper};               // inside (endpaper)
+        case 2: return {true, {pw / 2, 0, -pb}, {-1, 0, 0}, {0, 1, 0}, pw, ph, kCropLeft};           // the left page
+        case 3: return {true, {W / 2, H / 2, t / 2}, {0, 0, 1}, {1, 0, 0}, t, W, kCropPlain};        // top edge
+        case 4: return {true, {W / 2, -H / 2, t / 2}, {1, 0, 0}, {0, 0, 1}, W, t, kCropPlain};       // bottom edge
+        case 5: return {true, {W, 0, t / 2}, {0, 1, 0}, {0, 0, 1}, H, t, kCropPlain};                // outer edge
+        case 6: return {true, {pw / 2, ph / 2, -pb / 2}, {0, 0, 1}, {1, 0, 0}, pb, pw, kCropEdge};   // block: top
+        case 7: return {true, {pw / 2, -ph / 2, -pb / 2}, {1, 0, 0}, {0, 0, 1}, pw, pb, kCropEdge};  // bottom
+        case 8: return {true, {pw, 0, -pb / 2}, {0, 1, 0}, {0, 0, 1}, ph, pb, kCropEdge};            // outer
+        // The back board, the spine and the right block (they stay).
+        case 9: return {false, {W / 2, 0, 0}, {1, 0, 0}, {0, 1, 0}, W, H, kCropPaper};               // its inside
+        case 10: return {false, {W / 2, 0, -t}, {-1, 0, 0}, {0, 1, 0}, W, H, kCropPlain};            // outside
+        case 11: return {false, {W / 2, H / 2, -t / 2}, {0, 0, 1}, {1, 0, 0}, t, W, kCropPlain};
+        case 12: return {false, {W / 2, -H / 2, -t / 2}, {1, 0, 0}, {0, 0, 1}, W, t, kCropPlain};
+        case 13: return {false, {W, 0, -t / 2}, {0, 1, 0}, {0, 0, 1}, H, t, kCropPlain};
+        case 14: return {false, {0, 0, 0}, {0, 0, 1}, {0, 1, 0}, 0, H, kCropLeather};                // the spine (sized live)
+        case 15: return {false, {pw / 2, 0, pb}, {1, 0, 0}, {0, 1, 0}, pw, ph, kCropRight};          // the right page
+        case 16: return {false, {pw / 2, ph / 2, pb / 2}, {0, 0, 1}, {1, 0, 0}, pb, pw, kCropEdge};
+        case 17: return {false, {pw / 2, -ph / 2, pb / 2}, {1, 0, 0}, {0, 0, 1}, pw, pb, kCropEdge};
+        default: return {false, {pw, 0, pb / 2}, {0, 1, 0}, {0, 0, 1}, ph, pb, kCropEdge};
+    }
+}
 
 static void placeBook(phone3d::Panel* leaves, int count) {
     float c[3], metre = 1;
@@ -134,35 +174,45 @@ static void placeBook(phone3d::Panel* leaves, int count) {
         return;
     }
     const float pw = g_config.bookWidth / 2, ph = pw * kBookPageAspect;
+    const float pb = pw * 0.10f, t = pw * 0.028f;
     const float th = g_bookAngle.load(), ct = std::cos(th), st = std::sin(th);
-    auto put = [&](phone3d::Panel& p, const XrVector3f& at, const XrVector3f& ax, const XrVector3f& ay) {
-        auto world = [&](const XrVector3f& v) {
-            return XrVector3f{x.x * v.x + y.x * v.y + z.x * v.z, x.y * v.x + y.y * v.y + z.y * v.z,
-                              x.z * v.x + y.z * v.y + z.z * v.z};
-        };
+    const float hinge = pb * (1 + ct);  // the front board's hinge rides down as the cover opens
+    auto world = [&](const XrVector3f& v) {
+        return XrVector3f{x.x * v.x + y.x * v.y + z.x * v.z, x.y * v.x + y.y * v.y + z.y * v.z,
+                          x.z * v.x + y.z * v.y + z.z * v.z};
+    };
+    for (int i = 0; i < count; ++i) {
+        phone3d::Panel& p = leaves[i];
+        if (p.tag < 0 || p.tag >= kBookLeaves) {
+            p.width = p.height = 0;
+            continue;
+        }
+        BookLeaf l = bookLeaf(p.tag, pw, ph);
+        XrVector3f at{l.c[0], l.c[1], l.c[2]}, ax{l.ax[0], l.ax[1], l.ax[2]}, ay{l.ay[0], l.ay[1], l.ay[2]};
+        if (p.tag == 14) {  // the spine spans the boards' gap
+            l.w = hinge + 2 * t;
+            at.z = hinge / 2;
+        }
+        if (l.turns) {
+            auto turn = [&](const XrVector3f& v) { return XrVector3f{v.x * ct - v.z * st, v.y, v.x * st + v.z * ct}; };
+            at = turn(at);
+            at.z += hinge;
+            ax = turn(ax);
+            ay = turn(ay);
+        }
+        at.z -= pb;  // the pages' plane stays where the flat leaves were
         XrVector3f wc = world(at), wx = world(ax), wy = world(ay);
         p.centre[0] = c[0] + wc.x * metre;
         p.centre[1] = c[1] + wc.y * metre;
         p.centre[2] = c[2] + wc.z * metre;
         p.x[0] = wx.x, p.x[1] = wx.y, p.x[2] = wx.z;
         p.y[0] = wy.x, p.y[1] = wy.y, p.y[2] = wy.z;
-        p.width = pw * metre;
-        p.height = ph * metre;
-    };
-    const XrVector3f up{0, 1, 0};
-    for (int i = 0; i < count; ++i) {
-        phone3d::Panel& p = leaves[i];
-        if (p.tag == 0) {  // the right page, flat on the spine's right
-            put(p, {pw / 2, 0, 0}, {1, 0, 0}, up);
-        } else if (p.tag == 1) {  // the cover's leather, facing out of the book while it lies on the page
-            put(p, {ct * pw / 2 - st * kBookLeaf, 0, st * pw / 2 + ct * kBookLeaf}, {ct, 0, st}, up);
-        } else if (p.tag == 2) {  // its inside, the left page, facing the other way
-            put(p, {ct * pw / 2 + st * kBookLeaf, 0, st * pw / 2 - ct * kBookLeaf}, {-ct, 0, -st}, up);
-        }
+        p.width = l.w * metre;
+        p.height = l.h * metre;
     }
 }
 
-// Present thread, every frame while the book is out: the cover's angle, and the leaves handed to phone3d.
+// Present thread, every frame while the book is out: the cover's angle, and the faces handed to phone3d.
 static void updateBookLeaves() {
     if (!g_bookOut) return;
     const float seconds = std::max(0.1f, g_config.bookOpenSeconds);
@@ -173,22 +223,23 @@ static void updateBookLeaves() {
     g_bookSide = g_bookHand;
     ID3D11Texture2D* atlas = hud::texture();
     if (!atlas) return;
-    phone3d::Panel leaves[3];
-    const hud::Rect* crops[3] = {&hud::kBookRight, &hud::kBookCover, &hud::kBookLeft};
-    for (int i = 0; i < 3; ++i) {
+    static const hud::Rect* const kRects[6] = {&hud::kBookRight, &hud::kBookLeft, &hud::kBookLeatherAll,
+                                               &hud::kBookLeatherPlain, &hud::kBookPaper, &hud::kBookEdge};
+    phone3d::Panel leaves[kBookLeaves];
+    for (int i = 0; i < kBookLeaves; ++i) {
         phone3d::Panel& p = leaves[i];
         p.show = true;
         p.clear = true;
         p.opacity = 1;
         p.tag = i;
-        const hud::Rect& r = *crops[i];
+        const hud::Rect& r = *kRects[bookLeaf(i, 0.13f, 0.175f).crop];
         p.crop[0] = r.x / hud::kWidth;
         p.crop[1] = r.y / hud::kHeight;
         p.crop[2] = (r.x + r.w) / hud::kWidth;
         p.crop[3] = (r.y + r.h) / hud::kHeight;
     }
     phone3d::setBookPlacer(placeBook);
-    phone3d::setBook(leaves, 3, atlas);
+    phone3d::setBook(leaves, kBookLeaves, atlas);
 }
 
 // Controls thread: the other hand's sweep across the book turns a page (a swipe toward the left, the way a page

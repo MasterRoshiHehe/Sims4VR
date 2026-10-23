@@ -145,6 +145,8 @@ Config loadConfig(const std::wstring& ini) {
     c.pieDistance = readFloat(ini, "ui", "pie_distance", c.pieDistance);
     c.pieWidth = readFloat(ini, "ui", "pie_width", c.pieWidth);
     c.pieMode = readInt(ini, "ui", "pie_mode", c.pieMode);
+    c.scandalAxes = readInt(ini, "bubbles", "scandal_axes", 0);
+    if (c.scandalAxes < 0 || c.scandalAxes > 5) c.scandalAxes = 0;
     c.scandalHide = readInt(ini, "bubbles", "scandal_hide", 0) != 0;
     c.piePalmSize = readFloat(ini, "ui", "pie_palm_size", c.piePalmSize);
     c.piePalmLift = readFloat(ini, "ui", "pie_palm_lift", c.piePalmLift);

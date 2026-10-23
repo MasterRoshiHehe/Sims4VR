@@ -1497,10 +1497,12 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
         for (int j = 0; j < bookCount; ++j) {
             Constants kLeaf{};
             panelConstants(leaves[j], kLeaf, bookView);
-            context->OMSetDepthStencilState(tested, 0);
+            // Opaque faces of one object: they write depth so they hide each other whatever the order.
+            context->OMSetDepthStencilState(g_depthWrite[reversed ? 1 : 0] ? g_depthWrite[reversed ? 1 : 0] : tested, 0);
             context->UpdateSubresource(g_constants, 0, nullptr, &kLeaf, 0, 0);
             context->Draw(6, 0);
         }
+        context->OMSetDepthStencilState(tested, 0);
         context->OMSetBlendState(nullptr, nullptr, 0xffffffff);
         context->PSSetShaderResources(0, 1, &uiView);
         g_bookDrawnAt.store(GetTickCount64(), std::memory_order_relaxed);

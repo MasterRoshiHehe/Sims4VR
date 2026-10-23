@@ -149,6 +149,7 @@ struct Config {
     bool selfPiePalm = true;
     float pieDistance = 0.45f;  // metres from your eyes at most
     float pieWidth = 0.96f;     // metres
+    int scandalAxes = 0;          // [bubbles] scandal_axes: which joint axes right/up/ahead go to (permutation 0-5, scandal.py)
     bool scandalHide = false;     // [bubbles] scandal_hide
     float scandalPos[3] = {0, 0, 0};  // [bubbles] scandal_position: right / up / ahead offset of the aura from the head joint (m)
     int pieMode = 0;            // [ui] pie_mode: 0 in front, 1 on your other palm, 2 dynamic (front; palm for the laser on it)

@@ -654,6 +654,8 @@ std::vector<Row> makeRows() {
         // Your Sim's stat / relationship pops (user 2026-10-23): their own place and size.
         link(L"Bubbles", L"Your stat and relationship pops", L"Bubbles pops"),
         toggle(L"Bubbles scandal", L"Hide your scandal mark", "bubbles", "scandal_hide", &Config::scandalHide),  // scandal.py
+        choice(L"Bubbles scandal", L"Scandal mark: joint axes (try until right/up/ahead match)", "bubbles", "scandal_axes",
+               &Config::scandalAxes, {L"x y z", L"x z y", L"y x z", L"y z x", L"z x y", L"z y x"}),  // scandal.py
         component(L"Bubbles scandal", L"Your scandal mark: right", "bubbles", "scandal_position", &Config::scandalPos, 0, -1, 1,
                   0.05f, 100, L"%+.0f cm"),
         component(L"Bubbles scandal", L"Your scandal mark: up", "bubbles", "scandal_position", &Config::scandalPos, 1, -1, 1,

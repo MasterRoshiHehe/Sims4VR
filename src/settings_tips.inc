@@ -173,6 +173,7 @@ const TipText kTips[] = {
     {"bubbles.own_bubble_position", L"Where your bubble floats relative to your view. A green box shows the place while this page is open."},
     {"bubbles.skill_position", L"Where your skill bar floats relative to your view. A green box shows the place while this page is open."},
     {"bubbles.skill_size", L"How wide your skill bar is."},
+    {"bubbles.scandal_axes", L"The game moves the scandal mark along its head joint's own axes, which are not known to match right/up/ahead. Pick the order where the three rows move it right, up and ahead."},
     {"bubbles.scandal_hide", L"Hide the purple scandal mark from Royalty & Legacy on your Sim."},
     {"bubbles.scandal_position", L"Offset of the purple scandal mark from where the game puts it (your head). A green box shows the offset while this page is open."},
     {"bubbles.hide_pops", L"Hides the small pops over your Sim (the '!' and similar)."},

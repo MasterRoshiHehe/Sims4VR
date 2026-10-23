@@ -300,7 +300,32 @@ void nbCover(ImDrawList* d, const Rect& r) {
     }
 }
 
+// The pages' edges (a cream block with fine grain) and the boards' endpapers (mottled tan).
+void nbSolids(ImDrawList* d) {
+    uint32_t seed = 0x9E3779B9u;
+    auto rnd = [&]() {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        return (seed & 0xffff) / 65535.0f;
+    };
+    const Rect e = kBookEdge, p = kBookPaper;
+    d->AddRectFilled({e.x, e.y}, {e.x + e.w, e.y + e.h}, IM_COL32(236, 224, 192, 255));
+    for (int i = 0; i < 90; ++i) {
+        const float a = rnd() * e.w, b = rnd() * e.h;
+        d->AddLine({e.x + a, e.y}, {e.x + a, e.y + e.h}, IM_COL32(150, 125, 85, 26), 1);
+        d->AddLine({e.x, e.y + b}, {e.x + e.w, e.y + b}, IM_COL32(150, 125, 85, 26), 1);
+    }
+    d->AddRectFilled({p.x, p.y}, {p.x + p.w, p.y + p.h}, IM_COL32(120, 84, 52, 255));
+    for (int i = 0; i < 260; ++i) {
+        const float a = rnd() * p.w, b = rnd() * p.h, s = 3 + rnd() * 9;
+        d->AddRectFilled({p.x + a, p.y + b}, {p.x + std::min(p.w, a + s), p.y + std::min(p.h, b + s)},
+                         rnd() > 0.5f ? IM_COL32(170, 130, 85, 40) : IM_COL32(80, 50, 28, 40));
+    }
+}
+
 void drawNotebook(const Frame& f) {
+    nbSolids(ImGui::GetBackgroundDrawList());
     {
         std::lock_guard<std::mutex> lock(g_nbMutex);
         if (g_nbNew) {

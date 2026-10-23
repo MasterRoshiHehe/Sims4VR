@@ -135,7 +135,7 @@ void setPiecePlacer(void (*placer)(Panel* pieces, int count));
 // The notebook in your hand (vr.cpp, first person): flat leaves (a page, the cover, the cover's inside) taking
 // `crop` from `atlas` (the HUD's), clear panels drawn in order, depth-tested. Present thread; count 0: none.
 // Each leaf's place is set again on the render thread by the placer (from the joints of the frame drawn).
-constexpr int kMaxBook = 6;
+constexpr int kMaxBook = 24;
 void setBook(const Panel* leaves, int count, ID3D11Texture2D* atlas);
 void setBookPlacer(void (*placer)(Panel* leaves, int count));
 bool bookDrawnRecently();

@@ -15,7 +15,7 @@
 // eyelids). Pointer input comes back in atlas pixels; buttons return actions.
 namespace s4vr::hud {
 
-constexpr int kWidth = 1024, kHeight = 7376;  // the atlas
+constexpr int kWidth = 1024, kHeight = 7504;  // the atlas
 struct Rect {
     float x, y, w, h;
 };
@@ -46,6 +46,10 @@ constexpr Rect kPie{0, 5360, 1024, 640};
 constexpr Rect kBookLeft{0, 6000, 512, 688};
 constexpr Rect kBookRight{512, 6000, 512, 688};
 constexpr Rect kBookCover{0, 6688, 512, 688};
+constexpr Rect kBookLeatherAll{0, 6688, 512, 688};     // the cover, as the front board's outside
+constexpr Rect kBookLeatherPlain{150, 7108, 100, 100};  // plain leather of it: the boards' edges and back
+constexpr Rect kBookEdge{0, 7376, 128, 128};           // the pages' edges
+constexpr Rect kBookPaper{256, 7376, 128, 128};        // the boards' endpapers
 
 // What the buttons ask for. kCancel: the queue item `index` (render's out);
 // kDismissWant: the want `index` (the game's X on a want: a new one comes).

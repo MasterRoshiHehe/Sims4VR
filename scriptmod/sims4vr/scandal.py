@@ -25,6 +25,13 @@ def _spot():
         v = tuple(float(x) for x in native.setting('bubbles', 'scandal_position', '0 0 0').split())
         if len(v) != 3 or not any(v):
             v = None
+        else:
+            axes = int(native.setting('bubbles', 'scandal_axes', '0'))
+            order = ((0, 1, 2), (0, 2, 1), (1, 0, 2), (1, 2, 0), (2, 0, 1), (2, 1, 0))[axes if 0 <= axes <= 5 else 0]
+            out = [0.0, 0.0, 0.0]
+            for i, axis in enumerate(order):
+                out[axis] = v[i]  # right/up/ahead -> joint axis
+            v = (tuple(out), axes)
     except (TypeError, ValueError):
         v = None
     return hide, v
@@ -45,6 +52,7 @@ def _replay(buff, sim, spot):
     old = buff._vfx
     old.stop(immediate=True)
     hide, off = spot
+    off = off[0] if off is not None else None
     if off is None:
         new = buff.vfx(sim)  # the game's own
     else:
