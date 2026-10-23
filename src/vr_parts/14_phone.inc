@@ -223,6 +223,16 @@ static void updatePhone(const armik::Hand& hand, int side) {
     }
     XrQuaternionf facing = fromAxes(x, y2, z2);
     g_phoneBodyPose = {facing, centre};
+    // The game's phone prop (phone.py, for mirrors) sits inside this one: left out of the view from your eyes.
+    if (g_config.phoneProp && !g_tablet && g_phoneHand == 1) {
+        camera::View view;
+        if (camera::lastView(view)) {
+            XrQuaternionf heading{view.heading.x, view.heading.y, view.heading.z, view.heading.w};
+            XrVector3f w = rotate3(heading, {centre.x * view.scale, centre.y * view.scale, centre.z * view.scale});
+            const float at[3] = {view.anchor.x + w.x, view.anchor.y + w.y, view.anchor.z + w.z};
+            facehide::hidePropAt(at, 0.08f * view.scale);
+        }
+    }
 
     // The screen: the body less the bezel, with a wider band at the bottom and
     // top (not on the tablet). The menu fills its width (or its height, if the menu is the taller).

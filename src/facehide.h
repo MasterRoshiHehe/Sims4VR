@@ -42,4 +42,9 @@ void targets(ID3D11DeviceContext* context, bool sceneDepth);
 // needn't cut past your own head).
 bool hiding();
 
+// Present thread, every frame the phone is out in first person: the middle of our phone in the world. A model
+// whose bounds centre lies within `radius` of it (the game's phone prop, phone.py) is left out of the view from
+// your eyes; mirrors and other cameras still draw it (user 2026-10-23: your phone in mirrors, not twice in hand).
+void hidePropAt(const float world[3], float radius);
+
 }  // namespace s4vr::facehide

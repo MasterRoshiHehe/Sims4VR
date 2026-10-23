@@ -475,6 +475,23 @@ void hookedMeshDraw(uint8_t* mesh, uint8_t* params) {
     g_meshDraw(mesh, params);
 }
 
+// The game's phone prop: hidden from your eyes only (hidePropAt).
+std::mutex g_propMutex;
+float g_propAt[3] = {};
+float g_propRadius = 0;
+std::atomic<ULONGLONG> g_propTick{0};
+std::atomic<uint32_t> g_propHidden{0}, g_propOther{0}, g_propNear{0};
+
+bool nearProp(void* model) {
+    if (GetTickCount64() - g_propTick.load(std::memory_order_relaxed) > 300) return false;
+    const float* c = reinterpret_cast<const float*>(static_cast<uint8_t*>(model) + kModelCentre);
+    std::lock_guard<std::mutex> lock(g_propMutex);
+    float dx = c[0] - g_propAt[0], dy = c[1] - g_propAt[1], dz = c[2] - g_propAt[2];
+    float d2 = dx * dx + dy * dy + dz * dz;
+    if (d2 < 0.3f * 0.3f) g_propNear.fetch_add(1, std::memory_order_relaxed);
+    return std::isfinite(d2) && d2 < g_propRadius * g_propRadius;
+}
+
 void hookedSceneDraw(void* model, uint32_t lod, uint8_t* view) {
     int previous = t_eyePass;
     if (view) {
@@ -503,6 +520,14 @@ void hookedSceneDraw(void* model, uint32_t lod, uint8_t* view) {
                 return;
             }
         }
+    }
+    if (model && model != g_ourModel.load(std::memory_order_relaxed) && nearProp(model)) {
+        if (t_eyePass == 1) {
+            g_propHidden.fetch_add(1, std::memory_order_relaxed);
+            t_eyePass = previous;
+            return;
+        }
+        g_propOther.fetch_add(1, std::memory_order_relaxed);
     }
     void* outer = t_model;
     t_model = model;
@@ -645,6 +670,25 @@ void install(bool on) {
         LOG("Face hiding: hooked the Sims' per-camera draws: %s", MH_StatusToString(c));
     } else {
         LOG("Face hiding: the Sims' per-camera draw not found; mirrors may lose your head");
+    }
+}
+
+void hidePropAt(const float world[3], float radius) {
+    {
+        std::lock_guard<std::mutex> lock(g_propMutex);
+        std::memcpy(g_propAt, world, sizeof(g_propAt));
+        g_propRadius = radius;
+    }
+    const ULONGLONG now = GetTickCount64();
+    g_propTick.store(now, std::memory_order_relaxed);
+    static ULONGLONG loggedAt = 0;
+    static int logs = 0;
+    if (now - loggedAt >= 10000 && logs < 30) {
+        loggedAt = now;
+        ++logs;
+        LOG("Phone prop: %u draws from your eyes left out, %u from other cameras (mirrors, shadows) kept, %u models "
+            "within 30 cm (last 10 s)",
+            g_propHidden.exchange(0), g_propOther.exchange(0), g_propNear.exchange(0));
     }
 }
 

@@ -296,7 +296,7 @@ struct Config {
     float phoneThumbSpread = 0;   // degrees its thumb swings away from the hand (negative = toward it)
     float phoneHandOffset[3] = {0, 0, 0};  // the holding hand moved against the phone (metres): out from its middle, up it, toward you
     float phoneHandTurn[3] = {0, 0, 0};    // and turned about the palm (degrees): about the phone's up axis, its left-right axis, its screen's line
-    bool phoneProp = false;       // also put the game's phone model in the Sim's hand
+    bool phoneProp = true;        // also put the game's phone model in the Sim's hand (mirrors; hidden from your eyes)
     float phoneCropWidth = 0.45f, phoneCropHeight = 0.80f;  // part of the UI shown before the menu is measured (x UI height)
     // [tablet] In first-person build/buy the phone gesture brings out a tablet
     // with the whole build/buy UI on its screen instead.

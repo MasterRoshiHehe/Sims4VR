@@ -263,7 +263,7 @@ Config loadConfig(const std::wstring& ini) {
     if (!(c.phoneThumbBend >= 0 && c.phoneThumbBend <= 1)) c.phoneThumbBend = 0.3f;
     c.phoneThumbSpread = readFloat(ini, "phone", "thumb_spread", c.phoneThumbSpread);
     if (!(c.phoneThumbSpread >= -90 && c.phoneThumbSpread <= 90)) c.phoneThumbSpread = 0;
-    c.phoneProp = readBool(ini, "phone", "game_phone", false);
+    c.phoneProp = readBool(ini, "phone", "game_phone", true);
     {
         float v[3];
         std::string s = readString(ini, "phone", "hand_offset", "");

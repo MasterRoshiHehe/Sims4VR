@@ -116,6 +116,7 @@ static void phoneHandShift(int side, camera::Vec3& move, camera::Quat& turn) {
 }
 
 bool phoneMount(float out[7]) {
+    if (g_phoneHand != 1) return false;  // the game's prop hangs off the right hand only
     camera::Vec3 fwd, thumb, up;
     if (!armik::handAxes(1, fwd, thumb, up)) return false;
     const float* o = g_config.phoneOffset;

@@ -683,7 +683,7 @@ std::vector<Row> makeRows() {
         number(phoneSize, L"Menu crop width", "phone", "crop_width", &Config::phoneCropWidth, 0.1f, 2, 0.05f, 1, L"%.2f"),
         number(phoneSize, L"Menu crop height", "phone", "crop_height", &Config::phoneCropHeight, 0.1f, 1, 0.05f, 1,
                L"%.2f"),
-        flag(phoneModel, L"Game's phone model too", "phone", "game_phone", false, kNextPhone),
+        flag(phoneModel, L"Game's phone model (seen in mirrors)", "phone", "game_phone", true, kNextPhone),
         component(phoneModel, L"Model: right", "phone", "prop_offset", nullptr, 0, -0.1f, 0.1f, 0.002f, 100, L"%+.1f cm",
                   kNextPhone),
         component(phoneModel, L"Model: up", "phone", "prop_offset", nullptr, 1, -0.1f, 0.1f, 0.002f, 100, L"%+.1f cm",

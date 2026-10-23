@@ -44,6 +44,7 @@
 #include "touch.h"
 #include "bubbles.h"
 #include "clientdlg.h"
+#include "facehide.h"
 #include "uihook.h"
 #include "phone3d.h"
 #include "simsforever.h"

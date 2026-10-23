@@ -190,7 +190,7 @@ def _make_prop():
     global _phone, _sim
     if _phone is not None:
         return
-    if not native.setting_flag('phone', 'game_phone', False):
+    if not native.setting_flag('phone', 'game_phone', True):
         return
     sim = services.get_active_sim()
     if sim is None:
@@ -210,8 +210,13 @@ def _make_prop():
         return
     placed = _placement(phone)
     if placed is None:
-        _log('no hand frame from the DLL yet; the game phone sits on the joint as is')
-        placed = ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))
+        # The phone in your left hand, or no hand frame yet: no prop (it would hang empty in the right hand).
+        _log('no right-hand frame from the DLL (phone in the left hand?): no game phone for mirrors')
+        try:
+            phone.destroy(source=phone, cause='Sims4VR phone: no hand frame')
+        except Exception:
+            pass
+        return
     position, rotation = placed
     try:
         phone.set_parent(sim, sims4.math.Transform(sims4.math.Vector3(*position), sims4.math.Quaternion(*rotation)),
