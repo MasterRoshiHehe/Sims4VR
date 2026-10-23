@@ -245,8 +245,31 @@ struct SimSkill {
     bool mastered = false, rising = false;
     std::string nameJson;
 };
+struct SimGoal {
+    std::string textJson;
+    bool done = false, showProgress = false;
+    int value = 0, goal = 0;
+};
+struct SimTrack {
+    int category = 0;
+    uint64_t icon = 0;
+    bool current = false;
+    std::string nameJson;
+};
+struct SimAspiration {
+    bool valid = false, done = false;
+    uint64_t icon = 0;
+    int current = 0, count = 0;
+    float progress = 0;
+    std::string nameJson, textJson;
+    std::vector<std::pair<std::string, bool>> milestones;  // name json, done
+    std::vector<SimGoal> goals;                             // the current milestone's
+};
 struct SimContent {
     int age = 0;  // sims.sim_info_types.Age (0: not sent)
+    SimAspiration aspiration;
+    std::vector<std::string> trackCategories;  // Change Aspiration: category names (json)
+    std::vector<SimTrack> tracks;
     std::vector<std::pair<int, std::string>> categories;  // skill category, its title json
     std::vector<SimSkill> skills;
 };
@@ -257,6 +280,9 @@ SimContent g_sim;        // present thread
 int g_mySim = -1;        // present thread: -1 closed, 0 its apps, 1 + k sub-app k (kMySimApps)
 float g_mySimScroll = 0; // game pixels the list is scrolled
 ULONGLONG g_mySimAsked = 0;
+bool g_aspChange = false;   // Aspirations shows the tracks to change to
+int g_aspPicked = -1;       // the track pressed once (a second press changes to it)
+ULONGLONG g_aspPickedAt = 0, g_aspHoverSince = 0;
 // A press held and moved on the phone (laser or finger, user 2026-10-18 23:43Z):
 // a swipe. Pages and lists follow it while held; a swipe presses no button.
 struct PhoneDrag {
@@ -1918,8 +1944,8 @@ void drawCalendar(ImDrawList* d, const Rect& r, Button& button, std::vector<uint
 constexpr int kMySimApps = 9;
 const char* const kMySimNames[kMySimApps] = {"Aspirations", "Career", "Skills", "Relationships", "Inventory",
                                              "Needs", "Social Groups", "Owned Businesses", "Household"};
-constexpr int kSimSkills = 2, kSimNeeds = 5, kSimCareer = 1;
-bool mySimBuilt(int k) { return k == kSimSkills || k == kSimNeeds; }
+constexpr int kSimAspirations = 0, kSimSkills = 2, kSimNeeds = 5, kSimCareer = 1;
+bool mySimBuilt(int k) { return k == kSimSkills || k == kSimNeeds || k == kSimAspirations; }
 // The age's name for the Career app: School for children and teens (sims.sim_info_types.Age), none younger.
 const char* careerName(int age) {
     if (age == 4 || age == 8) return "School";
@@ -1946,7 +1972,7 @@ void drawPhoneClock(ImDrawList* d, const Rect& r, bool home) {
 // hudinfo.py: each one's icon, name and bar in its state's colours).
 template <class Button>
 void drawMySim(ImDrawList* d, const Rect& r, Button& button, std::vector<uint64_t>& shown, Action& action, bool swipeY,
-               float dy, const PhoneDrag& drag) {
+               float dy, const PhoneDrag& drag, int* index) {
     constexpr float S = 2.5f, A = S / art::kScale;
     auto at = [&](float x, float y) { return ImVec2{r.x + x * S, r.y + y * S}; };
     const ImU32 kBlue = IM_COL32(9, 73, 171, 255);
@@ -1965,15 +1991,27 @@ void drawMySim(ImDrawList* d, const Rect& r, Button& button, std::vector<uint64_
         std::vector<int> apps;
         for (int k = 0; k < kMySimApps; ++k)
             if (k != kSimCareer || careerName(g_sim.age)) apps.push_back(k);
+        bool peek = false;
         for (size_t i = 0; i < apps.size(); ++i) {
             const int k = apps[i];
             const float x = 13 + (i % 3) * 68 + 4, y = 58 + (i / 3) * 94;
             const ImVec2 c = at(x + 32, y + 32);
             const bool built = mySimBuilt(k);
             bool over = false;
-            if (button(at(x, y), at(x + 64, y + 64), &over) && built) g_mySim = 1 + k, g_mySimScroll = 0;
+            if (button(at(x, y), at(x + 64, y + 64), &over) && built)
+                g_mySim = 1 + k, g_mySimScroll = 0, g_aspChange = false, g_aspPicked = -1;
             if (over && built) piece(d, art::kPhoneAppOver, c, A);
             const ImU32 tint = built ? kWhite : IM_COL32(255, 255, 255, 110);
+            if (k == kSimAspirations && g_sim.aspiration.valid) {
+                // The live tile: a ring round it filling with the current milestone's goals.
+                const float rad = 35 * S, p = g_sim.aspiration.done ? 1.0f : std::max(0.0f, std::min(1.0f, g_sim.aspiration.progress));
+                d->AddCircle(c, rad, IM_COL32(0, 0, 0, 90), 48, 4.5f * S);
+                if (p > 0) {
+                    d->PathArcTo(c, rad, -3.14159265f / 2, -3.14159265f / 2 + 2 * 3.14159265f * p, 48);
+                    d->PathStroke(IM_COL32(120, 230, 70, 255), 0, 3.2f * S);
+                }
+                if (over) peek = true;
+            }
             pieceIn(d, *kIcons[k], {c.x - 32 * S, c.y - 32 * S}, {c.x + 32 * S, c.y + 32 * S}, tint);
             const char* name = k == kSimCareer ? careerName(g_sim.age) : kMySimNames[k];
             const float ns = 21 * g_phoneText;
@@ -1981,10 +2019,42 @@ void drawMySim(ImDrawList* d, const Rect& r, Button& button, std::vector<uint64_
             const float fit = std::min(1.0f, 68 * S / std::max(1.0f, size.x));
             shadowText(d, g_small, ns * fit, {c.x - size.x * fit / 2, at(0, y + 67).y}, tint, name);
         }
+        // The peek card (user 2026-10-23 23:22Z): pointed at for a moment, the Aspirations tile shows
+        // the current milestone and its goals, as the game's aspiration button does under the pointer.
+        if (!peek) g_aspHoverSince = 0;
+        else if (!g_aspHoverSince) g_aspHoverSince = now;
+        if (peek && now - g_aspHoverSince > 400) {
+            const SimAspiration& a = g_sim.aspiration;
+            const float wrap = 180 * S, ts = 20 * g_phoneText;
+            std::string head = a.done ? found(a.nameJson) : a.current < static_cast<int>(a.milestones.size())
+                                                                 ? found(a.milestones[a.current].first) : found(a.nameJson);
+            float h = 26;
+            for (const SimGoal& g : a.goals) h += g_text->CalcTextSizeA(ts, FLT_MAX, wrap, found(g.textJson).c_str()).y / S + 5;
+            const float cy0 = std::max(140.0f, 354 - h - 4);
+            const ImVec2 ca = at(8, cy0), cb = at(222, cy0 + h);
+            d->AddRectFilled({ca.x + 4, ca.y + 6}, {cb.x + 4, cb.y + 6}, IM_COL32(0, 0, 0, 80), 8 * S);
+            d->AddRectFilled(ca, cb, IM_COL32(250, 251, 253, 248), 8 * S);
+            d->AddText(g_title, 24 * g_phoneText, at(16, cy0 + 5), kBlue, head.c_str());
+            float gy = cy0 + 24;
+            for (const SimGoal& g : a.goals) {
+                const std::string& t = found(g.textJson);
+                const ImVec2 dot = at(20, gy + 6);
+                if (g.done) {
+                    d->AddCircleFilled(dot, 5 * S, IM_COL32(70, 170, 50, 255));
+                    d->AddLine({dot.x - 2.5f * S, dot.y}, {dot.x - 0.5f * S, dot.y + 2.2f * S}, kWhite, 1.4f * S);
+                    d->AddLine({dot.x - 0.5f * S, dot.y + 2.2f * S}, {dot.x + 3 * S, dot.y - 2.2f * S}, kWhite, 1.4f * S);
+                } else {
+                    d->AddCircle(dot, 5 * S, IM_COL32(120, 130, 145, 255), 20, 1.2f * S);
+                }
+                ImVec2 tsz = g_text->CalcTextSizeA(ts, FLT_MAX, wrap, t.c_str());
+                d->AddText(g_text, ts, at(30, gy), IM_COL32(40, 50, 70, 255), t.c_str(), nullptr, wrap);
+                gy += tsz.y / S + 5;
+            }
+        }
         return;
     }
     const int k = g_mySim - 1;
-    header(k == kSimCareer ? careerName(g_sim.age) : kMySimNames[k]);
+    header(k == kSimAspirations && g_aspChange ? "Change Aspiration" : k == kSimCareer ? careerName(g_sim.age) : kMySimNames[k]);
     const float top = 48, bottom = 354, left = 6, right = 206;
     float y = top - g_mySimScroll;
     d->PushClipRect(at(0, top), at(230, bottom), true);
@@ -1996,7 +2066,128 @@ void drawMySim(ImDrawList* d, const Rect& r, Button& button, std::vector<uint64_
         d->AddRectFilled(at(x0 + 1.5f, by + 1), at(std::max(x0 + 1.5f, x0 + (x1 - x0) * f - 1.5f), by + h * 0.45f),
                          IM_COL32(255, 255, 255, 70), h / 4 * S);
     };
-    if (k == kSimSkills) {
+    if (k == kSimAspirations && g_aspChange) {
+        // Change Aspiration: the tracks by category (ui.aspirations.set_primary); press one, then again to change.
+        if (g_aspPicked >= 0 && now - g_aspPickedAt > 4000) g_aspPicked = -1;
+        int lastCategory = -1;
+        const float rowH = 36 * std::max(1.0f, g_phoneText / 1.2f);
+        for (int n = 0; n < static_cast<int>(g_sim.tracks.size()); ++n) {
+            const SimTrack& t = g_sim.tracks[n];
+            if (t.category != lastCategory) {
+                lastCategory = t.category;
+                if (t.category >= 0 && t.category < static_cast<int>(g_sim.trackCategories.size())) {
+                    shadowText(d, g_title, 24 * g_phoneText, {at(left + 2, 0).x, at(0, y + 4).y}, kWhite,
+                               found(g_sim.trackCategories[t.category]).c_str());
+                    y += 22 * g_phoneText;
+                }
+            }
+            if (y + rowH > top - 40 && y < bottom + 10) {
+                const ImVec2 ra = at(left, y + 2), rb = at(right, y + rowH - 2);
+                bool over = false;
+                if (button(ra, rb, &over) && !t.current) {
+                    if (g_aspPicked == n) {
+                        action = kAspirationPicked;
+                        if (index) *index = n;
+                        g_aspChange = false, g_aspPicked = -1, g_mySimScroll = 0;
+                    } else {
+                        g_aspPicked = n, g_aspPickedAt = now;
+                    }
+                }
+                const bool picked = g_aspPicked == n;
+                d->AddRectFilled(ra, rb, picked ? IM_COL32(205, 235, 190, 240) : IM_COL32(255, 255, 255, 225), 6 * S);
+                if (over || t.current) d->AddRect(ra, rb, t.current ? IM_COL32(70, 170, 50, 255) : IM_COL32(9, 73, 171, 180), 6 * S, 0, 1.4f * S);
+                if (t.icon) {
+                    shown.push_back(t.icon);
+                    icon(d, t.icon, at(left + 17, y + rowH / 2), 28 * S);
+                }
+                const std::string label = picked ? std::string("Press again to change") : found(t.nameJson);
+                ImVec2 ls = g_text->CalcTextSizeA(ts, FLT_MAX, 0, label.c_str());
+                const float lk = std::min(1.0f, (right - left - 42) * S / std::max(1.0f, ls.x));
+                d->AddText(g_text, ts * lk, {at(left + 36, 0).x, at(0, y + rowH / 2).y - ls.y * lk / 2},
+                           picked ? IM_COL32(40, 120, 30, 255) : kBlue, label.c_str());
+            }
+            y += rowH;
+        }
+    } else if (k == kSimAspirations) {
+        const SimAspiration& a = g_sim.aspiration;
+        if (!a.valid) {
+            const char* none = g_sim.age ? "No aspiration." : "...";
+            ImVec2 ns = g_text->CalcTextSizeA(26, FLT_MAX, 0, none);
+            shadowText(d, g_text, 26, {at(115, 150).x - ns.x / 2, at(115, 150).y - ns.y / 2}, kWhite, none);
+        } else {
+            // The track: its icon, name and description on a card.
+            const float wrap = (right - left - 52) * S;
+            const std::string &name = found(a.nameJson), &text = found(a.textJson);
+            ImVec2 ds = g_text->CalcTextSizeA(18 * g_phoneText, FLT_MAX, wrap, text.c_str());
+            const float cardH = std::max(52.0f, 24 * g_phoneText + ds.y / S + 10);
+            d->AddRectFilled(at(left, y + 2), at(right, y + cardH), IM_COL32(255, 255, 255, 225), 6 * S);
+            if (a.icon) {
+                shown.push_back(a.icon);
+                icon(d, a.icon, at(left + 23, y + 2 + 23), 42 * S);
+            }
+            d->AddText(g_title, 24 * g_phoneText, at(left + 48, y + 6), kBlue, name.c_str());
+            d->AddText(g_text, 18 * g_phoneText, at(left + 48, y + 8 + 10 * g_phoneText), IM_COL32(60, 70, 90, 255), text.c_str(),
+                       nullptr, wrap);
+            y += cardH + 6;
+            // The milestones: a dot each (green done, ringed the current one), "Milestone n of N".
+            char line[48];
+            if (a.done) std::snprintf(line, sizeof line, "Aspiration complete!");
+            else std::snprintf(line, sizeof line, "Milestone %d of %d", a.current + 1, std::max(1, a.count));
+            shadowText(d, g_title, 22 * g_phoneText, {at(left + 2, 0).x, at(0, y).y}, kWhite, line);
+            const int n = static_cast<int>(a.milestones.size());
+            for (int i = 0; i < n; ++i) {
+                const ImVec2 c = at(right - 8 - (n - 1 - i) * 14, y + 6);
+                const bool done = a.milestones[i].second;
+                d->AddCircleFilled(c, 4.5f * S, done ? IM_COL32(110, 210, 60, 255) : IM_COL32(255, 255, 255, 90));
+                if (i == a.current && !a.done) d->AddCircle(c, 6.5f * S, kWhite, 20, 1.3f * S);
+            }
+            y += 18 * g_phoneText;
+            // The current milestone: its name, then each goal with its tick and progress.
+            if (!a.done && a.current < n) {
+                const std::string& mile = found(a.milestones[a.current].first);
+                d->AddRectFilled(at(left, y), at(right, y + 22 * g_phoneText), IM_COL32(9, 73, 171, 230), 6 * S);
+                d->AddText(g_title, 22 * g_phoneText, at(left + 6, y + 3), kWhite, mile.c_str());
+                y += 22 * g_phoneText + 3;
+                const float gwrap = (right - left - 52) * S;
+                for (const SimGoal& g : a.goals) {
+                    const std::string& t = found(g.textJson);
+                    ImVec2 tsz = g_text->CalcTextSizeA(ts, FLT_MAX, gwrap, t.c_str());
+                    const float h = std::max(26.0f, tsz.y / S + 10);
+                    d->AddRectFilled(at(left, y), at(right, y + h - 2), IM_COL32(255, 255, 255, 225), 6 * S);
+                    const ImVec2 dot = at(left + 11, y + h / 2 - 1);
+                    if (g.done) {
+                        d->AddCircleFilled(dot, 6 * S, IM_COL32(70, 170, 50, 255));
+                        d->AddLine({dot.x - 3 * S, dot.y}, {dot.x - 0.6f * S, dot.y + 2.6f * S}, kWhite, 1.6f * S);
+                        d->AddLine({dot.x - 0.6f * S, dot.y + 2.6f * S}, {dot.x + 3.6f * S, dot.y - 2.6f * S}, kWhite, 1.6f * S);
+                    } else {
+                        d->AddCircle(dot, 6 * S, IM_COL32(120, 130, 145, 255), 20, 1.4f * S);
+                    }
+                    d->AddText(g_text, ts, {at(left + 22, 0).x, at(0, y + h / 2 - 1).y - tsz.y / 2}, g.done ? IM_COL32(90, 100, 115, 255) : kBlue,
+                               t.c_str(), nullptr, gwrap);
+                    if (g.showProgress && g.goal > 1 && !g.done) {
+                        char pr[24];
+                        std::snprintf(pr, sizeof pr, "%d/%d", std::min(g.value, g.goal), g.goal);
+                        ImVec2 ps = g_text->CalcTextSizeA(20, FLT_MAX, 0, pr);
+                        d->AddText(g_text, 20, {at(right - 4, 0).x - ps.x, at(0, y + h / 2 - 1).y - ps.y / 2}, IM_COL32(60, 70, 90, 255), pr);
+                    }
+                    y += h;
+                }
+            }
+            // Change Aspiration (the game's button under the panel).
+            y += 6;
+            if (!g_sim.tracks.empty()) {
+                const ImVec2 ba = at(left + 30, y), bb = at(right - 30, y + 26);
+                bool over = false;
+                if (button(ba, bb, &over)) g_aspChange = true, g_aspPicked = -1, g_mySimScroll = 0;
+                if (over) nine(d, art::kDialogButtonOver, {ba.x - 2, ba.y - 3}, {bb.x + 2, bb.y + 6}, 48, 36, 48, 54, 0.6f);
+                else nine(d, art::kDialogButton, ba, bb, 48, 36, 48, 42, 0.6f);
+                const char* label = "Change Aspiration";
+                ImVec2 ls = g_text->CalcTextSizeA(24, FLT_MAX, 0, label);
+                d->AddText(g_text, 24, {(ba.x + bb.x - ls.x) / 2, (ba.y + bb.y - ls.y) / 2 - 2}, IM_COL32(30, 70, 128, 255), label);
+                y += 30;
+            }
+        }
+    } else if (k == kSimSkills) {
         if (g_sim.skills.empty()) {
             const char* none = g_sim.age ? "No skills yet." : "...";
             ImVec2 ns = g_text->CalcTextSizeA(26, FLT_MAX, 0, none);
@@ -2421,9 +2612,13 @@ Action drawPhone(ImDrawList* d, int* index) {
         if (button(at(96, 361), at(129, 392), &over)) g_phoneSettingsOpen = false;
         piece(d, over ? art::kPhoneBackOver : art::kPhoneBack, at(96 + 16.5f, 361 + 15.5f), A);
     } else if (g_mySim >= 0) {
-        drawMySim(d, r, button, shown, action, swipeY, dy, drag);
+        drawMySim(d, r, button, shown, action, swipeY, dy, drag, index);
         bool over = false;
-        if (button(at(96, 361), at(129, 392), &over)) g_mySim = g_mySim > 0 ? 0 : -1, g_mySimScroll = 0;
+        if (button(at(96, 361), at(129, 392), &over)) {
+            if (g_aspChange) g_aspChange = false;
+            else g_mySim = g_mySim > 0 ? 0 : -1;
+            g_mySimScroll = 0, g_aspPicked = -1;
+        }
         piece(d, over ? art::kPhoneBackOver : art::kPhoneBack, at(96 + 16.5f, 361 + 15.5f), A);
     } else if (g_phoneCalOpen) {
         drawCalendar(d, r, button, shown, action);
@@ -2712,7 +2907,7 @@ bool phonePicturesIn() {
 int phoneScreenKey() {
     const int opts = static_cast<int>(std::hash<std::wstring>()(g_phoneOptsGroup) & 0xffff);
     return (((g_phoneApp + 2) * 8 + (g_phoneNotesOpen ? 1 : 0) + (g_phoneCalOpen ? 2 : 0) + (g_phoneSettingsOpen ? 4 : 0)) *
-                65537 + opts) * 31 + g_phoneSerial + (g_mySim + 1) * 7919;
+                65537 + opts) * 31 + g_phoneSerial + (g_mySim + 1) * 7919 + (g_aspChange ? 104729 : 0);
 }
 
 // The still and the cover's blend: premultiplied colours (the atlas's), drawn with ImGui's straight blend otherwise.
@@ -3349,6 +3544,35 @@ void setPhoneSim(const char* data, size_t size) {
             k.mastered = f[7] == "1";
             k.rising = f[8] == "1";
             c.skills.push_back(k);
+        } else if (f[0] == "asp" && f.size() >= 8) {
+            SimAspiration& a = c.aspiration;
+            a.valid = true;
+            a.icon = std::strtoull(f[1].c_str(), nullptr, 10);
+            a.nameJson = f[2];
+            a.textJson = f[3];
+            a.current = std::atoi(f[4].c_str());
+            a.count = std::atoi(f[5].c_str());
+            a.progress = static_cast<float>(std::atof(f[6].c_str()));
+            a.done = f[7] == "1";
+        } else if (f[0] == "mile" && f.size() >= 4 && c.aspiration.milestones.size() < 20) {
+            c.aspiration.milestones.emplace_back(f[2], f[3] == "1");
+        } else if (f[0] == "goal" && f.size() >= 6 && c.aspiration.goals.size() < 20) {
+            SimGoal g;
+            g.textJson = f[1];
+            g.done = f[2] == "1";
+            g.value = std::atoi(f[3].c_str());
+            g.goal = std::atoi(f[4].c_str());
+            g.showProgress = f[5] == "1";
+            c.aspiration.goals.push_back(g);
+        } else if (f[0] == "acat" && f.size() >= 3 && c.trackCategories.size() < 40) {
+            c.trackCategories.push_back(f[2]);
+        } else if (f[0] == "atrack" && f.size() >= 6 && c.tracks.size() < 300) {
+            SimTrack t;
+            t.category = std::atoi(f[2].c_str());
+            t.icon = std::strtoull(f[3].c_str(), nullptr, 10);
+            t.nameJson = f[4];
+            t.current = f[5] == "1";
+            c.tracks.push_back(t);
         }
         if (end == std::string::npos) break;
         at = end + 1;

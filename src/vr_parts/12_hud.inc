@@ -1103,6 +1103,10 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
             }
             LOG("Notification %d: button %d", index / 8, index % 8);
             break;
+        case hud::kAspirationPicked:
+            if (index >= 0 && index < 100000) grab::pushControl(7000000 + index);  // phonesim.select_track
+            LOG("Phone: aspiration track %d picked", index);
+            break;
         case hud::kMySimOpened:
             grab::pushControl(85);  // phonesim.send
             break;
