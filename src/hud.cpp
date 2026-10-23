@@ -246,6 +246,33 @@ struct PhoneDrag {
 PhoneDrag g_drag;  // present thread
 int g_calWeek = 0, g_calSel = -1, g_calScroll = 0;
 int g_phoneApp = -1, g_phoneRoot = -1, g_phonePage = 0, g_phoneScroll = 0;
+std::vector<uint64_t> g_phonePreload;  // every picture the phone can show (apps, colours, notifications), read ahead (g_itemMutex)
+std::vector<uint64_t> g_notesPreload;  // the notifications' pictures, read ahead (g_itemMutex)
+std::string g_phoneRaw;                // the menu as Python sent it last (g_phoneMutex): the same again changes nothing
+int g_phoneSerial = 0;                 // present thread: the menu's tree changed (a new screen to fade to)
+// The phone's screen while it builds (user 2026-10-23 20:01Z): taken out, it is black with the game's
+// spinning plumbob until its menu, texts and pictures are in, then fades in; a press that leads to a
+// screen still building keeps a still of the last ready one (the press's screen waits) until the new
+// one is ready, then fades over to it.
+struct PhoneCover {
+    bool loading = true;    // nothing ready shown since taken out: the black loading screen
+    bool still = false;     // g_stillTexture holds the last ready screen
+    float fade = 1;         // how much of the cover shows (1 while waiting, to 0 once ready)
+    ULONGLONG waiting = 0;  // not ready since (0: ready)
+    bool blocked = false;   // the cover is up: presses on the phone wait
+    bool gaveUp = false;    // waited kCoverMaxWait: shown as it is
+};
+PhoneCover g_cover;                       // present thread
+std::atomic<bool> g_phoneTakenOut{false};
+ImDrawList* g_phoneList = nullptr;        // the phone's screen, drawn apart (shown or not, after the rest)
+ImDrawList* g_coverList = nullptr;        // over it: the black, the still, the plumbob
+ID3D11Texture2D* g_stillTexture = nullptr;
+ID3D11ShaderResourceView* g_stillView = nullptr;
+ID3D11BlendState* g_premultiplied = nullptr;  // the still is premultiplied (as the atlas it is copied from)
+ID3D11DeviceContext* g_drawContext = nullptr;  // render(): for the draw callbacks
+constexpr float kCoverFade = 0.22f;      // seconds from the cover to the screen
+constexpr ULONGLONG kCoverMaxWait = 4000;  // ms: then shown as it is (a picture that never comes)
+constexpr ULONGLONG kSpinAfter = 150;      // ms waiting before the plumbob shows (no flash when it is quick)
 
 // The tooltips of the needs and moodlets (hudinfo.py), and their texts once found.
 struct Tip {
@@ -265,7 +292,8 @@ int g_counts[kKinds] = {};
 
 // The game's icons (buffs, needs, wants, interactions), 128 px slots in one
 // texture, read on demand (missingIcons) and kept while used.
-constexpr int kIconSize = 128, kIconsAcross = 8, kIconSlots = kIconsAcross * kIconsAcross;
+// 16 x 16 (2048 px): the phone's app icons and colours stay in beside the HUD's (they are read ahead, phone away).
+constexpr int kIconSize = 128, kIconsAcross = 16, kIconSlots = kIconsAcross * kIconsAcross;
 struct PendingIcon {
     uint64_t id;
     std::vector<uint32_t> pixels;  // kIconSize^2, RGBA straight
@@ -391,6 +419,33 @@ bool init(ID3D11Device* device, ID3D11DeviceContext* context) {
         if (FAILED(device->CreateTexture2D(&icons, nullptr, &g_iconTexture)) ||
             FAILED(device->CreateShaderResourceView(g_iconTexture, nullptr, &g_icons)))
             LOG("HUD: no texture for the game's icons");
+    }
+    {
+        // The phone's screen apart, its cover and the still of its last ready screen (PhoneCover).
+        g_phoneList = IM_NEW(ImDrawList)(ImGui::GetDrawListSharedData());
+        g_coverList = IM_NEW(ImDrawList)(ImGui::GetDrawListSharedData());
+        D3D11_TEXTURE2D_DESC still{};
+        still.Width = static_cast<UINT>(kPhone.w);
+        still.Height = static_cast<UINT>(kPhone.h);
+        still.MipLevels = 1;
+        still.ArraySize = 1;
+        still.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+        still.SampleDesc.Count = 1;
+        still.Usage = D3D11_USAGE_DEFAULT;
+        still.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        D3D11_BLEND_DESC blend{};
+        blend.RenderTarget[0].BlendEnable = TRUE;
+        blend.RenderTarget[0].SrcBlend = D3D11_BLEND_ONE;
+        blend.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+        blend.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+        blend.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+        blend.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
+        blend.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+        blend.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+        if (FAILED(device->CreateTexture2D(&still, nullptr, &g_stillTexture)) ||
+            FAILED(device->CreateShaderResourceView(g_stillTexture, nullptr, &g_stillView)) ||
+            FAILED(device->CreateBlendState(&blend, &g_premultiplied)))
+            LOG("HUD: no still for the phone's screen (it shows as it builds)");
     }
     g_device = device;
     g_device->AddRef();
@@ -1506,6 +1561,11 @@ void resolvePhone() {
         if (g_notesNew) {
             g_notes = g_notesIn;
             g_notesNew = false;
+            std::vector<uint64_t> pictures;
+            for (const Note& n : g_notes.notes)
+                if (n.picture && pictures.size() < 24) pictures.push_back(n.picture);
+            std::lock_guard<std::mutex> items(g_itemMutex);
+            g_notesPreload.swap(pictures);
         }
     }
     {
@@ -1518,11 +1578,48 @@ void resolvePhone() {
     {
         std::lock_guard<std::mutex> lock(g_phoneMutex);
         if (g_phoneNew) {
+            // A node's place in the tree (the names above it and its own): the screen you are on is
+            // found again in a fresh menu, whose entries may be numbered differently.
+            auto place = [](const PhoneContent& c, int node) {
+                std::string key;
+                for (int n = node; n >= 0 && n < static_cast<int>(c.nodes.size()); n = c.nodes[n].parent)
+                    key = c.nodes[n].nameJson + '\x1d' + key;
+                return key;
+            };
+            auto find = [](const PhoneContent& c, const std::string& key, auto& placeOf) {
+                if (key.empty()) return -1;
+                for (int n = 0; n < static_cast<int>(c.nodes.size()); ++n)
+                    if (c.nodes[n].category && placeOf(c, n) == key) return n;
+                return -1;
+            };
+            const std::string app = g_phoneApp >= 0 ? place(g_phone, g_phoneApp) : std::string(),
+                              root = g_phoneRoot >= 0 ? place(g_phone, g_phoneRoot) : std::string();
+            bool same = g_phone.nodes.size() == g_phoneIn.nodes.size() && g_phone.home == g_phoneIn.home;
+            for (size_t i = 0; same && i < g_phone.nodes.size(); ++i) {
+                const PhoneNode &a = g_phone.nodes[i], &b = g_phoneIn.nodes[i];
+                same = a.parent == b.parent && a.icon == b.icon && a.nameJson == b.nameJson &&
+                       a.disabledJson == b.disabledJson && a.notification == b.notification && a.category == b.category;
+            }
             g_phone = g_phoneIn;
             g_phoneOn = !g_phoneIn.nodes.empty() || !g_phoneIn.disabledJson.empty() || g_phoneIn.valid;
             g_phoneNew = false;
+            if (!same) {
+                ++g_phoneSerial;
+                if (g_phoneApp >= 0) {
+                    g_phoneApp = find(g_phone, app, place);
+                    g_phoneRoot = find(g_phone, root, place);
+                    if (g_phoneApp < 0 || g_phoneRoot < 0) g_phoneApp = g_phoneRoot = -1, g_phoneScroll = 0;
+                }
+            }
             const int n = static_cast<int>(g_phone.nodes.size());
             if (g_phoneApp >= n || g_phoneRoot >= n) g_phoneApp = g_phoneRoot = -1;
+            // Its pictures read now, while it is still in your pocket.
+            std::vector<uint64_t> preload;
+            for (const PhoneNode& node : g_phone.nodes)
+                if (node.icon) preload.push_back(node.icon);
+            preload.insert(preload.end(), g_phone.colors.begin(), g_phone.colors.end());
+            std::lock_guard<std::mutex> items(g_itemMutex);
+            g_phonePreload.swap(preload);
         }
     }
     if (!g_phoneOn || g_phone.resolved || !strings::ready()) return;
@@ -1783,8 +1880,7 @@ void drawCalendar(ImDrawList* d, const Rect& r, Button& button, std::vector<uint
 // The game's phone screen (SimInfoTray: PhonePanel's PhoneCategoryScreen and
 // PhoneInteractionScreen, their places from the SWF), 2.5 atlas pixels to the
 // game's one. The background picture is the phone's glass (phone3d), not drawn here.
-Action drawPhone(int* index) {
-    ImDrawList* d = ImGui::GetBackgroundDrawList();
+Action drawPhone(ImDrawList* d, int* index) {
     const PhoneContent& p = g_phone;
     const Rect r = kPhone;
     constexpr float S = 2.5f, A = S / art::kScale;  // atlas pixels per game pixel; art scale
@@ -1797,7 +1893,9 @@ Action drawPhone(int* index) {
     const ImGuiIO& io = ImGui::GetIO();
     const ImVec2 mouse = io.MousePos;
     PhoneDrag& drag = g_drag;
-    if (ImGui::IsMouseClicked(0) && mouse.x >= r.x && mouse.x <= r.x + r.w && mouse.y >= r.y && mouse.y <= r.y + r.h) {
+    const bool blocked = g_cover.blocked;  // the cover is up: what is under it takes no presses
+    if (blocked) drag = PhoneDrag{};
+    if (!blocked && ImGui::IsMouseClicked(0) && mouse.x >= r.x && mouse.x <= r.x + r.w && mouse.y >= r.y && mouse.y <= r.y + r.h) {
         drag = PhoneDrag{};
         drag.on = true;
         drag.start = mouse;
@@ -1816,9 +1914,9 @@ Action drawPhone(int* index) {
         ImGui::SetCursorScreenPos(a);
         ImGui::PushID(3000 + id++);
         bool pressed = ImGui::InvisibleButton("phone", {std::max(1.0f, b.x - a.x), std::max(1.0f, b.y - a.y)});
-        if (swiping) pressed = false;
-        if (hover) *hover = ImGui::IsItemHovered();
-        if (held) *held = ImGui::IsItemActive();
+        if (swiping || blocked) pressed = false;
+        if (hover) *hover = !blocked && ImGui::IsItemHovered();
+        if (held) *held = !blocked && ImGui::IsItemActive();
         ImGui::PopID();
         return pressed;
     };
@@ -2140,7 +2238,8 @@ Action drawPhone(int* index) {
                          bb = at(39 + cs, 10 + cs);
             const bool inside = (m.x >= a0.x && m.x <= b0.x && m.y >= a0.y && m.y <= b0.y) ||
                                 (m.x >= ba.x && m.x <= bb.x && m.y >= ba.y && m.y <= bb.y);
-            if (ImGui::IsMouseClicked(0) && !inside && m.x >= r.x && m.x <= r.x + r.w && m.y >= r.y && m.y <= r.y + r.h)
+            if (!blocked && ImGui::IsMouseClicked(0) && !inside && m.x >= r.x && m.x <= r.x + r.w && m.y >= r.y &&
+                m.y <= r.y + r.h)
                 g_phoneColorsOpen = false;
         }
     } else {
@@ -2237,6 +2336,114 @@ Action drawPhone(int* index) {
     }
     if (drag.on && !io.MouseDown[0]) drag.on = false;
     return action;
+}
+
+// The phone's pictures on the screen just drawn are all in (or can't be read).
+bool phonePicturesIn() {
+    std::lock_guard<std::mutex> lock(g_itemMutex);
+    for (uint64_t id : g_phoneIcons)
+        if (id && !g_loadedIcons.count(id) && !g_badIcons.count(id) && !g_pictureIds.count(id)) return false;
+    return true;
+}
+
+// Which screen the phone is on (a change fades over from the last one).
+int phoneScreenKey() {
+    return ((g_phoneApp + 2) * 4 + (g_phoneNotesOpen ? 1 : 0) + (g_phoneCalOpen ? 2 : 0)) * 1000003 + g_phoneSerial;
+}
+
+// The still and the cover's blend: premultiplied colours (the atlas's), drawn with ImGui's straight blend otherwise.
+void premultipliedBlend(const ImDrawList*, const ImDrawCmd*) {
+    if (g_drawContext && g_premultiplied) {
+        const float factor[4] = {0, 0, 0, 0};
+        g_drawContext->OMSetBlendState(g_premultiplied, factor, 0xffffffff);
+    }
+}
+
+// The game's spinning plumbob (its loading animation's frames) centred on c, `height` atlas pixels tall.
+void plumbob(ImDrawList* d, ImVec2 c, float height, float alpha) {
+    static const art::Piece* kFrames[10] = {&art::kSpin0, &art::kSpin1, &art::kSpin2, &art::kSpin3, &art::kSpin4,
+                                            &art::kSpin5, &art::kSpin6, &art::kSpin7, &art::kSpin8, &art::kSpin9};
+    const art::Piece& a = *kFrames[(GetTickCount64() / 70) % 10];
+    const float h = height, w = h * a.w / a.h;
+    d->AddImage(reinterpret_cast<ImTextureID>(g_art), {c.x - w / 2, c.y - h / 2}, {c.x + w / 2, c.y + h / 2},
+                {static_cast<float>(a.x) / art::kAtlasW, static_cast<float>(a.y) / art::kAtlasH},
+                {static_cast<float>(a.x + a.w) / art::kAtlasW, static_cast<float>(a.y + a.h) / art::kAtlasH},
+                IM_COL32(255, 255, 255, static_cast<int>(255 * alpha)));
+}
+
+// The phone's screen into its own list, and the cover over it (PhoneCover). `wait`: something it
+// needs from outside the HUD is still coming (vr: the wallpaper, Options' menu).
+Action drawPhoneScreen(bool wait, float dt, int* index) {
+    PhoneCover& c = g_cover;
+    if (g_phoneTakenOut.exchange(false)) c = PhoneCover{};
+    const ImGuiIO& io = ImGui::GetIO();
+    for (ImDrawList* list : {g_phoneList, g_coverList}) {
+        list->_ResetForNewFrame();
+        list->Flags = ImGui::GetBackgroundDrawList()->Flags;  // anti-aliasing, vertex offsets: as ImGui's own lists
+        list->PushTextureID(io.Fonts->TexID);
+        list->PushClipRect({0, 0}, io.DisplaySize);
+    }
+    const int key = phoneScreenKey();
+    Action action = kNone;
+    const bool drawn = g_phoneOn && g_phone.resolved;
+    if (drawn) {
+        action = drawPhone(g_phoneList, index);
+    } else {
+        std::lock_guard<std::mutex> lock(g_itemMutex);
+        g_phoneIcons.clear();
+    }
+    const bool changed = phoneScreenKey() != key;  // pressed this frame: this frame still shows the old screen
+    const ULONGLONG now = GetTickCount64();
+    bool ready = drawn && !wait && phonePicturesIn();
+    if (ready || changed) {
+        c.waiting = changed ? now : 0;
+        c.gaveUp = false;
+    } else if (!c.waiting) {
+        c.waiting = now;
+    } else if (now - c.waiting > kCoverMaxWait && drawn) {
+        if (!c.gaveUp) LOG("Phone: its screen waited %llu ms, shown as it is", static_cast<unsigned long long>(now - c.waiting));
+        c.gaveUp = true;
+    }
+    if (c.gaveUp) ready = drawn;
+    const bool hold = !ready || changed;
+    if (hold) c.fade = 1;
+    else if (c.fade > 0) c.fade = std::max(0.0f, c.fade - dt / kCoverFade);
+    if (c.fade <= 0 && !hold) c.loading = false;
+    // Black (taken out, or no menu) or the last ready screen (a press): how it shows.
+    const bool black = c.loading || !c.still || !drawn || !g_stillView;
+    const float k = c.fade * c.fade * (3 - 2 * c.fade);  // smooth
+    const Rect r = kPhone;
+    const ImVec2 a{r.x, r.y}, b{r.x + r.w, r.y + r.h};
+    if (k > 0) {
+        if (black) {
+            g_coverList->AddRectFilled(a, b, IM_COL32(0, 0, 0, static_cast<int>(255 * k)));
+        } else {
+            g_coverList->AddCallback(premultipliedBlend, nullptr);
+            const int v = static_cast<int>(255 * k);
+            g_coverList->AddImage(reinterpret_cast<ImTextureID>(g_stillView), a, b, {0, 0}, {1, 1}, IM_COL32(v, v, v, v));
+            g_coverList->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
+        }
+    }
+    const ULONGLONG waited = c.waiting ? now - c.waiting : 0;
+    static float spin = 0;  // the plumbob's own fade (in once waiting a moment, out with the cover)
+    spin = hold && waited > kSpinAfter ? std::min(1.0f, spin + dt / 0.15f) : std::max(0.0f, spin - dt / kCoverFade);
+    if (black) spin = std::min(spin, k);
+    if (spin > 0) {
+        constexpr float S = 2.5f;  // atlas pixels per game pixel (drawPhone)
+        if (black) plumbob(g_coverList, {r.x + 115 * S, r.y + 190 * S}, 64 * S, spin);  // the loading screen
+        else plumbob(g_coverList, {r.x + 186 * S, r.y + 20 * S}, 22 * S, spin);  // a screen building: small, top right
+    }
+    c.blocked = hold || k > 0.5f;
+    static ULONGLONG holdSince = 0;
+    static int logged = 0;
+    if (hold && !holdSince) holdSince = now;
+    if (!hold && holdSince) {
+        if (now - holdSince > 60 && logged++ < 40)
+            LOG("Phone: its screen was ready after %llu ms (%s)", static_cast<unsigned long long>(now - holdSince),
+                black ? "the loading screen" : "the last screen kept");
+        holdSince = 0;
+    }
+    return c.blocked ? kNone : action;
 }
 
 // A notification as a card over a Sim's head (notify.py): the dialog panel,
@@ -2601,12 +2808,19 @@ int missingIcons(uint64_t* out, int max) {
     for (uint64_t id : g_noteIcons) want(id);
     for (const Balloon& b : g_balloons) want(b.picture), want(b.overlay), want(b.category);
     for (const Bar& b : g_bars) want(b.icon);
+    for (uint64_t id : g_phonePreload) want(id);  // what the phone may show next (read ahead)
+    for (uint64_t id : g_notesPreload) want(id);
     return n;
 }
 
 void setPhoneContent(const char* data, size_t size) {
     PhoneContent c;
     std::string all(data ? data : "", data ? size : 0);
+    {
+        std::lock_guard<std::mutex> lock(g_phoneMutex);
+        if (all == g_phoneRaw) return;  // the same menu again: the screen stays as it is
+        g_phoneRaw = all;
+    }
     size_t at = 0;
     while (!all.empty() && at <= all.size()) {
         size_t end = all.find('\x1e', at);
@@ -2656,6 +2870,10 @@ void setPhoneContent(const char* data, size_t size) {
 }
 
 void phoneHome() { g_phoneHomeAsked = true; }
+void phoneTakenOut() {
+    g_phoneHomeAsked = true;
+    g_phoneTakenOut = true;
+}
 
 void setPhoneNotes(const char* data, size_t size) {
     NotesContent c;
@@ -3007,13 +3225,21 @@ Action render(ID3D11Device* device, ID3D11DeviceContext* context, const Frame& f
     resolvePicker();
     if (f.picker && g_pickerOn && g_picker.resolved && g_picker.valid) take(drawPicker(index));
     resolvePhone();
-    if (f.phone && g_phoneOn && g_phone.resolved) take(drawPhone(index));
+    g_drawContext = context;
+    const bool phoneShown = f.phone && g_phoneList && g_coverList;
+    if (phoneShown) take(drawPhoneScreen(f.phoneWait, io.DeltaTime, index));
     resolvePie();
     if (f.pie && g_pieMenu.valid) take(drawPie(index));
     if (f.note) take(drawNote(f.note, index));
     else g_noteHeight = 0;
     ImGui::End();
     ImGui::Render();
+    if (phoneShown) {
+        // The phone's screen (unless the cover hides it whole), then its cover: after the rest, in its own place.
+        const bool whole = g_cover.fade >= 1;
+        if (!whole) ImGui::GetDrawData()->AddDrawList(g_phoneList);
+        if (!g_coverList->CmdBuffer.empty()) ImGui::GetDrawData()->AddDrawList(g_coverList);
+    }
     // Into the atlas, cleared to nothing; the game's targets put back after.
     ID3D11RenderTargetView* targets[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT] = {};
     ID3D11DepthStencilView* depth = nullptr;
@@ -3023,6 +3249,13 @@ Action render(ID3D11Device* device, ID3D11DeviceContext* context, const Frame& f
     context->OMSetRenderTargets(1, &g_target, nullptr);
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
     context->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, targets, depth);
+    if (phoneShown && g_stillTexture && g_cover.fade <= 0 && !g_cover.blocked) {
+        // A ready screen, nothing over it: kept as the still a press fades over from.
+        const D3D11_BOX box{static_cast<UINT>(kPhone.x), static_cast<UINT>(kPhone.y), 0,
+                            static_cast<UINT>(kPhone.x + kPhone.w), static_cast<UINT>(kPhone.y + kPhone.h), 1};
+        context->CopySubresourceRegion(g_stillTexture, 0, 0, 0, 0, g_texture, 0, &box);
+        g_cover.still = true;
+    }
     if (g_atlasView) context->GenerateMips(g_atlasView);
     for (ID3D11RenderTargetView* t : targets)
         if (t) t->Release();
@@ -3037,12 +3270,24 @@ ID3D11Texture2D* texture() { return g_imgui ? g_texture : nullptr; }
 void release() {
     if (g_imgui) {
         ImGui::SetCurrentContext(g_imgui);
+        for (ImDrawList** list : {&g_phoneList, &g_coverList}) {
+            if (*list) IM_DELETE(*list);
+            *list = nullptr;
+        }
         if (g_device) ImGui_ImplDX11_Shutdown();
         ImGui::DestroyContext(g_imgui);
         g_imgui = nullptr;
     }
     if (g_art) g_art->Release();
     g_art = nullptr;
+    if (g_stillView) g_stillView->Release();
+    if (g_stillTexture) g_stillTexture->Release();
+    if (g_premultiplied) g_premultiplied->Release();
+    g_stillView = nullptr;
+    g_stillTexture = nullptr;
+    g_premultiplied = nullptr;
+    g_drawContext = nullptr;
+    g_cover = PhoneCover{};
     if (g_icons) g_icons->Release();
     if (g_iconTexture) g_iconTexture->Release();
     g_icons = nullptr;

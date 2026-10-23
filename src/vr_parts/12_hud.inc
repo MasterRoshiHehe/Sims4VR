@@ -938,6 +938,9 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
     f.popup = hud::popupPending();
     f.picker = hud::pickerPending();
     f.phone = g_phoneSheet.m.active;
+    // The phone's screen waits covered for Options' menu, and just after it comes out for its wallpaper.
+    f.phoneWait = (g_phoneOptions && !g_optionsShown) ||
+                  (!phone3d::wallpaperReady() && GetTickCount64() - g_phoneMenuSince < 1500);
     f.note = noteShown();
     f.pie = g_hud[kHudPie].m.active;
     // Balloons over Sims (first person): the HUD draws them into its atlas, phone3d puts them in the world.
@@ -1109,6 +1112,7 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
             } else if (g_phoneOut && !g_tablet) {
                 g_phoneOptions = true;
                 g_phoneOptionsSeen = gameMenuOpen();
+                optionsAsked();
                 if (!gameMenuOpen() && !g_popupOpen) {
                     g_escapeFrames = 3;
                     g_phoneOpenedMenu = true;

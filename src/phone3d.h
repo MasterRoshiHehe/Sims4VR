@@ -40,11 +40,14 @@ struct Phone {
     int tiles = 0;
     float tileDst[kMaxTiles][4]{}, tileSrc[kMaxTiles][4]{};
     bool wallpaper = false;  // the tablet: the phone background picture (setWallpaper) fills the glass behind the UI
+    float dim = 0;           // black over the glass, 0..1 (the screen changing between the HUD's and the game's UI)
 };
 
 // Any thread: the played Sim's phone background picture (an image resource's
 // bytes: PNG, DDS or EA's shuffled DST), for the tablet. False if it can't be read.
 bool setWallpaper(const uint8_t* data, size_t size);
+// Any thread: a phone background picture has been read (setWallpaper).
+bool wallpaperReady();
 // Any thread: an image resource's bytes (PNG and other WIC formats, DDS or
 // EA's shuffled DST) to RGBA pixels (R in the low byte, straight alpha).
 bool decodePicture(const uint8_t* data, size_t size, std::vector<uint32_t>& rgba, int& w, int& h,

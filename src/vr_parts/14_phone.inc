@@ -46,7 +46,8 @@ static void phoneOpen(int hand) {
     // shows as the Options app. No Escape: the menu opens from Options.
     g_phoneOptions = gameMenuOpen() && !g_popupOpen;
     g_phoneOptionsSeen = g_phoneOptions;
-    hud::phoneHome();
+    optionsAsked();
+    hud::phoneTakenOut();
     g_phoneFitted = false;
     g_phoneMenuSince = GetTickCount64();
     buzz(hand, 0.4f, 0.05f);
@@ -134,7 +135,25 @@ static bool simPhoneFrame(int side, const float o[3], float tilt, float yaw, flo
 
 static void updatePhone(const armik::Hand& hand, int side) {
     // The game's phone menu (drawn by hud.cpp), or the UI's game menu (Options) / the tablet.
-    const bool app = g_phoneOut && !g_tablet && (!g_phoneOptions || g_optionsFront);
+    // Options: the HUD's screen until the game menu is measured, dimmed, then the menu fading in.
+    const ULONGLONG now = GetTickCount64();
+    if (!g_phoneOptions || !g_phoneOut || g_tablet) {
+        g_optionsShown = false;
+        g_optionsReadyAt = 0;
+    } else if (!g_optionsReadyAt && ((g_menuFitOk && g_menuFitDone != g_optionsFits) || now - g_phoneMenuSince > kOptionsMaxWait)) {
+        g_optionsReadyAt = now;
+        static int logged = 0;
+        if (logged++ < 20)
+            LOG("Phone: Options' menu %s after %llu ms", g_menuFitOk ? "measured" : "not measured, shown as it is",
+                static_cast<unsigned long long>(now - g_phoneMenuSince));
+    }
+    if (g_optionsReadyAt && now - g_optionsReadyAt >= kScreenDim) g_optionsShown = true;
+    const bool app = g_phoneOut && !g_tablet && (!g_phoneOptions || !g_optionsShown || g_optionsFront);
+    float dim = 0;  // phone3d: black over the glass
+    if (g_optionsReadyAt) {
+        const float t = static_cast<float>(now - g_optionsReadyAt);
+        dim = t < kScreenDim ? t / kScreenDim : std::max(0.0f, 1 - (t - kScreenDim) / kScreenUp);
+    }
     if (!g_phoneOut || !hand.valid || (!app && !g_uiFrame)) {
         phone3d::setPhone(phone3d::Phone{}, nullptr);
         g_phone.active = false;
@@ -285,6 +304,7 @@ static void updatePhone(const armik::Hand& hand, int side) {
     p3.crop[3] = static_cast<float>(crop[1] + crop[3]) / H;
     p3.tiles = tiles;
     p3.wallpaper = g_tablet || app;  // the Sim's phone background (buildbuy.py) behind the game's phone menu
+    p3.dim = g_tablet ? 0 : dim;
     g_phone.tiles = tiles;
     for (int k = 0; k < tiles; ++k) {
         for (int i = 0; i < 4; ++i) {

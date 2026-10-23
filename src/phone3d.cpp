@@ -36,7 +36,8 @@ cbuffer Draw : register(b0) {
     float4 capA[6];                     // psPie: your arms and hands in view space: start, radius
     float4 capB[6];                     // end
     float4 tileInfo;                    // x: tiles on the screen (the tablet; 0 = the crop above);
-                                        // y: 1 = the wallpaper behind the UI, z: its width / height
+                                        // y: 1 = the wallpaper behind the UI, z: its width / height,
+                                        // w: black over the glass (0..1)
     float4 tileDst[10];                 // each tile on the menu rect, from its top left: x0, y0, x1, y1 (0..1)
     float4 tileSrc[10];                  // its part of the UI: u0, v0, u1, v1
 };
@@ -164,6 +165,7 @@ float4 psMain(Out i) : SV_Target {
                 c = u.rgb + (1 - u.a) * c;
             }
         }
+        c = lerp(c, float3(0.01, 0.01, 0.012), saturate(tileInfo.w));
         float glare = pow(saturate(dot(reflect(-toEye, n), normalize(float3(0.3, 0.8, 0.5)))), 40) * 0.08;
         return float4(c + glare, 1);
     }
@@ -959,6 +961,11 @@ bool decodePicture(const uint8_t* data, size_t size, std::vector<uint32_t>& rgba
     return ok;
 }
 
+bool wallpaperReady() {
+    std::lock_guard<std::mutex> lock(g_wallMutex);
+    return g_wallSerial > 0;
+}
+
 bool setWallpaper(const uint8_t* data, size_t size) {
     std::vector<uint32_t> rgba;
     int w = 0, h = 0;
@@ -1222,6 +1229,7 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
             k.tileInfo[1] = 1;
             k.tileInfo[2] = static_cast<float>(g_wallW) / static_cast<float>(g_wallH);
         }
+        k.tileInfo[3] = std::max(0.0f, std::min(1.0f, p.dim));
         std::memcpy(k.tileDst, p.tileDst, sizeof(k.tileDst));
         std::memcpy(k.tileSrc, p.tileSrc, sizeof(k.tileSrc));
         k.misc[0] = uiView ? 1.0f : 0.0f;

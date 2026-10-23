@@ -179,8 +179,11 @@ void setPhoneNotes(const char* data, size_t size);
 void setPhoneCalendar(const char* data, size_t size);
 // Present thread: the height of the notification card drawn in kNote (Frame.note), 0 while not drawn.
 float noteHeight();
-// Present thread: the phone shows its home screen again (taken out).
+// Present thread: the phone shows its home screen again (Options closed: fades over from the last screen).
 void phoneHome();
+// Present thread: the phone was taken out: its home screen, black with the game's spinning plumbob until
+// it is ready, then fading in.
+void phoneTakenOut();
 
 // Any thread (hudinfo / scripted.py via native.hud_balloon): the game is sending an AddBalloon for `sim`
 // (BalloonRequest): the pictures (icon resource instance or thumbnail id; 0: none), the balloon type
@@ -220,6 +223,7 @@ struct Frame {
     bool pie = false;        // the pie menu drawn by us (kPie)
     bool money = false;      // the money gained / lost
     bool phone = false;      // the game's phone menu (kPhone)
+    bool phoneWait = false;  // something the phone's screen needs is still coming (the wallpaper, Options' menu): it waits covered
     bool balloons = false;
     bool bars = false;       // the skill bars over Sims' heads   // the balloons over Sims' heads (addBalloon)
     uint64_t note = 0;       // the notification drawn as a card in kNote (notify.py), 0: none

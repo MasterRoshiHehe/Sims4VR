@@ -25,6 +25,17 @@ static bool g_phoneFitPending = false;
 static int g_phoneFitWait = 0;
 static bool g_menuFitOk = false;   // the last fitMenu found the menu
 static int g_menuFitDone = 0;      // fits finished (found or not)
+// Options' game menu goes on the screen once measured (user 2026-10-23 20:01Z: no half-built screen):
+// until then the phone keeps its last screen (hud Frame.phoneWait), then dims and comes up on the menu.
+static bool g_optionsShown = false;
+static int g_optionsFits = 0;            // g_menuFitDone when Options was asked for
+static ULONGLONG g_optionsReadyAt = 0;   // measured: the last screen dims (kScreenDim ms), then the menu fades in
+static constexpr ULONGLONG kScreenDim = 120, kScreenUp = 220, kOptionsMaxWait = 2500;
+static void optionsAsked() {
+    g_optionsShown = false;
+    g_optionsFits = g_menuFitDone;
+    g_optionsReadyAt = 0;
+}
 
 // The game's phone model's size (phone.py), world units; 0 = none.
 static std::atomic<float> g_propSize[3] = {};

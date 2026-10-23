@@ -91,6 +91,16 @@ PIECES = [
     ('kPhoneBadgeGlow', 'liveui/art/SimInfoTray/7__MotivesVampireSunlightOverlay@intro__PhoneCategoryCellView@up.png'),
     ('kPhoneArrow', 'liveui/art/SimInfoTray/20__PhoneArrowButton@out__PhoneArrowButton@release.png'),
     ('kPhoneArrowOver', 'liveui/art/SimInfoTray/23__PhoneArrowButton@controller_over__PhoneArrowButton@over.png'),
+    ('kSpin0', 'liveui/art/ExchangeDetail/152.png'),  # the game's spinning plumbob (DetailLoadingAnimation)
+    ('kSpin1', 'liveui/art/ExchangeDetail/154.png'),  # the game's spinning plumbob (DetailLoadingAnimation)
+    ('kSpin2', 'liveui/art/ExchangeDetail/156.png'),  # the game's spinning plumbob (DetailLoadingAnimation)
+    ('kSpin3', 'liveui/art/ExchangeDetail/158.png'),  # the game's spinning plumbob (DetailLoadingAnimation)
+    ('kSpin4', 'liveui/art/ExchangeDetail/160.png'),  # the game's spinning plumbob (DetailLoadingAnimation)
+    ('kSpin5', 'liveui/art/ExchangeDetail/162.png'),  # the game's spinning plumbob (DetailLoadingAnimation)
+    ('kSpin6', 'liveui/art/ExchangeDetail/164.png'),  # the game's spinning plumbob (DetailLoadingAnimation)
+    ('kSpin7', 'liveui/art/ExchangeDetail/166.png'),  # the game's spinning plumbob (DetailLoadingAnimation)
+    ('kSpin8', 'liveui/art/ExchangeDetail/168.png'),  # the game's spinning plumbob (DetailLoadingAnimation)
+    ('kSpin9', 'liveui/art/ExchangeDetail/170.png'),  # the game's spinning plumbob (DetailLoadingAnimation)
     ('kPhoneBack', 'liveui/art/SimInfoTray/33__PhoneBackButton@out__PhoneBackButton@release.png'),
     ('kPhoneBackOver', 'liveui/art/SimInfoTray/36__PhoneBackButton@over__PhoneBackButton@selected_disabled.png'),
     ('kPhoneRowOver', 'liveui/art/SimInfoTray/11__PhoneItemCellView@over.png'),

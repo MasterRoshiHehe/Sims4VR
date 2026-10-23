@@ -174,14 +174,22 @@ def set_color(index):
         send()
 
 
-_job = None  # the phone menu being built a slice a tick: [client, sim, context, choice menu, aops, next]
+_job = None  # the phone menu being built a slice a tick: [client, sim, context, choice menu, aops, next, live]
 _BUDGET = 0.012  # seconds of aop tests a tick (the whole menu at once stalled the game 140-280 ms)
+_IDLE_BUDGET = 0.004  # the same while the phone is away (a menu made ahead, user 2026-10-23: no waiting)
+_AHEAD_EVERY = 20.0  # seconds: a menu made ahead is made again this often while the phone is away
 _last = None  # (sim id, records) of the menu sent last: shown at once while the fresh one is tested
+_built_at = 0.0  # time.monotonic() the last menu was finished
+_live = False  # _choice_ids belong to a menu set on the client (a press can be picked now)
+_pending = None  # an entry pressed before that: its key (_keys), picked once the menu is set
+_keys = {}  # node -> its place in the tree (the names above it and its own), to find it in a fresh menu
 
 
-def _start_menu(client, sim):
+def _start_menu(client, sim, live=True):
     """generate_phone_choices, its tests spread over ticks (poll). A finished
-    message (phone disabled, queue full) comes back at once; else None."""
+    message (phone disabled, queue full) comes back at once; else None.
+    live: the menu is set on the client when done (the phone is out); else it
+    is only made ahead to show at once (setting it would take over an open pie menu's choices)."""
     global _job
     from event_testing.resolver import SingleSimResolver
     from interactions.choices import ChoiceMenu
@@ -196,23 +204,49 @@ def _start_menu(client, sim):
         return ic.create_pie_menu_message(sim, None, 0, ic.PieMenuActions.INTERACTION_QUEUE_FULL_TOOLTIP,
                                           do_phone_tests=True)
     context = client.create_interaction_context(sim, shift_held=False)
-    _job = [client, sim, context, ChoiceMenu(sim), list(sim.potential_phone_interactions(context)), 0]
+    _job = [client, sim, context, ChoiceMenu(sim), list(sim.potential_phone_interactions(context)), 0, live]
     return None
+
+
+def _ahead():
+    """Phone away in first person: the menu made ahead now and then (a slice a tick), so taking
+    the phone out shows a ready menu at once."""
+    import time
+    try:
+        from sims4vr import hooks, phone
+        if phone.is_out() or not hooks.in_first_person():
+            return
+    except Exception:
+        return
+    client = _client()
+    sim = client.active_sim if client is not None else None
+    if sim is None:
+        return
+    if _last is not None and _last[0] == sim.id and time.monotonic() - _built_at < _AHEAD_EVERY:
+        return
+    msg = _start_menu(client, sim, live=False)
+    if msg is not None:
+        _send_message(sim, msg, live=False)
 
 
 def poll():
     """Controls tick: the phone menu's next slice of tests; sent when done."""
-    global _job
+    global _job, _built_at
     if _job is None:
+        try:
+            _ahead()
+        except Exception as e:
+            _log_error('making the phone menu ahead', e)
         return
     import time
-    client, sim, context, menu, aops, at = _job
+    client, sim, context, menu, aops, at, live = _job
     if client.active_sim is not sim:
         _job = None
         return
     started = time.perf_counter()
+    budget = _BUDGET if live else _IDLE_BUDGET
     try:
-        while at < len(aops) and time.perf_counter() - started < _BUDGET:
+        while at < len(aops) and time.perf_counter() - started < budget:
             menu.add_potential_aops(None, context, aops[at:at + 1], None)
             at += 1
     except Exception as e:
@@ -223,18 +257,20 @@ def poll():
     if at < len(aops):
         return
     _job = None
+    _built_at = time.monotonic()
     from server_commands import interaction_commands as ic
     try:
         t0 = time.perf_counter()
-        client.set_choices(menu)
+        if live:
+            client.set_choices(menu)
         msg = ic.create_pie_menu_message(sim, menu, 0, ic.PieMenuActions.SHOW_PIE_MENU, do_phone_tests=True)
         t1 = time.perf_counter()
     except Exception as e:
         _log_error('building the phone menu', e)
         return
-    _send_message(sim, msg)
-    _log('menu message {:.0f} ms, sent to the DLL {:.0f} ms ({} aops tested over several ticks)'.format(
-        (t1 - t0) * 1000, (time.perf_counter() - t1) * 1000, len(aops)))
+    _send_message(sim, msg, live)
+    _log('menu message {:.0f} ms, sent to the DLL {:.0f} ms ({} aops tested over several ticks{})'.format(
+        (t1 - t0) * 1000, (time.perf_counter() - t1) * 1000, len(aops), '' if live else ', made ahead'))
 
 
 def _category(key):
@@ -304,17 +340,26 @@ def _tree(sim, msg):
 
 def send():
     """The phone's menu for the played Sim, to the DLL (phone taken out): the
-    tests run a slice a tick (poll) and the menu goes when they are done."""
+    menu made last shows at once; the tests run a slice a tick (poll) and the
+    fresh menu goes when they are done (only if it differs: no rebuilt screen)."""
+    global _live, _pending
     if native._optional('phone_content') is None:
         return
     client = _client()
     sim = client.active_sim if client is not None else None
+    _live = False
+    _pending = None
     if sim is None:
         _choice_ids.clear()
         native.phone_content(b'phone\x1f0\x1f')
         return
     if _last is not None and _last[0] == sim.id:
         _send_records(sim, _last[1])  # the last menu now, the fresh one when its tests are done
+    else:
+        native.phone_content(b'')  # another Sim's menu: not shown (the phone shows it is loading)
+    if _job is not None and _job[1] is sim and not _job[6]:
+        _job[6] = True  # the menu being made ahead becomes the phone's: set on the client when done
+        return
     try:
         msg = _start_menu(client, sim)
     except Exception as e:
@@ -353,9 +398,10 @@ def _send_records(sim, records):
         _log_error('phone background', e)
 
 
-def _send_message(sim, msg):
-    global _revision, _last
+def _send_message(sim, msg, live=True):
+    global _revision, _last, _live, _pending
     _choice_ids.clear()
+    _keys.clear()
     _revision = None
     from sims4vr import objmenu
     disabled = objmenu._loc(msg.disabled_tooltip) if msg.HasField('disabled_tooltip') else ''
@@ -366,9 +412,11 @@ def _send_message(sim, msg):
         root = _tree(sim, msg)
         counter = [0]
 
-        def emit(node, parent):
+        def emit(node, parent, path):
             index = counter[0]
             counter[0] += 1
+            key = path + '\x1d' + node['name']
+            _keys[index] = key
             if node['kind'] == 'cat':
                 records.append('cat\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}'.format(
                     index, parent, node['icon'], node['name'], node['priority']))
@@ -377,30 +425,47 @@ def _send_message(sim, msg):
                 records.append('item\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}'.format(
                     index, parent, node['name'], node['disabled'], 1 if node['notif'] else 0, node['priority']))
             for child in node['children']:
-                emit(child, index)
+                emit(child, index, key)
         for child in root['children']:
-            emit(child, -1)
-        _log('{} entries for {} ({} apps, menu {})'.format(
-            len(msg.items), sim, sum(1 for c in root['children'] if c['kind'] == 'cat'), _revision))
+            emit(child, -1, '')
+        _log('{} entries for {} ({} apps, menu {}{})'.format(
+            len(msg.items), sim, sum(1 for c in root['children'] if c['kind'] == 'cat'), _revision,
+            '' if live else ', made ahead'))
     else:
         _log('the phone is disabled for {} now'.format(sim))
+    same = _last is not None and _last[0] == sim.id and _last[1] == records
     _last = (sim.id, records)
-    _send_records(sim, records)
+    _live = live
+    if not same:
+        _send_records(sim, records)  # (the same menu again: the DLL keeps the screen as it is)
+    if live and _pending is not None:
+        key, _pending = _pending, None
+        node = next((n for n, k in _keys.items() if k == key and n in _choice_ids), None)
+        if node is None:
+            _log('the entry pressed early is not in the fresh menu')
+        else:
+            select(node)
 
 
 def clear():
-    global _job
-    _job = None
-    _choice_ids.clear()
-    if native._optional('phone_content') is not None:
-        native.phone_content(b'')
+    """The phone put away: the menu stays with the DLL (shown at once next time)."""
+    global _job, _live, _pending
+    if _job is not None and _job[6]:
+        _job = None  # (one being made ahead carries on)
+    _live = False
+    _pending = None
 
 
 def select(node):
     """Item `node` pressed on the phone: the game's interactions.select."""
+    global _pending
+    if not _live and node in _keys and _job is not None:
+        _pending = _keys[node]  # the menu shown was made ahead: picked once the fresh one is set
+        _log('press on {} kept until the fresh menu is set'.format(node))
+        return
     choice = _choice_ids.get(node)
     client = _client()
-    if choice is None or client is None or _revision is None:
+    if choice is None or client is None or _revision is None or not _live:
         _log('press on {} with no menu for it'.format(node))
         return
     try:
