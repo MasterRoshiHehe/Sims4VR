@@ -195,17 +195,27 @@ void poll() {
         why = "it has text inputs";
     std::string title = memberText(data.v, "title"), prompt = memberText(data.v, "promptText");
     std::vector<std::string> labels;
-    if (!why && member(data.v, "actions", actions) && member(actions.v, "length", length)) {
-        int n = static_cast<int>(number(length.v));
-        for (int i = 0; i < n && i < 6; ++i) {
+    int count = -1;  // the actions' length as read; -1 unknown
+    if (!why && member(data.v, "actions", actions)) {
+        if (member(actions.v, "length", length)) count = static_cast<int>(number(length.v));
+        // Each element by its index as a name (Vector); probed when the length can't be read.
+        for (int i = 0; i < (count >= 0 ? count : 6) && i < 6; ++i) {
             Held action;
-            labels.push_back(member(actions.v, std::to_string(i).c_str(), action) ? memberText(action.v, "label")
-                                                                                   : std::string());
+            if (!member(actions.v, std::to_string(i).c_str(), action)) {
+                if (count < 0) break;
+                labels.emplace_back();
+            } else {
+                labels.push_back(memberText(action.v, "label"));
+            }
             if (labels.back().empty()) why = "a button without its text";
         }
+        static int logged = 0;
+        if (logged++ < 20)
+            LOG("Client dialog '%s': actions type %u, length %d, %zu buttons read", id.c_str(), kind(actions.v), count,
+                labels.size());
     }
     if (!why && title.empty() && prompt.empty()) why = "no texts";
-    if (!why && labels.empty()) why = "no buttons";
+    if (!why && labels.empty() && count != 0) why = "no buttons";  // none at all (Saving...): shown as it is
     if (why) {
         // The server's dialog has put its own content up already (objmenu.py): only ours is let go.
         if (server.ok())
