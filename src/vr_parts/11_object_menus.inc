@@ -326,7 +326,7 @@ static bool updateObjectMenu(bool firstPerson, bool headOk, const XrPosef& head)
     const bool ourHud = g_config.uiFirstPerson == 1 || g_config.uiFirstPerson == 3;
     bool want = r.kind > 0 && (r.kind >= 4 ? g_config.popups3d && ourHud : g_config.objectMenus) && firstPerson &&
                 (g_uiFrame || (r.kind >= 4 && hud::popupHeight() > 0)) &&
-                !g_pie.active && !(g_phoneOut && (g_tablet || g_phoneOptions));  // the phone's apps: popups stay in front of you
+                !g_pie.active && !(g_phoneOut && (g_tablet || g_phoneOptions) && !clientdlg::showing());  // the phone's apps: popups stay in front of you
     camera::View view;
     if (!want || !camera::lastView(view)) {
         hideObjectMenu();

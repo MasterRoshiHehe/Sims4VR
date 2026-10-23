@@ -900,6 +900,8 @@ Action drawList(int* index) {
     }
 
     const int first = g_listPage * perPage;
+    int tipRow = -1;  // the row pointed at whose description doesn't fit its one line
+    float tipY0 = 0, tipY1 = 0, tipX = 0;
     for (int k = first; k < std::min(first + perPage, n); ++k) {
         const PopupContent::Row& row = p.rows[k];
         const float ry = listY + (k - first) * (rowH + rowGap);
@@ -948,7 +950,24 @@ Action drawList(int* index) {
             // One line of it, as the game's ObjectPickerCellView.
             std::string line = row.desc.substr(0, row.desc.find('\n'));
             d->AddText(g_text, descSize, {tx, a.y + 16 + textSize}, kGrey, line.c_str(), nullptr, 0, &clip);
+            if (hover && (line.size() < row.desc.size() ||
+                          g_text->CalcTextSizeA(descSize, FLT_MAX, 0, line.c_str()).x > clip.z - tx))
+                tipRow = k, tipY0 = a.y, tipY1 = b.y, tipX = tx;
         }
+    }
+    if (tipRow >= 0) {
+        // The whole description of the row pointed at (user 2026-10-23: long ones were cut off), in a box over
+        // the rows under it, or over those above when it doesn't fit below; never past the card.
+        const std::string& desc = p.rows[tipRow].desc;
+        const float wrap = in1 - 24 - tipX, m = 16;
+        ImVec2 ds = g_text->CalcTextSizeA(descSize, FLT_MAX, wrap, desc.c_str());
+        const float boxH = ds.y + 2 * m, limit = std::max(footY + 76, listY + listH);
+        float by = tipY1 + 4;
+        if (by + boxH > limit) by = std::max(listY, tipY0 - 4 - boxH);
+        const ImVec2 ba{tipX - m, by}, bb{in1 - 8, by + boxH};
+        d->AddRectFilled(ba, bb, IM_COL32(255, 255, 255, 250), 10);
+        d->AddRect(ba, bb, kTitle, 10, 0, 2);
+        d->AddText(g_text, descSize, {tipX, by + m}, kBody, desc.c_str(), nullptr, wrap);
     }
 
     // The footer: Done (several to pick) on the left, the page arrows on the right.

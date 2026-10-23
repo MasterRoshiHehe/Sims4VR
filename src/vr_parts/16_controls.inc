@@ -506,7 +506,8 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
             static int32_t menuW = 0, menuH = 0;
             static int seen = 0;
             static ULONGLONG refitAt = 0;
-            const bool options = g_phoneOptions && g_phoneOut && !g_tablet && menu;
+            // The game's own question (Save and Exit) drawn as our card (clientdlg): not the game's UI in front too.
+            const bool options = g_phoneOptions && g_phoneOut && !g_tablet && menu && !clientdlg::showing();
             if (options && !wasOptions) menuW = menuH = 0, seen = g_menuFitDone;
             wasOptions = options;
             if (!options) {

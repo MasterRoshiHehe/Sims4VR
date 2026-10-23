@@ -902,6 +902,16 @@ def list_control(code):
             service.dialog_respond(dialog_id, ButtonType.DIALOG_RESPONSE_OK if code == 1 else
                                    ButtonType.DIALOG_RESPONSE_CANCEL)
             _log('list picker {} ({} picked)'.format('answered' if code == 1 else 'cancelled', len(picked)))
+            if dialog_id in getattr(service, '_active_dialogs', {}):
+                # Its answer didn't close it (a mod's respond returned False): the game's own picker would have
+                # closed itself on that click, so it is closed on the game's UI too (user 2026-10-23: it stayed
+                # open there), as the service closes dialogs (UiDialogCloseRequest), the dialog kept for its mod.
+                from protocolbuffers import Dialog_pb2, Consts_pb2
+                from distributor.system import Distributor
+                close = Dialog_pb2.UiDialogCloseRequest()
+                close.dialog_id = dialog_id
+                Distributor.instance().add_event(Consts_pb2.MSG_UI_DIALOG_CLOSE, close)
+                _log('list picker still open after its answer: closed on the game UI')
     except Exception as e:
         _log('the list picker failed: {!r}'.format(e))
 
