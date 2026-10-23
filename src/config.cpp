@@ -145,6 +145,7 @@ Config loadConfig(const std::wstring& ini) {
     c.pieDistance = readFloat(ini, "ui", "pie_distance", c.pieDistance);
     c.pieWidth = readFloat(ini, "ui", "pie_width", c.pieWidth);
     c.pieMode = readInt(ini, "ui", "pie_mode", c.pieMode);
+    c.scandalSpot = readInt(ini, "bubbles", "scandal_spot", c.scandalSpot);
     c.piePalmSize = readFloat(ini, "ui", "pie_palm_size", c.piePalmSize);
     c.piePalmLift = readFloat(ini, "ui", "pie_palm_lift", c.piePalmLift);
     c.pieCrop = readFloat(ini, "ui", "pie_crop", c.pieCrop);
@@ -223,6 +224,7 @@ Config loadConfig(const std::wstring& ini) {
     if (!(c.pieCrop >= 0.2f && c.pieCrop <= 3.0f)) c.pieCrop = 0.75f;
     if (!(c.pieWidth >= 0.1f && c.pieWidth <= 1.5f)) c.pieWidth = 0.96f;
     if (c.pieMode < 0 || c.pieMode > 2) c.pieMode = 0;
+    if (c.scandalSpot < 0 || c.scandalSpot > 5) c.scandalSpot = 0;
     if (!(c.piePalmSize >= 0.15f && c.piePalmSize <= 1.0f)) c.piePalmSize = 0.45f;
     if (!(c.piePalmLift >= 0.0f && c.piePalmLift <= 0.4f)) c.piePalmLift = 0.10f;
     if (!(c.pieDistance >= 0.2f && c.pieDistance <= 3.0f)) c.pieDistance = 0.45f;

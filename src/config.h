@@ -149,6 +149,7 @@ struct Config {
     bool selfPiePalm = true;
     float pieDistance = 0.45f;  // metres from your eyes at most
     float pieWidth = 0.96f;     // metres
+    int scandalSpot = 0;        // [bubbles] scandal_spot: your scandal aura (Royalty & Legacy) on 0 head, 1 chest, 2 hips, 3 left hand, 4 right hand, 5 hidden (scandal.py)
     int pieMode = 0;            // [ui] pie_mode: 0 in front, 1 on your other palm, 2 dynamic (front; palm for the laser on it)
     float piePalmSize = 0.45f;  // [ui] pie_palm_size: the pie on a palm against its size in front
     float piePalmLift = 0.10f;  // [ui] pie_palm_lift: metres above the palm

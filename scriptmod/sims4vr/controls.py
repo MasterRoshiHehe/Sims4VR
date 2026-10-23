@@ -348,6 +348,8 @@ def _tick(_handle):
         _report_clock()
         from sims4vr import hudinfo
         hudinfo.tick()
+        from sims4vr import scandal
+        scandal.tick()
     except Exception as e:
         _errors += 1
         if _errors <= 5:
