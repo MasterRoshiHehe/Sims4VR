@@ -351,10 +351,11 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
         now - g_lastWorldClick.tick < 3000) {
         XrSpaceLocation head{XR_TYPE_SPACE_LOCATION};
         if (XR_SUCCEEDED(xrLocateSpace(g_viewSpace, g_appSpace, time, &head)) &&
-            (head.locationFlags & located) == located)
-            openPie(head.pose.position);
+            (head.locationFlags & located) == located && openPie(head.pose.position))
+            choosePiePalm(hands);
         g_lastWorldClick.valid = false;
     }
+    updatePiePalm(time, hands);
     if (g_pie.active && (!(mode() == Mode::Stereo && steadyBody() && g_config.pieAtHand) || !g_uiFrame))
         closePie("left first person");
     trimPie();
@@ -705,7 +706,9 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
         c.leftButton = c.rightButton = false;
         c.hasTarget = false;
     }
-    bool poking = pokingSims1 || (laserHand < 0 && ((g_pie.active && (g_pie.own ? pokeHud(g_hud[kHudPie], hands, bothHands)
+    // The pie on a palm: the other hand's finger pokes it.
+    const bool pieHands[2] = {g_piePalm != 0, g_piePalm != 1};
+    bool poking = pokingSims1 || (laserHand < 0 && ((g_pie.active && (g_pie.own ? pokeHud(g_hud[kHudPie], hands, pieHands)
                                                                                : pokeSheet(g_pie, hands, bothHands, triggerDown, pulled, c,
                                                                                            camera::bodyActive()))) ||
                                     (g_phone.active && pokeSheet(g_phone, hands, freeHand, triggerDown, pulled, c, true)) ||
@@ -862,7 +865,11 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
             onPie = true;
             c.leftButton = false;
             XrPosef head;
-            if (laserClick && locateHead(time, head)) requestSelfPie(laserHand, "laser on the palm", head);
+            if (laserClick && locateHead(time, head)) {
+                requestSelfPie(laserHand, "laser on the palm", head);
+                g_piePalmNext = 1 - laserHand;  // dynamic: your own pie opens on the palm you pointed at
+                g_piePalmNextAt = GetTickCount64();
+            }
         } else if (onSims1) {
             // Sims 1's mouse: the trigger is its left button, A / X its right (Claude: the trigger only).
             g_laserFrom = o;

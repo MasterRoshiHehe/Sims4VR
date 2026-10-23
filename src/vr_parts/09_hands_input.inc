@@ -330,7 +330,9 @@ static bool shovePie(const armik::Hand hands[2]) {
         float k = std::min(1.0f, dt / 0.04f);  // about 40 ms of averaging
         velocity[i] = {velocity[i].x + (v.x - velocity[i].x) * k, velocity[i].y + (v.y - velocity[i].y) * k,
                        velocity[i].z + (v.z - velocity[i].z) * k};
-        if (!g_pie.active || GetTickCount64() - g_pie.opened < kShoveSettle || g_pie.pressing == i) continue;
+        if (!g_pie.active || GetTickCount64() - g_pie.opened < kShoveSettle || g_pie.pressing == i || i == g_piePalm ||
+            pieHidden())
+            continue;  // the palm holding the pie doesn't shove it (its fist closes it)
         // Only an empty hand slaps: no grip, trigger or button held (pointing
         // with the grip to press an option is not a slap).
         if (!emptyHand(i)) continue;

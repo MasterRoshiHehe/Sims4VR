@@ -72,6 +72,7 @@ namespace s4vr::vr {
 #include "vr_parts/13_sims1_screen.inc"
 #include "vr_parts/14_phone.inc"
 #include "vr_parts/15_settings_menu.inc"
+#include "vr_parts/15b_pie_palm.inc"
 #include "vr_parts/16_controls.inc"
 #include "vr_parts/17_render.inc"
 #include "vr_parts/18_stereo.inc"

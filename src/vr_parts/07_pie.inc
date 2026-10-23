@@ -67,8 +67,21 @@ void pieClosed() { g_pieCloseRequest = true; }
 static constexpr ULONGLONG kPieClickSettle = 300;  // ms
 static bool pieSettled() { return GetTickCount64() - g_pie.opened >= kPieClickSettle; }
 
+// The pie on your palm (user 2026-10-23, [ui] pie_mode 1 palm / 2 dynamic): the hand it lies on (-1: in front
+// of you), whether that palm faces up (it shows only then), and the fist that closes it (held: hidden, let go:
+// closed, thrown if the hand moved fast). 15b_pie_palm.inc.
+static int g_piePalm = -1;
+static bool g_piePalmUp = false;
+static bool g_piePalmFist = false;
+static ULONGLONG g_piePalmFistAt = 0;
+static int g_piePalmNext = -1;  // dynamic: the palm the own pie asked for now goes to
+static ULONGLONG g_piePalmNextAt = 0;
+static bool pieHidden() { return g_pie.active && g_piePalm >= 0 && (!g_piePalmUp || g_piePalmFist); }
+
 static void closePie(const char* why) {
     if (!g_pie.active) return;
+    g_piePalm = -1;
+    g_piePalmUp = g_piePalmFist = false;
     g_pie.active = false;
     g_pieShown.store(false, std::memory_order_relaxed);
     if (g_pie.own) hud::clearPie(g_pie.serial);

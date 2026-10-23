@@ -548,6 +548,12 @@ std::vector<Row> makeRows() {
         link(menus, L"Popups", L"Menus popups"),
         link(menus, L"Panels and flat screen", L"Menus panels"),
         flag(L"Menus pie", L"Pie drawn by the mod (off: cut from the game's UI)", "ui", "own_pie", true, kLive),  // pie.py
+        choice(L"Menus pie", L"Pie menu shows", "ui", "pie_mode", &Config::pieMode,
+               {L"In front", L"On your other palm", L"Dynamic"}),
+        number(L"Menus pie", L"Pie on the palm: size", "ui", "pie_palm_size", &Config::piePalmSize, 0.15f, 1, 0.05f, 100,
+               L"%.0f%%"),
+        number(L"Menus pie", L"Pie on the palm: height above it", "ui", "pie_palm_lift", &Config::piePalmLift, 0, 0.4f, 0.02f,
+               100, L"%.0f cm"),
         toggle(L"Menus pie", L"Own pie menu: poke your stomach", "ui", "self_pie_poke", &Config::selfPiePoke),
         toggle(L"Menus pie", L"Own pie menu: laser on your palm", "ui", "self_pie_palm", &Config::selfPiePalm),
         number(L"Menus pie", L"Pie menu distance", "ui", "pie_distance", &Config::pieDistance, 0.25f, 1, 0.05f, 100,

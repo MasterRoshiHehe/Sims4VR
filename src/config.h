@@ -144,6 +144,9 @@ struct Config {
     bool selfPiePalm = true;
     float pieDistance = 0.45f;  // metres from your eyes at most
     float pieWidth = 0.96f;     // metres
+    int pieMode = 0;            // [ui] pie_mode: 0 in front, 1 on your other palm, 2 dynamic (front; palm for the laser on it)
+    float piePalmSize = 0.45f;  // [ui] pie_palm_size: the pie on a palm against its size in front
+    float piePalmLift = 0.10f;  // [ui] pie_palm_lift: metres above the palm
     float pieCrop = 0.75f;      // width of the UI cut out around the click, as a fraction of the UI's height
     // First person: a game picker shows on the object it is for (fridge door, TV screen)
     bool objectMenus = true;
