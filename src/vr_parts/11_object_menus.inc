@@ -448,7 +448,7 @@ static bool updateObjectMenu(bool firstPerson, bool headOk, const XrPosef& head)
         return true;
     }
     hidePickerHud();
-    if (!g_objMenu.active && drawn <= 0) {
+    if (!g_objMenu.active) {
         g_objMenu.opened = now;
         static int logged = 0;
         if (logged++ < 30)
@@ -456,20 +456,19 @@ static bool updateObjectMenu(bool firstPerson, bool headOk, const XrPosef& head)
                 r.kind >= 2 ? "screen" : "front", crop[2], crop[3], crop[0], crop[1],
                 fitted && g_menuFitOk ? "measured" : "not found, the middle");
     }
-    if (drawn <= 0) {
-        g_objMenu.active = true;
-        g_objMenu.x = x;
-        g_objMenu.y = y;
-        g_objMenu.z = z;
-        g_objMenu.pose = {fromAxes(x, y, z), at};
-        g_objMenu.width = w;
-        g_objMenu.height = h;
-        g_objMenu.x0 = crop[0];
-        g_objMenu.y0 = crop[1];
-        g_objMenu.cw = crop[2];
-        g_objMenu.ch = crop[3];
-        g_objMenu.uiW = ui.Width;
-        g_objMenu.uiH = ui.Height;
+    g_objMenu.active = true;
+    g_objMenu.x = x;
+    g_objMenu.y = y;
+    g_objMenu.z = z;
+    g_objMenu.pose = {fromAxes(x, y, z), at};
+    g_objMenu.width = w;
+    g_objMenu.height = h;
+    g_objMenu.x0 = crop[0];
+    g_objMenu.y0 = crop[1];
+    g_objMenu.cw = crop[2];
+    g_objMenu.ch = crop[3];
+    g_objMenu.uiW = ui.Width;
+    g_objMenu.uiH = ui.Height;
     // Drawn inside the game's 3D view (phone3d), so your hands and anything
     // nearer pass in front of it; the flat layer only if that can't be drawn.
     // Back to world units: world = anchor + heading * (app * scale).
