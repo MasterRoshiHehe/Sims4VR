@@ -675,18 +675,20 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
         if (g_config.snapTurn) {
             // Snap turning: one fixed step per push, re-armed when the stick comes back under 0.3. No smooth
             // turning, so the world never slides under you. Two angles (user 2026-10-23): a push all the way to
-            // the side (past 0.92) turns snap_angle_big; a smaller push (past 0.6, held 150 ms or let back without
+            // the side (past 0.8) turns snap_angle_big; a smaller push (0.5 to 0.8, held 200 ms or let back without
             // going further) turns snap_angle. snap_angle_big 0: every push turns snap_angle.
             if (a < 0.3f) snapArmed = true, snapSince = 0;
             const bool two = g_config.snapAngleBig >= 5.f;
             float angle = 0;
-            if (snapArmed && a > 0.6f) {
+            if (snapArmed && a > 0.5f) {
                 const ULONGLONG t = GetTickCount64();
                 if (!snapSince) snapSince = t, snapPeak = a;
                 snapPeak = std::max(snapPeak, a);
+                // The small push's zone narrowed (user 2026-10-23 19:14Z): past 0.8 is the big turn at once; the
+                // small one fires once the stick stops short of that (let back, or 200 ms there).
                 if (!two) angle = g_config.snapAngle;
-                else if (a > 0.92f) angle = g_config.snapAngleBig;
-                else if (t - snapSince > 150 || a < snapPeak - 0.08f) angle = g_config.snapAngle;
+                else if (a > 0.8f) angle = g_config.snapAngleBig;
+                else if (t - snapSince > 200 || a < snapPeak - 0.1f) angle = g_config.snapAngle;
             }
             if (angle > 0) {
                 snapArmed = false;

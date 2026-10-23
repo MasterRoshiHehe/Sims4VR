@@ -487,7 +487,7 @@ std::vector<Row> makeRows() {
         toggle(L"View head", L"Seated: your Sim leans with you", "body", "seat_follow", &Config::bodySeatFollow, kView),
         toggle(L"View head", L"Seated: your head moves the upper body", "body", "seat_torso", &Config::bodySeatTorso, kView),
         toggle(L"View head", L"Hide your own face (mirrors keep it)", "body", "hide_face", &Config::bodyHideFace, kView),
-        toggle(L"View head", L"Steady shoulders (idle doesn't move your arms)", "body", "steady_shoulders",
+        toggle(L"View head", L"Steady wrist HUD (idle doesn't move it)", "body", "steady_shoulders",
                &Config::bodySteadyShoulders, kView),
         number(L"View near", L"Near clipping", "body", "near_clip", &Config::bodyNearClip, 0.02f, 0.5f, 0.01f, 100, L"%.0f cm",
                kView),

@@ -236,6 +236,7 @@ static void pollEvents() {
         if (event.type == XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING) {
             // The user recentred in the headset (e.g. holding the Oculus button).
             LOG("Runtime recenter detected");
+            g_runtimeRecenterAt = GetTickCount64();
             g_recenterRequested = true;
         } else if (event.type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED) {
             auto* changed = reinterpret_cast<XrEventDataSessionStateChanged*>(&event);
@@ -288,14 +289,13 @@ static void sampleHeadYaw(XrTime time) {
     g_headYawTick[g_headYawNext] = GetTickCount64();
     g_headYawNext = (g_headYawNext + 1) % 32;
 }
-// The yaw sampled about `ago` ms back (the oldest newer than that), or false.
-static bool headYawAgo(ULONGLONG ago, float& yaw) {
-    const ULONGLONG now = GetTickCount64();
+// The last yaw sampled before `before` (GetTickCount64) but no more than 2 s before it, or false.
+static bool headYawBefore(ULONGLONG before, float& yaw) {
     bool found = false;
     ULONGLONG best = 0;
     for (int i = 0; i < 32; ++i) {
         const ULONGLONG t = g_headYawTick[i];
-        if (!t || now - t < ago || now - t > ago + 1000) continue;
+        if (!t || t >= before || before - t > 2000) continue;
         if (!found || t > best) best = t, yaw = g_headYawHistory[i], found = true;
     }
     return found;
@@ -338,7 +338,11 @@ static void recenter(XrTime time) {
     float bodyPose[8];
     const bool freeWalk = g_appSpace && g_config.recenterTurnsBody && mode() == Mode::Stereo && camera::bodyActive() &&
                           player::pose(bodyPose) && bodyPose[5] > 0.5f;
-    if (freeWalk && headYawAgo(250, turn) && std::isfinite(turn)) {
+    // The runtime's recentre (the Meta button) moves its spaces about when it tells us: the yaw from before that.
+    const ULONGLONG now = GetTickCount64();
+    const ULONGLONG before = g_runtimeRecenterAt && now - g_runtimeRecenterAt < 3000 ? g_runtimeRecenterAt - 150 : now;
+    g_runtimeRecenterAt = 0;
+    if (freeWalk && headYawBefore(before, turn) && std::isfinite(turn)) {
         camera::turnBody(turn);
         LOG("Recenter: walking freely, your body turned %.0f deg to where you looked", turn * 57.2958f);
     } else if (g_appSpace) {

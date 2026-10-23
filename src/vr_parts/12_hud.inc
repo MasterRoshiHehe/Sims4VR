@@ -260,16 +260,38 @@ static bool onArm(HudSheet& s, int side, const armik::Hand& controller, const ca
                   const hud::Rect& area, bool toElbow = false) {
     float e[3], w[3];
     if (!camera::forearm(side, e, w)) return false;
-    XrVector3f wrist = worldToApp(view, w, false);
-    XrVector3f axis = sub3(worldToApp(view, e, false), wrist);
-    if (!(dot3(axis, axis) > 1e-4f)) return false;
-    axis = normalize3(axis);
     // The palm side: the Sim's hand as armik last posed it (its grip frame in
     // the world; the left palm faces its +X, the right one its -X), in app space.
     camera::Vec3 handWrist;
     camera::Quat handGrip;
     float handScale;
     if (!armik::handPose(side, handWrist, handGrip, handScale)) return false;
+    // Steady (user 2026-10-23: the idle swayed the wrist HUD): while the piece shows, its wrist and forearm keep
+    // where they lay in your hand's frame when it came up, so only your controller moves it, not the animation.
+    {
+        const int index = static_cast<int>(&s - g_hud);
+        static bool held[16] = {};
+        static XrVector3f wristLocal[16], elbowLocal[16];
+        const XrQuaternionf grip{handGrip.x, handGrip.y, handGrip.z, handGrip.w};
+        const XrQuaternionf inv{-grip.x, -grip.y, -grip.z, grip.w};
+        const XrVector3f hw{handWrist.x, handWrist.y, handWrist.z};
+        if (index >= 0 && index < 16 && g_config.bodySteadyShoulders) {
+            if (!s.m.active || !held[index]) {
+                wristLocal[index] = rotate3(inv, sub3({w[0], w[1], w[2]}, hw));
+                elbowLocal[index] = rotate3(inv, sub3({e[0], e[1], e[2]}, hw));
+                held[index] = s.m.active;
+            }
+            const XrVector3f wl = rotate3(grip, wristLocal[index]), el = rotate3(grip, elbowLocal[index]);
+            w[0] = hw.x + wl.x, w[1] = hw.y + wl.y, w[2] = hw.z + wl.z;
+            e[0] = hw.x + el.x, e[1] = hw.y + el.y, e[2] = hw.z + el.z;
+        } else if (index >= 0 && index < 16) {
+            held[index] = false;
+        }
+    }
+    XrVector3f wrist = worldToApp(view, w, false);
+    XrVector3f axis = sub3(worldToApp(view, e, false), wrist);
+    if (!(dot3(axis, axis) > 1e-4f)) return false;
+    axis = normalize3(axis);
     const float k = side == 0 ? 1.0f : -1.0f;
     XrVector3f palmWorld = rotate3(XrQuaternionf{handGrip.x, handGrip.y, handGrip.z, handGrip.w}, {k, 0, 0});
     const float pw[3] = {palmWorld.x, palmWorld.y, palmWorld.z};

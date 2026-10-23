@@ -220,6 +220,7 @@ static int g_pointerHand = 1;  // the hand that showed the laser last; right by 
 
 static std::atomic<int> g_mode{static_cast<int>(Mode::Quad)};
 static std::atomic<bool> g_recenterRequested{true};
+static ULONGLONG g_runtimeRecenterAt = 0;  // when the runtime said it recentred (its spaces move from then on)
 
 static std::mutex g_statusMutex;
 static std::mutex g_frameMutex;
