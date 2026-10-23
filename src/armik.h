@@ -128,6 +128,8 @@ float gameCurl(int side);
 //    the place, for the Sim's reaction.
 // Nothing here runs a game interaction or changes relationships.
 void configureTouch(bool bodies, bool holdHands, bool lookAt, bool grabBodies);
+// The game clock paused: other Sims stop looking at you (they turn back) until it runs.
+void setGamePaused(bool paused);
 // Touch events for the script mod, oldest first: kind 1 a hand took hold of a
 // Sim's body (or its hand), 2 let go (value: seconds held), 3 pulled it hard
 // (value: metres). region: kGrabRegionNames below. Returns false if none.

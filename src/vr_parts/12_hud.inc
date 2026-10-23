@@ -21,6 +21,7 @@ static hud::Frame g_hudInput;  // this frame's pointer on the atlas (a poke or t
 static Swapchain g_hudSwapchain;  // the asleep watch's layer
 
 void setPaused(bool paused) {
+    armik::setGamePaused(paused);
     if (g_paused.exchange(paused) != paused) {
         static int logged = 0;
         if (logged++ < 40) LOG("Game clock %s", paused ? "paused" : "running");

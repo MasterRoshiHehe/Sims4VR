@@ -234,6 +234,7 @@ long long ageMs(ULONGLONG now, ULONGLONG t) {
 }
 std::atomic<bool> g_fkVerified{false};              // the player's rig composed as expected: other Sims' will too
 bool g_touchBodies = true, g_holdHands = true, g_lookAt = true, g_grabBodies = true;
+std::atomic<bool> g_gamePaused{false};  // other Sims don't look at you while the game is paused (user 2026-10-23: creepy)
 std::atomic<bool> g_busy{false};
 bool g_enabled = false;
 float g_handPitch = 0;      // radians the hand points below the grip pose's -Z
@@ -2347,7 +2348,7 @@ void touchOther(uint8_t* actor, uint8_t* pose) {
         Vec3 face = rotate(quatOf(p.world.q), rotate(quatOf(hm.q), r.headForward));
         float facing = d > 1e-3f ? dot(face, mul(toYou, 1 / d)) : 0;
         constexpr float kLookTalk = 2.0f;  // metres: a Sim talking with you, already facing you
-        bool want = g_lookAt && d > 1e-3f &&
+        bool want = g_lookAt && !g_gamePaused.load(std::memory_order_relaxed) && d > 1e-3f &&
                     ((d < 1.0f * sc && facing > 0.2f) || (d < kLookTalk * sc && facing > 0.6f));
         st.look += ((want ? 1.0f : 0.0f) - st.look) * ease(3.0f, dt);
         if (!want && st.look < 0.01f) st.look = 0;
@@ -2865,6 +2866,8 @@ void configureHands(float handPitchDegrees, bool headTracking) {
     g_handPitch = handPitchDegrees * 3.14159265f / 180.0f;
     g_headTracking = headTracking;
 }
+
+void setGamePaused(bool paused) { g_gamePaused.store(paused, std::memory_order_relaxed); }
 
 void configureTouch(bool bodies, bool holdHands, bool lookAt, bool grabBodies) {
     g_touchBodies = bodies;
