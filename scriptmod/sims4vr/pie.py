@@ -171,6 +171,24 @@ def _send_own(msg, local):
         _log_error('own pie content', e)
 
 
+def send_dialog(answers):
+    """A popup's answers (objmenu.py, a Sim asking you something) as our pie at your palm: one option each (their
+    texts as JSON for the DLL's string tables), no categories; a pick answers the popup (select_own)."""
+    global _own_items
+    try:
+        _own_items = [('dialog', i) for i in range(len(answers))]
+        records = ['pie\x1f0\x1f0']
+        for i, text in enumerate(answers):
+            records.append('item\x1f{}\x1f0\x1f{}\x1f0\x1f0\x1f0\x1f{}\x1f\x1f'.format(i, len(answers) - i, text))
+        native.dialog_pie()
+        native.pie_content('\x1e'.join(records).encode('utf-8'))
+        native.pie_menu(len(answers))
+        native._log('pie: a popup\'s {} answers sent as the pie'.format(len(answers)))
+    except Exception as e:
+        _own_items = []
+        _log_error('popup answers as the pie', e)
+
+
 def select_own(index):
     """An option picked on the own-drawn pie (the DLL, control 5000000 + index): what the PieMenu widget sends,
     interactions.select [id, server_reference_id] (PieMenuMain.OnOptionSelected)."""
@@ -178,6 +196,11 @@ def select_own(index):
         if not 0 <= index < len(_own_items):
             return
         option, reference = _own_items[index]
+        if option == 'dialog':
+            from sims4vr import objmenu
+            objmenu.answer_popup(reference)
+            native._log('pie: popup answer {} picked on the pie'.format(reference))
+            return
         client = services.client_manager().get_first_client()
         if client is None:
             return

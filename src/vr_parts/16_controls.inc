@@ -347,6 +347,31 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
     bool firstPerson = mode() == Mode::Stereo && camera::bodyActive() && g_config.pieAtHand;
     ULONGLONG now = GetTickCount64();
     if (g_pieCloseRequest.exchange(false)) closePie("picked");
+    if (g_dialogPieRequest.exchange(false) && firstPerson) {
+        // A popup's answers (objmenu.py): the pie opens as your own does, in front of you (its click), on your left
+        // palm in the palm mode (the "click" is the right hand's) and in the dynamic one.
+        XrPosef headPose;
+        if (locateHead(time, headPose)) {
+            if (g_pie.active) closePie("a popup's answers came");
+            XrVector3f f = forwardOf(headPose.orientation);
+            f.y = 0;
+            if (dot3(f, f) > 1e-4f) {
+                f = normalize3(f);
+                g_lastWorldClick.valid = true;
+                g_lastWorldClick.u = kSelfPieU;
+                g_lastWorldClick.v = kSelfPieV;
+                g_lastWorldClick.point = {headPose.position.x + f.x * 0.45f, headPose.position.y - 0.12f,
+                                          headPose.position.z + f.z * 0.45f};
+                g_lastWorldClick.tick = now;
+                g_clickHand.store(1, std::memory_order_relaxed);
+                g_clickHandTick.store(now, std::memory_order_relaxed);
+                g_piePalmNext = 0;
+                g_piePalmNextAt = now;
+                g_dialogPiePending = true;
+                LOG("Pie menu at hand: a popup's answers asked for as the pie");
+            }
+        }
+    }
     // Up to 8 s after the click: a big social pie made while the game is paused came 3.5 s after it (2026-10-23).
     if (g_pieOpenRequest.exchange(false) && firstPerson && g_lastWorldClick.valid &&
         now - g_lastWorldClick.tick < 8000) {

@@ -994,7 +994,7 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
             // The game's own pie widget stayed open behind ours (user 2026-10-23 16:46Z): closed as its own pick
             // closes it (HidePieMenu, clientdlg), not with Escape.
             if (index >= 0) grab::pushControl(5000000 + index);
-            clientdlg::closeGamePie();
+            if (!g_pieDialog) clientdlg::closeGamePie();  // a popup's answers: no game pie open
             LOG("HUD: pie option %d picked", index);
             closePie("picked on the pie");
             g_pieDismissHold = true;  // the press doesn't reach the world

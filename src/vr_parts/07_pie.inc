@@ -78,8 +78,19 @@ static int g_piePalmNext = -1;  // dynamic: the palm the own pie asked for now g
 static ULONGLONG g_piePalmNextAt = 0;
 static bool pieHidden() { return g_pie.active && g_piePalm >= 0 && (!g_piePalmUp || g_piePalmFist); }
 
+// A popup's answers as the pie (objmenu.py chat questions, dialogPie): asked for, then open.
+static std::atomic<bool> g_dialogPieRequest{false};
+static bool g_dialogPiePending = false, g_pieDialog = false;
+void dialogPie() { g_dialogPieRequest = true; }
+
 static void closePie(const char* why) {
     if (!g_pie.active) return;
+    if (g_pieDialog && std::strcmp(why, "picked on the pie") != 0) {
+        grab::pushControl(6200000);  // objmenu: no answer picked, the popup card gets its buttons back
+        static int logged = 0;
+        if (logged++ < 20) LOG("Pie menu at hand: the popup's answers closed unpicked (%s): its buttons back on the card", why);
+    }
+    g_pieDialog = false;
     g_piePalm = -1;
     g_piePalmUp = g_piePalmFist = false;
     g_pie.active = false;
@@ -98,6 +109,11 @@ static bool g_pieDismissHold = false;  // that press, until the triggers let go
 static ULONGLONG g_pieEscapeTick = 0;  // when dismissPie last pressed Escape
 static void dismissPie(const char* why) {
     if (!g_pie.active) return;
+    if (g_pieDialog) {  // the popup's answers: no game pie to close with Escape (it would answer the popup)
+        closePie(why);
+        g_pieDismissHold = true;
+        return;
+    }
     closePie(why);
     g_escapeFrames = 3;
     g_pieEscapeTick = GetTickCount64();
@@ -157,6 +173,8 @@ static bool openPie(const XrVector3f& head) {
     // Drawn by us when pie.py sent the game's options for it (its texts may still be looked up).
     g_pie.own = hud::pieState() == 1 || hud::pieState() == 2;
     g_pie.serial = hud::pieSerial();
+    g_pieDialog = g_dialogPiePending;
+    g_dialogPiePending = false;
     if (!g_pie.own) {
         static int logged = 0;
         if (logged++ < 20) LOG("Pie menu at hand: no options from the game for our own pie (state %d): the game's pie cut out", hud::pieState());

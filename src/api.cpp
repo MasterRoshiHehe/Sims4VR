@@ -415,6 +415,8 @@ S4VR_API void s4vr_pie_menu(int items) {
     else
         s4vr::vr::pieClosed();
 }
+// The next pie (pie_menu) holds a popup's answers, on your palm (objmenu.py chat questions).
+S4VR_API void s4vr_dialog_pie() { s4vr::vr::dialogPie(); }
 // The hand of the last click into the world in first person (0 left, 1 right), -1 none lately.
 S4VR_API int s4vr_click_hand() { return s4vr::vr::clickHand(); }
 // 1 while the pie menu shows at your hand.

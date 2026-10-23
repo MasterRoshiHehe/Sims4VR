@@ -59,6 +59,7 @@ _popup = None           # (dialog id, kind, Sim id or 0) of the popup shown in t
 _popup_alarm = None
 _last_msg = None        # the UiDialogMessage the last dialog_show sent the client
 _popup_choices = []     # the choice ids of the popup card's buttons, in order
+_chat_buttons = False   # the asking Sim's popup shows its buttons (its answers' pie closed unpicked)
 _picker_rows = []       # the option ids of the picker card's rows, in the order sent (the DLL answers with an index)
 
 
@@ -787,17 +788,31 @@ def _send_popup_content(dialog):
                 right = hudinfo._sim_bust(msg.owner_id)
             except Exception as e:
                 _log('popup pictures failed: {!r}'.format(e))
-        records = ['{}\x1f{}\x1f{}\x1f{}'.format(1 if chat else 0, msg.dialog_id, left, right)]
+        # A Sim asking you something, with the palm or dynamic pie (user 2026-10-23, [ui] chat_pie): their question
+        # alone on the card beside them (no pictures, no buttons), your answers on the pie at your palm.
+        as_pie = (chat and not _chat_buttons and len(msg.choices) > 0 and native.setting_flag('ui', 'chat_pie', True) and
+                  native.setting_flag('ui', 'own_pie', True) and native.setting('ui', 'pie_mode', '0') in ('1', '2'))
+        if as_pie:
+            left = right = 0
+        records = ['{}\x1f{}\x1f{}\x1f{}'.format(0 if as_pie else 1 if chat else 0, msg.dialog_id, left, right)]
         if msg.HasField('title'):
             records.append('title\x1f' + _loc(msg.title))
         if msg.HasField('text'):
             records.append('text\x1f' + _loc(msg.text))
+        answers = []
         for c in msg.choices:
-            records.append('button\x1f' + (_loc(c.text) if c.HasField('text') else '{}') + '\x1f' + str(c.choice_id) +
-                           '\x1f' + (_loc(c.tooltip_text) if c.HasField('tooltip_text') else ''))
+            text = _loc(c.text) if c.HasField('text') else '{}'
+            answers.append(text)
+            if not as_pie:
+                records.append('button\x1f' + text + '\x1f' + str(c.choice_id) + '\x1f' +
+                               (_loc(c.tooltip_text) if c.HasField('tooltip_text') else ''))
             _popup_choices.append(c.choice_id)
         native.popup_content('\x1e'.join(records).encode('utf-8'))
-        _log('popup card from the game\'s message: {} buttons{}'.format(len(_popup_choices), ', two Sims' if chat else ''))
+        if as_pie:
+            from sims4vr import pie
+            pie.send_dialog(answers)
+        _log('popup card from the game\'s message: {} {}{}'.format(
+            len(_popup_choices), 'answers on the pie' if as_pie else 'buttons', ', two Sims' if chat else ''))
     except Exception as e:
         try:
             native.popup_content(b'')
@@ -885,6 +900,9 @@ def list_control(code):
     """The list picker card (the DLL, control event 6000000 + code): 0 starts a pick, 100000 + n adds row n,
     1 sends it (the game's pick_result then respond OK), 2 cancels (pick_result with nothing, respond CANCEL)."""
     global _list_picked
+    if code == 200000:
+        _dialog_pie_closed()
+        return
     try:
         if code == 0:
             _list_picked = []
@@ -905,6 +923,26 @@ def list_control(code):
             _close_on_game_ui(dialog_id, 'list picker')
     except Exception as e:
         _log('the list picker failed: {!r}'.format(e))
+
+
+def _dialog_pie_closed():
+    """The pie with a popup's answers closed without one (the DLL, 6200000): the card gets its buttons back."""
+    global _chat_buttons
+    try:
+        if _popup is None:
+            return
+        import services
+        dialog = services.ui_dialog_service().get_dialog(_popup[0])
+        if dialog is None:
+            return
+        _chat_buttons = True
+        try:
+            _send_popup_content(dialog)
+        finally:
+            _chat_buttons = False
+        _log('popup answers\' pie closed: the buttons back on the card')
+    except Exception as e:
+        _log('putting the popup buttons back failed: {!r}'.format(e))
 
 
 def _close_on_game_ui(dialog_id, what):
@@ -1119,6 +1157,13 @@ def _popup_gone(service):
     _popup = None
     try:
         native.popup_content(b'')
+    except Exception:
+        pass
+    try:
+        from sims4vr import pie
+        if pie._own_items and pie._own_items[0][0] == 'dialog':
+            pie._own_items = []
+            native.pie_menu(0)  # its answers' pie goes with it
     except Exception:
         pass
     _stop_popup_watch()

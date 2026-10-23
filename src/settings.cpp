@@ -555,6 +555,8 @@ std::vector<Row> makeRows() {
         link(menus, L"Popups", L"Menus popups"),
         link(menus, L"Panels and flat screen", L"Menus panels"),
         flag(L"Menus pie", L"Pie drawn by the mod (off: cut from the game's UI)", "ui", "own_pie", true, kLive),  // pie.py
+        flag(L"Menus pie", L"A Sim's question: answers on the palm pie (palm / dynamic)", "ui", "chat_pie", true,
+             kLive),  // objmenu.py
         choice(L"Menus pie", L"Pie menu shows", "ui", "pie_mode", &Config::pieMode,
                {L"In front", L"On your other palm", L"Dynamic"}),
         number(L"Menus pie", L"Pie on the palm: size", "ui", "pie_palm_size", &Config::piePalmSize, 0.15f, 1, 0.05f, 100,

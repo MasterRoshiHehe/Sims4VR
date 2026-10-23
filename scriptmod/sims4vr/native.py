@@ -424,6 +424,13 @@ def popup_content(packed):
         fn(bytes(packed))
 
 
+def dialog_pie():
+    """The next pie (pie_content, pie_menu) holds a popup's answers: on your palm."""
+    fn = _optional('dialog_pie')
+    if fn is not None:
+        fn()
+
+
 def pie_content(packed):
     """The pie menu's options for our own pie card in first person (pie.py); b'': none."""
     fn = _optional('pie_content')

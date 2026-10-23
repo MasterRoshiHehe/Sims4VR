@@ -78,6 +78,7 @@ int s4vr_phone_mount(float* out);
 void s4vr_set_phone_prop(float w, float h, float d);
 void s4vr_set_held(const unsigned long long* ids, int count);
 void s4vr_pie_menu(int items);
+void s4vr_dialog_pie();
 int s4vr_click_hand();
 int s4vr_pie_shown();
 void s4vr_set_testing_cheats(int on);
@@ -550,6 +551,10 @@ PyObject* pieMenu(PyObject*, PyObject* args) {
     s4vr_pie_menu(items);
     return none();
 }
+PyObject* dialogPie(PyObject*, PyObject*) {
+    s4vr_dialog_pie();
+    return none();
+}
 PyObject* setTestingCheats(PyObject*, PyObject* args) {
     int state = 0;  // 1: testing cheats, 2: cheat pie menus (a bool from an older script still works)
     if (!py.PyArg_ParseTuple(args, "i", &state)) return nullptr;
@@ -790,6 +795,7 @@ PyMethodDef methods[] = {
      "set_eyes_held(bool): eyes held shut (load start, exit save) until released"},
     {"set_body_view", setBodyView, METH_VARARGS, "set_body_view(bool): straight ahead lies the way the Sim's body does"},
     {"pie_menu", pieMenu, METH_VARARGS, "pie_menu(items): a pie menu opened for a world click (0: picked from it)"},
+    {"dialog_pie", dialogPie, METH_NOARGS, "dialog_pie(): the next pie holds a popup's answers (on your palm)"},
     {"set_testing_cheats", setTestingCheats, METH_VARARGS,
      "set_testing_cheats(int): the debug menu's testing cheats (1) and cheat pie menus (2) switches as the game has them"},
     {"set_script_mods", setScriptMods, METH_VARARGS,

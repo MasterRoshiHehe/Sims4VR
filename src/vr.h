@@ -40,6 +40,9 @@ bool walkInput(float& x, float& z, float& strength);
 // Any thread: the game built a pie menu for a click into the world (items > 0)
 // or you picked from it. In first person the menu then shows at your hand.
 void pieOpened(int items);
+// The next pie holds a popup's answers (objmenu.py): opened in front of you as your own pie is, on your palm in
+// the palm and dynamic pie modes; closing it without an answer brings the popup's buttons back.
+void dialogPie();
 void pieClosed();
 // Any thread (remote.py): the hand of the last click into the world in first
 // person (0 left, 1 right; laser or fingertip), -1 if none in the last 5 s; and
