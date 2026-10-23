@@ -168,6 +168,13 @@ PIECES = [
     ('kPieButtonOver', 'liveui/art/PieMenu/41__BackButton@over__PickerButtonBackgroundHighlighted_9.png'),
     ('kPieButtonDown', 'liveui/art/PieMenu/46__BackButton@down__PickerButtonBackgroundDown_11.png'),
     ('kPieBackArrow', 'liveui/art/PieMenu/75.png'),
+    # The notebook in your hand (Notebook SWF): the left page with its leather rim and rings (mirrored for the right
+    # one), a category cell (up / over), the page-curl corner and the Sim's white portrait ring.
+    ('kNbPage', 'liveui/art/Notebook/139.png', 1),
+    ('kNbCell', 'liveui/art/Notebook/102__CategoryCellView@down__CategoryCellView@up.png', 2),
+    ('kNbCellOver', 'liveui/art/Notebook/107__CategoryCellView@over.png', 2),
+    ('kNbCurl', 'liveui/art/Notebook/130__NotebookPage.png', 1),
+    ('kNbPortrait', 'liveui/art/Notebook/126.png', 2),
 ]
 EXTRA = 'tools/hud_art_extra.txt'
 # Arrays of one piece per mood (MOODS order): the frames of a mood sprite,

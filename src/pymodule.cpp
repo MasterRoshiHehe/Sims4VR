@@ -58,6 +58,7 @@ void s4vr_popup_content(const char* data, int size);
 void s4vr_picker_content(const char* data, int size);
 void s4vr_pie_content(const char* data, int size);
 void s4vr_phone_content(const char* data, int size);
+void s4vr_notebook_content(const char* data, int size);
 void s4vr_phone_notes(const char* data, int size);
 void s4vr_phone_calendar(const char* data, int size);
 void s4vr_note_over(unsigned long long id, float x, float y, float z, int front);
@@ -414,6 +415,13 @@ PyObject* phoneContent(PyObject*, PyObject* args) {
     int length = 0;
     if (!py.PyArg_ParseTuple(args, "y#", &data, &length)) return nullptr;
     s4vr_phone_content(data, length);
+    return none();
+}
+PyObject* notebookContent(PyObject*, PyObject* args) {
+    const char* data = nullptr;
+    int length = 0;
+    if (!py.PyArg_ParseTuple(args, "y#", &data, &length)) return nullptr;
+    s4vr_notebook_content(data, length);
     return none();
 }
 PyObject* phoneNotes(PyObject*, PyObject* args) {
@@ -827,6 +835,7 @@ PyMethodDef methods[] = {
     {"phone_notes", phoneNotes, METH_VARARGS, "phone_notes(bytes): the game's notifications for the phone (notify.py)"},
     {"phone_calendar", phoneCalendar, METH_VARARGS, "phone_calendar(bytes): the game's calendar for the phone (phonecal.py)"},
     {"note_over", noteOver, METH_VARARGS, "note_over(id, x, y, z, front): a notification card over a Sim's head; 0: none"},
+    {"notebook_content", notebookContent, METH_VARARGS, "notebook_content(bytes): the game's notebook for the book in your hand (b'': gone)"},
     {"phone_content", phoneContent, METH_VARARGS, "phone_content(bytes): the game's phone menu for the phone in your hand (b'': gone)"},
     {"hud_missing_icons", hudMissingIcons, METH_NOARGS, "hud_missing_icons() -> packed u64 instances the HUD still needs"},
     {"thumb", thumb, METH_VARARGS, "thumb(id, path) -> 1 asked, 0 not: the game's thumbnail img://thumbs/<path> as HUD picture id"},

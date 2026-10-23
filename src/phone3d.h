@@ -132,6 +132,13 @@ void setPieces(const Panel* pieces, int count, ID3D11Texture2D* ui);
 // v0.13.152 they were placed at Present, a frame behind the body, and showed
 // doubled in the two eyes while walking).
 void setPiecePlacer(void (*placer)(Panel* pieces, int count));
+// The notebook in your hand (vr.cpp, first person): flat leaves (a page, the cover, the cover's inside) taking
+// `crop` from `atlas` (the HUD's), clear panels drawn in order, depth-tested. Present thread; count 0: none.
+// Each leaf's place is set again on the render thread by the placer (from the joints of the frame drawn).
+constexpr int kMaxBook = 6;
+void setBook(const Panel* leaves, int count, ID3D11Texture2D* atlas);
+void setBookPlacer(void (*placer)(Panel* leaves, int count));
+bool bookDrawnRecently();
 // Sims Forever (simsforever.h): Sims 1's picture on a computer's screen, drawn
 // first of the panels. Same terms; `crop` is of Sims 1's frame, which this
 // takes from simsforever::frameView on the render thread.

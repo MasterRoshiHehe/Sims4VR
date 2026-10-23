@@ -15,7 +15,7 @@
 // eyelids). Pointer input comes back in atlas pixels; buttons return actions.
 namespace s4vr::hud {
 
-constexpr int kWidth = 1024, kHeight = 6000;  // the atlas
+constexpr int kWidth = 1024, kHeight = 7376;  // the atlas
 struct Rect {
     float x, y, w, h;
 };
@@ -41,6 +41,11 @@ constexpr int kBarSlot = 224, kBarSlots = 4;
 constexpr Rect kNote{576, 3584, 448, 360};  // a notification card over a Sim's head (notify.py)
 // The pie menu drawn by us (first person), centred in it; pieScale() atlas pixels per game stage pixel.
 constexpr Rect kPie{0, 5360, 1024, 640};
+// The notebook in your hand (notebook pages, hud.cpp): the left and right page of the open spread, and the leather
+// cover. Each is the game's page 422 x 568 at 512 x 689 atlas pixels.
+constexpr Rect kBookLeft{0, 6000, 512, 688};
+constexpr Rect kBookRight{512, 6000, 512, 688};
+constexpr Rect kBookCover{0, 6688, 512, 688};
 
 // What the buttons ask for. kCancel: the queue item `index` (render's out);
 // kDismissWant: the want `index` (the game's X on a want: a new one comes).
@@ -172,6 +177,10 @@ float pickerHeight();
 // json>\x1f<priority>" and "item\x1f<node>\x1f<parent>\x1f<name json>\x1f<disabled
 // text json>\x1f<notification 0/1>\x1f<priority>".
 void setPhoneContent(const char* data, size_t size);
+// Python (notebook.py): the game's notebook for the book in your hand, records split by 0x1e (see notebook.py); empty: gone.
+void setNotebookContent(const char* data, size_t size);
+// How many spreads the notebook has as drawn last (render thread's layout; 0 before the first draw).
+int notebookSpreads();
 // Any thread (notify.py): the game's notifications for the phone's bell and
 // list: "notes" <unread>, then "note" <id> <read> <picture> <title json> <text json> <time>.
 void setPhoneNotes(const char* data, size_t size);
@@ -221,6 +230,8 @@ struct Frame {
     bool popup = false;      // the popup card
     bool picker = false;     // the picker card (on its object)
     bool pie = false;        // the pie menu drawn by us (kPie)
+    bool book = false;       // the notebook's pages (kBookLeft / kBookRight) and cover (kBookCover)
+    int bookSpread = 0;      // the spread to draw (0 = the owner and the categories)
     bool money = false;      // the money gained / lost
     bool phone = false;      // the game's phone menu (kPhone)
     bool phoneWait = false;  // something the phone's screen needs is still coming (the wallpaper, Options' menu): it waits covered

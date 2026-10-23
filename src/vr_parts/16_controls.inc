@@ -190,6 +190,7 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
         armik::Hand grabHands[2] = {hands[0], hands[1]};
         if (g_noteDrag.hand >= 0 && !g_noteDrag.laser) grabHands[g_noteDrag.hand].grip = 0;
         if (g_phoneOut) grabHands[g_phoneHand].grip = 0;
+        if (g_bookOut) grabHands[g_bookHand].grip = 0;
         if (g_settingsDrag.hand >= 0 && !g_settingsDrag.laser) grabHands[g_settingsDrag.hand].grip = 0;
         grab::update(grabHands, trigger, indexOut, head, firstPerson, g_config.grab);
         for (int i = 0; i < 2; ++i) {
@@ -228,12 +229,29 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
         } else if (!g_phoneOut && !callHold && firstPerson && g_config.phone && head.valid) {
             for (int i : {1, 0}) {
                 if (closed[i] && !closedWas[i] && hands[i].valid && !grab::holding(i) && !armik::holding(i) &&
-                    atRightHip(hands[i], i, head)) {
+                    !(g_bookOut && g_bookHand == i) && atRightHip(hands[i], i, head)) {
                     phoneOpen(i);
                     break;
                 }
             }
         }
+        // Your notebook: the same at the LEFT hip.
+        if (g_bookOut && ((closed[g_bookHand] && !closedWas[g_bookHand] && hands[g_bookHand].valid && head.valid &&
+                           atLeftHip(hands[g_bookHand], g_bookHand, head)) ||
+                          !firstPerson || !g_config.book)) {
+            const bool atHip = firstPerson && g_config.book;
+            if (atHip) buzz(g_bookHand, 0.3f, 0.04f);
+            bookClose(!firstPerson ? "left first person" : !g_config.book ? "switched off" : "back at the hip");
+        } else if (!g_bookOut && firstPerson && g_config.book && head.valid) {
+            for (int i : {0, 1}) {
+                if (closed[i] && !closedWas[i] && hands[i].valid && !grab::holding(i) && !armik::holding(i) &&
+                    !(g_phoneOut && g_phoneHand == i) && atLeftHip(hands[i], i, head)) {
+                    bookOpen(i);
+                    break;
+                }
+            }
+        }
+        updateBookSwipe(hands);
     }
 
     // Touching other Sims (armik): a tap when a hand meets a body or takes a
@@ -308,7 +326,7 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
         // the triggers are just your index fingers.
         for (int i : {g_pointerHand, 1 - g_pointerHand}) {
             if (floatState(g_gripAction, i) > 0.6f && boolState(g_primaryAction, i) && !grab::holding(i) &&
-                !(g_phoneOut && i == g_phoneHand)) {
+                !(g_phoneOut && i == g_phoneHand) && !(g_bookOut && i == g_bookHand)) {
                 laserHand = i;
                 break;
             }
@@ -605,7 +623,7 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
     int pointing = -1;
     if (mode() == Mode::Stereo && camera::bodyActive()) {
         for (int i : {g_pointerHand, 1 - g_pointerHand}) {
-            if (i != laserHand && !(g_phoneOut && i == g_phoneHand) && hands[i].valid && hands[i].grip > 0.6f &&
+            if (i != laserHand && !(g_phoneOut && i == g_phoneHand) && !(g_bookOut && i == g_bookHand) && hands[i].valid && hands[i].grip > 0.6f &&
                 !boolState(g_indexTouchAction, i) &&
                 trigger[i] < 0.15f && !armik::holding(i) && !grab::holding(i)) {
                 pointing = i;

@@ -480,6 +480,13 @@ def phone_content(packed):
         fn(bytes(packed))
 
 
+def notebook_content(packed):
+    """The game's notebook for the book in your hand (notebook.py); b'': gone."""
+    fn = _optional('notebook_content')
+    if fn is not None:
+        fn(bytes(packed))
+
+
 def hud_missing_icons():
     """Packed u64 instances of the icons the HUD still needs (b'' none)."""
     fn = _optional('hud_missing_icons')

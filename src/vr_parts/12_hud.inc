@@ -666,9 +666,9 @@ static void updateHud(const armik::Hand hands[2], bool firstPerson, bool headOk,
     XrVector3f flat = normalize3({look.x, 0, look.z});
     if (!(dot3(flat, flat) > 0.5f)) flat = {0, 0, -1};
     const bool asleep = eyelids::sleeping();
-    const bool leftFree = !grab::holding(0) && !(g_phoneOut && g_phoneHand == 0);
+    const bool leftFree = !grab::holding(0) && !(g_phoneOut && g_phoneHand == 0) && !(g_bookOut && g_bookHand == 0);
 
-    const bool rightFree = !grab::holding(1) && !(g_phoneOut && g_phoneHand == 1);
+    const bool rightFree = !grab::holding(1) && !(g_phoneOut && g_phoneHand == 1) && !(g_bookOut && g_bookHand == 1);
     const Config& c = g_config;
     struct ArmPiece {
         int sheet;
@@ -943,6 +943,9 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
                   (!phone3d::wallpaperReady() && GetTickCount64() - g_phoneMenuSince < 1500);
     f.note = noteShown();
     f.pie = g_hud[kHudPie].m.active;
+    f.book = g_bookOut;
+    f.bookSpread = g_bookSpread;
+    updateBookLeaves();
     // Balloons over Sims (first person): the HUD draws them into its atlas, phone3d puts them in the world.
     {
         static bool balloonsShown = false;
@@ -967,7 +970,7 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
     }
     f.preview = previewArea();
     if (!f.watch && !f.pause && !f.build && !f.needs && !f.moodlets && !f.queue && !f.wants && !f.popup && !f.money &&
-        !f.picker && !f.phone && !f.note && !f.balloons && !f.bars && !f.pie && !f.previewCard && !(f.preview.w > 0))
+        !f.picker && !f.phone && !f.note && !f.balloons && !f.bars && !f.pie && !f.book && !f.previewCard && !(f.preview.w > 0))
         return;
     ID3D11Device* device = nullptr;
     ID3D11DeviceContext* context = nullptr;

@@ -228,6 +228,12 @@ Panel g_pieces[kMaxPieces];
 int g_pieceCount = 0;
 ID3D11ShaderResourceView* g_pieceView = nullptr;
 ID3D11Texture2D* g_pieceTexture = nullptr;
+// The notebook in your hand (setBook): flat leaves of the HUD atlas placed by vr.cpp on the render thread.
+Panel g_book[kMaxBook];
+int g_bookCount = 0;
+ID3D11ShaderResourceView* g_bookView = nullptr;
+ID3D11Texture2D* g_bookTexture = nullptr;
+std::atomic<ULONGLONG> g_bookDrawnAt{0};
 // The tablet's wallpaper: decoded pixels (any thread) and their texture (render thread).
 std::mutex g_wallMutex;
 std::vector<uint32_t> g_wallPixels;  // RGBA
@@ -288,6 +294,8 @@ void releaseAll() {
     safeRelease(g_balloonView);
     g_balloonTexture = nullptr;
     safeRelease(g_pieceView);
+    safeRelease(g_bookView);
+    g_bookTexture = nullptr;
     g_pieceTexture = nullptr;
     safeRelease(g_trailView);
     safeRelease(g_vs);
@@ -741,6 +749,20 @@ void setPieces(const Panel* pieces, int count, ID3D11Texture2D* ui) {
     if (!g_pieceView) g_pieceCount = 0;
 }
 
+std::atomic<void (*)(Panel*, int)> g_bookPlacer{nullptr};
+
+void setBookPlacer(void (*placer)(Panel* leaves, int count)) { g_bookPlacer = placer; }
+
+void setBook(const Panel* leaves, int count, ID3D11Texture2D* ui) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    g_bookCount = ui && leaves ? std::max(0, std::min(count, kMaxBook)) : 0;
+    for (int i = 0; i < g_bookCount; ++i) g_book[i] = leaves[i];
+    if (g_bookCount) viewOf(ui, g_bookView, g_bookTexture);
+    if (!g_bookView) g_bookCount = 0;
+}
+
+bool bookDrawnRecently() { return GetTickCount64() - g_bookDrawnAt.load(std::memory_order_relaxed) < 200; }
+
 void setSims1Screen(const Panel& screen) {
     std::lock_guard<std::mutex> lock(g_mutex);
     g_sims1 = screen;
@@ -1072,25 +1094,25 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
     if (!camera::lastView(view)) return;
     std::unique_lock<std::mutex> lock(g_mutex);
     bool showPhone = g_phone.show, showPanel = g_panel.show, showPie = g_pie.show, showSims1 = g_sims1.show;
-    int bubbleCount = g_bubbleCount, pieceCount = g_pieceCount, balloonCount = g_balloonCount;
+    int bubbleCount = g_bubbleCount, pieceCount = g_pieceCount, balloonCount = g_balloonCount, bookCount = g_bookCount;
     // The guiding trail (first person only): footprints from the route the game planned.
     Panel prints[trail::kMaxPrints];
     int printCount = camera::bodyActive() && trail::active()
                          ? trail::build(prints, trail::kMaxPrints, view.position.x, view.position.z, view.scale)
                          : 0;
-    if (!showPhone && !showPanel && !showPie && !showSims1 && !bubbleCount && !balloonCount && !pieceCount && !printCount) return;
+    if (!showPhone && !showPanel && !showPie && !showSims1 && !bubbleCount && !balloonCount && !pieceCount && !bookCount && !printCount) return;
     ID3D11Device* device = nullptr;
     context->GetDevice(&device);
     if (device) device->Release();  // only used here, while the context holds it
     if (!device || !init(device)) return;
     if (showPhone && !buildMesh(device, g_phone)) showPhone = false;
-    if ((showPanel || showPie || showSims1 || bubbleCount || balloonCount || pieceCount || printCount) && !buildPanelMesh(device)) {
+    if ((showPanel || showPie || showSims1 || bubbleCount || balloonCount || pieceCount || bookCount || printCount) && !buildPanelMesh(device)) {
         showPanel = showPie = showSims1 = false;
-        bubbleCount = balloonCount = pieceCount = printCount = 0;
+        bubbleCount = balloonCount = pieceCount = bookCount = printCount = 0;
     }
     ID3D11ShaderResourceView* trailView = printCount ? trailTexture(device) : nullptr;
     if (!trailView) printCount = 0;
-    if (!showPhone && !showPanel && !showPie && !showSims1 && !bubbleCount && !balloonCount && !pieceCount && !printCount) return;
+    if (!showPhone && !showPanel && !showPie && !showSims1 && !bubbleCount && !balloonCount && !pieceCount && !bookCount && !printCount) return;
     if (showPhone && g_phone.wallpaper) makeWallpaper(device);
     const Phone p = g_phone;
     Panel q = g_panel, pie = g_pie;
@@ -1115,11 +1137,17 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
     std::copy(g_pieces, g_pieces + pieceCount, pieces);
     ID3D11ShaderResourceView* pieceView = pieceCount ? g_pieceView : nullptr;
     if (pieceView) pieceView->AddRef();
+    Panel leaves[kMaxBook];
+    std::copy(g_book, g_book + bookCount, leaves);
+    ID3D11ShaderResourceView* bookView = bookCount ? g_bookView : nullptr;
+    if (bookView) bookView->AddRef();
     HandCapsule hands[kHandCapsules];
     const int handCount = GetTickCount64() - g_handsAt < 300 ? g_handCount : 0;
     std::copy(g_hands, g_hands + handCount, hands);
     lock.unlock();
     if (auto placer = g_piecePlacer.load()) placer(pieces, pieceCount);
+    if (bookView)
+        if (auto placer = g_bookPlacer.load()) placer(leaves, bookCount);
 
     // The target's size, for the viewport; the depth must match it.
     ID3D11Resource* resource = nullptr;
@@ -1460,6 +1488,23 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
         context->PSSetShaderResources(0, 1, &uiView);
         static int logged = 0;
         if (logged++ < 3) LOG("Wrist pieces: %d drawn", pieceCount);
+    }
+    if (bookView) {
+        // The notebook in your hand: leaves in order (later over earlier), depth-tested.
+        context->OMSetBlendState(g_premultiplied, nullptr, 0xffffffff);
+        context->PSSetShaderResources(0, 1, &bookView);
+        context->IASetVertexBuffers(0, 1, &g_panelVertices, &stride, &offset);
+        for (int j = 0; j < bookCount; ++j) {
+            Constants kLeaf{};
+            panelConstants(leaves[j], kLeaf, bookView);
+            context->OMSetDepthStencilState(tested, 0);
+            context->UpdateSubresource(g_constants, 0, nullptr, &kLeaf, 0, 0);
+            context->Draw(6, 0);
+        }
+        context->OMSetBlendState(nullptr, nullptr, 0xffffffff);
+        context->PSSetShaderResources(0, 1, &uiView);
+        g_bookDrawnAt.store(GetTickCount64(), std::memory_order_relaxed);
+        bookView->Release();
     }
     if (showPie) {
         // Last, blended over what is behind it; anything nearer (your hands)

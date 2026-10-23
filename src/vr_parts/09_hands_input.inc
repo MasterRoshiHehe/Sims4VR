@@ -66,6 +66,14 @@ static void smoothAim(XrVector3f& origin, XrVector3f& dir) {
 static bool g_phoneOut = false;
 static std::atomic<bool> g_onCall{false};  // a phone call of your Sim is running (nophone.py): the phone stays in the hand
 static int g_phoneHand = 1;
+// Your Sim's notebook (14b_notebook.inc): the hand holding it (0 left, 1 right), the spread showing, the cover's
+// opening (0..1).
+static bool g_bookOut = false;
+static int g_bookHand = 0;
+static int g_bookSpread = 0;
+static float g_bookAnim = 0;
+static void bookHandShift(int side, camera::Vec3& move, camera::Quat& turn);
+static void updateBookLeaves();
 static bool g_tablet = false;  // what's out is the tablet (first-person build/buy), not the phone
 static float g_tabletAspect = 1;  // its screen's width / height (the palette's, or the whole UI's)
 static void phoneSize(float& w, float& h, float& d);
@@ -269,9 +277,24 @@ static void updateHands(XrTime time, armik::Hand hands[2]) {
         posed[g_phoneHand].thumb = 0;
         phoneHandShift(g_phoneHand, move, turn);
     }
-    for (int i = 0; i < 2; ++i)
-        armik::setHoldPose(i, phoneHeld && i == g_phoneHand, g_config.phoneCurl, g_config.phoneThumbBend,
-                           g_config.phoneThumbSpread * 0.0174533f, move, turn);
+    const bool bookHeld = g_bookOut && !g_handTracked[g_bookHand];
+    camera::Vec3 bookMove{0, 0, 0};
+    camera::Quat bookTurn{0, 0, 0, 1};
+    if (bookHeld) {
+        posed[g_bookHand].grip = g_config.bookCurl;
+        posed[g_bookHand].index = g_config.bookCurl;
+        posed[g_bookHand].trigger = 0;  // the book squeezes no Sim
+        posed[g_bookHand].thumb = 0;
+        bookHandShift(g_bookHand, bookMove, bookTurn);
+    }
+    for (int i = 0; i < 2; ++i) {
+        if (bookHeld && i == g_bookHand)
+            armik::setHoldPose(i, true, g_config.bookCurl, g_config.bookThumbBend, g_config.bookThumbSpread * 0.0174533f,
+                               bookMove, bookTurn);
+        else
+            armik::setHoldPose(i, phoneHeld && i == g_phoneHand, g_config.phoneCurl, g_config.phoneThumbBend,
+                               g_config.phoneThumbSpread * 0.0174533f, move, turn);
+    }
     armik::setHands(posed);
 }
 

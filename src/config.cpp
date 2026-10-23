@@ -288,6 +288,35 @@ Config loadConfig(const std::wstring& ini) {
     c.phoneTilt = readFloat(ini, "phone", "tilt", c.phoneTilt);
     c.phoneYaw = readFloat(ini, "phone", "yaw", c.phoneYaw);
     c.phonePitch = readFloat(ini, "phone", "pitch", c.phonePitch);
+    c.book = readBool(ini, "book", "book", c.book);
+    c.bookHipDrop = readFloat(ini, "book", "hip_drop", c.bookHipDrop);
+    c.bookWidth = readFloat(ini, "book", "book_width", c.bookWidth);
+    if (!(c.bookWidth >= 0.08f && c.bookWidth <= 0.8f)) c.bookWidth = 0.26f;
+    c.bookTilt = readFloat(ini, "book", "tilt", c.bookTilt);
+    c.bookYaw = readFloat(ini, "book", "yaw", c.bookYaw);
+    c.bookPitch = readFloat(ini, "book", "pitch", c.bookPitch);
+    c.bookCurl = readFloat(ini, "book", "finger_curl", c.bookCurl);
+    if (!(c.bookCurl >= 0 && c.bookCurl <= 1)) c.bookCurl = 0.5f;
+    c.bookThumbBend = readFloat(ini, "book", "thumb_bend", c.bookThumbBend);
+    if (!(c.bookThumbBend >= 0 && c.bookThumbBend <= 1)) c.bookThumbBend = 0.3f;
+    c.bookThumbSpread = readFloat(ini, "book", "thumb_spread", c.bookThumbSpread);
+    if (!(c.bookThumbSpread >= -90 && c.bookThumbSpread <= 90)) c.bookThumbSpread = 0;
+    c.bookOpenSeconds = readFloat(ini, "book", "open_seconds", c.bookOpenSeconds);
+    if (!(c.bookOpenSeconds >= 0.1f && c.bookOpenSeconds <= 3)) c.bookOpenSeconds = 0.7f;
+    c.bookSwipe = readFloat(ini, "book", "swipe", c.bookSwipe);
+    if (!(c.bookSwipe >= 0.03f && c.bookSwipe <= 0.4f)) c.bookSwipe = 0.10f;
+    {
+        float v[3];
+        std::string s = readString(ini, "book", "book_offset", "");
+        if (sscanf(s.c_str(), "%f %f %f", &v[0], &v[1], &v[2]) == 3)
+            for (int i = 0; i < 3; ++i) c.bookOffset[i] = v[i];
+        s = readString(ini, "book", "hand_offset", "");
+        if (sscanf(s.c_str(), "%f %f %f", &v[0], &v[1], &v[2]) == 3)
+            for (int i = 0; i < 3; ++i) c.bookHandOffset[i] = v[i] >= -0.2f && v[i] <= 0.2f ? v[i] : 0;
+        s = readString(ini, "book", "hand_turn", "");
+        if (sscanf(s.c_str(), "%f %f %f", &v[0], &v[1], &v[2]) == 3)
+            for (int i = 0; i < 3; ++i) c.bookHandTurn[i] = v[i] >= -180 && v[i] <= 180 ? v[i] : 0;
+    }
     c.tablet = readBool(ini, "tablet", "tablet", true);
     c.tabletWidth = readFloat(ini, "tablet", "width", c.tabletWidth);
     if (!(c.tabletWidth >= 0.1f && c.tabletWidth <= 0.6f)) c.tabletWidth = 0.30f;

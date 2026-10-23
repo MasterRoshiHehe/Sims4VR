@@ -129,6 +129,10 @@ const Page kFixedPages[] = {
     {L"Phone size", L"Size and screen", L"Phone"},
     {L"Phone model", L"Game's phone model", L"Phone"},
     {L"Tablet", L"Tablet (build/buy)", L"Phone"},
+    {L"Notebook", L"Notebook", L"Interface"},
+    {L"Notebook position", L"Position", L"Notebook"},
+    {L"Notebook hand", L"Hand", L"Notebook"},
+    {L"Notebook size", L"Size and turning pages", L"Notebook"},
     {L"Performance", L"Claude Performance", L"", othermods::kPerformance},
 };
 // The pages: ours, then those other mods' menu exports add (Integrated Body Physics, Extended Sound Control: mergeMenus).
@@ -278,6 +282,10 @@ std::vector<Row> makeRows() {
     const wchar_t* phoneSize = L"Phone size";
     const wchar_t* phoneModel = L"Phone model";
     const wchar_t* tablet = L"Tablet";
+    const wchar_t* notebook = L"Notebook";
+    const wchar_t* notebookPosition = L"Notebook position";
+    const wchar_t* notebookHand = L"Notebook hand";
+    const wchar_t* notebookSize = L"Notebook size";
     const wchar_t* testing = L"Testing";
     Row view3;
     view3.group = L"Play";
@@ -410,6 +418,7 @@ std::vector<Row> makeRows() {
         link(L"Interface", L"Popups", L"Menus popups"),
         link(L"Interface", L"Speech bubbles and skill bars", L"Bubbles"),
         link(L"Interface", L"Phone", L"Phone"),
+        link(L"Interface", L"Notebook", L"Notebook"),
         link(L"Interface", L"Panels and flat screen", L"Menus panels"),
         // Their pages come from their own menu exports once they are loaded (mergeMenus, v0.13.236/237).
         link(L"Other mods", L"Integrated Body Physics", L"ibp:main"),
@@ -712,6 +721,43 @@ std::vector<Row> makeRows() {
                   L"%+.0f\u00b0"),
         component(phoneHand, L"Hand roll", "phone", "hand_turn", &Config::phoneHandTurn, 2, -90, 90, 5, 1,
                   L"%+.0f\u00b0"),
+        toggle(notebook, L"Notebook at your left hip", "book", "book", &Config::book),
+        number(notebook, L"Hip: hand below your eyes", "book", "hip_drop", &Config::bookHipDrop, 0.1f, 0.9f, 0.02f, 100,
+               L"%.0f cm"),
+        link(notebook, L"Position", notebookPosition),
+        link(notebook, L"Hand", notebookHand),
+        link(notebook, L"Size and turning pages", notebookSize),
+        angle(notebookPosition, L"Tilt", "book", "tilt", &Config::bookTilt),
+        angle(notebookPosition, L"Turn", "book", "yaw", &Config::bookYaw),
+        angle(notebookPosition, L"Tip back / forward", "book", "pitch", &Config::bookPitch),
+        component(notebookPosition, L"Toward the back of the hand", "book", "book_offset", &Config::bookOffset, 0, -0.15f,
+                  0.15f, 0.002f, 100, L"%+.1f cm"),
+        component(notebookPosition, L"Toward the thumb", "book", "book_offset", &Config::bookOffset, 1, -0.15f, 0.15f,
+                  0.002f, 100, L"%+.1f cm"),
+        component(notebookPosition, L"Toward the wrist", "book", "book_offset", &Config::bookOffset, 2, -0.15f, 0.15f,
+                  0.002f, 100, L"%+.1f cm"),
+        number(notebookHand, L"Finger curl", "book", "finger_curl", &Config::bookCurl, 0, 1, 0.05f, 1, L"%.2f"),
+        number(notebookHand, L"Thumb bend", "book", "thumb_bend", &Config::bookThumbBend, 0, 1, 0.05f, 1, L"%.2f"),
+        number(notebookHand, L"Thumb spread", "book", "thumb_spread", &Config::bookThumbSpread, -60, 60, 5, 1,
+               L"%+.0f\u00b0"),
+        component(notebookHand, L"Hand out from the book", "book", "hand_offset", &Config::bookHandOffset, 0, -0.1f, 0.1f,
+                  0.002f, 100, L"%+.1f cm"),
+        component(notebookHand, L"Hand up the book", "book", "hand_offset", &Config::bookHandOffset, 1, -0.1f, 0.1f,
+                  0.002f, 100, L"%+.1f cm"),
+        component(notebookHand, L"Hand toward you", "book", "hand_offset", &Config::bookHandOffset, 2, -0.1f, 0.1f,
+                  0.002f, 100, L"%+.1f cm"),
+        component(notebookHand, L"Hand turn", "book", "hand_turn", &Config::bookHandTurn, 0, -90, 90, 5, 1,
+                  L"%+.0f\u00b0"),
+        component(notebookHand, L"Hand tip", "book", "hand_turn", &Config::bookHandTurn, 1, -90, 90, 5, 1,
+                  L"%+.0f\u00b0"),
+        component(notebookHand, L"Hand roll", "book", "hand_turn", &Config::bookHandTurn, 2, -90, 90, 5, 1,
+                  L"%+.0f\u00b0"),
+        number(notebookSize, L"Width (both pages)", "book", "book_width", &Config::bookWidth, 0.1f, 0.6f, 0.01f, 100,
+               L"%.0f cm"),
+        number(notebookSize, L"Cover opening time", "book", "open_seconds", &Config::bookOpenSeconds, 0.1f, 3, 0.1f, 1,
+               L"%.1f s"),
+        number(notebookSize, L"Page turn: swipe length", "book", "swipe", &Config::bookSwipe, 0.03f, 0.3f, 0.01f, 100,
+               L"%.0f cm"),
         number(phoneSize, L"Width", "phone", "phone_width", &Config::phoneWidth, 0.04f, 0.2f, 0.002f, 100, L"%.1f cm"),
         number(phoneSize, L"Height", "phone", "phone_height", &Config::phoneHeight, 0.08f, 0.3f, 0.002f, 100, L"%.1f cm"),
         number(phoneSize, L"Thickness", "phone", "phone_depth", &Config::phoneDepth, 0.003f, 0.03f, 0.001f, 100,

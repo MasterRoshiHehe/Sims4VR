@@ -336,6 +336,11 @@ S4VR_API void s4vr_phone_content(const char* data, int size) {
     s4vr::strings::start();
     s4vr::hud::setPhoneContent(data, size > 0 ? static_cast<size_t>(size) : 0);
 }
+// The game's notebook for the book in your hand (hud::setNotebookContent); empty: gone.
+S4VR_API void s4vr_notebook_content(const char* data, int size) {
+    s4vr::strings::start();
+    s4vr::hud::setNotebookContent(data, size > 0 ? static_cast<size_t>(size) : 0);
+}
 S4VR_API void s4vr_phone_notes(const char* data, int size) {
     s4vr::strings::start();
     s4vr::hud::setPhoneNotes(data, size > 0 ? static_cast<size_t>(size) : 0);

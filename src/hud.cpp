@@ -172,6 +172,7 @@ bool g_phoneNew = false;    // g_phoneIn changed (g_phoneMutex)
 PhoneContent g_phone;       // present thread
 bool g_phoneOn = false;     // present thread: there is one
 std::vector<uint64_t> g_phoneIcons;  // its apps' icons (g_itemMutex)
+std::vector<uint64_t> g_nbIcons;     // the notebook's icons, read ahead (g_itemMutex)
 // What you did on it (present thread): the screen (the home screen, or the
 // list of the app `g_phoneApp`, opened from the home screen's app
 // g_phoneRoot), the home screen's page, the list's first row shown.
@@ -2806,6 +2807,7 @@ int missingIcons(uint64_t* out, int max) {
     for (uint64_t id : g_popupIcons) want(id);
     for (uint64_t id : g_phoneIcons) want(id);
     for (uint64_t id : g_noteIcons) want(id);
+    for (uint64_t id : g_nbIcons) want(id);
     for (const Balloon& b : g_balloons) want(b.picture), want(b.overlay), want(b.category);
     for (const Bar& b : g_bars) want(b.icon);
     for (uint64_t id : g_phonePreload) want(id);  // what the phone may show next (read ahead)
@@ -3149,6 +3151,68 @@ void setClock(int hour, int minute, int day, int speed) {
 
 #include "hud_pie.inc"
 
+namespace {
+#include "notebook_ui.inc"
+}  // namespace
+
+// Python (notebook.py): the game's notebook for the book in your hand; empty: gone.
+void setNotebookContent(const char* data, size_t size) {
+    NbContent c;
+    const std::string all(data ? data : "", data ? size : 0);
+    size_t at = 0;
+    NbCat* cat = nullptr;
+    NbSub* sub = nullptr;
+    NbEntry* entry = nullptr;
+    while (!all.empty() && at <= all.size()) {
+        size_t end = all.find('\x1e', at);
+        const std::vector<std::string> f = fieldsOf(all.substr(at, end == std::string::npos ? std::string::npos : end - at));
+        at = end == std::string::npos ? all.size() + 1 : end + 1;
+        if (f[0] == "nb" && f.size() >= 4) {
+            c.valid = true;
+            c.name = f[1];
+            c.portrait = std::strtoull(f[2].c_str(), nullptr, 10);
+            c.notes = f[3];
+        } else if (f[0] == "cat" && f.size() >= 5) {
+            c.cats.emplace_back();
+            cat = &c.cats.back();
+            sub = nullptr;
+            entry = nullptr;
+            cat->nameJson = f[1];
+            cat->descJson = f[2];
+            cat->icon = std::strtoull(f[3].c_str(), nullptr, 10);
+            cat->large = std::strtoull(f[4].c_str(), nullptr, 10);
+        } else if (f[0] == "sub" && f.size() >= 3 && cat) {
+            cat->subs.emplace_back();
+            sub = &cat->subs.back();
+            entry = nullptr;
+            sub->nameJson = f[1];
+            sub->icon = std::strtoull(f[2].c_str(), nullptr, 10);
+        } else if (f[0] == "ent" && f.size() >= 5 && sub) {
+            sub->entries.emplace_back();
+            entry = &sub->entries.back();
+            entry->textJson = f[1];
+            entry->descJson = f[2];
+            entry->icon = std::strtoull(f[3].c_str(), nullptr, 10);
+            entry->isNew = f[4] == "1";
+        } else if (f[0] == "itm" && f.size() >= 5 && entry) {
+            NbItem item;
+            item.textJson = f[1];
+            item.icon = std::strtoull(f[2].c_str(), nullptr, 10);
+            item.count = std::atoi(f[3].c_str());
+            item.total = std::atoi(f[4].c_str());
+            entry->items.push_back(item);
+        }
+        if (end == std::string::npos) break;
+    }
+    if (c.valid)
+        LOG("HUD: notebook of %s: %zu categories", c.name.c_str(), c.cats.size());
+    std::lock_guard<std::mutex> lock(g_nbMutex);
+    g_nbIn = c;
+    g_nbNew = true;
+}
+
+int notebookSpreads() { return g_nbSpreads.load(); }
+
 Action render(ID3D11Device* device, ID3D11DeviceContext* context, const Frame& f, int* index) {
     if (g_failed) return kNone;
     if (!g_imgui && !init(device, context)) {
@@ -3232,6 +3296,7 @@ Action render(ID3D11Device* device, ID3D11DeviceContext* context, const Frame& f
     if (f.pie && g_pieMenu.valid) take(drawPie(index));
     if (f.note) take(drawNote(f.note, index));
     else g_noteHeight = 0;
+    if (f.book) drawNotebook(f);
     ImGui::End();
     ImGui::Render();
     if (phoneShown) {

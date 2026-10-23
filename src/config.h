@@ -305,6 +305,18 @@ struct Config {
     float phoneHandTurn[3] = {0, 0, 0};    // and turned about the palm (degrees): about the phone's up axis, its left-right axis, its screen's line
     bool phoneProp = true;        // also put the game's phone model in the Sim's hand (mirrors; hidden from your eyes)
     float phoneCropWidth = 0.45f, phoneCropHeight = 0.80f;  // part of the UI shown before the menu is measured (x UI height)
+    // Notebook (first person): close your hand at your LEFT hip and your Sim holds its notebook, a leather book that
+    // swings open on the game's notebook pages; a hand swiped across it turns the pages.
+    bool book = true;
+    float bookHipDrop = 0.40f;    // metres below your eyes your hand must be
+    float bookWidth = 0.26f;      // the open book's width (both pages), metres; its height follows the pages
+    float bookOffset[3] = {-0.064f, 0.042f, 0.024f};  // book centre (the spine's middle) from the grip, as the phone's
+    float bookTilt = -15, bookYaw = 90, bookPitch = 45;  // degrees, as the phone's
+    float bookCurl = 0.5f, bookThumbBend = 0.3f, bookThumbSpread = 0;
+    float bookHandOffset[3] = {0, 0, 0};
+    float bookHandTurn[3] = {0, 0, 0};
+    float bookOpenSeconds = 0.7f;  // the cover swinging open
+    float bookSwipe = 0.10f;       // metres your other hand sweeps along the book to turn a page
     // [tablet] In first-person build/buy the phone gesture brings out a tablet
     // with the whole build/buy UI on its screen instead.
     bool tablet = true;
