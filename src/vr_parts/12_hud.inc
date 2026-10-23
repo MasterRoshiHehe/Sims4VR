@@ -921,7 +921,7 @@ static hud::Rect previewArea() {
 static void drawHud(ID3D11Texture2D* backbuffer) {
     {
         const wchar_t* page = settings::openPage();
-        bubbles::setPreview(!page ? 0 : !wcscmp(page, L"Bubbles yours") ? 1 : !wcscmp(page, L"Bubbles pops") ? 2 : 0);
+        bubbles::setPreview(!page ? 0 : !wcscmp(page, L"Bubbles yours") ? 1 : !wcscmp(page, L"Bubbles skill") ? 3 : !wcscmp(page, L"Bubbles pops") ? 2 : 0);
     }
     hud::Frame f = g_hudInput;
     f.watch = g_hud[kHudWatch].m.active || g_hud[kHudSleep].m.active;

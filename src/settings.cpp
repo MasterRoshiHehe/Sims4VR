@@ -80,25 +80,34 @@ struct Page {
 const Page kFixedPages[] = {
     {L"", L"Sims4VR", nullptr},
     {L"Testing", L"Testing cheats", L""},
-    {L"Advanced", L"Advanced", L""},
-    {L"View", L"View", L"Advanced"},
-    {L"View picture", L"Picture", L"View"},
-    {L"View motion", L"Smooth motion", L"View"},
-    {L"View align", L"Right eye alignment", L"View"},
-    {L"View head", L"Head and body", L"View"},
-    {L"View near", L"Near clipping", L"View"},
-    {L"View shadows", L"Shadows", L"View"},
-    {L"View speed", L"Speed test", L"View"},
-    {L"Moving", L"Moving", L"Advanced"},
-    {L"Hands", L"Hands", L"Advanced"},
-    {L"Reach", L"Reach and game control", L"Advanced"},
-    {L"Other Sims", L"Other Sims", L"Advanced"},
-    {L"Menus", L"Menus and popups", L"Advanced"},
-    {L"Menus pie", L"Pie menu", L"Menus"},
-    {L"Menus pickers", L"Pickers on objects", L"Menus"},
-    {L"Menus popups", L"Popups", L"Menus"},
-    {L"Menus panels", L"Panels and flat screen", L"Menus"},
-    {L"HUD", L"Wrist and HUD", L"Advanced"},
+    // Options: the five categories (user 2026-10-23: the menu got hard to navigate).
+    {L"Options", L"Options", L""},
+    {L"Game", L"Game settings", L"Options"},
+    {L"Reach", L"Reach and walking to things", L"Game"},
+    {L"Other Sims", L"Other Sims", L"Game"},
+    {L"Other Sims touch", L"Touching and grabbing", L"Other Sims"},
+    {L"Loading", L"Loading and saving", L"Game"},
+    {L"Graphics", L"Graphics & Performance", L"Options"},
+    {L"View picture", L"Picture", L"Graphics"},
+    {L"View mirrors", L"Mirrors and reflections", L"Graphics"},
+    {L"View near", L"Near clipping", L"Graphics"},
+    {L"View shadows", L"Shadows", L"Graphics"},
+    {L"View motion", L"Smooth motion", L"Graphics"},
+    {L"View eyes", L"Depth eye and tests", L"Graphics"},
+    {L"View align", L"Right eye alignment", L"View eyes"},
+    {L"View speed", L"Performance and tests", L"Graphics"},
+    {L"Sound", L"Sound", L"Options"},
+    {L"Controls", L"Controls", L"Options"},
+    {L"Moving", L"Moving", L"Controls"},
+    {L"Turning", L"Turning", L"Controls"},
+    {L"Hands", L"Hands and touch", L"Controls"},
+    {L"View head", L"Head and body", L"Controls"},
+    {L"Interface", L"Interface", L"Options"},
+    {L"Menus pie", L"Pie menu", L"Interface"},
+    {L"Menus pickers", L"Pickers on objects", L"Interface"},
+    {L"Menus popups", L"Popups", L"Interface"},
+    {L"Menus panels", L"Panels and flat screen", L"Interface"},
+    {L"HUD", L"Wrist HUD", L"Interface"},
     {L"HUD watch", L"Watch", L"HUD"},
     {L"HUD needs", L"Needs", L"HUD"},
     {L"HUD moodlets", L"Moodlets", L"HUD"},
@@ -107,17 +116,19 @@ const Page kFixedPages[] = {
     {L"HUD wants", L"Wants", L"HUD"},
     {L"HUD pause", L"Pause symbol", L"HUD"},
     {L"HUD sleep", L"Clock while asleep", L"HUD"},
-    {L"HUD note", L"Notification card", L"HUD"},
-    {L"Bubbles", L"Speech bubbles and skill bars", L"Advanced"},
-    {L"Bubbles yours", L"Where yours sit", L"Bubbles"},
+    {L"HUD note", L"Notification card", L"Interface"},
+    {L"Bubbles", L"Speech bubbles and skill bars", L"Interface"},
+    {L"Bubbles yours", L"Your bubble", L"Bubbles"},
+    {L"Bubbles skill", L"Your skill bar", L"Bubbles"},
     {L"Bubbles pops", L"Your stat and relationship pops", L"Bubbles"},
-    {L"Phone", L"Phone", L"Advanced"},
+    {L"Bubbles scandal", L"Your scandal mark", L"Bubbles"},
+    {L"Bubbles others", L"Other Sims' bubbles", L"Bubbles"},
+    {L"Phone", L"Phone", L"Interface"},
     {L"Phone position", L"Position", L"Phone"},
     {L"Phone hand", L"Hand", L"Phone"},
     {L"Phone size", L"Size and screen", L"Phone"},
     {L"Phone model", L"Game's phone model", L"Phone"},
     {L"Tablet", L"Tablet (build/buy)", L"Phone"},
-    {L"Sound", L"Sound", L"Advanced"},
     {L"Performance", L"Claude Performance", L"", othermods::kPerformance},
 };
 // The pages: ours, then those other mods' menu exports add (Integrated Body Physics, Extended Sound Control: mergeMenus).
@@ -253,12 +264,13 @@ Row choice(const wchar_t* group, const wchar_t* label, const char* section, cons
     return r;
 }
 
+#include "settings_tips.inc"
+
 std::vector<Row> makeRows() {
-    const wchar_t* view = L"View";
     const wchar_t* moving = L"Moving";
     const wchar_t* hands = L"Hands";
     const wchar_t* sims = L"Other Sims";
-    const wchar_t* menus = L"Menus";
+    const wchar_t* front = L"Settings";  // the first page under Play: the way into Options
     const wchar_t* sound = L"Sound";
     const wchar_t* phone = L"Phone";
     const wchar_t* phonePosition = L"Phone position";
@@ -267,8 +279,6 @@ std::vector<Row> makeRows() {
     const wchar_t* phoneModel = L"Phone model";
     const wchar_t* tablet = L"Tablet";
     const wchar_t* testing = L"Testing";
-    const wchar_t* front = L"Settings";  // the first page, under Play: the everyday settings
-    const wchar_t* advanced = L"Advanced";
     Row view3;
     view3.group = L"Play";
     view3.label = L"First person / game camera";
@@ -331,7 +341,7 @@ std::vector<Row> makeRows() {
     alignReset.tip = L"Picture and headset rows back to 0 (eye distance and depth to 100%). Each change logs "
                      L"\"Depth eye alignment\" and is saved in your ini.";
     Row reset;
-    reset.group = advanced;
+    reset.group = L"Options";
     reset.label = L"Use sims4vr.ini for everything";
     reset.kind = Kind::Reset;
     std::vector<Row> rows = {
@@ -344,45 +354,63 @@ std::vector<Row> makeRows() {
         link(L"Play", L"Testing cheats", testing),
         // The everyday settings on the first page, the rest under Advanced (user 2026-10-17 16:09Z, v0.13.235;
         // these rows moved here from their pages).
-        number(front, L"Render resolution", "stereo", "render_scale", &Config::renderScale, 0.4f, 1.5f, 0.05f, 100,
+        number(L"View picture", L"Render resolution", "stereo", "render_scale", &Config::renderScale, 0.4f, 1.5f, 0.05f, 100,
                L"%.0f%%", kRenderScale),
-        number(front, L"Walk speed", "body", "walk_speed", &Config::walkSpeed, 0.5f, 5, 0.1f, 1, L"%.1f m/s", kWalk),
-        number(front, L"Turn speed", "body", "turn_rate", &Config::bodyTurnRate, 30, 360, 10, 1, L"%.0f°/s"),
-        toggle(front, L"Snap turning (off: smooth turning)", "controls", "snap_turn", &Config::snapTurn),
-        number(front, L"Snap turn angle (small push)", "controls", "snap_angle", &Config::snapAngle, 15, 90, 15, 1, L"%.0f°"),
-        number(front, L"Snap turn angle (stick all the way, 0 = same)", "controls", "snap_angle_big", &Config::snapAngleBig, 0,
+        number(L"Moving", L"Walk speed", "body", "walk_speed", &Config::walkSpeed, 0.5f, 5, 0.1f, 1, L"%.1f m/s", kWalk),
+        number(L"Turning", L"Turn speed", "body", "turn_rate", &Config::bodyTurnRate, 30, 360, 10, 1, L"%.0f°/s"),
+        toggle(L"Turning", L"Snap turning (off: smooth turning)", "controls", "snap_turn", &Config::snapTurn),
+        number(L"Turning", L"Snap turn angle (small push)", "controls", "snap_angle", &Config::snapAngle, 15, 90, 15, 1, L"%.0f°"),
+        number(L"Turning", L"Snap turn angle (stick all the way, 0 = same)", "controls", "snap_angle_big", &Config::snapAngleBig, 0,
                180, 15, 1, L"%.0f°"),
-        flag(front, L"Walk there yourself (footprint trail)", "body", "trail", true, kLive),  // trail.py
-        number(front, L"Trail: how near its end starts the action", "body", "trail_arrive", &Config::trailArrive, 0.3f, 2,
+        flag(L"Reach", L"Walk there yourself (footprint trail)", "body", "trail", true, kLive),  // trail.py
+        number(L"Reach", L"Trail: how near its end starts the action", "body", "trail_arrive", &Config::trailArrive, 0.3f, 2,
                0.1f, 100, L"%.0f cm"),  // trail.py
-        number(front, L"Trail: the same for touching socials", "body", "trail_arrive_contact", &Config::trailArriveContact,
+        number(L"Reach", L"Trail: the same for touching socials", "body", "trail_arrive_contact", &Config::trailArriveContact,
                0.1f, 1, 0.05f, 100, L"%.0f cm"),  // trail.py
-        toggle(front, L"Recenter turns your body to your view (in actions: view to the body)", "controls",
+        toggle(L"Turning", L"Recenter turns your body to your view (in actions: view to the body)", "controls",
                "recenter_turns_body", &Config::recenterTurnsBody),
-        flag(front, L"Start with eyes closed and time paused until you can move", "body", "load_eyes_closed", true,
+        flag(L"Loading", L"Start with eyes closed and time paused until you can move", "body", "load_eyes_closed", true,
              kLive),  // loadshut.py
-        flag(front, L"Eyes closed while saving on exit", "body", "exit_eyes_closed", true, kLive),  // loadshut.py
-        toggle(front, L"Pick things up", "hands", "grab", &Config::grab, kNextStart),
-        toggle(front, L"Touch to click", "body", "touch", &Config::touch, kNextStart),
-        toggle(front, L"Pie menu at your hand", "ui", "pie_at_hand", &Config::pieAtHand),
-        toggle(front, L"Popups in the world", "ui", "popups_3d", &Config::popups3d),
-        toggle(front, L"HUD on (all of it)", "wrist", "hud", &Config::wristPieces),
-        number(front, L"HUD size (all of it)", "wrist", "scale", &Config::wristScale, 0.3f, 3, 0.05f, 100, L"%.0f%%"),
-        toggle(front, L"Phone at your hip", "phone", "phone", &Config::phone),
-        flag(front, L"Notifications about one Sim over their head (off: phone only)", "phone", "notes_overhead", true, kLive),  // notify.py
-        toggle(front, L"Mic moves your Sim's mouth", "voice", "mic", &Config::voiceMic, kNextStart),
-        link(front, L"Advanced settings", advanced),
-        link(advanced, L"View", view),
-        link(advanced, L"Moving", moving),
-        link(advanced, L"Hands", hands),
-        link(advanced, L"Reach and game control", L"Reach"),
-        link(advanced, L"Other Sims", sims),
-        link(advanced, L"Menus and popups", menus),
-        link(advanced, L"Wrist and HUD", L"HUD"),
-        link(advanced, L"Speech bubbles and skill bars", L"Bubbles"),
-        link(advanced, L"Phone", phone),
-        link(advanced, L"Sound", sound),
+        flag(L"Loading", L"Eyes closed while saving on exit", "body", "exit_eyes_closed", true, kLive),  // loadshut.py
+        toggle(L"Hands", L"Pick things up", "hands", "grab", &Config::grab, kNextStart),
+        toggle(L"Hands", L"Touch to click", "body", "touch", &Config::touch, kNextStart),
+        toggle(L"Menus pie", L"Pie menu at your hand", "ui", "pie_at_hand", &Config::pieAtHand),
+        toggle(L"Menus popups", L"Popups in the world", "ui", "popups_3d", &Config::popups3d),
+        toggle(L"HUD", L"HUD on (all of it)", "wrist", "hud", &Config::wristPieces),
+        number(L"HUD", L"HUD size (all of it)", "wrist", "scale", &Config::wristScale, 0.3f, 3, 0.05f, 100, L"%.0f%%"),
+        toggle(L"Phone", L"Phone at your hip", "phone", "phone", &Config::phone),
+        flag(L"Phone", L"Notifications about one Sim over their head (off: phone only)", "phone", "notes_overhead", true, kLive),  // notify.py
+        toggle(L"Hands", L"Mic moves your Sim's mouth", "voice", "mic", &Config::voiceMic, kNextStart),
+        link(front, L"Options", L"Options"),
         reset,
+        link(L"Options", L"Game settings", L"Game"),
+        link(L"Options", L"Graphics & Performance", L"Graphics"),
+        link(L"Options", L"Sound", L"Sound"),
+        link(L"Options", L"Controls", L"Controls"),
+        link(L"Options", L"Interface", L"Interface"),
+        link(L"Game", L"Reach and walking to things", L"Reach"),
+        link(L"Game", L"Other Sims", L"Other Sims"),
+        link(L"Game", L"Loading and saving", L"Loading"),
+        link(L"Other Sims", L"Touching and grabbing", L"Other Sims touch"),
+        link(L"Graphics", L"Picture", L"View picture"),
+        link(L"Graphics", L"Mirrors and reflections", L"View mirrors"),
+        link(L"Graphics", L"Near clipping", L"View near"),
+        link(L"Graphics", L"Shadows", L"View shadows"),
+        link(L"Graphics", L"Smooth motion", L"View motion"),
+        link(L"Graphics", L"Depth eye and tests", L"View eyes"),
+        link(L"Graphics", L"Performance and tests", L"View speed"),
+        link(L"View eyes", L"Right eye alignment (depth eye)", L"View align"),
+        link(L"Controls", L"Moving", L"Moving"),
+        link(L"Controls", L"Turning", L"Turning"),
+        link(L"Controls", L"Hands and touch", L"Hands"),
+        link(L"Controls", L"Head and body", L"View head"),
+        link(L"Interface", L"Wrist HUD", L"HUD"),
+        link(L"Interface", L"Pie menu", L"Menus pie"),
+        link(L"Interface", L"Pickers on objects", L"Menus pickers"),
+        link(L"Interface", L"Popups", L"Menus popups"),
+        link(L"Interface", L"Speech bubbles and skill bars", L"Bubbles"),
+        link(L"Interface", L"Phone", L"Phone"),
+        link(L"Interface", L"Panels and flat screen", L"Menus panels"),
         // Their pages come from their own menu exports once they are loaded (mergeMenus, v0.13.236/237).
         link(L"Other mods", L"Integrated Body Physics", L"ibp:main"),
         link(L"Other mods", L"Extended Sound Control", L"esc:main"),
@@ -410,13 +438,6 @@ std::vector<Row> makeRows() {
         perfButton(L"Profile 60 s", 76, L"Records for 60 s which game functions take the most time and writes them to "
                                         L"claudeperf_profile.txt. The game runs slower while it records."),
 
-        link(view, L"Picture", L"View picture"),
-        link(view, L"Smooth motion", L"View motion"),
-        link(view, L"Right eye alignment (depth eye)", L"View align"),
-        link(view, L"Head and body", L"View head"),
-        link(view, L"Near clipping", L"View near"),
-        link(view, L"Shadows", L"View shadows"),
-        link(view, L"Speed test", L"View speed"),
         number(L"View picture", L"Sharpness", "stereo", "sharpen", &Config::sharpen, 0, 1, 0.05f, 100, L"%.0f%%"),
         number(L"View picture", L"Texture sharpness (mip bias, next start; 0 = off)", "stereo", "texture_bias",
                &Config::textureBias, -1, 0, 0.1f, 1, L"%.1f", kNextStart),
@@ -436,19 +457,19 @@ std::vector<Row> makeRows() {
         toggle(L"View motion", L"Draw ahead of the stick turn", "stereo", "turn_lead", &Config::turnLead),
         toggle(L"View motion", L"Both eyes drawn from one place (walking)", "stereo", "paired_eyes", &Config::pairedEyes),
         toggle(L"View motion", L"Hands match in both eyes (walking)", "stereo", "paired_hands", &Config::pairedHands),
-        toggle(L"View motion", L"Own body steady while turning", "stereo", "body_layer", &Config::bodyLayer),
-        toggle(L"View motion", L"Both eyes every frame (depth)", "stereo", "depth_eye", &Config::depthEye),
-        toggle(L"View motion", L"Flat world (clean, fast; no depth in the picture)", "stereo", "flat_world",
+        toggle(L"View eyes", L"Own body steady while turning", "stereo", "body_layer", &Config::bodyLayer),
+        toggle(L"View eyes", L"Both eyes every frame (depth)", "stereo", "depth_eye", &Config::depthEye),
+        toggle(L"View eyes", L"Flat world (clean, fast; no depth in the picture)", "stereo", "flat_world",
                &Config::flatWorld),
-        toggle(L"View motion", L"Both real eyes every frame (real depth; test)", "stereo", "both_eyes",
+        toggle(L"View eyes", L"Both real eyes every frame (real depth; test)", "stereo", "both_eyes",
                &Config::bothEyes),
         toggle(L"View motion", L"Headset frames on their own clock (smooth turning)", "stereo", "frame_clock",
                &Config::frameClock),
         toggle(L"View motion", L"Draw only the width the headset needs (faster)", "stereo", "headset_width",
                &Config::headsetWidth),
-        choice(L"View motion", L"Right eye reuses a scene part (test)", "stereo", "both_eyes_skip", &Config::bothEyesSkip,
+        choice(L"View eyes", L"Right eye reuses a scene part (test)", "stereo", "both_eyes_skip", &Config::bothEyesSkip,
                {L"Off", L"Part 3", L"Part 4", L"Part 8"}),
-        choice(L"View motion", L"Depth eye test view", "stereo", "depth_eye_debug", &Config::depthEyeDebug,
+        choice(L"View eyes", L"Depth eye test view", "stereo", "depth_eye_debug", &Config::depthEyeDebug,
                {L"Off", L"Depth", L"No shift", L"Depth edges", L"Compare with the real eye"}),
         toggle(L"View align", L"Eyes take turns (real picture behind near things)", "stereo", "depth_eye_alternate",
                &Config::depthEyeAlternate),
@@ -468,7 +489,7 @@ std::vector<Row> makeRows() {
         number(L"View align", L"Headset: eye tilted up/down (+ up)", "stereo", "made_eye_submit_pitch",
                &Config::madeEyeSubmitPitch, -3, 3, 0.05f, 1, L"%+.2f\u00b0"),
         alignReset,
-        toggle(L"View picture", L"Test: draw the scene twice (log)", "stereo", "probe_double", &Config::probeDouble),
+        toggle(L"View speed", L"Test: draw the scene twice (log)", "stereo", "probe_double", &Config::probeDouble),
         toggle(L"View picture", L"Ambient occlusion (SSAO, next start)", "stereo", "ambient_occlusion", &Config::ambientOcclusion, kNextStart),
         benchButton(L"Run turn test (game paused)", 201,
                     L"Stand still, close this menu. After 8 s: 5 s still, 3 turns each way, 5 s still. One 'Benchmark:' line in the log. Pause the game first."),
@@ -495,13 +516,13 @@ std::vector<Row> makeRows() {
         number(L"View near", L"Near clipping at most", "body", "near_max", &Config::bodyNearMax, 0.1f, 2, 0.05f, 100, L"%.0f cm",
                kView),
         flag(L"View near", L"Rooms in doorways stay whole", "body", "rooms_whole", true, kLive),  // gamefix.cpp
-        number(L"View picture", L"Mirrors reach in rooms (0 = game's)", "stereo", "mirror_far_inside", &Config::mirrorInterior, 0, 15,
+        number(L"View mirrors", L"Mirrors reach in rooms (0 = game's)", "stereo", "mirror_far_inside", &Config::mirrorInterior, 0, 15,
                1, 1, L"%.0f m", kNextStart),
-        number(L"View picture", L"Mirrors and water reach outdoors (0 = game's)", "stereo", "mirror_far_outside",
+        number(L"View mirrors", L"Mirrors and water reach outdoors (0 = game's)", "stereo", "mirror_far_outside",
                &Config::mirrorExterior, 0, 100, 5, 1, L"%.0f m", kNextStart),
-        toggle(L"View picture", L"Mirrors clip at the glass (may pop objects)", "stereo", "mirror_clip", &Config::mirrorClip,
+        toggle(L"View mirrors", L"Mirrors clip at the glass (may pop objects)", "stereo", "mirror_clip", &Config::mirrorClip,
                kLive),
-        toggle(L"View picture", L"No mirror or water reflections", "stereo", "reflections_off", &Config::reflectionsOff,
+        toggle(L"View mirrors", L"No mirror or water reflections", "stereo", "reflections_off", &Config::reflectionsOff,
                kNextStart),
         toggle(L"View shadows", L"Right eye reuses the left eye's shadows (both real eyes, faster)", "stereo", "reuse_shadows",
                &Config::reuseShadows),
@@ -517,7 +538,7 @@ std::vector<Row> makeRows() {
 
         number(moving, L"Run speed (tap left stick)", "body", "run_speed", &Config::runSpeed, 1, 8, 0.1f, 1, L"%.1f m/s",
                kWalk),
-        number(moving, L"Game camera turn speed", "controls", "turn_speed", &Config::turnSpeed, 200, 3000, 100, 1,
+        number(L"Turning", L"Game camera turn speed", "controls", "turn_speed", &Config::turnSpeed, 200, 3000, 100, 1,
                L"%.0f"),
         flag(moving, L"Stairs and ladders carry you", "body", "carried_stairs", true),
         toggle(moving, L"Body drawn at your height (stairs)", "body", "keep_height", &Config::bodyKeepHeight, kWalk),
@@ -536,30 +557,25 @@ std::vector<Row> makeRows() {
         flag(hands, L"Eat with your hands", "hands", "eat", true),
         toggle(hands, L"Vibrate on touch", "physical", "haptics", &Config::touchHaptics),
 
-        toggle(sims, L"Their bodies stop your hands", "physical", "bodies", &Config::touchBodies, kTouch),
-        toggle(sims, L"Hold hands", "physical", "hold_hands", &Config::holdHands, kTouch),
+        toggle(L"Other Sims touch", L"Their bodies stop your hands", "physical", "bodies", &Config::touchBodies, kTouch),
+        toggle(L"Other Sims touch", L"Hold hands", "physical", "hold_hands", &Config::holdHands, kTouch),
         toggle(sims, L"They look at you", "physical", "look_at_you", &Config::lookAtYou, kTouch),
-        toggle(sims, L"Your head stays out of them", "physical", "head", &Config::headRepel, kTouch),
-        number(sims, L"Head keeps clear by", "physical", "head_radius", &Config::headRadius, 0.02f, 0.2f, 0.01f, 100, L"%.0f cm", kTouch),
-        toggle(sims, L"Grab their bodies (grip + trigger)", "physical", "grab_bodies", &Config::grabBodies, kTouch),
-        number(sims, L"Grab: finger bend", "physical", "grab_curl", &Config::grabCurl, 0, 1, 0.05f, 100, L"%.0f%%", kTouch),
-        number(sims, L"Grab: how far you drag them", "physical", "grab_drag", &Config::grabDrag, 0, 0.6f, 0.025f, 100,
+        toggle(L"Other Sims touch", L"Your head stays out of them", "physical", "head", &Config::headRepel, kTouch),
+        number(L"Other Sims touch", L"Head keeps clear by", "physical", "head_radius", &Config::headRadius, 0.02f, 0.2f, 0.01f, 100, L"%.0f cm", kTouch),
+        toggle(L"Other Sims touch", L"Grab their bodies (grip + trigger)", "physical", "grab_bodies", &Config::grabBodies, kTouch),
+        number(L"Other Sims touch", L"Grab: finger bend", "physical", "grab_curl", &Config::grabCurl, 0, 1, 0.05f, 100, L"%.0f%%", kTouch),
+        number(L"Other Sims touch", L"Grab: how far you drag them", "physical", "grab_drag", &Config::grabDrag, 0, 0.6f, 0.025f, 100,
                L"%.1f cm", kTouch),
-        flag(sims, L"They react to being grabbed", "physical", "grab_reactions", true, kLive),  // bodygrab.py
+        flag(L"Other Sims touch", L"They react to being grabbed", "physical", "grab_reactions", true, kLive),  // bodygrab.py
         scriptNumber(sims, L"They follow you from (0 off)", "body", "follow_distance", 2.5f, 0, 10, 0.5f,
                      L"%.1f m"),  // hint.py: the Sims you talk with follow you
         scriptNumber(sims, L"Talk starts within", "body", "talk_distance", 3, 1, 10, 0.5f,
                      L"%.1f m"),  // scripted.py, reach.py, trail.py: closer, a picked social just starts
         flag(sims, L"Their chats with you stay where you are", "body", "socials_in_place", true, kLive),  // scripted.py
 
-        choice(menus, L"Game menus in first person", "ui", "first_person", &Config::uiFirstPerson,
+        choice(L"Interface", L"Game menus in first person", "ui", "first_person", &Config::uiFirstPerson,
                {L"Hidden", L"Wrist HUD only", L"Game UI in front only", L"Both"}),
         // The wrist HUD's size here too (user 18:24Z: the size on this page should size what's on the wrist).
-        number(menus, L"Wrist HUD size", "wrist", "scale", &Config::wristScale, 0.3f, 3, 0.05f, 100, L"%.0f%%"),
-        link(menus, L"Pie menu", L"Menus pie"),
-        link(menus, L"Pickers on objects", L"Menus pickers"),
-        link(menus, L"Popups", L"Menus popups"),
-        link(menus, L"Panels and flat screen", L"Menus panels"),
         flag(L"Menus pie", L"Pie drawn by the mod (off: cut from the game's UI)", "ui", "own_pie", true, kLive),  // pie.py
         flag(L"Menus pie", L"A Sim's question: answers on the palm pie (palm / dynamic)", "ui", "chat_pie", true,
              kLive),  // objmenu.py
@@ -590,10 +606,10 @@ std::vector<Row> makeRows() {
         number(L"Menus panels", L"Flat screen size", "quad", "width", &Config::quadWidth, 1, 5, 0.1f, 1, L"%.1f m"),
 
         // Our own HUD (first person, hud.cpp: drawn with Dear ImGui).
-        number(L"HUD", L"Game UI on the wrist (UI button): size", "ui", "wrist_width", &Config::wristWidth, 0.2f, 0.8f,
+        number(L"Menus panels", L"Game UI on the wrist (UI button): size", "ui", "wrist_width", &Config::wristWidth, 0.2f, 0.8f,
                0.02f, 100, L"%.0f cm"),
         // The notification card in front of you (user 2026-10-23): where it sits and its size; also set by dragging it.
-        link(L"HUD", L"Notification card", L"HUD note"),
+        link(L"Interface", L"Notification card", L"HUD note"),
         component(L"HUD note", L"Notification card: right", "phone", "note_place", &Config::notePlace, 0, -1, 1, 0.02f, 100,
                   L"%+.0f cm"),
         component(L"HUD note", L"Notification card: up", "phone", "note_place", &Config::notePlace, 1, -1, 1, 0.02f, 100,
@@ -616,15 +632,21 @@ std::vector<Row> makeRows() {
         toggle(L"Bubbles", L"Yours in front of you (first person)", "bubbles", "own_in_front", &Config::bubbleOwnFront),
         number(L"Bubbles", L"Your bubble size", "bubbles", "own_size", &Config::bubbleOwnSize, 0.05f, 0.5f, 0.01f, 100,
                L"%.0f cm wide"),
-        number(L"Bubbles", L"Other Sims' bubble size", "bubbles", "npc_size", &Config::bubbleNpcSize, 0.2f, 1.5f, 0.05f,
+        number(L"Bubbles others", L"Other Sims' bubble size", "bubbles", "npc_size", &Config::bubbleNpcSize, 0.2f, 1.5f, 0.05f,
                100, L"%.0f cm wide"),
         toggle(L"Bubbles", L"Hide your Sim's bubbles", "bubbles", "hide_own", &Config::bubbleHideOwn),
-        toggle(L"Bubbles", L"Hide other Sims' bubbles", "bubbles", "hide_npc", &Config::bubbleHideNpc),
-        toggle(L"Bubbles", L"Skill bars, flyaways, nameplates (old cut, stray boxes)", "bubbles", "cut_others", &Config::bubbleCutOthers),
+        toggle(L"Bubbles others", L"Hide other Sims' bubbles", "bubbles", "hide_npc", &Config::bubbleHideNpc),
+        toggle(L"Bubbles others", L"Skill bars, flyaways, nameplates (old cut, stray boxes)", "bubbles", "cut_others", &Config::bubbleCutOthers),
         toggle(L"Bubbles", L"Balloons drawn by the mod (off: cut from the game's UI)", "bubbles", "own_balloons", &Config::bubbleOwnDraw),
-        link(L"Bubbles", L"Where yours sit", L"Bubbles yours"),
-        // Your Sim's stat / relationship pops (the "!" and the like; user 2026-10-23): their own place and size.
+        link(L"Bubbles", L"Your bubble", L"Bubbles yours"),
+        link(L"Bubbles", L"Your skill bar", L"Bubbles skill"),
+        link(L"Bubbles", L"Other Sims' bubbles", L"Bubbles others"),
+        link(L"Bubbles", L"Your scandal mark (Royalty & Legacy)", L"Bubbles scandal"),
+        // Your Sim's stat / relationship pops (user 2026-10-23): their own place and size.
         link(L"Bubbles", L"Your stat and relationship pops", L"Bubbles pops"),
+        choice(L"Bubbles scandal", L"Your purple scandal \"!\" (Royalty & Legacy) sits on", "bubbles", "scandal_spot",
+               &Config::scandalSpot, {L"Your head (game)", L"Your chest", L"Your hips", L"Your left hand", L"Your right hand",
+                                      L"Hidden"}),  // scandal.py
         toggle(L"Bubbles pops", L"Hide your pops", "bubbles", "hide_pops", &Config::popHideOwn),
         component(L"Bubbles pops", L"Your pops: right", "bubbles", "pop_position", &Config::popOwnPos, 0, -1, 1, 0.05f, 100,
                   L"%+.0f cm"),
@@ -640,13 +662,13 @@ std::vector<Row> makeRows() {
                   0.05f, 100, L"%+.0f cm"),
         component(L"Bubbles yours", L"Your bubble: ahead", "bubbles", "own_bubble_position", &Config::bubbleOwnPos, 2, 0.1f,
                   4, 0.05f, 100, L"%.0f cm"),
-        component(L"Bubbles yours", L"Your skill bar: horizontal", "bubbles", "skill_position", &Config::skillOwnPos, 0, -0.5f,
+        component(L"Bubbles skill", L"Your skill bar: horizontal", "bubbles", "skill_position", &Config::skillOwnPos, 0, -0.5f,
                   0.5f, 0.05f, 100, L"%+.0f cm"),
-        component(L"Bubbles yours", L"Your skill bar: up", "bubbles", "skill_position", &Config::skillOwnPos, 1, -0.5f,
+        component(L"Bubbles skill", L"Your skill bar: up", "bubbles", "skill_position", &Config::skillOwnPos, 1, -0.5f,
                   1.0f, 0.05f, 100, L"%+.0f cm"),
-        component(L"Bubbles yours", L"Your skill bar: ahead", "bubbles", "skill_position", &Config::skillOwnPos, 2, 0.2f,
+        component(L"Bubbles skill", L"Your skill bar: ahead", "bubbles", "skill_position", &Config::skillOwnPos, 2, 0.2f,
                   2, 0.05f, 100, L"%.0f cm"),
-        number(L"Bubbles yours", L"Your skill bar: size", "bubbles", "skill_size", &Config::skillOwnSize, 0.05f, 0.6f, 0.01f,
+        number(L"Bubbles skill", L"Your skill bar: size", "bubbles", "skill_size", &Config::skillOwnSize, 0.05f, 0.6f, 0.01f,
                100, L"%.0f cm wide"),
 
         number(phone, L"Hip: hand below your eyes", "phone", "hip_drop", &Config::phoneHipDrop, 0.1f, 0.9f, 0.02f, 100,
@@ -793,6 +815,7 @@ std::vector<Row> makeRows() {
         back.linkPage = parentOf(p);
         rows.push_back(back);
     }
+    applyTips(rows);
     return rows;
 }
 
@@ -820,6 +843,7 @@ constexpr int kCloseRow = -2;
 bool g_closeWanted = false;
 bool g_tipDrawn = false;
 constexpr ULONGLONG kTipDelay = 500;
+const wchar_t* const kCloseTip = L"Closes the menu and saves your changes. B closes it too.";
 int g_top = 0;  // first line shown
 ULONGLONG g_resetArmed = 0;
 ULONGLONG g_switchedAt = 0;  // the view switch was asked for (until first person comes or goes)
@@ -1696,12 +1720,13 @@ void shownValue(size_t i, wchar_t* out, size_t size) {
 // The picked row's tip: a box under the row (over it when there's no room),
 // once the row has stayed picked for a moment.
 void drawTip() {
-    if (g_selected < 0 || g_selected >= static_cast<int>(g_rows.size())) return;
-    const Row& row = g_rows[g_selected];
-    const wchar_t* tip = row.kind == Kind::Link && !linkOpen(row) ? row.offTip : row.tip;
+    const bool onClose = g_selected == kCloseRow;
+    if (!onClose && (g_selected < 0 || g_selected >= static_cast<int>(g_rows.size()))) return;
+    const Row* picked = onClose ? nullptr : &g_rows[g_selected];
+    const wchar_t* tip = onClose ? kCloseTip : picked->kind == Kind::Link && !linkOpen(*picked) ? picked->offTip : picked->tip;
     if (!tip || GetTickCount64() - g_selectedAt < kTipDelay) return;
-    int line = lineOf(g_selected);
-    if (line < g_top || line >= g_top + kShown) return;
+    int line = onClose ? 0 : lineOf(g_selected);
+    if (!onClose && (line < g_top || line >= g_top + kShown)) return;
     g_tipDrawn = true;
     constexpr int kLeft = 60, kRight = kWidth - 60, kPad = 18;
     SelectObject(g_canvas.dc, g_canvas.small);
@@ -1710,7 +1735,8 @@ void drawTip() {
     int height = static_cast<int>(size.bottom - size.top) + 2 * kPad;
     int rowTop = kListTop + (line - g_top) * kRowHeight, rowBottom = rowTop + kRowHeight;
     int y0 = rowBottom - 2;
-    if (y0 + height > kHeight - 12) y0 = rowTop + 2 - height;
+    if (onClose) y0 = kCloseBottom + 8;  // under the Close button
+    else if (y0 + height > kHeight - 12) y0 = rowTop + 2 - height;
     fillRounded(kLeft - 2, y0 - 2, kRight + 2, y0 + height + 2, 14, kBorder);
     fillRounded(kLeft, y0, kRight, y0 + height, 12, kTipBack);
     GdiFlush();
@@ -2183,7 +2209,7 @@ int point(float u, float v, bool click) {
     if (!g_open) return kNothing;
     int x = static_cast<int>(u * kWidth), y = static_cast<int>(v * kHeight);
     if (x >= kCloseLeft && x < kCloseRight && y >= kCloseTop && y < kCloseBottom)
-        return click ? kCloseRequested : kNothing;
+        return selectClose(), click ? kCloseRequested : kNothing;  // hovering it shows its tip
     if (y < kListTop || y >= kListBottom) return kNothing;
     int j = g_top + (y - kListTop) / kRowHeight;
     if (j >= static_cast<int>(g_lines.size()) || g_lines[j].row < 0) return kNothing;
@@ -2195,7 +2221,7 @@ int point(float u, float v, bool click) {
     if (now - hoveredAt > 150) hovered = -1;
     hoveredAt = now;
     int result = kNothing;
-    if (row != hovered || click) result = select(row) ? kChanged : kNothing;
+    if (row != hovered || click || g_selected == kCloseRow) result = select(row) ? kChanged : kNothing;
     hovered = row;
     if (!click) return result;
     const Row& r = g_rows[row];
@@ -2209,8 +2235,9 @@ int point(float u, float v, bool click) {
 }
 
 const uint32_t* image(int& width, int& height, uint64_t& version) {
-    if (g_open && !g_tipDrawn && g_selected >= 0 && g_selected < static_cast<int>(g_rows.size()) &&
-        g_rows[g_selected].tip && GetTickCount64() - g_selectedAt >= kTipDelay)
+    if (g_open && !g_tipDrawn && GetTickCount64() - g_selectedAt >= kTipDelay &&
+        (g_selected == kCloseRow ||
+         (g_selected >= 0 && g_selected < static_cast<int>(g_rows.size()) && g_rows[g_selected].tip)))
         g_redraw = true;  // the tip is due
     if (g_redraw && makeCanvas()) {
         g_redraw = false;
