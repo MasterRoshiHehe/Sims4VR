@@ -43,6 +43,7 @@
 #include "thumbs.h"
 #include "strings.h"
 #include "bubbles.h"
+#include "clientdlg.h"
 #include "uihook.h"
 #include "log.h"
 #include "modelbox.h"
@@ -182,6 +183,7 @@ S4VR_API int s4vr_init() {
     if (g_config.gamepad) s4vr::gamepad::install();
     // The game's menus on their own layer (a panel, your wrist, the pie at your hand).
     if (g_config.uiPanel && s4vr::uihook::install()) s4vr::bubbles::install();
+    s4vr::clientdlg::install();
     if (g_config.renderScale > 0) s4vr::renderscale::install(g_config.renderMsaa);
     if (!s4vr::vr::init(g_moduleDir, g_config)) return -1;
     if (g_config.autostart == 1 && startAtMainMenu()) return 0;

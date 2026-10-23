@@ -43,6 +43,7 @@
 #include "handshape.h"
 #include "touch.h"
 #include "bubbles.h"
+#include "clientdlg.h"
 #include "uihook.h"
 #include "phone3d.h"
 #include "simsforever.h"

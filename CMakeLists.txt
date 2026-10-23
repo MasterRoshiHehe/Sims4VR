@@ -85,6 +85,7 @@ add_library(sims4vr SHARED
     src/nearplane.cpp
     src/uihook.cpp
     src/bubbles.cpp
+    src/clientdlg.cpp
     src/nodim.cpp
     src/phone3d.cpp
     src/trail.cpp

@@ -946,7 +946,13 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
             break;
         case hud::kAnswer:
             // controls.py: 50 + n answers the popup with its n-th button.
-            if (index >= 0 && index < 10) grab::pushControl(50 + index);
+            // The game's own Flash dialogs (clientdlg) answer in the UI, not through the scripts.
+            if (index >= 0 && index < 10) {
+                if (clientdlg::showing())
+                    clientdlg::press(index);
+                else
+                    grab::pushControl(50 + index);
+            }
             LOG("HUD: popup button %d", index);
             break;
         case hud::kPiePick:

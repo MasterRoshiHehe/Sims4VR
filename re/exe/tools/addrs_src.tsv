@@ -1,62 +1,62 @@
 # game=1.128.90.1030 stamp=0x6aa08454
 name	kind	rva	used_in	first16	sig	description
-FindObject	function	0x162030	doorswing, walkstop	48 89 5c 24 08 57 48 83 ec 20 48 8b f9 48 8b da		Object by id (handle) from the object manager.
-ScreenHidden	function	0x1fa850	api	40 53 48 83 ec 30 e8 35 cf 43 01 48 8b d8 48 85		Main menu native listener for the UI message TransitionScreenHidden (first loading screen gone); hooked so autostart = 1 starts VR then.
-PortalOf	function	0x2147a0	doorswing	48 89 5c 24 08 57 48 83 ec 20 48 8b 99 b0 00 00		Portal (door) record of an object.
-WallsUpOp	function	0x21c390	gamefix	40 57 48 83 ec 70 48 c7 44 24 40 fe ff ff ff 48		OverrideWallsUp op handler (walls_up False clears lot override slot 3). Size 0x118.
-ReleaseBlocker	function	0x2f1a40	walkstop	48 8b 81 c0 01 00 00 45 33 c9 4c 8b 81 e0 01 00		Free a path's op channel/blocker.
-FireComplete	function	0x2f1a80	walkstop	48 8b 81 c8 01 00 00 4c 8b c2 48 c7 81 c8 01 00		Fire route_complete for a path.
-PoseToJoints	function	0x90b370	armik	48 85 d2 0f 84 c8 00 00 00 48 89 5c 24 10 57 48		Actor pose -> joint transforms (hooked for arm IK).
-JointIndex	function	0x9119e0	armik, facehide	48 83 ec 18 44 8b c2 48 b8 c5 4e ec c4 4e ec c4		Joint index of a bone hash in a skeleton.
-JointCount	function	0x911b30	armik	48 8b c1 48 8b 49 10 48 2b 48 08 48 b8 25 49 92		Skeleton joint count.
-Parent	function	0x911b60	armik	8b c2 48 6b d0 70 48 8b 41 08 8b 44 02 58 c3 cc		Parent joint index.
-ModelTransform	function	0x93e540	armik	48 89 5c 24 10 48 89 74 24 18 57 48 81 ec 90 00		Model-space transform of a joint in a RigPose.
-Component	function	0x9b0430	doorswing, walkstop	8b 41 10 4c 8b c1 85 c2 74 3e ff ca 23 d0 8b c2		Object component by kind mask.
-FloorSnap	function	0x9b41f0	player	48 89 5c 24 20 55 56 57 41 55 41 56 48 8d 6c 24		Snaps the drawn Sim to the routing level's floor (skipped for the pinned first-person body).
-ClearRoute	function	0x9c4c00	walkstop	48 83 ec 28 48 85 c9 74 20 8b 15 19 1d f9 01 e8		Clear a Sim's route.
-Enter	function	0x9cc020	doorswing	ff 41 38 88 91 80 00 00 00 48 8b 49 18 e9 6e ec		Portal enter counter (+0x38 ++).
-Exit	function	0x9cc040	doorswing	8b 51 38 33 c0 ff ca 85 d2 0f 4f c2 89 41 38 48		Portal exit counter (+0x38 --).
-LotById	function	0x9e1a20	gamefix	48 83 ec 18 44 8b 49 20 4c 8b 51 18 44 8b c2 8b		Lot by id from the lot manager.
-ClearOverride	function	0xa15970	gamefix	48 63 c2 48 8d 14 80 80 bc 91 ec 00 00 00 00 74		Clear lot view override slot (lot+0xec+i*0x14); hooked to keep walls up in first person.
-TopLevel	function	0xa178a0	gamefix	40 56 48 83 ec 40 48 8b f1 84 d2 74 2a 32 c0 90		Lot's top level (with or without overrides).
-SetOverride	function	0xa1aae0	gamefix	40 53 48 83 ec 20 48 63 44 24 58 48 8b d9 4c 8d		Set lot view override slot (top/bottom level, wall mode).
-CullRooms	function	0xa6bdc0	gamefix	48 8b c4 44 88 48 20 44 88 40 18 48 89 50 10 55		Room culling (rooms, view, kind, floor); hooked.
-SceneRender	function	0x137a710	singleview	48 8b c4 55 57 41 54 41 56 41 57 48 8d a8 48 ff		Scene render (renderer, viewport rect, seconds): shadows, reflections, main view, final copy into gfx job slots 6-10; called once a frame by the renderer frame fn 0x137b830 (GameRenderSystemService::Update 0xa5b60); hooked (step 2 probe).
-Canvas	function	0xbb6590	renderscale	48 8b 05 f9 2b da 01 c3 cc cc cc cc cc cc cc cc		Canvas getter.
-UiObject	function	0xd9f100	bubbles	48 8b 05 09 c4 bb 01 c3 cc cc cc cc cc cc cc cc		
-Render	function	0xdaed30	uihook	40 55 56 57 41 54 41 55 41 56 41 57 48 81 ec 80		RenderManager::Render(rm, movie): every UI movie once a frame; hooked for the UI layer.
-ApplySettings	function	0xdaf810	renderscale	44 88 4c 24 20 55 53 56 57 41 55 41 57 48 8d 6c		DisplayManager apply display settings.
-Fetch	function	0xe0f250	thumbs	48 8b c4 55 41 56 41 57 48 8d 68 a9 48 81 ec c0		
-Anchor	function	0xe53140	bubbles	48 89 5c 24 08 48 89 74 24 10 48 89 7c 24 18 55		
-Updater	function	0xe55120	bubbles	48 8b c4 48 89 48 08 55 53 56 57 41 54 41 55 41		
-GetInfo	function	0xec80d0	bubbles	40 55 53 57 48 8d 6c 24 a0 48 81 ec 60 01 00 00		
-SetInfo	function	0xee37e0	bubbles	4c 8b dc 55 57 49 8d 6b a8 48 81 ec 48 01 00 00		
-Ramp	function	0x107c540	nodim	40 55 56 41 56 48 8d 6c 24 e0 48 81 ec 20 01 00		Scaleform GradientRamp::Init(ramp, records, count, gamma xmm3): 256-entry colour ramp from gradient records {ratio byte, pad, ARGB at +4}; only caller the gradient image decode (0x107d411). Hooked: the modal dimming's stops get alpha 0.
-ConfigInt	function	0x117e590	shadows	48 89 5c 24 08 48 89 74 24 10 57 48 83 ec 20 41		int get(config, name, fallback) from GraphicsRules.sgr.
-SceneDraw	function	0x11d0160	facehide	48 8b c4 48 89 58 08 55 56 57 41 54 41 55 41 56		
-SceneSkin	function	0x11d32e0	facehide	48 89 6c 24 20 57 48 83 ec 20 48 8b e9 48 81 c1		
-Projection	function	0x1208640	camera	48 8b c4 48 81 ec a8 00 00 00 83 79 10 00 4c 8b		Builds the projection (+0x70..+0xaf) from +0x14/+0x18 (width/height at 1), the off-centre point +0x1f0 (x,y) and sub-rect fractions +0x270..+0x27c (0,1,1,0); exact_fov writes +0x1f0.
-NearFade	function	0x120a130	gamefix	40 53 48 81 ec 80 00 00 00 48 8b 9c 24 c8 00 00		Near fading check (1 shown / 0 hidden); first person always shown.
-RequestPick	function	0x1211d90	touch	80 b9 a8 00 00 00 00 4c 8b c9 74 72 44 8b 91 ec		RequestPick(RenderPickManager*, x, y).
-Palette	function	0x121d850	facehide	48 8b c4 48 89 58 08 57 48 83 ec 70 0f 29 70 e8		
-MeshDraw	function	0x121dcf0	facehide	40 55 57 48 81 ec f8 01 00 00 f6 81 cb 01 00 00		
-SkinUpdate	function	0x1220550	facehide	48 89 74 24 10 57 48 83 ec 30 48 8b 81 50 01 00		
-Fit	function	0x126b820	shadows	48 8b c4 48 89 58 18 4c 89 48 20 48 89 48 08 55		Shadow cascade fit(sun, view cam, light cam, settings, cascade, map size).
-SkinVerts	function	0x1296ee0	facehide	55 48 83 ec 40 48 8d 6c 24 20 0f 29 75 e0 0f 29		
-GfxByIndex	function	0x129c370	uihook	40 53 48 83 ec 20 8b d9 e8 53 39 0d 00 48 85 c0		Game D3D11 wrapper (gfx) by index.
-Gfx	function	0x129c3a0	renderscale	8b 0d 3a f9 6e 01 65 48 8b 04 25 58 00 00 00 ba		Main gfx getter.
-Reset	function	0x12a0000	renderscale	48 89 5c 24 08 57 48 83 ec 20 80 79 2c 00 0f b6		gfx device reset.
-SetMsaa	function	0x12a4240	renderscale	48 89 5c 24 08 57 48 83 ec 20 8b fa 48 8b d9 39		gfx SetMsaa (gfx +0x54 / +0x38).
-Threading	function	0x136fcd0	uihook	48 8b 05 61 2d 61 01 c3 cc cc cc cc cc cc cc cc		Render threading manager getter (first byte: threading on).
-RenderSystem	function	0x13785c0	bubbles, renderscale	48 8b 05 21 a8 60 01 c3 cc cc cc cc cc cc cc cc		RenderSystem getter.
-ScreenSize	function	0x1378650	bubbles	8b 41 38 89 02 8b 41 3c 41 89 00 c3 cc cc cc cc		
-SetLetterbox	function	0x137aff0	renderscale	8b 44 24 28 89 41 4c 8b 44 24 30 89 41 50 8b 44		Set letterbox.
-ApplyBlend	function	0x189f690	uihook	4c 8b dc 56 57 41 54 41 56 41 57 48 83 ec 40 49		Scaleform::Render::Sims4::HAL::applyBlendModeImpl.
-WallDistance	function	0x1a779e0	ambience	48 8b c4 4c 89 48 20 48 89 50 10 48 89 48 08 55		Distance from a tile spot to the nearest inside/outside wall.
-Value	function	0x1a84c70	ambience	40 53 48 83 ec 30 0f 29 74 24 20 48 8b d9 0f 57		AmbienceInsideOutsideGC value (vtable 0x200b798 slot 5).
-DistanceUpdate	function	0x1a9f530	camera	40 55 56 48 8d 6c 24 b1 48 81 ec b8 00 00 00 f6		
-Pan	function	0x1a9fdf0	camera	48 8b c4 57 48 81 ec 80 00 00 00 48 c7 40 98 fe		A 3D sound's Pan2D1 angle and distance from the pan listener (listener 1); distance capped at the sound's near radius (6th arg).
-Curve	function	0x1aabdc0	ambience	48 89 5c 24 08 48 8b 59 08 48 b8 67 66 66 66 66		A GC curve at x (piecewise linear).
+FindObject	function	0x162030	doorswing, walkstop	48 89 5c 24 08 57 48 83 ec 20 48 8b f9 48 8b da	48 89 5c 24 08 57 48 83 ec 20 48 8b f9 48 8b da 48 8b 0d ?? ?? ?? ?? 48 85 c9 75 10	Object by id (handle) from the object manager.
+ScreenHidden	function	0x1fa850	api	40 53 48 83 ec 30 e8 35 cf 43 01 48 8b d8 48 85	40 53 48 83 ec 30 e8 ?? ?? ?? ?? 48 8b d8 48 85 c0 74 33 45 33 c0 48 8d 15 ?? ?? ?? ??	Main menu native listener for the UI message TransitionScreenHidden (first loading screen gone); hooked so autostart = 1 starts VR then.
+PortalOf	function	0x2147a0	doorswing	48 89 5c 24 08 57 48 83 ec 20 48 8b 99 b0 00 00	48 89 5c 24 08 57 48 83 ec 20 48 8b 99 b0 00 00 00 48 8b b9 b8 00 00 00 48 3b df 74 1f 0f 1f 00 48 8b 0b ba 8c 63 40 40	Portal (door) record of an object.
+WallsUpOp	function	0x21c390	gamefix	40 57 48 83 ec 70 48 c7 44 24 40 fe ff ff ff 48	40 57 48 83 ec 70 48 c7 44 24 40 fe ff ff ff 48 89 9c 24 80 00 00 00 48 8b d9	OverrideWallsUp op handler (walls_up False clears lot override slot 3). Size 0x118.
+ReleaseBlocker	function	0x2f1a40	walkstop	48 8b 81 c0 01 00 00 45 33 c9 4c 8b 81 e0 01 00	48 8b 81 c0 01 00 00 45 33 c9 4c 8b 81 e0 01 00 00 48 8b 91 e8 01 00 00	Free a path's op channel/blocker.
+FireComplete	function	0x2f1a80	walkstop	48 8b 81 c8 01 00 00 4c 8b c2 48 c7 81 c8 01 00	48 8b 81 c8 01 00 00 4c 8b c2 48 c7 81 c8 01 00 00 00 00 00 00 48 85 c0	Fire route_complete for a path.
+PoseToJoints	function	0x90b370	armik	48 85 d2 0f 84 c8 00 00 00 48 89 5c 24 10 57 48	48 85 d2 0f 84 ?? ?? ?? ?? 48 89 5c 24 10 57 48 83 ec 20 48 8b 01 48 8b fa	Actor pose -> joint transforms (hooked for arm IK).
+JointIndex	function	0x9119e0	armik, facehide	48 83 ec 18 44 8b c2 48 b8 c5 4e ec c4 4e ec c4	48 83 ec 18 44 8b c2 48 b8 c5 4e ec c4 4e ec c4 4e 44 8b ca 4c 8b d1 49 f7 e1	Joint index of a bone hash in a skeleton.
+JointCount	function	0x911b30	armik	48 8b c1 48 8b 49 10 48 2b 48 08 48 b8 25 49 92	48 8b c1 48 8b 49 10 48 2b 48 08 48 b8 25 49 92 24 49 92 24 49 48 f7 e9	Skeleton joint count.
+Parent	function	0x911b60	armik	8b c2 48 6b d0 70 48 8b 41 08 8b 44 02 58 c3 cc	8b c2 48 6b d0 70 48 8b 41 08 8b 44 02 58 c3 cc 4c 8b c9 85 d2 78 1f 45 85 c0	Parent joint index.
+ModelTransform	function	0x93e540	armik	48 89 5c 24 10 48 89 74 24 18 57 48 81 ec 90 00	48 89 5c 24 10 48 89 74 24 18 57 48 81 ec 90 00 00 00 0f 28 05 ?? ?? ?? ??	Model-space transform of a joint in a RigPose.
+Component	function	0x9b0430	doorswing, walkstop	8b 41 10 4c 8b c1 85 c2 74 3e ff ca 23 d0 8b c2	8b 41 10 4c 8b c1 85 c2 74 3e ff ca 23 d0 8b c2 d1 e8 25 55 55 55 55 2b d0	Object component by kind mask.
+FloorSnap	function	0x9b41f0	player	48 89 5c 24 20 55 56 57 41 55 41 56 48 8d 6c 24	48 89 5c 24 20 55 56 57 41 55 41 56 48 8d 6c 24 c9 48 81 ec 90 00 00 00 4c 8b e9	Snaps the drawn Sim to the routing level's floor (skipped for the pinned first-person body).
+ClearRoute	function	0x9c4c00	walkstop	48 83 ec 28 48 85 c9 74 20 8b 15 19 1d f9 01 e8	48 83 ec 28 48 85 c9 74 20 8b 15 ?? ?? ?? ?? e8 ?? ?? ?? ?? 48 85 c0 74 10	Clear a Sim's route.
+Enter	function	0x9cc020	doorswing	ff 41 38 88 91 80 00 00 00 48 8b 49 18 e9 6e ec	ff 41 38 88 91 80 00 00 00 48 8b 49 18 e9 ?? ?? ?? ?? cc cc cc cc cc cc	Portal enter counter (+0x38 ++).
+Exit	function	0x9cc040	doorswing	8b 51 38 33 c0 ff ca 85 d2 0f 4f c2 89 41 38 48	8b 51 38 33 c0 ff ca 85 d2 0f 4f c2 89 41 38 48 8b 49 18 e9 ?? ?? ?? ??	Portal exit counter (+0x38 --).
+LotById	function	0x9e1a20	gamefix	48 83 ec 18 44 8b 49 20 4c 8b 51 18 44 8b c2 8b	48 83 ec 18 44 8b 49 20 4c 8b 51 18 44 8b c2 8b c2 33 d2 49 f7 f1 8b c2 49 8d 0c c2 49 8b 04 c2 48 85 c0 74 0e 44 3b 00 74 0b 48 8b 40 10 48 85 c0 75 f2 33 c0 48 85 c0 75 08 4b 8b 04 ca 4b 8d 0c ca 48 89 04 24 48 8d 04 24 48 89 4c 24 08 48 8b 00 4b 3b 04 ca 74 09	Lot by id from the lot manager.
+ClearOverride	function	0xa15970	gamefix	48 63 c2 48 8d 14 80 80 bc 91 ec 00 00 00 00 74	48 63 c2 48 8d 14 80 80 bc 91 ec 00 00 00 00 74 11 c6 84 91 ec 00 00 00 00	Clear lot view override slot (lot+0xec+i*0x14); hooked to keep walls up in first person.
+TopLevel	function	0xa178a0	gamefix	40 56 48 83 ec 40 48 8b f1 84 d2 74 2a 32 c0 90	40 56 48 83 ec 40 48 8b f1 84 d2 74 2a 32 c0 90 0f b6 d0 4c 8d 04 92 4a 8d 14 81	Lot's top level (with or without overrides).
+SetOverride	function	0xa1aae0	gamefix	40 53 48 83 ec 20 48 63 44 24 58 48 8b d9 4c 8d	40 53 48 83 ec 20 48 63 44 24 58 48 8b d9 4c 8d 14 80 0f b6 44 24 50 42 88 84 91 f4 00 00 00	Set lot view override slot (top/bottom level, wall mode).
+CullRooms	function	0xa6bdc0	gamefix	48 8b c4 44 88 48 20 44 88 40 18 48 89 50 10 55	48 8b c4 44 88 48 20 44 88 40 18 48 89 50 10 55 53 56 57 41 54 41 55 41 56	Room culling (rooms, view, kind, floor); hooked.
+SceneRender	function	0x137a710	singleview	48 8b c4 55 57 41 54 41 56 41 57 48 8d a8 48 ff	48 8b c4 55 57 41 54 41 56 41 57 48 8d a8 48 ff ff ff 48 81 ec 90 01 00 00 48 c7 45 70 fe ff ff ff	Scene render (renderer, viewport rect, seconds): shadows, reflections, main view, final copy into gfx job slots 6-10; called once a frame by the renderer frame fn 0x137b830 (GameRenderSystemService::Update 0xa5b60); hooked (step 2 probe).
+Canvas	function	0xbb6590	renderscale	48 8b 05 f9 2b da 01 c3 cc cc cc cc cc cc cc cc	48 8b 05 ?? ?? ?? ?? c3 cc cc cc cc cc cc cc cc 48 8b 05 ?? ?? ?? ?? 48 89 0d ?? ?? ?? ?? c3 cc 48 8b 05 ?? ?? ?? ?? c3 cc cc cc cc cc cc cc cc 48 89 0d ?? ?? ?? ?? c3 cc cc cc cc cc cc cc cc 48 8b 05 ?? ?? ?? ?? c3 cc cc cc cc cc cc cc cc 48 89 0d ?? ?? ?? ?? c3 cc cc cc cc cc cc cc cc	Canvas getter.
+UiObject	function	0xd9f100	bubbles	48 8b 05 09 c4 bb 01 c3 cc cc cc cc cc cc cc cc	48 8b 05 ?? ?? ?? ?? c3 cc cc cc cc cc cc cc cc b8 9a c5 ec 62 c3 cc cc	
+Render	function	0xdaed30	uihook	40 55 56 57 41 54 41 55 41 56 41 57 48 81 ec 80	40 55 56 57 41 54 41 55 41 56 41 57 48 81 ec 80 00 00 00 48 c7 44 24 20 fe ff ff ff	RenderManager::Render(rm, movie): every UI movie once a frame; hooked for the UI layer.
+ApplySettings	function	0xdaf810	renderscale	44 88 4c 24 20 55 53 56 57 41 55 41 57 48 8d 6c	44 88 4c 24 20 55 53 56 57 41 55 41 57 48 8d 6c 24 e1 48 81 ec c8 00 00 00	DisplayManager apply display settings.
+Fetch	function	0xe0f250	thumbs	48 8b c4 55 41 56 41 57 48 8d 68 a9 48 81 ec c0	48 8b c4 55 41 56 41 57 48 8d 68 a9 48 81 ec c0 00 00 00 48 c7 45 ff fe ff ff ff	
+Anchor	function	0xe53140	bubbles	48 89 5c 24 08 48 89 74 24 10 48 89 7c 24 18 55	48 89 5c 24 08 48 89 74 24 10 48 89 7c 24 18 55 41 56 41 57 48 8b ec 48 83 ec 70 41 0f 10 40 10	
+Updater	function	0xe55120	bubbles	48 8b c4 48 89 48 08 55 53 56 57 41 54 41 55 41	48 8b c4 48 89 48 08 55 53 56 57 41 54 41 55 41 56 41 57 48 8d a8 98 fe ff ff	
+GetInfo	function	0xec80d0	bubbles	40 55 53 57 48 8d 6c 24 a0 48 81 ec 60 01 00 00	40 55 53 57 48 8d 6c 24 a0 48 81 ec 60 01 00 00 48 8b 05 ?? ?? ?? ?? 48 33 c4	
+SetInfo	function	0xee37e0	bubbles	4c 8b dc 55 57 49 8d 6b a8 48 81 ec 48 01 00 00	4c 8b dc 55 57 49 8d 6b a8 48 81 ec 48 01 00 00 48 8b 05 ?? ?? ?? ?? 48 33 c4	
+Ramp	function	0x107c540	nodim	40 55 56 41 56 48 8d 6c 24 e0 48 81 ec 20 01 00	40 55 56 41 56 48 8d 6c 24 e0 48 81 ec 20 01 00 00 44 0f 29 94 24 b0 00 00 00	Scaleform GradientRamp::Init(ramp, records, count, gamma xmm3): 256-entry colour ramp from gradient records {ratio byte, pad, ARGB at +4}; only caller the gradient image decode (0x107d411). Hooked: the modal dimming's stops get alpha 0.
+ConfigInt	function	0x117e590	shadows	48 89 5c 24 08 48 89 74 24 10 57 48 83 ec 20 41	48 89 5c 24 08 48 89 74 24 10 57 48 83 ec 20 41 8b d8 48 8b fa 48 8b f1 e8 ?? ?? ?? ?? 48 85 c0 74 37 4c 8d 4c 24 48 4c 8b c7 48 8b d6 48 8b c8 e8 ?? ?? ?? ?? 84 c0 74 20 48 8b 4c 24 48 33 d2 44 8d 42 0a e8 ?? ?? ?? ?? 48 8b 5c 24 30 48 8b 74 24 38 48 83 c4 20 5f c3 48 8b 74 24 38 8b c3	int get(config, name, fallback) from GraphicsRules.sgr.
+SceneDraw	function	0x11d0160	facehide	48 8b c4 48 89 58 08 55 56 57 41 54 41 55 41 56	48 8b c4 48 89 58 08 55 56 57 41 54 41 55 41 56 41 57 48 8d a8 08 ff ff ff	
+SceneSkin	function	0x11d32e0	facehide	48 89 6c 24 20 57 48 83 ec 20 48 8b e9 48 81 c1	48 89 6c 24 20 57 48 83 ec 20 48 8b e9 48 81 c1 10 03 00 00 e8 ?? ?? ?? ??	
+Projection	function	0x1208640	camera	48 8b c4 48 81 ec a8 00 00 00 83 79 10 00 4c 8b	48 8b c4 48 81 ec a8 00 00 00 83 79 10 00 4c 8b c1 0f 10 a1 f0 01 00 00	Builds the projection (+0x70..+0xaf) from +0x14/+0x18 (width/height at 1), the off-centre point +0x1f0 (x,y) and sub-rect fractions +0x270..+0x27c (0,1,1,0); exact_fov writes +0x1f0.
+NearFade	function	0x120a130	gamefix	40 53 48 81 ec 80 00 00 00 48 8b 9c 24 c8 00 00	40 53 48 81 ec 80 00 00 00 48 8b 9c 24 c8 00 00 00 0f 28 15 ?? ?? ?? ??	Near fading check (1 shown / 0 hidden); first person always shown.
+RequestPick	function	0x1211d90	touch	80 b9 a8 00 00 00 00 4c 8b c9 74 72 44 8b 91 ec	80 b9 a8 00 00 00 00 4c 8b c9 74 72 44 8b 91 ec 04 00 00 41 8d 42 ff 83 e0 03	RequestPick(RenderPickManager*, x, y).
+Palette	function	0x121d850	facehide	48 8b c4 48 89 58 08 57 48 83 ec 70 0f 29 70 e8	48 8b c4 48 89 58 08 57 48 83 ec 70 0f 29 70 e8 49 8b f9 0f 29 78 d8 49 8b d8	
+MeshDraw	function	0x121dcf0	facehide	40 55 57 48 81 ec f8 01 00 00 f6 81 cb 01 00 00	40 55 57 48 81 ec f8 01 00 00 f6 81 cb 01 00 00 02 48 8b ea 48 8b f9 0f 85 ?? ?? ?? ??	
+SkinUpdate	function	0x1220550	facehide	48 89 74 24 10 57 48 83 ec 30 48 8b 81 50 01 00	48 89 74 24 10 57 48 83 ec 30 48 8b 81 50 01 00 00 48 8b f2 48 8b f9 48 85 c0	
+Fit	function	0x126b820	shadows	48 8b c4 48 89 58 18 4c 89 48 20 48 89 48 08 55	48 8b c4 48 89 58 18 4c 89 48 20 48 89 48 08 55 56 57 41 54 41 55 41 56 41 57 48 8d 6c 24 a0 48 81 ec 60 01 00 00 0f 29 70 b8	Shadow cascade fit(sun, view cam, light cam, settings, cascade, map size).
+SkinVerts	function	0x1296ee0	facehide	55 48 83 ec 40 48 8d 6c 24 20 0f 29 75 e0 0f 29	55 48 83 ec 40 48 8d 6c 24 20 0f 29 75 e0 0f 29 7d f0 66 44 0f 7f 45 00 66 44 0f 7f 4d 10 66 44 0f 6f 0d b9 62 57 01	
+GfxByIndex	function	0x129c370	uihook	40 53 48 83 ec 20 8b d9 e8 53 39 0d 00 48 85 c0	40 53 48 83 ec 20 8b d9 e8 ?? ?? ?? ?? 48 85 c0 74 0f 8b d3 48 8b c8 48 83 c4 20	Game D3D11 wrapper (gfx) by index.
+Gfx	function	0x129c3a0	renderscale	8b 0d 3a f9 6e 01 65 48 8b 04 25 58 00 00 00 ba	8b 0d ?? ?? ?? ?? 65 48 8b 04 25 58 00 00 00 ba 98 01 00 00 48 8b 04 c8	Main gfx getter.
+Reset	function	0x12a0000	renderscale	48 89 5c 24 08 57 48 83 ec 20 80 79 2c 00 0f b6	48 89 5c 24 08 57 48 83 ec 20 80 79 2c 00 0f b6 fa 48 8b d9 75 0b 80 79 37 00	gfx device reset.
+SetMsaa	function	0x12a4240	renderscale	48 89 5c 24 08 57 48 83 ec 20 8b fa 48 8b d9 39	48 89 5c 24 08 57 48 83 ec 20 8b fa 48 8b d9 39 51 54 74 21 45 84 c0 74 19	gfx SetMsaa (gfx +0x54 / +0x38).
+Threading	function	0x136fcd0	uihook	48 8b 05 61 2d 61 01 c3 cc cc cc cc cc cc cc cc	48 8b 05 ?? ?? ?? ?? c3 cc cc cc cc cc cc cc cc 8b c2 48 8d 04 40 48 03 c0	Render threading manager getter (first byte: threading on).
+RenderSystem	function	0x13785c0	bubbles, renderscale	48 8b 05 21 a8 60 01 c3 cc cc cc cc cc cc cc cc	48 8b 05 ?? ?? ?? ?? c3 cc cc cc cc cc cc cc cc 40 53 48 83 ec 20 48 8b 05 ?? ?? ?? ??	RenderSystem getter.
+ScreenSize	function	0x1378650	bubbles	8b 41 38 89 02 8b 41 3c 41 89 00 c3 cc cc cc cc	8b 41 38 89 02 8b 41 3c 41 89 00 c3 cc cc cc cc 48 89 5c 24 10 56 48 83 ec 20	
+SetLetterbox	function	0x137aff0	renderscale	8b 44 24 28 89 41 4c 8b 44 24 30 89 41 50 8b 44	8b 44 24 28 89 41 4c 8b 44 24 30 89 41 50 8b 44 24 38 89 41 54 89 51 40	Set letterbox.
+ApplyBlend	function	0x189f690	uihook	4c 8b dc 56 57 41 54 41 56 41 57 48 83 ec 40 49	4c 8b dc 56 57 41 54 41 56 41 57 48 83 ec 40 49 c7 43 c0 fe ff ff ff 49 89 5b 10	Scaleform::Render::Sims4::HAL::applyBlendModeImpl.
+WallDistance	function	0x1a779e0	ambience	48 8b c4 4c 89 48 20 48 89 50 10 48 89 48 08 55	48 8b c4 4c 89 48 20 48 89 50 10 48 89 48 08 55 53 56 57 41 54 41 55 41 56 41 57 48 8d 68 98	Distance from a tile spot to the nearest inside/outside wall.
+Value	function	0x1a84c70	ambience	40 53 48 83 ec 30 0f 29 74 24 20 48 8b d9 0f 57	40 53 48 83 ec 30 0f 29 74 24 20 48 8b d9 0f 57 f6 0f 2e 71 40 74 4f 48 89 7c 24 40	AmbienceInsideOutsideGC value (vtable 0x200b798 slot 5).
+DistanceUpdate	function	0x1a9f530	camera	40 55 56 48 8d 6c 24 b1 48 81 ec b8 00 00 00 f6	40 55 56 48 8d 6c 24 b1 48 81 ec b8 00 00 00 f6 81 f8 00 00 00 01 48 8b f1	
+Pan	function	0x1a9fdf0	camera	48 8b c4 57 48 81 ec 80 00 00 00 48 c7 40 98 fe	48 8b c4 57 48 81 ec 80 00 00 00 48 c7 40 98 fe ff ff ff 48 89 58 08 0f 29 70 e8 0f 29 78 d8	A 3D sound's Pan2D1 angle and distance from the pan listener (listener 1); distance capped at the sound's near radius (6th arg).
+Curve	function	0x1aabdc0	ambience	48 89 5c 24 08 48 8b 59 08 48 b8 67 66 66 66 66	48 89 5c 24 08 48 8b 59 08 48 b8 67 66 66 66 66 66 66 66 4c 8b 09 45 33 c0	A GC curve at x (piecewise linear).
 StopDrift	global	0x1b45660	walkstop			Locomotion controller Stop (vtable slot 57): drift.
 StopMaster	global	0x1b45760	walkstop			Locomotion controller Stop (slot 57): master.
 StopSimple	global	0x1b45910	walkstop			Locomotion controller Stop (slot 57): simple.
@@ -66,22 +66,28 @@ PathVTable	global	0x1e6bfa8	walkstop			Path vtable (identifies path objects); no
 ProxyVTable	global	0x22e9c30	walkstop			
 WalkLogicVTable	global	0x22ea6b8	walkstop			
 MasterVTable	global	0x22eb968	walkstop			
-FadeValuesGlobal	global	0x280ccf0	gamefix			Renderer.TunableFadeValues (6 floats: object/building/Sim fade starts and ends).
-ComponentMaskGlobal	global	0x2956160	doorswing			Component kind the portal event looks up.
-RoutingMaskGlobal	global	0x2956928	walkstop			Routing component kind mask (set at runtime).
-ZoneGlobal	global	0x2956c30	gamefix			Current zone (+0x160 active lot id).
-LotManagerGlobal	global	0x2956f28	gamefix			Lot manager.
+FadeValuesGlobal	global	0x280ccf0	gamefix		| anchor=NearFade:82:86	Renderer.TunableFadeValues (6 floats: object/building/Sim fade starts and ends).
+ComponentMaskGlobal	global	0x2956160	doorswing		| anchor=WallsUpOp:603:607	Component kind the portal event looks up.
+RoutingMaskGlobal	global	0x2956928	walkstop		| anchor=FloorSnap:52:56	Routing component kind mask (set at runtime).
+ZoneGlobal	global	0x2956c30	gamefix		| anchor=LotById:205:209	Current zone (+0x160 active lot id).
+LotManagerGlobal	global	0x2956f28	gamefix		| anchor=LotById:117:121	Lot manager.
 DisplayManagerGlobal	global	0x295b790	renderscale			EA::Sims4::UI::DisplayManager*.
 SceneGlobal	global	0x2965ce8	touch			Render scene; +0x80 RenderPickManager.
-RenderSystemGlobal	global	0x2982de8	touch			RenderSystem*; +0x138 pick dispatcher.
+RenderSystemGlobal	global	0x2982de8	touch		| anchor=RenderSystem:3:7	RenderSystem*; +0x138 pick dispatcher.
 AudioManagerGlobal	global	0x29b0918	ambience			Audio manager (+0x3350 outdoor distance, +0x3391 override; listeners at +0x2dd0, 0x80 each, listener 0 loudness, 1 pan; sounds list +0x2ff8, next +0x2d8).
-CameraUpdate	function	0x1208eb0	singleview	48 8b c4 48 89 58 08 57 48 81 ec 10 01 00 00 0f		Camera update (camera, 0, optional matrix): rebuilds the view matrices (+0xf0..) and calls Projection 0x1208640; run by the camera tick 0x1209c70 after the render-camera copy and by the renderer frame 0x137b830 before SceneRender. both_eyes calls it after writing the right eye.
-SceneJob	function	0x1379b20	singleview	40 57 48 81 ec 30 01 00 00 48 c7 44 24 20 fe ff		Scene render job body (task, data): data+0x1c skip byte, data+0x20 part mode (slot 6 = 3, slot 7 = 4, slot 8 = 8; bit 8 = post/FXAA) -> render view 0x11c7520(renderer->a8, mode) via thunk 0x11c7510. both_eyes logs per-part cost and can skip one part in the second eye.
-FrameBegin	function	0x11c1a60	singleview	40 57 48 81 ec 10 01 00 00 80 b9 d4 06 00 00 00		Renderer frame begin (renderer->a8, seconds in xmm1), first call of SceneRender 0x137a710: frame counter +0x678, a main-thread render 0x1227430 (4 targets + depth), the sun shadow fits (return addresses 0x11c1cad < 0x11cc831 < 0x126aa19 -> Fit) and the cull jobs for every view (frame map, v0.13.316). both_eyes times it per pass and can leave it out of the second eye (both_eyes_skip 4).
-SceneViews	function	0x11c45a0	singleview	48 89 5c 24 08 48 89 74 24 10 57 48 83 ec 40 80		Scene views (renderer->a8, 0, 0, 1) from SceneRender when its vcall flag is 0: prep 0x11c2f80/0x11c2c90/0x11c2450/0x11c3710, then SceneLists inline or as a job. both_eyes times it to find the shadow fits/culls.
-SceneLists	function	0x11c46d0	singleview	48 89 5c 24 08 57 48 81 ec 20 01 00 00 48 8b d9		Scene draw lists (renderer): profiler stages 0 (0x11c88d0), 1 (0x11c8080 x2, 0x1262240/0x12623c0), 4 (0x11c4ea0), 5 (0x11c99f0). both_eyes times it.
-ShadowLists	function	0x11c8080	shadowreuse	44 89 4c 24 20 44 89 44 24 18 88 54 24 10 55 56		Draws the non-eye views' lists (renderer->a8, flag, kind mask, 0): called twice in the scene lists (1, 0x7fdff000 then 0, 0x200000 = Sims), in the lists job 0x11cb4xx; binds the sun shadow map (0x11c8539) and draws casters and Sims into it (frame map 316). shadowreuse can leave it out of the right eye's pass.
-ListStage0	function	0x11c88d0	passtime	40 55 57 41 56 48 8d ac 24 c0 ab ff ff b8 40 55		Scene lists stage 0 (renderer->a8): one argument, 0x5540 stack. passtime times it per eye (v0.13.321).
-ListStage4	function	0x11c4ea0	passtime	40 55 56 57 48 8d ac 24 30 fc ff ff 48 81 ec d0		Scene lists stage 4 (renderer->a8): one argument. passtime times it per eye (v0.13.321).
-ListMirrors	function	0x11c99f0	passtime	40 55 57 48 8d ac 24 68 ff ff ff 48 81 ec 98 01		Scene lists stage 5, its own job 0x11cb400 (renderer->a8): reflection/mirror views (OtherBind via 0x11c4151, frame map 316). passtime times it per eye (v0.13.321).
-ListOverlay	function	0x12623c0	passtime	40 57 41 56 48 81 ec c8 00 00 00 66 83 79 04 00		Hash-named overlay pass of singleton 0x1262000 (singleton, renderer+0x60, flag), in job 0x11cb570 before the Sim shadow lists (ColourBind 4 via 0x12624da). passtime times it per eye (v0.13.321).
+CameraUpdate	function	0x1208eb0	singleview	48 8b c4 48 89 58 08 57 48 81 ec 10 01 00 00 0f	48 8b c4 48 89 58 08 57 48 81 ec 10 01 00 00 0f 29 70 e8 49 8b f8 0f 29 78 d8	Camera update (camera, 0, optional matrix): rebuilds the view matrices (+0xf0..) and calls Projection 0x1208640; run by the camera tick 0x1209c70 after the render-camera copy and by the renderer frame 0x137b830 before SceneRender. both_eyes calls it after writing the right eye.
+SceneJob	function	0x1379b20	singleview	40 57 48 81 ec 30 01 00 00 48 c7 44 24 20 fe ff	40 57 48 81 ec 30 01 00 00 48 c7 44 24 20 fe ff ff ff 48 89 9c 24 40 01 00 00 48 8b da	Scene render job body (task, data): data+0x1c skip byte, data+0x20 part mode (slot 6 = 3, slot 7 = 4, slot 8 = 8; bit 8 = post/FXAA) -> render view 0x11c7520(renderer->a8, mode) via thunk 0x11c7510. both_eyes logs per-part cost and can skip one part in the second eye.
+FrameBegin	function	0x11c1a60	singleview	40 57 48 81 ec 10 01 00 00 80 b9 d4 06 00 00 00	40 57 48 81 ec 10 01 00 00 80 b9 d4 06 00 00 00 48 8b f9 0f 29 b4 24 d0 00 00 00	Renderer frame begin (renderer->a8, seconds in xmm1), first call of SceneRender 0x137a710: frame counter +0x678, a main-thread render 0x1227430 (4 targets + depth), the sun shadow fits (return addresses 0x11c1cad < 0x11cc831 < 0x126aa19 -> Fit) and the cull jobs for every view (frame map, v0.13.316). both_eyes times it per pass and can leave it out of the second eye (both_eyes_skip 4).
+SceneViews	function	0x11c45a0	singleview	48 89 5c 24 08 48 89 74 24 10 57 48 83 ec 40 80	48 89 5c 24 08 48 89 74 24 10 57 48 83 ec 40 80 b9 d3 06 00 00 00 41 0f b6 f9	Scene views (renderer->a8, 0, 0, 1) from SceneRender when its vcall flag is 0: prep 0x11c2f80/0x11c2c90/0x11c2450/0x11c3710, then SceneLists inline or as a job. both_eyes times it to find the shadow fits/culls.
+SceneLists	function	0x11c46d0	singleview	48 89 5c 24 08 57 48 81 ec 20 01 00 00 48 8b d9	48 89 5c 24 08 57 48 81 ec 20 01 00 00 48 8b d9 ba 02 00 00 00 48 8d 4c 24 20	Scene draw lists (renderer): profiler stages 0 (0x11c88d0), 1 (0x11c8080 x2, 0x1262240/0x12623c0), 4 (0x11c4ea0), 5 (0x11c99f0). both_eyes times it.
+ShadowLists	function	0x11c8080	shadowreuse	44 89 4c 24 20 44 89 44 24 18 88 54 24 10 55 56	44 89 4c 24 20 44 89 44 24 18 88 54 24 10 55 56 57 41 54 41 57 48 8d ac 24 c0 aa ff ff	Draws the non-eye views' lists (renderer->a8, flag, kind mask, 0): called twice in the scene lists (1, 0x7fdff000 then 0, 0x200000 = Sims), in the lists job 0x11cb4xx; binds the sun shadow map (0x11c8539) and draws casters and Sims into it (frame map 316). shadowreuse can leave it out of the right eye's pass.
+ListStage0	function	0x11c88d0	passtime	40 55 57 41 56 48 8d ac 24 c0 ab ff ff b8 40 55	40 55 57 41 56 48 8d ac 24 c0 ab ff ff b8 40 55 00 00 e8 ?? ?? ?? ?? 48 2b e0	Scene lists stage 0 (renderer->a8): one argument, 0x5540 stack. passtime times it per eye (v0.13.321).
+ListStage4	function	0x11c4ea0	passtime	40 55 56 57 48 8d ac 24 30 fc ff ff 48 81 ec d0	40 55 56 57 48 8d ac 24 30 fc ff ff 48 81 ec d0 04 00 00 48 8b f1 e8 ?? ?? ?? ??	Scene lists stage 4 (renderer->a8): one argument. passtime times it per eye (v0.13.321).
+ListMirrors	function	0x11c99f0	passtime	40 55 57 48 8d ac 24 68 ff ff ff 48 81 ec 98 01	40 55 57 48 8d ac 24 68 ff ff ff 48 81 ec 98 01 00 00 83 b9 58 06 00 00 00	Scene lists stage 5, its own job 0x11cb400 (renderer->a8): reflection/mirror views (OtherBind via 0x11c4151, frame map 316). passtime times it per eye (v0.13.321).
+ListOverlay	function	0x12623c0	passtime	40 57 41 56 48 81 ec c8 00 00 00 66 83 79 04 00	40 57 41 56 48 81 ec c8 00 00 00 66 83 79 04 00 4c 8b f2 48 8b f9 0f 84 ?? ?? ?? ??	Hash-named overlay pass of singleton 0x1262000 (singleton, renderer+0x60, flag), in job 0x11cb570 before the Sim shadow lists (ColourBind 4 via 0x12624da). passtime times it per eye (v0.13.321).
+UiManagerUpdate	function	0xda3fe0	clientdlg	48 8b c4 55 56 57 41 54 41 55 41 56 41 57 48 8d	48 8b c4 55 56 57 41 54 41 55 41 56 41 57 48 8d 68 a1 48 81 ec 00 01 00 00 48 c7 45 b7 fe ff ff ff	UI::Manager::Update (vtable slot 6): advances every UI movie, then pumps the AS3 queues (0xd9e8c0); hooked: client dialogs read after it, on the UI thread.
+GfxGetMember	function	0xec9740	clientdlg	48 89 5c 24 20 4c 89 44 24 18 55 56 57 41 54 41	48 89 5c 24 20 4c 89 44 24 18 55 56 57 41 54 41 55 41 56 41 57 48 8d 6c 24 e1 48 81 ec a0 00 00 00	GFx AS3 ObjectInterface GetMember(root, pdata = Value+0x10, name, Value* out, isDisplayObject).
+GfxInvoke	function	0xed0df0	clientdlg	48 89 5c 24 10 4c 89 4c 24 20 55 56 57 41 54 41	48 89 5c 24 10 4c 89 4c 24 20 55 56 57 41 54 41 55 41 56 41 57 48 8d 6c 24 e9	GFx AS3 invoke a closure Value(root, data +0x10, data2 +0x18, Value* result, const Value* args, n).
+GfxRelease	function	0xed5680	clientdlg	8b 42 08 25 8f 00 00 00 83 f8 06 74 37 83 f8 07	8b 42 08 25 8f 00 00 00 83 f8 06 74 37 83 f8 07 74 29 76 3f 83 f8 0a 76 09	GFx release of a managed Value (OI, Value*, data), called when type & 0x40.
+MovieInvoke	function	0xffaca0	clientdlg	48 8b 49 18 4c 8b 11 49 ff a2 c8 01 00 00 cc cc	48 8b 49 18 4c 8b 11 49 ff a2 c8 01 00 00 cc cc 48 8b 49 18 4c 8b 11 49 ff a2 d0 01 00 00	EA movie Invoke(movie, path, Value* result, const Value* args, n): (movie+0x18)->vtbl[57].
+UiManager	global	0x295b510	clientdlg		| anchor=UiObject:3:7	UI::Manager* (getter 0xd9f100): +0xe0 the UIContainer.gfx movie (its +0x18 = AS3MovieRoot*).
