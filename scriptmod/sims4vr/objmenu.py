@@ -761,6 +761,8 @@ def _send_popup_content(dialog):
         # DEFAULT is 1 in the game's dialog message (UiDialogMessage.as
         # TYPE_DEFAULT = 1; unset reads as 1 too): plain answer dialogs are 1.
         # Checking for 0 sent every popup to the cut (user 2026-10-17 11:53Z).
+        if msg.dialog_type == 2 and not len(msg.text_input) and _send_list_content(msg):
+            return
         if msg.dialog_type not in (0, 1) or len(msg.text_input):
             raise ValueError('dialog type {} with {} text inputs'.format(msg.dialog_type, len(msg.text_input)))
         for c in msg.choices:
@@ -802,6 +804,101 @@ def _send_popup_content(dialog):
         except Exception:
             pass
         _log('popup card as a cut of the game\'s dialog ({})'.format(e))
+
+
+# The list picker as our own card (user 2026-10-23: the pickers mods keep their settings in, and the game's
+# own object / Sim / item pickers): the option ids of its rows and the ones picked so far.
+_list_options = []
+_list_picked = []
+# Picker types drawn as a list (re/liveui/components/Pickers.md: GUIPicker and PickersSim); the rest keep the cut.
+_LIST_TYPES = {3, 4, 9, 10, 11, 12, 14, 17, 21, 22, 24, 25, 27}
+
+
+def _send_list_content(msg):
+    """A picker of rows (GUIPicker / SimPicker) drawn as our card (hud.cpp layout 2): each row's icon, name and
+    description, single pick or several with Done, as the game's picker answers. False: not one of those."""
+    global _list_options, _list_picked
+    _list_options = []
+    _list_picked = []
+    if not msg.HasField('picker_data') or getattr(msg, 'validation_command', ''):
+        return False
+    picker = msg.picker_data
+    if picker.type not in _LIST_TYPES:
+        _log('picker type {}: the cut of the game\'s picker'.format(picker.type))
+        return False
+    import services
+    from sims4vr import hudinfo
+    from sims4.localization import LocalizationHelperTuning
+    sims = picker.HasField('sim_picker_data')
+    data = picker.sim_picker_data if sims else picker.object_picker_data
+    multi = (picker.min_selectable < 1 or picker.max_selectable > 1 or picker.max_selectable == 0 or
+             picker.force_done_button)
+    can_close = not (int(getattr(msg, 'dialog_options', 0) or 0) & 8)  # DISABLE_PICKER_CLOSE_BUTTON
+    owner = picker.owner_sim_id or getattr(msg, 'override_sim_icon_id', 0) or msg.owner_id
+    records = ['2\x1f{}\x1f{}\x1f0'.format(msg.dialog_id, hudinfo._sim_bust(owner) if owner else 0),
+               'list\x1f{}\x1f{}\x1f{}\x1f{}'.format(1 if multi else 0, picker.min_selectable, picker.max_selectable,
+                                                1 if can_close else 0)]
+    if picker.HasField('title'):
+        records.append('title\x1f' + _loc(picker.title))
+    elif msg.HasField('title'):
+        records.append('title\x1f' + _loc(msg.title))
+    if picker.HasField('subtitle'):
+        records.append('subtitle\x1f' + _loc(picker.subtitle))
+    elif msg.HasField('text'):
+        records.append('subtitle\x1f' + _loc(msg.text))
+    for row in data.row_data:
+        b = row.base_data
+        name = ''
+        if b.HasField('name') and (b.name.hash or len(b.name.tokens)):
+            name = _loc(b.name)
+        icon = 0
+        sim_id = getattr(row, 'sim_id', 0) if sims else 0
+        if b.HasField('icon') and b.icon.instance:
+            icon = hudinfo._icon(b.icon)
+        elif b.HasField('icon_info'):
+            icon = hudinfo._picture(b.icon_info)
+        if sim_id:
+            if not icon:
+                icon = hudinfo._sim_bust(sim_id)
+            if not name:
+                info = services.sim_info_manager().get(sim_id)
+                if info is not None:
+                    name = _loc(LocalizationHelperTuning.get_raw_text('{} {}'.format(info.first_name, info.last_name)))
+        description = _loc(b.description) if b.HasField('description') and b.description.hash else ''
+        records.append('\x1f'.join(['row', str(icon), name, description, '1' if b.is_enable else '0',
+                                     '1' if b.is_selected else '0']))
+        _list_options.append(b.option_id or sim_id)
+    if not _list_options:
+        return False
+    native.popup_content('\x1e'.join(records).encode('utf-8'))
+    _log('list picker card from the game\'s message: type {}, {} rows, {} ({} to {})'.format(
+        picker.type, len(_list_options), 'several' if multi else 'one', picker.min_selectable, picker.max_selectable))
+    return True
+
+
+def list_control(code):
+    """The list picker card (the DLL, control event 6000000 + code): 0 starts a pick, 100000 + n adds row n,
+    1 sends it (the game's pick_result then respond OK), 2 cancels (pick_result with nothing, respond CANCEL)."""
+    global _list_picked
+    try:
+        if code == 0:
+            _list_picked = []
+        elif code >= 100000:
+            n = code - 100000
+            if 0 <= n < len(_list_options):
+                _list_picked.append(_list_options[n])
+        elif code in (1, 2) and _popup is not None:
+            import services
+            from ui.ui_dialog import ButtonType
+            service = services.ui_dialog_service()
+            dialog_id = _popup[0]
+            picked = list(_list_picked) if code == 1 else []
+            service.dialog_pick_result(dialog_id, picked_results=picked)
+            service.dialog_respond(dialog_id, ButtonType.DIALOG_RESPONSE_OK if code == 1 else
+                                   ButtonType.DIALOG_RESPONSE_CANCEL)
+            _log('list picker {} ({} picked)'.format('answered' if code == 1 else 'cancelled', len(picked)))
+    except Exception as e:
+        _log('the list picker failed: {!r}'.format(e))
 
 
 def _send_picker_content(dialog):

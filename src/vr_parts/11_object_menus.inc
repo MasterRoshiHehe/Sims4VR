@@ -101,47 +101,29 @@ static bool steadyBody() {
     return lastOn && now - lastOn <= 300;
 }
 
-// A card's place kept in the world (user 2026-10-22, the skill bar): where your head was and which way it
-// faced when the card was placed. Head turns never move it; it is placed again after a 1 m walk, when
-// `reset` (a new card), or once unused for 3 s. Gives that head and facing in app space for this frame,
-// so the card's own offsets (menu rows) still apply live.
-struct WorldAnchor {
+// A card's place as the pie's (user 2026-10-23: the pie recipe; 02:29Z: never "follows after a 1 m walk"):
+// where your head was and which way it faced when the card showed, kept in app space, so it goes with you
+// as you walk and turn and stays put in front of you; placed again only for a new card (`reset`) or once
+// unused for 3 s. The card's own offsets (menu rows) still apply live.
+struct HeldPlace {
     bool set = false;
-    float head[3]{}, flat[3]{};
+    XrVector3f eye{}, flat{};
     ULONGLONG seen = 0;
 };
-static void holdAnchor(WorldAnchor& a, const camera::View& view, const XrVector3f& eye, const XrVector3f& flat, bool reset,
-                       const char* what, XrVector3f& outEye, XrVector3f& outFlat) {
+static void holdPlace(HeldPlace& a, const XrVector3f& eye, const XrVector3f& flat, bool reset, const char* what,
+                      XrVector3f& outEye, XrVector3f& outFlat) {
     const ULONGLONG now = GetTickCount64();
     if (a.set && now - a.seen > 3000) a.set = false;
-    float walked = 0;
-    if (a.set) {
-        const XrVector3f was = worldToApp(view, a.head, false);
-        walked = std::sqrt((eye.x - was.x) * (eye.x - was.x) + (eye.z - was.z) * (eye.z - was.z));
-    }
-    if (!a.set || reset || walked > 1.0f) {
+    if (!a.set || reset) {
         static int logged = 0;
-        if (logged < 40) {
-            ++logged;
-            LOG("%s: placed in the world (%s, walked %.2f m)", what, !a.set ? "new" : reset ? "new card" : "walked away", walked);
-        }
-        const float scale = view.scale > 0 ? view.scale : 1.0f;
-        const XrQuaternionf heading{view.heading.x, view.heading.y, view.heading.z, view.heading.w};
-        const XrVector3f w = rotate3(heading, {eye.x * scale, eye.y * scale, eye.z * scale});
-        const XrVector3f f = rotate3(heading, flat);
-        a.head[0] = view.anchor.x + w.x;
-        a.head[1] = view.anchor.y + w.y;
-        a.head[2] = view.anchor.z + w.z;
-        a.flat[0] = f.x;
-        a.flat[1] = f.y;
-        a.flat[2] = f.z;
+        if (logged++ < 40) LOG("%s: placed where you look (kept in place like the pie)", what);
+        a.eye = eye;
+        a.flat = flat;
         a.set = true;
     }
     a.seen = now;
-    outEye = worldToApp(view, a.head, false);
-    XrVector3f f = worldToApp(view, a.flat, true);
-    f.y = 0;
-    outFlat = dot3(f, f) > 1e-4f ? normalize3(f) : flat;
+    outEye = a.eye;
+    outFlat = a.flat;
 }
 
 // ---------------------------------------------------------------------------
@@ -560,16 +542,16 @@ static bool updatePopupCard(const ObjectMenuRequest& r, bool firstPerson, bool h
         float h = w / std::max(aspect, 0.2f);
         at = {sim.x + right.x * (0.20f + w / 2), sim.y + h / 2 - 0.10f, sim.z + right.z * (0.20f + w / 2)};
     } else {
-        // In front of you, a little below your eyes, kept in the world (holdAnchor): head turns don't move it.
-        static WorldAnchor anchor;
+        // In front of you, a little below your eyes, kept in place like the pie (holdPlace).
+        static HeldPlace place;
         const float distance = std::max(0.3f, g_config.popupDistance);
         XrVector3f aEye, aFlat;
-        holdAnchor(anchor, view, eye, flat, g_popupPlace, "Popup card", aEye, aFlat);
+        holdPlace(place, eye, flat, g_popupPlace, "Popup card", aEye, aFlat);
         g_popupPlace = false;
         at = {aEye.x + aFlat.x * distance, aEye.y - 0.08f, aEye.z + aFlat.z * distance};
-        XrVector3f to{at.x - eye.x, at.y - eye.y, at.z - eye.z};
-        w = std::max(0.15f, g_config.popupSize * std::sqrt(dot3(to, to)));
+        w = std::max(0.15f, g_config.popupSize * std::sqrt(distance * distance + 0.08f * 0.08f));
         onTop = true;
+        eye = aEye;  // facing where you were when it showed, not turning after you (the pie's way)
     }
     float h = w / std::max(aspect, 0.2f);
     // Facing you, upright.

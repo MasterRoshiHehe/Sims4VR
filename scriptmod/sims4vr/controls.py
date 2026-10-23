@@ -323,6 +323,9 @@ def _tick(_handle):
             elif 5000000 <= what < 6000000:
                 from sims4vr import pie
                 pie.select_own(what - 5000000)
+            elif 6000000 <= what < 7000000:
+                from sims4vr import objmenu
+                objmenu.list_control(what - 6000000)
             elif what >= 100000:
                 from sims4vr import phoneapp
                 phoneapp.select(what - 100000)

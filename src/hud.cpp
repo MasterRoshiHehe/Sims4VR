@@ -78,7 +78,20 @@ struct PopupContent {
     bool resolved = false, valid = false;
     std::string title, text;
     std::vector<std::string> buttons;
+    // Layout 2: a picker of rows (the game's GUIPicker / SimPicker: objmenu.py _send_list_content).
+    struct Row {
+        std::string nameJson, descJson, name, desc;
+        uint64_t icon = 0;
+        bool enabled = true, selected = false;
+    };
+    std::vector<Row> rows;
+    std::string subtitleJson, subtitle;
+    bool multi = false, canClose = true;
+    int minSel = 0, maxSel = 1;
 };
+int g_listPage = 0;                 // the list picker's page (present thread)
+std::vector<char> g_listChosen;     // its rows ticked (several to pick)
+std::vector<int> g_listPicked;      // what Done sent
 std::mutex g_popupMutex;
 PopupContent g_popupIn;      // set by Python (g_popupMutex)
 bool g_popupNew = false;     // g_popupIn changed (g_popupMutex)
@@ -740,8 +753,12 @@ void resolvePopup() {
         std::lock_guard<std::mutex> lock(g_popupMutex);
         if (g_popupNew) {
             g_popup = g_popupIn;
-            g_popupOn = !g_popupIn.textJson.empty() || !g_popupIn.titleJson.empty() || !g_popupIn.buttonJson.empty();
+            g_popupOn = !g_popupIn.textJson.empty() || !g_popupIn.titleJson.empty() || !g_popupIn.buttonJson.empty() ||
+                        !g_popupIn.rows.empty();
             g_popupNew = false;
+            g_listPage = 0;
+            g_listChosen.assign(g_popup.rows.size(), 0);
+            for (size_t i = 0; i < g_popup.rows.size(); ++i) g_listChosen[i] = g_popup.rows[i].selected && g_popup.multi;
             g_popupHeight = 0;
         }
     }
@@ -754,6 +771,26 @@ void resolvePopup() {
     p.resolved = true;
     if (!p.titleJson.empty()) p.title = strings::resolve(p.titleJson);
     if (!p.textJson.empty()) p.text = strings::resolve(p.textJson);
+    if (p.layout == 2) {
+        if (!p.subtitleJson.empty()) p.subtitle = strings::resolve(p.subtitleJson);
+        int named = 0;
+        for (PopupContent::Row& r : p.rows) {
+            if (r.nameJson.size() > 2) r.name = strings::resolve(r.nameJson);
+            if (r.descJson.size() > 2) r.desc = strings::resolve(r.descJson);
+            if (!r.name.empty()) ++named;
+        }
+        // Every row needs its words: an unknown one keeps the cut of the game's picker.
+        p.valid = !p.rows.empty() && named == static_cast<int>(p.rows.size());
+        {
+            std::lock_guard<std::mutex> lock(g_popupMutex);
+            if (!g_popupNew) g_popupState = p.valid ? 2 : 3;
+        }
+        static int logged = 0;
+        if (logged++ < 40)
+            LOG("HUD: list picker texts %s (%zu rows, %d named, %s)", p.valid ? "found" : "missing: the game's picker is shown cut out",
+                p.rows.size(), named, p.multi ? "several" : "one");
+        return;
+    }
     int named = 0;
     for (size_t i = 0; i < p.buttonJson.size(); ++i) {
         std::string label = p.buttonJson[i].size() > 2 ? strings::resolve(p.buttonJson[i]) : std::string();
@@ -798,7 +835,157 @@ using uikit::portrait;
 // answers as buttons in the light bubble beside your portrait. Otherwise the
 // plain dialog: its panel, title, text and buttons. Returns kAnswer with the
 // button's index; its height goes to popupHeight().
+// A picker of rows (the game's GUIPicker / SimPicker, re/liveui/components/Pickers.md) as its card: the dialog
+// panel, title and subtitle, the X (unless the picker has none), a page of rows (icon, name, description;
+// greyed when not enabled) and the page arrows. One to pick: a row press answers. Several: rows tick, Done
+// (from min_selectable, up to max_selectable; 0 = any) answers with the ticked ones.
+Action drawList(int* index) {
+    ImDrawList* d = ImGui::GetBackgroundDrawList();
+    const PopupContent& p = g_popup;
+    const Rect r = kPopup;
+    const ImU32 kTitle = IM_COL32(29, 58, 102, 255), kBody = IM_COL32(44, 52, 66, 255), kGrey = IM_COL32(130, 136, 146, 255);
+    const float x0 = r.x + 8, x1 = r.x + r.w - 8, top = r.y + 8, pad = 34, in0 = x0 + pad, in1 = x1 - pad;
+    const float titleSize = g_title->FontSize, textSize = g_text->FontSize * 0.8f, descSize = g_text->FontSize * 0.62f;
+    Action action = kNone;
+    std::vector<uint64_t> shown;
+    for (uint64_t pic : {p.pictures[0], p.pictures[1]})
+        if (pic) shown.push_back(pic);
+    int id = 0;
+    auto button = [&](ImVec2 a, ImVec2 b, bool* hover) {
+        ImGui::SetCursorScreenPos(a);
+        ImGui::PushID(3000 + id++);
+        bool pressed = ImGui::InvisibleButton("row", {std::max(1.0f, b.x - a.x), std::max(1.0f, b.y - a.y)});
+        if (hover) *hover = ImGui::IsItemHovered();
+        ImGui::PopID();
+        return pressed;
+    };
+    const int n = static_cast<int>(p.rows.size());
+    if (static_cast<int>(g_listChosen.size()) != n) g_listChosen.assign(n, 0);
+    int ticked = 0;
+    for (char c : g_listChosen) ticked += c ? 1 : 0;
+
+    const float wrapTitle = in1 - in0 - 160;
+    ImVec2 tt = p.title.empty() ? ImVec2{0, 0} : g_title->CalcTextSizeA(titleSize, FLT_MAX, wrapTitle, p.title.c_str());
+    ImVec2 st = p.subtitle.empty() ? ImVec2{0, 0} : g_text->CalcTextSizeA(descSize, FLT_MAX, in1 - in0, p.subtitle.c_str());
+    const float rowH = 96, rowGap = 8, arrowsH = 76, doneH = 76;
+    const float headH = 30 + std::max(tt.y, 60.0f) + (st.y > 0 ? 12 + st.y : 0) + 22;
+    const float footFixed = 22 + std::max(p.multi ? doneH : 0.0f, 0.0f) + 30 + 16;
+    int perPage = std::max(3, std::min(8, static_cast<int>((r.h - headH - footFixed - arrowsH - 22 + rowGap) / (rowH + rowGap))));
+    const bool paged = n > perPage;
+    if (!paged) perPage = std::max(1, n);
+    const int pages = std::max(1, (n + perPage - 1) / perPage);
+    g_listPage = std::max(0, std::min(g_listPage, pages - 1));
+    const int linesShown = paged ? perPage : n;
+    const float listY = top + headH;
+    const float listH = linesShown * (rowH + rowGap) - rowGap;
+    const float footY = listY + listH + 22;
+    const float footH = std::max(paged ? arrowsH : 0.0f, p.multi ? doneH : 0.0f);
+    const float bottom = footY + footH + 30;
+    nine(d, art::kDialogPanel, {x0, top}, {x1, bottom}, 36, 36, 36, 36, 1, IM_COL32(244, 247, 252, 255));
+
+    float y = top + 30;
+    if (tt.y > 0) d->AddText(g_title, titleSize, {(in0 + in1 - tt.x) / 2, y}, kTitle, p.title.c_str(), nullptr, wrapTitle);
+    if (p.canClose) {
+        const float s = 76;
+        ImVec2 c{in1 - s / 2 + 8, y + titleSize / 2};
+        bool hover = false;
+        if (button({c.x - s / 2, c.y - s / 2}, {c.x + s / 2, c.y + s / 2}, &hover)) action = kListClose;
+        piece(d, art::kCancel, c, (hover ? s * 1.08f : s) / art::kCancel.w);
+    }
+    y += std::max(tt.y, 60.0f);
+    if (st.y > 0) {
+        d->AddText(g_text, descSize, {in0, y + 12}, kBody, p.subtitle.c_str(), nullptr, in1 - in0);
+    }
+
+    const int first = g_listPage * perPage;
+    for (int k = first; k < std::min(first + perPage, n); ++k) {
+        const PopupContent::Row& row = p.rows[k];
+        const float ry = listY + (k - first) * (rowH + rowGap);
+        const ImVec2 a{in0, ry}, b{in1, ry + rowH};
+        bool hover = false;
+        const bool full = p.multi && p.maxSel > 0 && ticked >= p.maxSel && !g_listChosen[k];
+        const bool usable = row.enabled && !(full && p.maxSel > 1);
+        if (button(a, b, &hover) && usable) {
+            if (!p.multi) {
+                action = kListPick;
+                if (index) *index = k;
+            } else if (p.maxSel == 1) {
+                const bool was = g_listChosen[k] != 0;
+                std::fill(g_listChosen.begin(), g_listChosen.end(), 0);
+                g_listChosen[k] = was ? 0 : 1;
+            } else {
+                g_listChosen[k] = g_listChosen[k] ? 0 : 1;
+            }
+        }
+        const bool on = p.multi && g_listChosen[k];
+        nine(d, art::kDialogPanel, a, b, 36, 36, 36, 36, 0.5f,
+             !usable ? IM_COL32(234, 236, 240, 255) : on ? IM_COL32(170, 208, 244, 255)
+                                                   : hover ? IM_COL32(214, 230, 250, 255) : kWhite);
+        float tx = a.x + 18;
+        if (p.multi) {
+            const float s = 40;
+            const ImVec2 ca{tx, (a.y + b.y - s) / 2}, cb{tx + s, (a.y + b.y + s) / 2};
+            d->AddRectFilled(ca, cb, kWhite, 6);
+            d->AddRect(ca, cb, kTitle, 6, 0, 3);
+            if (on) {
+                const ImVec2 tick[3] = {{ca.x + 8, ca.y + s * 0.52f}, {ca.x + s * 0.42f, cb.y - 9}, {cb.x - 7, ca.y + 9}};
+                d->AddPolyline(tick, 3, kTitle, 0, 5);
+            }
+            tx += s + 16;
+        }
+        if (row.icon) {
+            const float is = rowH - 20;
+            icon(d, row.icon, {tx + is / 2, (a.y + b.y) / 2}, is, usable ? kWhite : IM_COL32(255, 255, 255, 110));
+            shown.push_back(row.icon);
+            tx += is + 16;
+        }
+        const ImVec4 clip{tx, a.y + 4, b.x - 12, b.y - 4};
+        const float nameY = row.desc.empty() ? a.y + (rowH - textSize) / 2 - 4 : a.y + 12;
+        d->AddText(g_text, textSize, {tx, nameY}, usable ? kBody : kGrey, row.name.c_str(), nullptr, 0, &clip);
+        if (!row.desc.empty()) {
+            // One line of it, as the game's ObjectPickerCellView.
+            std::string line = row.desc.substr(0, row.desc.find('\n'));
+            d->AddText(g_text, descSize, {tx, a.y + 16 + textSize}, kGrey, line.c_str(), nullptr, 0, &clip);
+        }
+    }
+
+    // The footer: Done (several to pick) on the left, the page arrows on the right.
+    if (p.multi) {
+        const bool can = ticked >= std::max(0, p.minSel) && (ticked > 0 || p.minSel <= 0);
+        char label[48];
+        if (p.maxSel > 1)
+            std::snprintf(label, sizeof label, "Done (%d/%d)", ticked, p.maxSel);
+        else
+            std::snprintf(label, sizeof label, "Done");
+        if (dialogButton(d, 63, label, {in0, footY}, {in0 + 330, footY + doneH}) && can) {
+            g_listPicked.clear();
+            for (int k = 0; k < n; ++k)
+                if (g_listChosen[k]) g_listPicked.push_back(k);
+            action = kListDone;
+        }
+    }
+    if (paged) {
+        const float bw = 104, bh = 76;
+        char where[32];
+        std::snprintf(where, sizeof where, "%d / %d", g_listPage + 1, pages);
+        ImVec2 ws = g_text->CalcTextSizeA(textSize, FLT_MAX, 0, where);
+        const float nx = in1 - bw, px = nx - 24 - ws.x - 24 - bw;
+        if (dialogButton(d, 64, "<", {px, footY}, {px + bw, footY + bh})) g_listPage = (g_listPage + pages - 1) % pages;
+        d->AddText(g_text, textSize, {px + bw + 24, footY + (bh - 10 - ws.y) / 2}, kBody, where);
+        if (dialogButton(d, 65, ">", {nx, footY}, {nx + bw, footY + bh})) g_listPage = (g_listPage + 1) % pages;
+    }
+    std::sort(shown.begin(), shown.end());
+    shown.erase(std::unique(shown.begin(), shown.end()), shown.end());
+    {
+        std::lock_guard<std::mutex> lock(g_itemMutex);
+        if (shown != g_popupIcons) g_popupIcons.swap(shown);
+    }
+    g_popupHeight = std::min(r.h, bottom - r.y + 8);
+    return action;
+}
+
 Action drawPopup(int* index) {
+    if (g_popup.layout == 2) return drawList(index);
     ImDrawList* d = ImGui::GetBackgroundDrawList();
     const PopupContent& p = g_popup;
     const Rect r = kPopup;
@@ -2580,7 +2767,7 @@ void setPopupContent(const char* data, size_t size) {
             k = e + 1;
         }
         if (first) {
-            c.layout = f[0] == "1" ? 1 : 0;
+            c.layout = f[0] == "1" ? 1 : f[0] == "2" ? 2 : 0;
             for (int k = 0; k < 2; ++k)
                 if (f.size() > static_cast<size_t>(2 + k)) c.pictures[k] = std::strtoull(f[2 + k].c_str(), nullptr, 10);
             first = false;
@@ -2588,6 +2775,21 @@ void setPopupContent(const char* data, size_t size) {
             c.titleJson = f[1];
         } else if (f[0] == "text" && f.size() > 1) {
             c.textJson = f[1];
+        } else if (f[0] == "list" && f.size() > 4) {
+            c.multi = f[1] == "1";
+            c.minSel = std::atoi(f[2].c_str());
+            c.maxSel = std::atoi(f[3].c_str());
+            c.canClose = f[4] == "1";
+        } else if (f[0] == "subtitle" && f.size() > 1) {
+            c.subtitleJson = f[1];
+        } else if (f[0] == "row" && f.size() > 5) {
+            PopupContent::Row r;
+            r.icon = std::strtoull(f[1].c_str(), nullptr, 10);
+            r.nameJson = f[2];
+            r.descJson = f[3];
+            r.enabled = f[4] == "1";
+            r.selected = f[5] == "1";
+            c.rows.push_back(r);
         } else if (f[0] == "button" && f.size() > 2) {
             c.buttonJson.push_back(f[1]);
             c.choices.push_back(std::atoll(f[2].c_str()));
@@ -2603,8 +2805,10 @@ void setPopupContent(const char* data, size_t size) {
     g_popupIn = c;
     g_popupNew = true;
     g_popupHeight = 0;
-    g_popupState = !c.textJson.empty() || !c.titleJson.empty() || !c.buttonJson.empty() ? 1 : 0;
+    g_popupState = !c.textJson.empty() || !c.titleJson.empty() || !c.buttonJson.empty() || !c.rows.empty() ? 1 : 0;
 }
+
+std::vector<int> listPicked() { return g_listPicked; }
 
 void setTexts(int kind, const char* data, size_t size) {
     if (kind < 0 || kind >= kKinds) return;

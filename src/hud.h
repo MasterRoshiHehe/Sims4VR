@@ -1,4 +1,5 @@
 #pragma once
+#include <vector>
 
 #include <d3d11.h>
 #include <cstddef>
@@ -49,7 +50,10 @@ constexpr Rect kPie{0, 5360, 1024, 640};
 // kPhoneOptions: the Options app (the game menu); kPhoneColor: wallpaper colour `index`.
 enum Action { kNone = 0, kPausePressed = 1, kSpeed1, kSpeed2, kSpeed3, kFullUi, kBuildPressed, kCancel, kDismissWant, kAnswer,
               kPick, kPickerClose, kPhonePick, kPhoneSilence, kPhoneOptions, kPhoneColor, kNotesOpened, kNotesClear, kNoteDelete, kNoteDismiss, kCalendarOpened, kNoteAnswer,
-              kPiePick, kPieClose };
+              kPiePick, kPieClose, kListPick, kListDone, kListClose };
+// kListPick: the list picker's row `index` (one pick); kListDone: Done with listPicked(); kListClose: its X.
+// The rows picked on the list picker when kListDone came (render's thread).
+std::vector<int> listPicked();
 
 // Python (controls.py), whenever it changes: the game's clock. speed is
 // ClockSpeedMode (0 paused, 1..3, 4 loading, 5 super speed); day 0 = Sunday.

@@ -430,8 +430,8 @@ static void startNoteDrag(int hand, bool laser, const XrVector3f& held) {
     LOG("Notification card: moving it (%s, %s hand)", laser ? "laser" : "hand", hand ? "right" : "left");
 }
 
-// The card in front of you is kept in the world (holdAnchor): the head and facing it is placed from.
-static WorldAnchor g_noteAnchor;
+// The card in front of you is kept in place like the pie (holdPlace): the head and facing it is placed from.
+static HeldPlace g_noteAnchor;
 static XrVector3f g_noteEye{}, g_noteFlat{0, 0, -1};
 static bool g_noteAnchored = false;
 
@@ -483,7 +483,7 @@ static void updateNoteCard(const camera::View& view, bool firstPerson, bool head
         if (!(dot3(flat, flat) > 0.5f)) flat = {0, 0, -1};
         static uint64_t lastId = 0;
         XrVector3f aEye;
-        holdAnchor(g_noteAnchor, view, eye, flat, n.id != lastId, "Notification card", aEye, flat);
+        holdPlace(g_noteAnchor, eye, flat, n.id != lastId, "Notification card", aEye, flat);
         lastId = n.id;
         g_noteEye = aEye, g_noteFlat = flat, g_noteAnchored = true;
         const XrVector3f right = cross3(flat, XrVector3f{0, 1, 0});
@@ -504,7 +504,7 @@ static void updateNoteCard(const camera::View& view, bool firstPerson, bool head
         const float h = w * used / hud::kNote.w;
         at = {headAt.x, headAt.y + 0.28f + h / 2, headAt.z};
     }
-    facingAxes(at, eye, x, y);
+    facingAxes(at, n.front ? g_noteEye : eye, x, y);  // in front: facing where you were (the pie's way)
     g_noteCardFront = n.front;
     g_noteCardAt = at, g_noteCardX = x, g_noteCardY = y;
     g_noteCardW = w, g_noteCardH = w * used / hud::kNote.w;
@@ -601,6 +601,17 @@ static void updateHud(const armik::Hand hands[2], bool firstPerson, bool headOk,
         viewOk = true;
     }
     updatePieHud();
+    {
+        // The popup card in front of you: placed again with each drawn frame's camera (placeArmPieces), as the pie.
+        int kind;
+        {
+            std::lock_guard<std::mutex> lock(g_objMenuMutex);
+            kind = g_objMenuRequest.kind;
+        }
+        const PieMenu& m = g_hud[kHudPopup].m;
+        std::lock_guard<std::mutex> lock(g_armPlaceMutex);
+        g_appPlace[kHudPopup] = {m.active && kind == 4, m.pose.position, m.x, m.y};
+    }
     if (viewOk)
         updateNoteCard(view, firstPerson, headOk, head);
     else
@@ -688,15 +699,15 @@ static void updateHud(const armik::Hand hands[2], bool firstPerson, bool headOk,
     }
 
     // The money gained or lost, in front of you a little up and right, kept in
-    // the world (holdAnchor); over the world.
+    // place like the pie (holdPlace); over the world.
     {
         HudSheet& money = g_hud[kHudMoney];
         money.onTop = true;
-        static WorldAnchor anchor;
+        static HeldPlace anchor;
         if (c.wristMoney && !asleep && hud::moneyShowing()) {
             XrVector3f aEye, dir;
-            holdAnchor(anchor, view, eye, flat, !money.m.active, "Money", aEye, dir);
-            aroundYou(money, aEye, dir, eye, c.wristMoneyPos, c.wristMoneyTurn, c.wristMoneySize, hud::kMoney);
+            holdPlace(anchor, eye, flat, !money.m.active, "Money", aEye, dir);
+            aroundYou(money, aEye, dir, aEye, c.wristMoneyPos, c.wristMoneyTurn, c.wristMoneySize, hud::kMoney);
         } else
             hideHud(money);
     }
@@ -707,10 +718,10 @@ static void updateHud(const armik::Hand hands[2], bool firstPerson, bool headOk,
     {
         HudSheet& pause = g_hud[kHudPause];
         pause.onTop = true;
-        static WorldAnchor anchor;
+        static HeldPlace anchor;
         if (c.wristPause && g_paused.load() && !asleep) {
             XrVector3f aEye, dir;
-            holdAnchor(anchor, view, eye, flat, !pause.m.active, "Pause symbol", aEye, dir);
+            holdPlace(anchor, eye, flat, !pause.m.active, "Pause symbol", aEye, dir);
             float distance = std::max(0.3f, c.popupDistance);
             XrVector3f at{aEye.x + dir.x * distance, aEye.y - 0.08f, aEye.z + dir.z * distance};
             int kind;
@@ -720,7 +731,7 @@ static void updateHud(const armik::Hand hands[2], bool firstPerson, bool headOk,
             }
             if (g_objMenu.active && kind == 4) at = g_objMenu.pose.position;
             if (g_hud[kHudPopup].m.active && kind == 4) at = g_hud[kHudPopup].m.pose.position;
-            aroundYou(pause, at, dir, eye, c.wristPausePos, c.wristPauseTurn, c.wristPauseSize, hud::kPauseArea);
+            aroundYou(pause, at, dir, aEye, c.wristPausePos, c.wristPauseTurn, c.wristPauseSize, hud::kPauseArea);
         } else {
             hideHud(pause);
         }
@@ -957,6 +968,25 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
             LOG("HUD: pie option %d picked", index);
             closePie("picked on the pie");
             g_pieDismissHold = true;  // the press doesn't reach the world
+            break;
+        case hud::kListPick:
+            // controls.py 6000000 + code (objmenu.list_control): start, the row, send.
+            grab::pushControl(6000000);
+            grab::pushControl(6100000 + index);
+            grab::pushControl(6000001);
+            LOG("HUD: list picker row %d picked", index);
+            break;
+        case hud::kListDone: {
+            const std::vector<int> picked = hud::listPicked();
+            grab::pushControl(6000000);
+            for (int k : picked) grab::pushControl(6100000 + k);
+            grab::pushControl(6000001);
+            LOG("HUD: list picker done (%zu picked)", picked.size());
+            break;
+        }
+        case hud::kListClose:
+            grab::pushControl(6000002);
+            LOG("HUD: list picker closed");
             break;
         case hud::kPieClose:
             dismissPie("closed on the pie");
