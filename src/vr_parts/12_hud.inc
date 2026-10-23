@@ -950,11 +950,13 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
             LOG("HUD: popup button %d", index);
             break;
         case hud::kPiePick:
-            // controls.py: 5000000 + n picks the pie's n-th option (pie.select_own: interactions.select); Escape
-            // closes the game's own pie, which stays open behind ours.
+            // controls.py: 5000000 + n picks the pie's n-th option (pie.select_own: interactions.select). No
+            // Escape (user 2026-10-23: mod settings menus closed as they opened): the game's own pie is gone by
+            // then, and the Escape closed the picker the option opened (and the game menu after it).
             if (index >= 0) grab::pushControl(5000000 + index);
             LOG("HUD: pie option %d picked", index);
-            dismissPie("picked on the pie");
+            closePie("picked on the pie");
+            g_pieDismissHold = true;  // the press doesn't reach the world
             break;
         case hud::kPieClose:
             dismissPie("closed on the pie");
