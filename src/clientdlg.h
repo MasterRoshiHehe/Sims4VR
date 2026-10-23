@@ -24,5 +24,8 @@ void setWanted(bool wanted);
 bool showing();
 // Any thread: answer the client dialog with its n-th button (run on the UI thread).
 void press(int index);
+// Any thread: closes the game's own pie menu widget (on the UI thread), as its own pick does.
+// False when the game isn't hooked.
+bool closeGamePie();
 
 }  // namespace s4vr::clientdlg

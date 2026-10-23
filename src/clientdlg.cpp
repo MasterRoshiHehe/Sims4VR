@@ -48,6 +48,7 @@ uint8_t* g_manager = nullptr;
 std::atomic<bool> g_wanted{false};
 std::atomic<bool> g_showing{false};
 std::atomic<int> g_press{-1};
+std::atomic<bool> g_hidePie{false};
 std::string g_shownId;   // UI thread only
 std::string g_skippedId;
 
@@ -130,15 +131,34 @@ void* movie() {
     return *reinterpret_cast<void**>(manager + 0xe0);  // UIContainer.gfx
 }
 
-// olympus.dialog.DialogManager, the class (its static functions are members of it).
-bool dialogManager(Held& out) {
+// An AS3 class by its full name (its static functions are members of it).
+bool definition(const char* className, Held& out) {
     void* m = movie();
     if (!m || !*reinterpret_cast<void**>(static_cast<uint8_t*>(m) + 0x18)) return false;
     Value name;
     name.type = kString;
-    name.data = const_cast<char*>("olympus.dialog.DialogManager");
+    name.data = const_cast<char*>(className);
     release(out.v);
     return g_movieInvoke(m, "flash.utils.getDefinitionByName", &out.v, &name, 1) && out.ok();
+}
+
+bool dialogManager(Held& out) { return definition("olympus.dialog.DialogManager", out); }
+
+// The game's pie menu widget closes as after a pick of its own (PieMenuMain.OnOptionSelected):
+// CommunicationManager.SendMessage("HidePieMenu", {isOptionSelected: true}) is what it sends; null does the same close.
+void hideGamePie() {
+    Held comms;
+    if (!definition("olympus.io.CommunicationManager", comms)) {
+        LOG("Pie: the game's pie menu not closed (CommunicationManager not found)");
+        return;
+    }
+    Value args[2];
+    args[0].type = kString;
+    args[0].data = const_cast<char*>("HidePieMenu");
+    args[1].type = kNull;
+    bool sent = callMember(comms.v, "SendMessage", args, 2, nullptr);
+    static int logged = 0;
+    if (logged++ < 20) LOG("Pie: the game's pie menu %s", sent ? "closed (HidePieMenu)" : "not closed (SendMessage failed)");
 }
 
 void hide() {
@@ -167,6 +187,7 @@ void answer(const Value& manager, const Value& data, int index) {
 }
 
 void poll() {
+    if (g_hidePie.exchange(false)) hideGamePie();
     int pressed = g_press.exchange(-1);
     static int tick = 0;
     if (pressed < 0 && (++tick % 4)) return;
@@ -275,5 +296,11 @@ void setWanted(bool wanted) {
 bool showing() { return g_showing.load(); }
 
 void press(int index) { g_press = index; }
+
+bool closeGamePie() {
+    if (!g_update) return false;
+    g_hidePie = true;
+    return true;
+}
 
 }  // namespace s4vr::clientdlg
