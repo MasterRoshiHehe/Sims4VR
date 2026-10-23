@@ -227,6 +227,7 @@ struct Config {
     float bodyNearClip = 0.08f;      // metres, the lowest near limit (first person)
     bool bodyNearAdaptive = true;    // the near limit follows what is close, less flicker (DX11)
     float bodyNearMax = 0.75f;       // metres, the highest it goes
+    bool bodySteadyShoulders = true;  // [body] steady_shoulders: the idle doesn't move your shoulders (arms on controllers)
     bool bodyHideFace = true;        // your own face, eyes and teeth folded out of your view (mirrors keep them)
     bool steadyShadows = true;       // first person: sun shadows that hold still (shadows.h)
     float shadowStep = 0.2f;         // degrees the sun moves before the shadows follow

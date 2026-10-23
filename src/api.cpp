@@ -165,6 +165,7 @@ S4VR_API int s4vr_init() {
          !g_config.ambientOcclusion ? "off" : "on", g_config.shadowMap, g_config.renderScale, g_config.renderMsaa, g_config.hitchCatcher ? "on" : "off");
     s4vr::armik::install(g_config.armIk, g_config.handPitch, g_config.headTracking);
     s4vr::armik::setSeatTorso(g_config.bodySeatTorso);
+    s4vr::armik::setSteadyShoulders(g_config.bodySteadyShoulders);
     s4vr::facehide::install(g_config.bodyHideFace);
     s4vr::armik::configureTouch(g_config.touchBodies, g_config.holdHands, g_config.lookAtYou, g_config.grabBodies);
     s4vr::armik::configureGrab(g_config.grabCurl, g_config.grabDrag);

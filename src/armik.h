@@ -63,6 +63,8 @@ bool leanDone(camera::Vec3& world);
 // animation's slowly averaged posture, without its moves, so only your head
 // (setLean) moves them. Off: the animation moves them as before.
 void setSeatTorso(bool on);
+// [body] steady_shoulders: the game's idle doesn't move your shoulders while your arms follow the controllers.
+void setSteadyShoulders(bool on);
 
 // Present thread: hold that hand in one fixed pose (your phone), whatever the
 // buttons do: its four fingers curled by fingerCurl (0 open .. 1 a fist), its

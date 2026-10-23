@@ -22,6 +22,7 @@ struct Rect {
 constexpr Rect kWatch{0, 0, 640, 256};        // clock, day, speed buttons, full-UI button
 constexpr Rect kPauseArea{640, 0, 128, 128};  // the pause symbol
 constexpr Rect kBuild{768, 0, 128, 128};      // the round build/buy button
+constexpr Rect kPreview{896, 0, 128, 128};    // see-through green: where a HUD piece goes while its menu page is open
 constexpr Rect kNeeds{0, 256, 512, 256};      // six need bars with their icons, 2 x 3
 constexpr Rect kMoodlets{512, 256, 512, 256};  // up to 8 moodlets, 4 x 2
 constexpr Rect kQueue{0, 512, 1024, 160};     // the action queue: running first, then queued
@@ -222,6 +223,10 @@ struct Frame {
     bool balloons = false;
     bool bars = false;       // the skill bars over Sims' heads   // the balloons over Sims' heads (addBalloon)
     uint64_t note = 0;       // the notification drawn as a card in kNote (notify.py), 0: none
+    // The settings page open places this piece (user 2026-10-23): its area gets a see-through green box behind it,
+    // and kPreview is filled (cards with no area of their own). w 0: none.
+    Rect preview{0, 0, 0, 0};
+    bool previewCard = false;
     float px = -1, py = -1;  // the pointer in atlas pixels; < 0: none
     bool down = false;       // pressing
 };

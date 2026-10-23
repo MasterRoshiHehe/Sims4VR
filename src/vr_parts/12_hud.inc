@@ -674,7 +674,7 @@ static void updateHud(const armik::Hand hands[2], bool firstPerson, bool headOk,
         // (placeArmPieces). The menu rows' offsets still apply live.
         static bool placed = false;
         static XrVector3f placedEye, placedDir;
-        if (c.wristWhims && !asleep && hud::hasItems(hud::kWantItems)) {
+        if (c.wristWhims && !asleep && (hud::hasItems(hud::kWantItems) || previewSheet() == kHudWants)) {
             if (!wants.m.active || !placed) {
                 placedEye = eye;
                 placedDir = flat;
@@ -709,7 +709,7 @@ static void updateHud(const armik::Hand hands[2], bool firstPerson, bool headOk,
         HudSheet& pause = g_hud[kHudPause];
         pause.onTop = true;
         static HeldPlace anchor;
-        if (c.wristPause && g_paused.load() && !asleep) {
+        if (c.wristPause && (g_paused.load() || previewSheet() == kHudPause) && !asleep) {
             XrVector3f aEye, dir;
             holdPlace(anchor, eye, flat, !pause.m.active, "Pause symbol", aEye, dir);
             float distance = std::max(0.3f, c.popupDistance);
@@ -872,8 +872,35 @@ static bool laserHud(const XrVector3f& o, const XrVector3f& d, bool trigger, XrV
     return false;
 }
 
+// The HUD piece the open settings page places (user 2026-10-23: a green box behind it, so it can be placed even
+// when it isn't showing): -1 none.
+static int previewSheet() {
+    const wchar_t* page = settings::openPage();
+    if (!page) return -1;
+    static const struct {
+        const wchar_t* page;
+        int sheet;
+    } kPages[] = {{L"HUD watch", kHudWatch}, {L"HUD needs", kHudNeeds}, {L"HUD moodlets", kHudMoodlets},
+                  {L"HUD queue", kHudQueue}, {L"HUD build", kHudBuild},     {L"HUD wants", kHudWants},
+                  {L"HUD pause", kHudPause}};
+    for (const auto& k : kPages)
+        if (!wcscmp(page, k.page)) return k.sheet;
+    return -1;
+}
+
+static hud::Rect previewArea() {
+    const int sheet = previewSheet();
+    if (sheet < 0 || !g_hud[sheet].m.active) return {0, 0, 0, 0};
+    const PieMenu& m = g_hud[sheet].m;
+    return {static_cast<float>(m.x0), static_cast<float>(m.y0), static_cast<float>(m.cw), static_cast<float>(m.ch)};
+}
+
 // Present thread, after updateControls: draws the HUD and acts on its buttons.
 static void drawHud(ID3D11Texture2D* backbuffer) {
+    {
+        const wchar_t* page = settings::openPage();
+        bubbles::setPreview(!page ? 0 : !wcscmp(page, L"Bubbles yours") ? 1 : !wcscmp(page, L"Bubbles pops") ? 2 : 0);
+    }
     hud::Frame f = g_hudInput;
     f.watch = g_hud[kHudWatch].m.active || g_hud[kHudSleep].m.active;
     f.pause = g_hud[kHudPause].m.active;
@@ -898,9 +925,12 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
         camera::View view;
         int n = camera::lastView(view) ? bubbles::balloonCards(view, balloons, 8) : 0;
         f.balloons = n > 0;
-        const int bars = bubbles::barCards(balloons + n, 12 - n);
+        const int bars = bubbles::barCards(balloons + n, 10 - n);
         f.bars = bars > 0;
         n += bars;
+        const int previews = bubbles::previewCards(balloons + n, 12 - n);
+        f.previewCard = previews > 0;
+        n += previews;
         ID3D11Texture2D* atlas = hud::texture();
         if (n > 0 && atlas) {
             phone3d::setBalloons(balloons, n, atlas);
@@ -910,8 +940,9 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
             balloonsShown = false;
         }
     }
+    f.preview = previewArea();
     if (!f.watch && !f.pause && !f.build && !f.needs && !f.moodlets && !f.queue && !f.wants && !f.popup && !f.money &&
-        !f.picker && !f.phone && !f.note && !f.balloons && !f.bars && !f.pie)
+        !f.picker && !f.phone && !f.note && !f.balloons && !f.bars && !f.pie && !f.previewCard && !(f.preview.w > 0))
         return;
     ID3D11Device* device = nullptr;
     ID3D11DeviceContext* context = nullptr;

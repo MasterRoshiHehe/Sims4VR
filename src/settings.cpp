@@ -478,6 +478,8 @@ std::vector<Row> makeRows() {
         toggle(L"View head", L"Seated: your Sim leans with you", "body", "seat_follow", &Config::bodySeatFollow, kView),
         toggle(L"View head", L"Seated: your head moves the upper body", "body", "seat_torso", &Config::bodySeatTorso, kView),
         toggle(L"View head", L"Hide your own face (mirrors keep it)", "body", "hide_face", &Config::bodyHideFace, kView),
+        toggle(L"View head", L"Steady shoulders (idle doesn't move your arms)", "body", "steady_shoulders",
+               &Config::bodySteadyShoulders, kView),
         number(L"View near", L"Near clipping", "body", "near_clip", &Config::bodyNearClip, 0.02f, 0.5f, 0.01f, 100, L"%.0f cm",
                kView),
         toggle(L"View near", L"Near clipping follows what's close", "body", "near_adaptive", &Config::bodyNearAdaptive, kView),
@@ -969,6 +971,7 @@ void applyChange(Apply apply) {
                                   c.bodyNearAdaptive, c.bodyNearMax);
             camera::setSeatFollow(c.bodySeatFollow);
             armik::setSeatTorso(c.bodySeatTorso);
+            armik::setSteadyShoulders(c.bodySteadyShoulders);
             facehide::setEnabled(c.bodyHideFace);
             break;
         case kWalk:
@@ -2017,6 +2020,8 @@ bool back() {
 }
 
 bool isOpen() { return g_open; }
+
+const wchar_t* openPage() { return g_open && g_page > 0 && g_page < pageCount() ? g_pages[g_page].group : nullptr; }
 
 bool closeWanted() {
     const bool wanted = g_open && g_closeWanted;

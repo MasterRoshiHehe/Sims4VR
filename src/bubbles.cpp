@@ -640,6 +640,54 @@ int balloonCards(const camera::View& view, phone3d::Panel* out, int max) {
     return written;
 }
 
+std::atomic<int> g_preview{0};
+
+void setPreview(int which) { g_preview.store(which, std::memory_order_relaxed); }
+
+int previewCards(phone3d::Panel* out, int max) {
+    const int which = g_preview.load(std::memory_order_relaxed);
+    if (!which || max <= 0 || !camera::bodyActive()) return 0;
+    Config o;
+    {
+        std::lock_guard<std::mutex> lock(g_optionMutex);
+        o = g_options;
+    }
+    camera::Vec3 hp{}, hr{}, hu{}, hb{};
+    if (!camera::headInWorld(hp, hr, hu, hb)) return 0;
+    struct Spot {
+        const float* pos;
+        float size;
+    } spots[2];
+    int n = 0;
+    if (which == 1) {
+        spots[n++] = {o.bubbleOwnPos, o.bubbleOwnSize};
+        spots[n++] = {o.skillOwnPos, o.skillOwnSize};
+    } else {
+        spots[n++] = {o.popOwnPos, o.popOwnSize};
+    }
+    const float s = o.worldScale;
+    int written = 0;
+    for (int i = 0; i < n && written < max; ++i) {
+        const float* pos = spots[i].pos;
+        phone3d::Panel& p = out[written++];
+        p = phone3d::Panel{};
+        p.show = true;
+        p.clear = true;
+        p.opacity = 1;
+        p.centre[0] = hp.x + (hr.x * pos[0] + hu.x * pos[1] - hb.x * pos[2]) * s;
+        p.centre[1] = hp.y + (hr.y * pos[0] + hu.y * pos[1] - hb.y * pos[2]) * s;
+        p.centre[2] = hp.z + (hr.z * pos[0] + hu.z * pos[1] - hb.z * pos[2]) * s;
+        std::copy(&hr.x, &hr.x + 3, p.x);
+        std::copy(&hu.x, &hu.x + 3, p.y);
+        p.width = p.height = spots[i].size * s;
+        p.crop[0] = hud::kPreview.x / hud::kWidth;
+        p.crop[1] = hud::kPreview.y / hud::kHeight;
+        p.crop[2] = (hud::kPreview.x + hud::kPreview.w) / hud::kWidth;
+        p.crop[3] = (hud::kPreview.y + hud::kPreview.h) / hud::kHeight;
+    }
+    return written;
+}
+
 int barCards(phone3d::Panel* out, int max) {
     hud::BarInfo info[hud::kBarSlots];
     const int n = hud::activeBars(info, hud::kBarSlots);

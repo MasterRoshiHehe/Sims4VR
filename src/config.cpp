@@ -314,6 +314,7 @@ Config loadConfig(const std::wstring& ini) {
     c.bodyNearClip = readFloat(ini, "body", "near_clip", c.bodyNearClip);
     c.bodyNearAdaptive = readInt(ini, "body", "near_adaptive", 1) != 0;
     c.bodyHideFace = readInt(ini, "body", "hide_face", 1) != 0;
+    c.bodySteadyShoulders = readInt(ini, "body", "steady_shoulders", 1) != 0;
     c.bodyNearMax = readFloat(ini, "body", "near_max", c.bodyNearMax);
     c.steadyShadows = readInt(ini, "body", "steady_shadows", 1) != 0;
     c.shadowStep = readFloat(ini, "body", "shadow_step", c.shadowStep);

@@ -2969,6 +2969,16 @@ Action render(ID3D11Device* device, ID3D11DeviceContext* context, const Frame& f
     auto take = [&](Action a) {
         if (a != kNone) action = a;
     };
+    {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const ImU32 green = IM_COL32(40, 220, 90, 90), edge = IM_COL32(40, 255, 110, 200);
+        auto box = [&](const Rect& r) {
+            dl->AddRectFilled({r.x, r.y}, {r.x + r.w, r.y + r.h}, green, 12.0f);
+            dl->AddRect({r.x + 2, r.y + 2}, {r.x + r.w - 2, r.y + r.h - 2}, edge, 12.0f, 0, 4.0f);
+        };
+        if (f.preview.w > 0) box(f.preview);
+        if (f.previewCard) box(kPreview);
+    }
     if (f.watch) take(drawWatch(f));
     if (f.pause) drawPause();
     if (f.build) take(drawBuild());

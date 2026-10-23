@@ -36,6 +36,10 @@ void setOwnBalloons(bool on);
 int balloonCards(const camera::View& view, phone3d::Panel* out, int max);
 // Your Sim's skill bars (hud.cpp kBars slots) in front of your face, at [bubbles] own_skill_position.
 int barCards(phone3d::Panel* out, int max);
+// While a settings page places your own cards (1: "Where yours sit": your bubble and skill bar; 2: your pops), a
+// see-through green card (hud::kPreview) where each goes, in front of your head as the cut cards are placed.
+void setPreview(int which);
+int previewCards(phone3d::Panel* out, int max);
 
 // One card: where it is on the UI texture and in the world.
 struct Card {

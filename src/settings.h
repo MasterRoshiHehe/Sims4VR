@@ -27,6 +27,8 @@ void setTestingCheats(int state);  // 1: testing cheats on, 2: cheat pie menus o
 bool back();
 
 bool isOpen();
+// The open page's name (its group, as kFixedPages names it), null on the first page or closed. Any thread.
+const wchar_t* openPage();
 void open();
 // Closes and saves. True if render_scale changed (vr.cpp applies it then).
 bool close();

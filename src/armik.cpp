@@ -234,6 +234,7 @@ long long ageMs(ULONGLONG now, ULONGLONG t) {
 }
 std::atomic<bool> g_fkVerified{false};              // the player's rig composed as expected: other Sims' will too
 bool g_touchBodies = true, g_holdHands = true, g_lookAt = true, g_grabBodies = true;
+std::atomic<bool> g_steadyShoulders{true};  // [body] steady_shoulders
 std::atomic<bool> g_gamePaused{false};  // other Sims don't look at you while the game is paused (user 2026-10-23: creepy)
 std::atomic<bool> g_busy{false};
 bool g_enabled = false;
@@ -1118,6 +1119,37 @@ bool reachArm(void* pose, uint8_t* skeleton, Xf* locals, const Arm& arm, const A
 
     Xf clav = modelOf(pose, arm.clavicle), upper = modelOf(pose, arm.upper), fore = modelOf(pose, arm.fore),
        wristNow = modelOf(pose, arm.hand);
+    // Your arms (stretchSide >= 0): the game's idle no longer shrugs the shoulder (user 2026-10-23: the wrist HUD
+    // swam with the idle). The clavicle keeps one turn against its parent, the first it was seen with; the arm
+    // below it turns with it before solving.
+    if (stretchSide >= 0 && stretchSide < 2 && g_steadyShoulders.load(std::memory_order_relaxed)) {
+        static void* restRig[2] = {};
+        static Quat rest[2];
+        const int cp = g_parent(skeleton, static_cast<uint32_t>(arm.clavicle));
+        if (cp >= 0) {
+            const Quat parentRot = quatOf(modelOf(pose, cp).q), clavRot = quatOf(clav.q);
+            if (restRig[stretchSide] != g_cache.rig) {
+                restRig[stretchSide] = g_cache.rig;
+                rest[stretchSide] = qnormalize(qmul(conj(parentRot), clavRot));
+            }
+            const Quat want = qnormalize(qmul(parentRot, rest[stretchSide]));
+            const Quat delta = qmul(want, conj(clavRot));
+            const Vec3 c = vecOf(clav.p);
+            auto turnXf = [&](Xf& x) {
+                const Vec3 p = add(c, rotate(delta, sub(vecOf(x.p), c)));
+                const Quat q = qnormalize(qmul(delta, quatOf(x.q)));
+                x.p[0] = p.x, x.p[1] = p.y, x.p[2] = p.z;
+                x.q[0] = q.x, x.q[1] = q.y, x.q[2] = q.z, x.q[3] = q.w;
+            };
+            if (finite(vecOf(upper.p))) {
+                turnXf(upper);
+                turnXf(fore);
+                turnXf(wristNow);
+                clav.q[0] = want.x, clav.q[1] = want.y, clav.q[2] = want.z, clav.q[3] = want.w;
+                writeLocal(locals, arm.clavicle, rest[stretchSide], weight);
+            }
+        }
+    }
     Vec3 S = vecOf(upper.p), E = vecOf(fore.p), W = vecOf(wristNow.p);
     float l1 = length(sub(E, S)), l2 = length(sub(W, E));
     if (!(l1 > 1e-3f) || !(l2 > 1e-3f)) return false;
@@ -2844,6 +2876,8 @@ void setFrame(void* actor, bool free, const float anchor[3], const Quat& heading
 }  // namespace s4vr::armik
 
 namespace s4vr::armik {
+
+void setSteadyShoulders(bool on) { g_steadyShoulders.store(on, std::memory_order_relaxed); }
 
 void setSeatTorso(bool on) {
     g_seatTorso.store(on, std::memory_order_relaxed);
