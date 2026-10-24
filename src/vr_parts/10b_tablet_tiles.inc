@@ -24,12 +24,28 @@ static ULONGLONG g_tabletScanAt = 0;
 
 // The tablet's band of the UI: from 15% down to the bottom.
 static void tabletScanBand(int W, int H, int& y0, int& y1) {
-    y0 = H * 15 / 100;
+    y0 = 0;  // all of it: the alpha map (tabletUiOpaque) covers the top too
     y1 = H;
     (void)W;
 }
 
+// The UI's alpha every 8 px from the last scan (about 3 times a second): what of the game's UI lies over the tool
+// tray (user 2026-10-24 16:17Z: presses on the UI over the tray went through to the tray).
+static constexpr int kAlphaStep = 8;
+static std::vector<uint8_t> g_tabletAlpha;
+static int g_tabletAlphaW = 0, g_tabletAlphaH = 0;
+
 static void readTabletScan(const uint8_t* px, UINT pitch, int W, int H) {
+    {
+        const int aw = W / kAlphaStep, ah = H / kAlphaStep;
+        g_tabletAlpha.resize(static_cast<size_t>(aw) * ah);
+        for (int y = 0; y < ah; ++y)
+            for (int x = 0; x < aw; ++x)
+                g_tabletAlpha[static_cast<size_t>(y) * aw + x] =
+                    px[static_cast<size_t>(y * kAlphaStep) * pitch + static_cast<size_t>(x * kAlphaStep) * 4 + 3];
+        g_tabletAlphaW = aw;
+        g_tabletAlphaH = ah;
+    }
     float s = H / 2808.0f;
     int y0, y1;
     tabletScanBand(W, H, y0, y1);
@@ -388,9 +404,24 @@ static int tabletLayout(int W, int H, float dst[][4], float src[][4], float& asp
     return n;
 }
 
+// Whether the game's UI covers this place on the tablet's screen (0..1 from the UI area's top left, as phone3d's
+// menu rect and the tray's overlay): through the pieces to the UI's pixels, then the alpha map.
+static bool tabletUiOpaque(float a, float b) {
+    if (g_tabletAlpha.empty() || !g_phone.active) return false;
+    float u = a, v = b;
+    if (g_phone.tiles > 0) {
+        sheetToWindow(g_phone, (a - 0.5f) * g_phone.width, (0.5f - b) * g_phone.height, u, v);
+        if (u < 0 || v < 0) return false;
+    }
+    const int x = static_cast<int>(u * g_tabletAlphaW), y = static_cast<int>(v * g_tabletAlphaH);
+    if (x < 0 || y < 0 || x >= g_tabletAlphaW || y >= g_tabletAlphaH) return false;
+    return g_tabletAlpha[static_cast<size_t>(y) * g_tabletAlphaW + x] > 24;
+}
+
 // The tablet put away or brought out: the pieces are found again.
 static void resetTabletScan() {
     g_tabletScan = TabletScan{};
     g_tabletLeftSeen = g_tabletGridSeen = 0;
     g_tabletMiddleRuns = 0;
+    g_tabletAlpha.clear();
 }

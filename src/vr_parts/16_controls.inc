@@ -193,6 +193,7 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
         if (g_bookOut) grabHands[g_bookHand].grip = 0;
         if (g_settingsDrag.hand >= 0 && !g_settingsDrag.laser) grabHands[g_settingsDrag.hand].grip = 0;
         grab::update(grabHands, trigger, indexOut, head, firstPerson, g_config.grab);
+        gesture::update(head, firstPerson);
         for (int i = 0; i < 2; ++i) {
             float amplitude = 0, seconds = 0;
             if (grab::takeHaptic(i, amplitude, seconds)) buzz(i, amplitude, seconds);
@@ -823,7 +824,7 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
     bool poking = pokingSims1 || (laserHand < 0 && ((g_pie.active && (g_pie.own ? pokeHud(g_hud[kHudPie], hands, pieHands)
                                                                                : pokeSheet(g_pie, hands, bothHands, triggerDown, pulled, c,
                                                                                            camera::bodyActive()))) ||
-                                    (g_traySheet.m.active && pokeHud(g_traySheet, hands, freeHand)) ||
+                                    (g_traySheet.m.active && pokeTray(hands, freeHand)) ||
                                     (g_phone.active && pokeSheet(g_phone, hands, freeHand, triggerDown, pulled, c, true)) ||
                                     (g_phoneSheet.m.active && pokeHud(g_phoneSheet, hands, freeHand)) ||
                                     (g_objMenu.active && pokeSheet(g_objMenu, hands, bothHands, triggerDown, pulled, c)) ||

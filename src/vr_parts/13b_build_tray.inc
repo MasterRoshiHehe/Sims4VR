@@ -16,6 +16,27 @@ static void setTrayLit(int tool, bool on) {
     else g_trayLit &= ~(1u << tool);
 }
 
+static float g_trayAt[4];     // the tray on the tablet's UI area, 0..1: x0, y0, x1, y1
+static hud::Rect g_trayArea;  // its part of the HUD atlas
+
+// A place on the tray (HUD atlas pixels) where the game's UI lies over it: the UI's, not ours (user 2026-10-24
+// 16:17Z; the UI is drawn over the tray).
+static bool trayUnderUi(float px, float py) {
+    if (g_trayArea.w <= 0 || g_trayArea.h <= 0) return false;
+    const float fa = (px - g_trayArea.x) / g_trayArea.w, fb = (py - g_trayArea.y) / g_trayArea.h;
+    return tabletUiOpaque(g_trayAt[0] + fa * (g_trayAt[2] - g_trayAt[0]), g_trayAt[1] + fb * (g_trayAt[3] - g_trayAt[1]));
+}
+
+// A finger on the tray, unless the game's UI is over it there (then the tablet's UI takes the poke).
+static bool pokeTray(const armik::Hand hands[2], const bool use[2]) {
+    if (!pokeHud(g_traySheet, hands, use)) return false;
+    if (!trayUnderUi(g_hudInput.px, g_hudInput.py)) return true;
+    g_traySheet.m.pressing = -1;
+    g_hudInput.down = false;
+    g_hudInput.px = g_hudInput.py = -1;
+    return false;
+}
+
 // Every frame the tablet is drawn: the tray on its glass (p3's overlay) and its sheet for pokes and the laser.
 static void placeTray(phone3d::Phone& p3, const XrVector3f& centre, const XrVector3f& x, const XrVector3f& y,
                       const XrVector3f& z, float menuW, float menuH) {
@@ -28,6 +49,8 @@ static void placeTray(phone3d::Phone& p3, const XrVector3f& centre, const XrVect
     area.x += left * area.w;
     area.w -= left * area.w;
     const float x0 = kTrayRight - w * (1 - left), x1 = kTrayRight;
+    g_trayAt[0] = x0, g_trayAt[1] = top, g_trayAt[2] = x1, g_trayAt[3] = bottom;
+    g_trayArea = area;
     p3.overlay = true;
     p3.overlayDst[0] = x0, p3.overlayDst[1] = top, p3.overlayDst[2] = x1, p3.overlayDst[3] = bottom;
     p3.overlayCrop[0] = area.x / hud::kWidth;
@@ -110,6 +133,7 @@ static bool laserTray(const XrVector3f& o, const XrVector3f& d, bool trigger, Xr
     const PieMenu& m = g_traySheet.m;
     float u, v;
     if (!m.active || !hitSheet(m, o, d, hit, u, v)) return false;
+    if (trayUnderUi(u * hud::kWidth, v * hud::kHeight)) return false;  // the game's UI over it: the tablet's
     g_hudInput.px = u * hud::kWidth;
     g_hudInput.py = v * hud::kHeight;
     g_hudInput.down = trigger;
