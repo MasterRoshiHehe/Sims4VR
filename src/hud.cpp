@@ -4254,19 +4254,30 @@ Action drawPhone(ImDrawList* d, int* index) {
             ImVec2 hs = g_title->CalcTextSizeA(34, FLT_MAX, 0, head);
             shadowText(d, g_title, 34, {at(115, 24).x - hs.x / 2, at(115, 24).y - hs.y / 2}, kWhite, head);
         }
+        // Our own buttons (user 2026-10-24 15:33Z: not a copy of the game's menu), each a shortcut to the Escape
+        // menu's button of the same name (its index in Sims4EscapeMenu's order): light cards two a row as the
+        // phone's lists, the exits in red at the bottom.
         static const char* const kButtons[11] = {"Save", "Save As...", "Game Options", "Help", "Lessons", "Release Notes",
                                                  "Credits", "Achievements", "Manage Worlds", "Exit to Main Menu", "Exit Game"};
-        d->AddRectFilled(at(8, 50), at(222, 320), IM_COL32(255, 255, 255, 235), 6 * S);
-        d->AddRectFilled(at(8, 322), at(222, 354), IM_COL32(196, 204, 222, 240), 6 * S);
-        for (int k = 0; k < 11; ++k) {
-            const float y = k < 10 ? 54 + k * 26.4f : 326;
-            const ImVec2 ba = at(22, y), bb = at(208, y + 23);
-            bool over = false;
-            if (button(ba, bb, &over)) action = kGameMenuButton, *index = k;
-            if (over) nine(d, art::kDialogButtonOver, {ba.x - 2, ba.y - 3}, {bb.x + 2, bb.y + 6}, 48, 36, 48, 54, 0.6f);
-            else nine(d, art::kDialogButton, ba, bb, 48, 36, 48, 42, 0.6f);
-            ImVec2 ls = g_text->CalcTextSizeA(24, FLT_MAX, 0, kButtons[k]);
-            d->AddText(g_text, 24, {(ba.x + bb.x - ls.x) / 2, (ba.y + bb.y - ls.y) / 2 - 2}, IM_COL32(30, 70, 128, 255), kButtons[k]);
+        static const int kOrder[12] = {0, 1, 2, 8, 7, 4, 3, 5, 6, -1, 9, 10};  // -1: the half Credits takes
+        const ImU32 kBlue = IM_COL32(28, 72, 150, 255), kRed = IM_COL32(196, 40, 40, 255);
+        for (int n = 0; n < 12; ++n) {
+            const int k = kOrder[n];
+            if (k < 0) continue;
+            const float rowH = 46, top = 54 + (n / 2) * (rowH + 3) + (n >= 10 ? 4 : 0);
+            const float x0 = n % 2 ? 117 : 8, x1 = n % 2 || k == 6 ? 222 : 113;  // Credits: the whole row
+            const ImVec2 ba = at(x0, top), bb = at(x1, top + rowH);
+            bool over = false, held = false;
+            if (button(ba, bb, &over, &held)) action = kGameMenuButton, *index = k;
+            const bool exit = k >= 9;
+            const ImU32 fill = held ? IM_COL32(205, 222, 246, 245) : over ? IM_COL32(232, 241, 255, 245) : IM_COL32(255, 255, 255, 225);
+            d->AddRectFilled(ba, bb, fill, 8 * S);
+            if (over || held) d->AddRect(ba, bb, exit ? kRed : IM_COL32(66, 140, 214, 255), 8 * S, 0, 1.2f * S);
+            const float size = 26 * g_phoneText, room = bb.x - ba.x - 10 * S;
+            ImVec2 ls = g_title->CalcTextSizeA(size, FLT_MAX, 0, kButtons[k]);
+            const float fit = std::min(1.0f, room / std::max(1.0f, ls.x));
+            ls = {ls.x * fit, ls.y * fit};
+            d->AddText(g_title, size * fit, {(ba.x + bb.x - ls.x) / 2, (ba.y + bb.y - ls.y) / 2}, exit ? kRed : kBlue, kButtons[k]);
         }
         bool over = false;
         if (button(at(96, 361), at(129, 392), &over)) g_gameMenuPhone = false;
