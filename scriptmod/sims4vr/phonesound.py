@@ -5,7 +5,8 @@ notifications, and the phone's mode (sound, vibrate, mute), chosen on the phone'
 The tones are the game's own music stings and notification bumpers (their PropX audio
 resources, as the game's tuning names them: re/tuning/xml ... p="InGame\\Audio\\Stings\\...").
 They play the way the game plays tuned audio (audio.primitive.PlaySound on your Sim, the
-TunablePlayAudio instance as the sound id), first person only, in sound mode:
+TunablePlayAudio instance as the sound id) on the joint of the hand holding the phone (or the hip it
+hangs at), so the game places them there in 3D; first person only, in sound mode:
 - ringtone: a popup the game rings the phone for (PhoneRingType.RING: a call);
 - text tone: a popup that buzzes or alarms (BUZZ, ALARM: texts), and each new notification.
 Index 0 is "None" (only the controllers buzz). The names must match settings.cpp's rows.
@@ -46,6 +47,20 @@ def _index(key, count, default=1):
     return n if 0 <= n < count else 0
 
 
+def _phone_joint():
+    """Where the phone is (user 2026-10-24 00:31Z: its sounds from the phone, heard in 3D): the joint of the hand
+    holding it (phone.py: the DLL gives a right-hand mount only while the right hand holds it), else the right
+    hip it hangs at."""
+    from sims4vr import phone
+    name = 'b__R_Thigh__'
+    try:
+        if phone.is_out():
+            name = 'b__R_Hand__' if native.phone_mount() is not None else 'b__L_Hand__'
+    except Exception:
+        pass
+    return phone._joint_hash(name)  # the joint hash as the game's (FNV-32 of the lower-case name)
+
+
 def _play(sound_id):
     global _playing
     if not sound_id:
@@ -61,7 +76,7 @@ def _play(sound_id):
             _playing.stop()
     except Exception:
         pass
-    sound = PlaySound(sim, sound_id)
+    sound = PlaySound(sim, sound_id, joint_name_hash=_phone_joint())
     sound.start()
     _playing = sound
 
