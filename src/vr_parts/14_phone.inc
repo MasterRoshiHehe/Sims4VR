@@ -154,7 +154,7 @@ static void updatePhone(const armik::Hand& hand, int side) {
         const float t = static_cast<float>(now - g_optionsReadyAt);
         dim = t < kScreenDim ? t / kScreenDim : std::max(0.0f, 1 - (t - kScreenDim) / kScreenUp);
     }
-    if (!g_phoneOut || !hand.valid || (!app && !g_uiFrame)) {
+    if (!g_phoneOut || (!hand.valid && !g_sims1Phone.on) || (!app && !g_uiFrame)) {
         phone3d::setPhone(phone3d::Phone{}, nullptr);
         hideTray();
         g_phone.active = false;
@@ -241,6 +241,13 @@ static void updatePhone(const armik::Hand& hand, int side) {
             z2 = sz;
         }
     }
+    if (g_sims1Phone.on) {  // the Sims Forever app: sideways (its top to your left), in front of you
+        const Sims1Phone& f = g_sims1Phone;
+        centre = f.at;
+        x = f.up;
+        y2 = {-f.right.x, -f.right.y, -f.right.z};
+        z2 = {-f.ahead.x, -f.ahead.y, -f.ahead.z};
+    }
     XrQuaternionf facing = fromAxes(x, y2, z2);
     g_phoneBodyPose = {facing, centre};
     // The game's phone prop (phone.py, for mirrors) sits inside this one: left out of the view from your eyes.
@@ -257,6 +264,9 @@ static void updatePhone(const armik::Hand& hand, int side) {
     // The screen: the body less the bezel, with a wider band at the bottom and
     // top (not on the tablet). The menu fills its width (or its height, if the menu is the taller).
     float screenW = w - 2 * b, screenH = h - 2 * b - (g_tablet ? 0 : kPhoneChin * h * 2);
+    g_sims1Phone.glassW = screenW;
+    g_sims1Phone.glassH = screenH;
+    g_sims1Phone.glass = depth / 2 + 0.001f;
     float aspect = tiles ? g_tabletAspect : static_cast<float>(crop[2]) / static_cast<float>(crop[3]);
     float menuW = screenW, menuH = screenW / aspect;
     if (menuH > screenH) {
@@ -307,7 +317,8 @@ static void updatePhone(const armik::Hand& hand, int side) {
     p3.wallpaper = g_tablet || app;  // the Sim's phone background (buildbuy.py) behind the game's phone menu
     if (!g_tablet && g_phoneAsleep) dim = 1;
     else if (!g_tablet && g_phoneWokeAt && now - g_phoneWokeAt < 150) dim = std::max(dim, 1 - (now - g_phoneWokeAt) / 150.0f);
-    p3.dim = g_tablet ? 0 : dim;
+    p3.dim = g_tablet ? 0 : g_sims1Phone.on ? 1 : dim;  // Sims Forever: black under Sims 1's picture
+    p3.free = g_sims1Phone.on;
     g_phone.tiles = tiles;
     for (int k = 0; k < tiles; ++k) {
         for (int i = 0; i < 4; ++i) {
@@ -315,6 +326,15 @@ static void updatePhone(const armik::Hand& hand, int side) {
             g_phone.tileSrc[k][i] = tileSrc[k][i];
             p3.tileSrc[k][i] = tileSrc[k][i] / static_cast<float>(i % 2 ? H : W);
         }
+    }
+    if (app && g_sims1Phone.on) {  // Sims 1 on it (13_sims1_screen.inc): the phone's own menu isn't pressed
+        hideTray();
+        phone3d::setPhone(p3, hud::texture());
+        g_phone.active = false;
+        g_phone.armed[0] = g_phone.armed[1] = false;
+        g_phone.pressing = -1;
+        hideHud(g_phoneSheet);
+        return;
     }
     if (app) {
         // The game's phone menu: our HUD atlas on the glass; pokes and the laser

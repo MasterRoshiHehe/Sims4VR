@@ -109,13 +109,6 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
         bool down = triggerDown[hand] ? trigger[hand] > 0.35f : trigger[hand] > 0.6f;
         triggerDown[hand] = down;
     }
-    // The phone's screen wakes with the holding hand's trigger (that pull clicks nothing else).
-    if (g_phoneAsleep && (!g_phoneOut || g_tablet || (triggerDown[g_phoneHand] && !triggerWas[g_phoneHand]))) {
-        g_phoneAsleep = false;
-        g_phoneWokeAt = g_phoneOut ? GetTickCount64() : 0;
-        hud::setPhoneAsleep(false);
-        if (g_phoneOut && !g_tablet) LOG("Phone: screen on (trigger of the hand holding it)");
-    }
     // Picking things up (grab.cpp): a hand that closes near an object holds
     // it, and points or shows the laser no more until it opens.
     {
@@ -211,6 +204,7 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
         static bool closed[2] = {false, false};
         const bool closedWas[2] = {closed[0], closed[1]};
         for (int i = 0; i < 2; ++i) closed[i] = closed[i] ? hands[i].grip > 0.35f : hands[i].grip > 0.6f;
+        const bool phoneWasOut = g_phoneOut;
         // Into or out of build/buy with it out: put away (it comes back as the other).
         const bool tabletNow = g_buildBuy && g_config.tablet;
         // A phone call of your Sim keeps the phone in its hand (opening the hand doesn't put it away); every
@@ -228,7 +222,7 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
             phoneOpen(1);  // the call brings the phone out in your right hand
         } else if (g_phoneOut && !callHold &&
                    ((closed[g_phoneHand] && !closedWas[g_phoneHand] && hands[g_phoneHand].valid && head.valid &&
-                     atRightHip(hands[g_phoneHand], g_phoneHand, head)) ||
+                     atRightHip(hands[g_phoneHand], g_phoneHand, head) && !g_sims1Phone.on) ||
                     !firstPerson || !g_config.phone || g_tablet != tabletNow)) {
             const bool atHip = firstPerson && g_config.phone && g_tablet == tabletNow;
             if (atHip) buzz(g_phoneHand, 0.3f, 0.04f);  // put back at the hip: a small buzz (user 2026-10-23)
@@ -240,6 +234,18 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
                     phoneOpen(i);
                     break;
                 }
+            }
+        }
+        // The phone's screen wakes with the holding hand's grip (user 2026-10-24 02:26Z: grip, not trigger),
+        // pressed away from the hip, with a buzz on that controller.
+        if (g_phoneAsleep && (!g_phoneOut || g_tablet ||
+                              (phoneWasOut && closed[g_phoneHand] && !closedWas[g_phoneHand]))) {
+            g_phoneAsleep = false;
+            g_phoneWokeAt = g_phoneOut ? GetTickCount64() : 0;
+            hud::setPhoneAsleep(false);
+            if (g_phoneOut && !g_tablet) {
+                buzz(g_phoneHand, 0.35f, 0.04f);
+                LOG("Phone: screen on (grip of the hand holding it)");
             }
         }
         // Your notebook: the same at the LEFT hip.

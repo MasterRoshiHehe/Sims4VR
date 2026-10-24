@@ -25,6 +25,7 @@
 #include "log.h"
 #include "phone3d.h"
 #include "settings.h"
+#include "simsforever.h"
 #include "strings.h"
 #include "uikit.h"
 
@@ -3086,7 +3087,7 @@ Action drawPhone(ImDrawList* d, int* index) {
         // Our apps: our own icons in the game's phone app style (tools/make_phone_icons.py).
         const art::Piece* own = node == -1 ? &art::kAppSettings : node == -2 ? &art::kAppCalendar : node == -3 ? &art::kAppBuild
                               : node == -10 ? &art::kAppGameOptions : node == -11 ? &art::kAppPhoneOptions
-                              : node == -12 ? &art::kAppVrOptions : node == -4 ? &art::kAppMySim : node == -5 ? &art::kAppRelationships : node == -6 ? &art::kAppWeather : node == -15 ? &art::kAppGodView : nullptr;
+                              : node == -12 ? &art::kAppVrOptions : node == -4 ? &art::kAppMySim : node == -5 ? &art::kAppRelationships : node == -6 ? &art::kAppWeather : node == -7 ? &art::kAppSimsForever : node == -15 ? &art::kAppGodView : nullptr;
         if (own) {
             const float h = 32 * S;
             pieceIn(d, *own, {c.x - h, c.y - h}, {c.x + h, c.y + h}, tint);
@@ -3669,6 +3670,7 @@ Action drawPhone(ImDrawList* d, int* index) {
     apps.push_back(-4);  // My Sim (phonesim.py)
         apps.push_back(-5);  // Contacts (phonesim.py)
         apps.push_back(-6);  // Weather (phonesim.py)
+        if (simsforever::available()) apps.push_back(-7);  // Sims Forever: only with Sims 1 set up
         apps.insert(apps.end(), p.home.begin(), p.home.end());
         // Your order: the saved apps first in theirs, the rest after in the game's.
         readAppOrder();
@@ -3728,7 +3730,9 @@ Action drawPhone(ImDrawList* d, int* index) {
                     g_reorderPick.clear();
                 }
             } else if (!open && !g_reorder && button(at(x, y), at(x + 64, y + 64), &over)) {
-                if (node == -6) {
+                if (node == -7) {
+                    action = kSimsForever;
+                } else if (node == -6) {
                     g_weatherOpen = true;
                     action = kMySimFresh;
                     g_phoneDataUntil = GetTickCount64() + 1500;
@@ -3771,7 +3775,7 @@ Action drawPhone(ImDrawList* d, int* index) {
         // mcCategoryName: the app pointed at.
         if (hovered != -100) {
             std::string name = hovered == -1 ? std::string("Settings") : hovered == -2 ? std::string("Calendar")
-                             : hovered == -3 ? std::string("Build Mode") : hovered == -4 ? std::string("My Sim") : hovered == -5 ? std::string("Contacts") : hovered == -6 ? std::string("Weather")
+                             : hovered == -3 ? std::string("Build Mode") : hovered == -4 ? std::string("My Sim") : hovered == -5 ? std::string("Contacts") : hovered == -6 ? std::string("Weather") : hovered == -7 ? std::string("Sims Forever")
                              : p.nodes[hovered].name;
             ImVec2 size = g_small->CalcTextSizeA(34 * g_phoneText, FLT_MAX, 0, name.c_str());
             float scale = g_phoneText * std::min(1.0f, 206 * S / std::max(1.0f, size.x));

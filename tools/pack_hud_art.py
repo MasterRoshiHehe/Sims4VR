@@ -102,6 +102,7 @@ PIECES = [
     ('kAppVrOptions', '../art/phone_icons/vr_options.png', 2),  # our phone apps (tools/make_phone_icons.py)
     ('kAppMySim', '../art/phone_icons/my_sim.png', 2),
     ('kAppGodView', '../art/phone_icons/god_view.png', 2),  # Settings > God View
+    ('kAppSimsForever', '../art/phone_icons/sims_forever.png', 2),  # Home > Sims Forever (only with Sims 1 set up)
     ('kNeedHunger', '../art/phone_icons/need_hunger.png', 2),  # the Needs app (make_phone_icons.py)
     ('kNeedHygiene', '../art/phone_icons/need_hygiene.png', 2),  # the Needs app (make_phone_icons.py)
     ('kNeedBladder', '../art/phone_icons/need_bladder.png', 2),  # the Needs app (make_phone_icons.py)

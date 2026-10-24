@@ -1233,7 +1233,7 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
         camera::Vec3 wrist;
         camera::Quat grip;
         float handScale = s;
-        bool pinned = armik::handPose(p.side, wrist, grip, handScale);
+        bool pinned = !p.free && armik::handPose(p.side, wrist, grip, handScale);
         if (pinned) {
             // Where the Sim's hand went on its latest pose (armik): its wrist, and
             // the grip frame the hand was turned to (the wrist sits 8 cm behind the

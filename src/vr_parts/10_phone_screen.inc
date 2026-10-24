@@ -16,8 +16,35 @@ static bool g_vrOptionsAsked = false;   // the phone's VR Options app was presse
 // A window opened from the phone's own Game Options (user 2026-10-24 01:26Z): the game's UI shows it in front
 // of you (the Options' front path below) while the phone keeps our screen; save questions are clientdlg cards.
 // The screen is off when the phone comes out, until the holding hand's trigger (user 2026-10-24 01:29Z: hides
-// the loading); g_phoneWokeAt fades it on.
+// the loading); g_phoneWokeAt fades it on. (02:26Z: the grip, not the trigger.)
 static bool g_phoneAsleep = false;
+// The phone's Sims Forever app (user 2026-10-24 02:21Z): the phone turned 90 degrees counter-clockwise
+// (landscape) and stuck in front of where you looked when you pressed it, Sims 1 on its glass, your real
+// mouse and keyboard playing it, until you quit Sims 1; then it is back in your hand. App space: the
+// phone's centre, the view's right / up / ahead then; glassW x glassH the portrait glass (updatePhone).
+struct Sims1Phone {
+    bool on = false;
+    XrVector3f at{}, right{}, up{}, ahead{};
+    float glassW = 0, glassH = 0, glass = 0;  // glass: its front ahead of the centre
+};
+static Sims1Phone g_sims1Phone;
+static void startSims1Phone() {
+    if (g_sims1Phone.on || !g_eyeValid[0] || !g_eyeValid[1]) return;
+    const XrVector3f& e0 = g_eyePose[0].position;
+    const XrVector3f& e1 = g_eyePose[1].position;
+    XrVector3f head{(e0.x + e1.x) * 0.5f, (e0.y + e1.y) * 0.5f, (e0.z + e1.z) * 0.5f};
+    XrVector3f ahead = normalize3(rotate3(g_eyePose[0].orientation, {0, 0, -1}));
+    XrVector3f right = cross3(ahead, {0, 1, 0});  // level: no head roll
+    right = dot3(right, right) > 0.01f ? normalize3(right) : rotate3(g_eyePose[0].orientation, {1, 0, 0});
+    const float distance = 0.30f;
+    g_sims1Phone.at = {head.x + ahead.x * distance, head.y + ahead.y * distance, head.z + ahead.z * distance};
+    g_sims1Phone.right = right;
+    g_sims1Phone.up = normalize3(cross3(right, ahead));
+    g_sims1Phone.ahead = ahead;
+    g_sims1Phone.on = true;
+    simsforever::setPhone(true);
+    LOG("Phone: Sims Forever, the phone turned sideways in front of you");
+}
 static ULONGLONG g_phoneWokeAt = 0;
 static bool g_phoneWindow = false, g_phoneWindowSeen = false;
 static ULONGLONG g_phoneWindowSince = 0;

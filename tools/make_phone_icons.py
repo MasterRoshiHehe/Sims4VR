@@ -499,6 +499,38 @@ def god_view():
     finish(img, inner, 'god_view')
 
 
+def figure(cx, top, s):
+    """A standing Sim seen from the front, arms at its sides (mask): the Sims 1 family icon's people."""
+    def draw(d):
+        d.rounded_rectangle((cx - 26 * s, top, cx + 26 * s, top + 62 * s), radius=int(22 * s), fill=255)  # head
+        d.rectangle((cx - 10 * s, top + 56 * s, cx + 10 * s, top + 72 * s), fill=255)  # neck
+        d.rounded_rectangle((cx - 50 * s, top + 68 * s, cx + 50 * s, top + 190 * s), radius=int(20 * s), fill=255)  # torso
+        d.rounded_rectangle((cx - 72 * s, top + 74 * s, cx - 46 * s, top + 200 * s), radius=int(13 * s), fill=255)  # arms
+        d.rounded_rectangle((cx + 46 * s, top + 74 * s, cx + 72 * s, top + 200 * s), radius=int(13 * s), fill=255)
+        d.rounded_rectangle((cx - 44 * s, top + 180 * s, cx - 4 * s, top + 330 * s), radius=int(12 * s), fill=255)  # legs
+        d.rounded_rectangle((cx + 4 * s, top + 180 * s, cx + 44 * s, top + 330 * s), radius=int(12 * s), fill=255)
+    return mask_of(draw)
+
+
+def sims_forever():
+    """Home > Sims Forever: the Sims 1 family icon (user 2026-10-24 02:24Z), an adult and a child hand in hand
+    in pale cyan on deep blue, redrawn smooth on our tile."""
+    img, inner = tile((70, 140, 230), (10, 40, 130), (5, 20, 80, 255))
+    glow = Image.new('L', (N, N), 0)
+    ImageDraw.Draw(glow).ellipse((90, 60, 420, 420), fill=120)
+    glow = ImageChops.multiply(glow.filter(ImageFilter.GaussianBlur(70)), inner)
+    g = Image.new('RGBA', (N, N), (120, 190, 255, 0))
+    g.putalpha(glow)
+    img.alpha_composite(g)
+    adult = figure(205, 70, 1.12)
+    child = figure(334, 228, 0.66)  # its hand at the adult's
+    people = ImageChops.lighter(adult, child)
+    shadow(img, people, dx=14, dy=10, alpha=140)
+    fill(img, people, (215, 250, 248), (120, 200, 205), 0, outline=(10, 40, 90, 255), width=5)
+    gloss(img, people, (120, 40, 300, 220), 110)
+    finish(img, inner, 'sims_forever')
+
+
 # The Needs app's own need icons (user 2026-10-24 01:58Z: HD, not the game's small ones): one glossy object each,
 # no tile, in the game's need colours.
 def plain(name, img):
@@ -582,6 +614,6 @@ if __name__ == '__main__':
     os.makedirs(OUT, exist_ok=True)
     for f in (settings, calendar, build, game_options, phone_options, vr_options, my_sim, aspirations, career, skills,
               relationships, inventory, needs, social_groups, owned_businesses, household, weather, wants,
-              need_hunger, need_hygiene, need_bladder, need_energy, need_fun, need_social, god_view):
+              need_hunger, need_hygiene, need_bladder, need_energy, need_fun, need_social, god_view, sims_forever):
         f()
     print('phone icons in', OUT)

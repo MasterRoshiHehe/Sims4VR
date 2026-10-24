@@ -14,6 +14,8 @@
 #include "log.h"
 #include "simsforever/sf_shared.h"
 
+extern "C" int s4vr_setting(const char* section, const char* key, char* buffer, int size);  // api.cpp
+
 namespace s4vr::simsforever {
 namespace {
 
@@ -28,6 +30,10 @@ bool g_launched = false;
 ULONGLONG g_launchedAt = 0;
 ULONGLONG g_offSince = 0;  // the screen went off: Sims 1 is closed after kCloseAfter
 constexpr ULONGLONG kCloseAfter = 2000;
+// The phone's Sims Forever app: Sims 1 on the phone held in front of you
+// until you quit it (setPhone). g_phoneSeen: Sims 1 (or its launcher) has run.
+bool g_phone = false, g_phoneSeen = false;
+ULONGLONG g_phoneSince = 0;
 
 // The screen's shape (screenmesh.py): depths behind its front on a grid.
 std::mutex g_surfaceMutex;
@@ -359,6 +365,74 @@ float depth(float fx, float fy) {
     return (at(ix, iy) * (1 - tx) + at(ix + 1, iy) * tx) * (1 - ty) + (at(ix, iy + 1) * (1 - tx) + at(ix + 1, iy + 1) * tx) * ty;
 }
 
+namespace {
+
+// sims4vr.ini through the same reader as the script mod's (api.cpp).
+std::string iniValue(const char* section, const char* key, const char* def) {
+    char buffer[1024] = {};
+    int n = s4vr_setting(section, key, buffer, sizeof buffer);
+    return n > 0 ? std::string(buffer, n) : std::string(def);
+}
+
+}  // namespace
+
+bool available() {
+    static ULONGLONG checked = 0;
+    static bool yes = false;
+    const ULONGLONG now = GetTickCount64();
+    if (checked && now - checked < 2000) return yes;
+    checked = now;
+    const std::string on = iniValue("simsforever", "on", "1");
+    std::wstring exe = widen(iniValue("simsforever", "sims1_path", "").c_str());
+    yes = on != "0" && on != "false" && on != "off" && on != "no" && !exe.empty() &&
+          GetFileAttributesW(exe.c_str()) != INVALID_FILE_ATTRIBUTES;
+    return yes;
+}
+
+void setPhone(bool on) {
+    if (on) setSurface(0, 0, nullptr, 0);  // the phone is flat (a computer's shape comes again with its screen)
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (on == g_phone) return;
+    g_phone = on;
+    if (on) {
+        g_phoneSeen = false;
+        g_phoneSince = GetTickCount64();
+        launch(widen(iniValue("simsforever", "sims1_path", "").c_str()), widen(iniValue("simsforever", "sims1_args", "-w").c_str()));
+        if (g_shared) g_shared->active = 1;
+        g_offSince = 0;
+    } else if (!g_on) {
+        if (g_shared) g_shared->active = 0;
+        g_offSince = GetTickCount64();  // closed after kCloseAfter, as off a computer
+    }
+    LOG("Sims Forever: %s the phone", on ? "on" : "off");
+}
+
+bool phone() {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    return g_phone;
+}
+
+namespace {
+
+// The phone's Sims 1 has gone: you quit it (no process left in its job), or it
+// never started. g_mutex held.
+bool phoneEnded() {
+    const ULONGLONG now = GetTickCount64();
+    bool running = sims1Alive() || (g_launcher && WaitForSingleObject(g_launcher, 0) == WAIT_TIMEOUT);
+    if (g_job) {
+        JOBOBJECT_BASIC_ACCOUNTING_INFORMATION info{};
+        if (QueryInformationJobObject(g_job, JobObjectBasicAccountingInformation, &info, sizeof info, nullptr))
+            running = info.ActiveProcesses > 0;
+    }
+    if (running) {
+        g_phoneSeen = true;
+        return false;
+    }
+    return g_phoneSeen || now - g_phoneSince > 10000;
+}
+
+}  // namespace
+
 void setScreen(int on, const float v[11], const char* exe, const char* args) {
     std::wstring e = widen(exe), a = widen(args);
     {
@@ -366,8 +440,8 @@ void setScreen(int on, const float v[11], const char* exe, const char* args) {
         g_on = on;
         if (on && v) std::memcpy(g_v, v, sizeof(g_v));
         if (on) launch(e, a);
-        if (g_shared) g_shared->active = on ? 1 : 0;
-        g_offSince = on ? 0 : GetTickCount64();
+        if (g_shared) g_shared->active = on || g_phone ? 1 : 0;
+        g_offSince = on || g_phone ? 0 : GetTickCount64();
     }
     static int logged = 0;
     if (logged++ < 40) {
@@ -473,6 +547,16 @@ void poll() {
         if (g_offSince && GetTickCount64() - g_offSince >= kCloseAfter) {
             g_offSince = 0;
             if (g_launched || sims1Alive()) closeSims1("you stopped playing");
+        }
+        if (g_phone && phoneEnded()) {
+            g_phone = false;
+            if (g_shared) {
+                g_shared->hookPid = 0;
+                g_shared->frames = 0;
+                if (!g_on) g_shared->active = 0;
+            }
+            g_launched = false;  // a new start may launch it again straight away
+            LOG("Sims Forever: Sims 1 quit, off the phone");
         }
     }
     static char last[128] = {};

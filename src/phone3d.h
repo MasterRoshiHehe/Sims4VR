@@ -27,6 +27,7 @@ struct Phone {
     // The drawn phone follows the hand joint as the game posed it, so it stays
     // in the Sim's fingers; centre and axes above are the fallback.
     float grip[3]{};
+    bool free = false;  // not in the hand: at centre and axes (the Sims Forever app's phone in front of you)
     int side = 1;       // the hand: 1 right, 0 left (its phone the mirror image of the right's)
     float tilt = 0;
     float yaw = 0;      // then its turn about its own up axis (radians)

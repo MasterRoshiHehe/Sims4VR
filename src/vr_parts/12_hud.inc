@@ -1121,6 +1121,9 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
             if (index >= 0 && index < 100000) grab::pushControl(7400000 + index);  // phonesim.contact_action
             LOG("Phone: contact action %d", index);
             break;
+        case hud::kSimsForever:
+            startSims1Phone();
+            break;
         case hud::kGodView:
             grab::pushControl(1);  // controls.py _switch_view: first person off, the game's camera on your Sim
             LOG("Phone: God View");

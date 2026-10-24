@@ -12,6 +12,7 @@ struct Sims1Screen {
     bool armed[2] = {false, false};
     float u = 0.5f, v = 0.5f;
     int buttons = 0;
+    bool onPhone = false;  // on the phone's glass (the Sims Forever app): flat
     bool used = false;  // the laser or a finger gave it the mouse this frame
 };
 static Sims1Screen g_sims1;
@@ -25,27 +26,11 @@ static void hideSims1Screen() {
     phone3d::setSims1Screen(phone3d::Panel{});
 }
 
-static bool g_laserOnClaude = false;  // the laser is on Claude's screen (it keeps the front then)
-
-static void updateSims1Screen(bool firstPerson) {
-    simsforever::poll();
-    // Neither the laser nor a finger is on it any more: a held button lets go.
-    if (!g_sims1.used && g_sims1.buttons) simsforever::mouse(g_sims1.u, g_sims1.v, g_sims1.buttons = 0);
-    g_sims1.used = false;
-    float r[11];
-    camera::View view;
-    if (!firstPerson || !simsforever::screen(r) || !camera::lastView(view)) {
-        if (g_sims1.active) hideSims1Screen();
-        return;
-    }
-    float scale = view.scale > 0 ? view.scale : 1.0f;
-    XrVector3f centre = worldToApp(view, r, false);
-    XrVector3f z = normalize3(worldToApp(view, r + 3, true)), up = normalize3(worldToApp(view, r + 6, true));
-    XrVector3f x = cross3(up, z);
-    if (!(dot3(x, x) > 1e-4f)) return;
-    x = normalize3(x);
-    XrVector3f y = cross3(z, x);
-    float faceW = r[9] / scale, faceH = r[10] / scale;
+// Sims 1's picture on a face (app space: its centre `at`, axes, faceW x faceH metres), as large as fits at
+// its aspect; your real mouse and keyboard play it meanwhile. onPhone: flat (no screen shape).
+static void showSims1(const camera::View& view, XrVector3f at, XrVector3f x, XrVector3f y, XrVector3f z, float faceW,
+                      float faceH, bool onPhone) {
+    const float scale = view.scale > 0 ? view.scale : 1.0f;
     int fw = 0, fh = 0;
     float aspect = simsforever::frameSize(fw, fh) ? static_cast<float>(fw) / static_cast<float>(fh) : 4.0f / 3.0f;
     float w = faceW, h = w / aspect;
@@ -57,8 +42,6 @@ static void updateSims1Screen(bool firstPerson) {
         hideSims1Screen();
         return;
     }
-    const float out = 0.005f;  // just in front of the glass
-    XrVector3f at{centre.x + z.x * out, centre.y + z.y * out, centre.z + z.z * out};
     if (!g_sims1.active) {
         static int logged = 0;
         if (logged++ < 20) LOG("Sims Forever: shown %.2f x %.2f m on a %.2f x %.2f m screen", w, h, faceW, faceH);
@@ -73,6 +56,7 @@ static void updateSims1Screen(bool firstPerson) {
     g_sims1.faceW = faceW;
     g_sims1.faceH = faceH;
     g_sims1.scale = scale;
+    g_sims1.onPhone = onPhone;
     phone3d::Panel panel;
     panel.show = true;
     XrQuaternionf heading{view.heading.x, view.heading.y, view.heading.z, view.heading.w};
@@ -117,10 +101,51 @@ static void updateSims1Screen(bool firstPerson) {
     }
 }
 
+static bool g_laserOnClaude = false;  // the laser is on Claude's screen (it keeps the front then)
+
+static void updateSims1Screen(bool firstPerson) {
+    simsforever::poll();
+    // Neither the laser nor a finger is on it any more: a held button lets go.
+    if (!g_sims1.used && g_sims1.buttons) simsforever::mouse(g_sims1.u, g_sims1.v, g_sims1.buttons = 0);
+    g_sims1.used = false;
+    // The phone's Sims Forever app: you quit Sims 1 (or left first person): the phone is back in your hand.
+    if (g_sims1Phone.on && (!simsforever::phone() || !firstPerson || !g_phoneOut)) {
+        if (simsforever::phone()) simsforever::setPhone(false);
+        g_sims1Phone.on = false;
+        LOG("Phone: Sims Forever ended, the phone back in your hand");
+    }
+    float r[11];
+    camera::View view;
+    if (g_sims1Phone.on && camera::lastView(view)) {
+        const Sims1Phone& f = g_sims1Phone;
+        if (!(f.glassW > 0 && f.glassH > 0)) return;
+        // On the phone's glass, sideways: the glass's height across, its width up.
+        const XrVector3f z{-f.ahead.x, -f.ahead.y, -f.ahead.z};
+        const float out = f.glass + 0.001f;
+        showSims1(view, {f.at.x + z.x * out, f.at.y + z.y * out, f.at.z + z.z * out}, f.right, f.up, z, f.glassH, f.glassW,
+                  true);
+        return;
+    }
+    if (!firstPerson || !simsforever::screen(r) || !camera::lastView(view)) {
+        if (g_sims1.active) hideSims1Screen();
+        return;
+    }
+    float scale = view.scale > 0 ? view.scale : 1.0f;
+    XrVector3f centre = worldToApp(view, r, false);
+    XrVector3f z = normalize3(worldToApp(view, r + 3, true)), up = normalize3(worldToApp(view, r + 6, true));
+    XrVector3f x = cross3(up, z);
+    if (!(dot3(x, x) > 1e-4f)) return;
+    x = normalize3(x);
+    XrVector3f y = cross3(z, x);
+    const float out = 0.005f;  // just in front of the glass
+    showSims1(view, {centre.x + z.x * out, centre.y + z.y * out, centre.z + z.z * out}, x, y, z, r[9] / scale,
+              r[10] / scale, false);
+}
+
 // How far the screen's glass is behind the panel's plane at u v of the picture
 // (metres, <= 0; a curved screen's shape, simsforever::depth).
 static float sims1Depth(float u, float v) {
-    if (!(g_sims1.faceW > 0 && g_sims1.faceH > 0)) return 0;
+    if (g_sims1.onPhone || !(g_sims1.faceW > 0 && g_sims1.faceH > 0)) return 0;
     float fx = 0.5f + (u - 0.5f) * g_sims1.width / g_sims1.faceW;
     float fy = 0.5f + (0.5f - v) * g_sims1.height / g_sims1.faceH;
     return simsforever::depth(fx, fy) / g_sims1.scale;

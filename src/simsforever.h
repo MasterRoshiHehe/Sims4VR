@@ -39,6 +39,15 @@ float depth(float fx, float fy);
 // from where the computer is around your head; simsforever_sound.cpp).
 void setEars(float left, float right);
 
+// Any thread: Sims 1 is set up ([simsforever] on, sims1_path a file): the
+// phone shows its Sims Forever app. Checked at most every 2 s.
+bool available();
+// The phone's Sims Forever app (render/present thread): on starts Sims 1 for
+// the phone held in front of you; it goes off by itself when you quit Sims 1
+// (phone() false again), or with off (Sims 1 closed 2 s later).
+void setPhone(bool on);
+bool phone();
+
 // Present thread, every frame: logs the Sims 1 side's news; closes Sims 1 when
 // the screen has been off for 2 s.
 void poll();
