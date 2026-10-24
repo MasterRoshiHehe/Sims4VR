@@ -270,7 +270,7 @@ static void updateHands(XrTime time, armik::Hand hands[2]) {
         if (g_handTracked[i]) posed[i] = tracked[i];
     camera::Vec3 move{0, 0, 0};
     camera::Quat turn{0, 0, 0, 1};
-    const bool phoneHeld = g_phoneOut && !g_handTracked[g_phoneHand];
+    const bool phoneHeld = g_phoneOut && !g_handTracked[g_phoneHand] && !g_sims1Phone.on;
     if (phoneHeld) {
         posed[g_phoneHand].grip = g_config.phoneCurl;
         posed[g_phoneHand].index = g_config.phoneCurl;
@@ -288,7 +288,45 @@ static void updateHands(XrTime time, armik::Hand hands[2]) {
         posed[g_bookHand].thumb = 0;
         bookHandShift(g_bookHand, bookMove, bookTurn);
     }
+    // Sims Forever on the phone in front of you (user 2026-10-24 02:37Z): both of the Sim's hands hold it,
+    // wherever the controllers are (your hands are on the mouse and keyboard), each as [simsforever]
+    // phone_*_left / _right say (Phone > Sims Forever in the debug menu, live).
+    if (g_sims1Phone.on) {
+        const Sims1Phone& f = g_sims1Phone;
+        const XrVector3f toward{-f.ahead.x, -f.ahead.y, -f.ahead.z};
+        auto about = [](const XrVector3f& v, const XrVector3f& k, float degrees) {
+            float a = degrees * 0.0174533f, ca = std::cos(a), sa = std::sin(a);
+            XrVector3f kv = cross3(k, v);
+            float kd = dot3(k, v) * (1 - ca);
+            return XrVector3f{v.x * ca + kv.x * sa + k.x * kd, v.y * ca + kv.y * sa + k.y * kd, v.z * ca + kv.z * sa + k.z * kd};
+        };
+        const float half = g_config.handPitch * 0.5f * 3.14159265f / 180.0f;
+        for (int i = 0; i < 2; ++i) {
+            const float* o = i ? g_config.sfHandOffsetR : g_config.sfHandOffsetL;
+            const float* t = i ? g_config.sfHandTurnR : g_config.sfHandTurnL;
+            // The Sim's hand frame: fingers (-Z) reaching past the phone, thumb (+Y) up, the palm toward the
+            // phone's middle (the right palm faces -X, the left +X), then turned as set.
+            XrVector3f basis[3] = {f.right, f.up, toward};
+            for (XrVector3f& b : basis) b = about(about(about(b, toward, t[2]), f.right, t[1]), f.up, t[0]);
+            // armik tilts the grip down by hand_pitch about its X: given back up so the hand is as set.
+            XrQuaternionf q = qmul(fromAxes(basis[0], basis[1], basis[2]), XrQuaternionf{std::sin(half), 0, 0, std::cos(half)});
+            armik::Hand& h = posed[i];
+            h = armik::Hand{};
+            h.valid = true;
+            h.position = {f.at.x + f.right.x * o[0] + f.up.x * o[1] + toward.x * o[2],
+                          f.at.y + f.right.y * o[0] + f.up.y * o[1] + toward.y * o[2],
+                          f.at.z + f.right.z * o[0] + f.up.z * o[1] + toward.z * o[2]};
+            h.orientation = {q.x, q.y, q.z, q.w};
+            h.grip = h.index = i ? g_config.sfCurlR : g_config.sfCurlL;
+        }
+    }
     for (int i = 0; i < 2; ++i) {
+        if (g_sims1Phone.on) {
+            armik::setHoldPose(i, true, i ? g_config.sfCurlR : g_config.sfCurlL, i ? g_config.sfThumbBendR : g_config.sfThumbBendL,
+                               (i ? g_config.sfThumbSpreadR : g_config.sfThumbSpreadL) * 0.0174533f, camera::Vec3{0, 0, 0},
+                               camera::Quat{0, 0, 0, 1});
+            continue;
+        }
         if (bookHeld && i == g_bookHand)
             armik::setHoldPose(i, true, g_config.bookCurl, g_config.bookThumbBend, g_config.bookThumbSpread * 0.0174533f,
                                bookMove, bookTurn);

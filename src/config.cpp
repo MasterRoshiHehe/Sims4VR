@@ -284,6 +284,29 @@ Config loadConfig(const std::wstring& ini) {
             for (int i = 0; i < 3; ++i) c.phoneHandTurn[i] = v[i] >= -180 && v[i] <= 180 ? v[i] : 0;
     }
     {
+        // Sims Forever on the phone: each hand on it.
+        auto triple = [&](const char* key, float out[3], float lim) {
+            float v[3];
+            std::string s = readString(ini, "simsforever", key, "");
+            if (sscanf(s.c_str(), "%f %f %f", &v[0], &v[1], &v[2]) == 3)
+                for (int i = 0; i < 3; ++i) out[i] = v[i] >= -lim && v[i] <= lim ? v[i] : 0;
+        };
+        triple("phone_hand_offset_left", c.sfHandOffsetL, 0.4f);
+        triple("phone_hand_offset_right", c.sfHandOffsetR, 0.4f);
+        triple("phone_hand_turn_left", c.sfHandTurnL, 180);
+        triple("phone_hand_turn_right", c.sfHandTurnR, 180);
+        auto unit = [&](const char* key, float& out, float lo, float hi) {
+            float v = readFloat(ini, "simsforever", key, out);
+            if (v >= lo && v <= hi) out = v;
+        };
+        unit("phone_finger_curl_left", c.sfCurlL, 0, 1);
+        unit("phone_finger_curl_right", c.sfCurlR, 0, 1);
+        unit("phone_thumb_bend_left", c.sfThumbBendL, 0, 1);
+        unit("phone_thumb_bend_right", c.sfThumbBendR, 0, 1);
+        unit("phone_thumb_spread_left", c.sfThumbSpreadL, -90, 90);
+        unit("phone_thumb_spread_right", c.sfThumbSpreadR, -90, 90);
+    }
+    {
         std::string s = readString(ini, "phone", "phone_offset", "");
         float v[3];
         if (sscanf(s.c_str(), "%f %f %f", &v[0], &v[1], &v[2]) == 3)

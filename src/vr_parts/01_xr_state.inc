@@ -480,3 +480,13 @@ static const char* stateName(XrSessionState s) {
     }
 }
 
+// The phone's Sims Forever app (user 2026-10-24 02:21Z): the phone turned 90 degrees counter-clockwise
+// (landscape) and stuck in front of where you looked when you pressed it, Sims 1 on its glass, your real
+// mouse and keyboard playing it, until you quit Sims 1; then it is back in your hand. App space: the
+// phone's centre, the view's right / up / ahead then; glassW x glassH the portrait glass (updatePhone).
+struct Sims1Phone {
+    bool on = false;
+    XrVector3f at{}, right{}, up{}, ahead{};
+    float glassW = 0, glassH = 0, glass = 0;  // glass: its front ahead of the centre
+};
+static Sims1Phone g_sims1Phone;

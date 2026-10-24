@@ -186,7 +186,7 @@ static void sims1Mouse(float u, float v, int buttons) {
 // A finger on Sims 1's picture: touching it presses the mouse there, as on the
 // pie (from in front, let go when pulled back); that hand's trigger clicks too.
 static bool pokeSims1(const armik::Hand hands[2], const bool trigger[2], bool rightButton) {
-    if (!g_sims1.active) return false;
+    if (!g_sims1.active || g_sims1.onPhone) return false;  // on the phone: both Sim hands hold it, no pokes
     int best = -1;
     float bestZ = 1e9f, bu = 0, bv = 0, bz = 0;
     for (int i = 0; i < 2; ++i) {

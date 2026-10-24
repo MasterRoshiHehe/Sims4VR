@@ -308,6 +308,12 @@ struct Config {
     float phoneThumbSpread = 0;   // degrees its thumb swings away from the hand (negative = toward it)
     float phoneHandOffset[3] = {0, 0, 0};  // the holding hand moved against the phone (metres): out from its middle, up it, toward you
     float phoneHandTurn[3] = {0, 0, 0};    // and turned about the palm (degrees): about the phone's up axis, its left-right axis, its screen's line
+    // Sims Forever on the phone (in front of you, sideways): both of the Sim's hands hold it ([simsforever]
+    // phone_*_left / _right). Each hand's palm from the phone's middle (metres: to your right, up, toward you),
+    // turned (degrees: about up, about right, about the line toward you), its fingers and thumb as on the phone.
+    float sfHandTurnL[3] = {0, 0, 0}, sfHandTurnR[3] = {0, 0, 0};
+    float sfHandOffsetL[3] = {-0.125f, -0.01f, 0.02f}, sfHandOffsetR[3] = {0.125f, -0.01f, 0.02f};
+    float sfCurlL = 0.7f, sfCurlR = 0.7f, sfThumbBendL = 0.3f, sfThumbBendR = 0.3f, sfThumbSpreadL = 0, sfThumbSpreadR = 0;
     bool phoneProp = true;        // also put the game's phone model in the Sim's hand (mirrors; hidden from your eyes)
     float phoneCropWidth = 0.45f, phoneCropHeight = 0.80f;  // part of the UI shown before the menu is measured (x UI height)
     // Notebook (first person): close your hand at your LEFT hip and your Sim holds its notebook, a leather book that
