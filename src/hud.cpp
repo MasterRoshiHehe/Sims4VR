@@ -4203,7 +4203,7 @@ Action drawPhone(ImDrawList* d, int* index) {
         bool over = false;
         if (button(at(96, 361), at(129, 392), &over)) g_phoneSoundsOpen = false, g_mySimScroll = 0;
         piece(d, over ? art::kPhoneBackOver : art::kPhoneBack, at(96 + 16.5f, 361 + 15.5f), A);
-    } else if (g_phoneSettingsOpen) {
+    } else if (g_phoneSettingsOpen && !g_gameMenuPhone) {  // Game Options (below) opens over it, Back returns here
         // Settings: its apps (Game Options: the game's Escape menu, as the old Options app;
         // Phone Options: this phone's settings; VR Options: the VR debug menu), named under them.
         pieceIn(d, art::kPhoneTint, at(0, 0), at(230, 44));
