@@ -300,7 +300,23 @@ struct SimItem {  // Inventory: one stack (phonesim.py "inv")
     int count = 1, value = 0;
     std::string name;
 };
+struct SimClub {  // Social Groups: one club ("club", "cmem", "crule")
+    uint64_t icon = 0;
+    bool gathering = false;
+    std::string name, description, leader;
+    struct Member { uint64_t face = 0; std::string first; bool leader = false; };
+    std::vector<Member> members;
+    std::vector<std::pair<bool, std::string>> rules;  // encouraged, text
+};
+struct SimBusiness {  // Owned Businesses ("biz")
+    int type = 0, funds = 0, revenue = 0, employees = 0;
+    float stars = 0;
+    bool open = false;
+    std::string name;
+};
 struct SimContent {
+    std::vector<SimBusiness> businesses;
+    std::vector<SimClub> clubs;
     std::vector<SimItem> inventory;
     std::vector<SimContact> contacts;
     ContactPage contact;
@@ -2029,8 +2045,8 @@ constexpr int kMySimApps = 10;
 const char* const kMySimNames[kMySimApps] = {"Aspirations", "Career", "Wants", "Skills", "Needs", "Relationships",
                                              "Inventory", "Social Groups", "Owned Businesses", "Household"};
 constexpr int kSimAspirations = 0, kSimCareer = 1, kSimWants = 2, kSimSkills = 3, kSimNeeds = 4, kSimInventory = 6,
-              kSimHousehold = 9;
-bool mySimBuilt(int k) { return k <= kSimNeeds || k == kSimInventory || k == kSimHousehold; }
+              kSimClubs = 7, kSimBusinesses = 8, kSimHousehold = 9;
+bool mySimBuilt(int k) { return k <= kSimNeeds || (k >= kSimInventory && k <= kSimHousehold); }
 // sims.sim_info_types.Age's names, as the game shows them.
 const char* ageName(int age) {
     switch (age) {
@@ -2475,6 +2491,104 @@ void drawMySim(ImDrawList* d, const Rect& r, Button& button, std::vector<uint64_
                 }
             }
             y += rowH;
+        }
+    } else if (k == kSimBusinesses) {
+        // Owned Businesses (business_service): per business its kind, name, open or closed, stars, funds, today's
+        // revenue and staff.
+        static const char* const kKinds[6] = {"Business", "Retail store", "Restaurant", "Vet clinic", "Rental", "Small business"};
+        const float small = 19 * g_phoneText;
+        for (const SimBusiness& b : g_sim.businesses) {
+            const float h = 30 + 4 * (small / S + 3) + 8;
+            d->AddRectFilled(at(left, y), at(right, y + h), IM_COL32(255, 255, 255, 228), 6 * S);
+            d->AddText(g_title, 24 * g_phoneText, at(left + 6, y + 4), kBlue, b.name.c_str());
+            const char* state = b.open ? "Open" : "Closed";
+            ImVec2 ss = g_text->CalcTextSizeA(small, FLT_MAX, 0, state);
+            const ImVec2 pa = at(right - 8, y + 6);
+            d->AddRectFilled({pa.x - ss.x - 6 * S, pa.y}, {pa.x, pa.y + ss.y + 2 * S},
+                             b.open ? IM_COL32(70, 170, 50, 255) : IM_COL32(150, 158, 170, 255), 4 * S);
+            d->AddText(g_text, small, {pa.x - ss.x - 3 * S, pa.y + 1 * S}, kWhite, state);
+            float yy = y + 30;
+            auto line = [&](const char* label, const std::string& value) {
+                d->AddText(g_text, small, at(left + 8, yy), IM_COL32(50, 60, 80, 255), label);
+                ImVec2 vs = g_text->CalcTextSizeA(small, FLT_MAX, 0, value.c_str());
+                d->AddText(g_text, small, {at(right - 8, 0).x - vs.x, at(0, yy).y}, kBlue, value.c_str());
+                yy += small / S + 3;
+            };
+            line("Kind", kKinds[b.type >= 0 && b.type <= 5 ? b.type : 0]);
+            // Stars: five, filled to the rating.
+            {
+                d->AddText(g_text, small, at(left + 8, yy), IM_COL32(50, 60, 80, 255), "Rating");
+                for (int i = 0; i < 5; ++i) {
+                    const ImVec2 sc = at(right - 12 - (4 - i) * 11, yy + small / S / 2);
+                    const float fill = std::max(0.0f, std::min(1.0f, b.stars - i));
+                    d->AddCircleFilled(sc, 4.5f * S, IM_COL32(200, 206, 214, 255));
+                    if (fill > 0) d->AddCircleFilled(sc, 4.5f * S * fill, IM_COL32(235, 175, 30, 255));
+                }
+                yy += small / S + 3;
+            }
+            char v[32];
+            std::snprintf(v, sizeof v, "\xC2\xA7%d", b.funds);
+            line("Funds", v);
+            std::snprintf(v, sizeof v, "\xC2\xA7%d today, %d staff", b.revenue, b.employees);
+            line("Revenue", v);
+            y += h + 6;
+        }
+        if (g_sim.businesses.empty()) {
+            const char* none = g_sim.age ? "No businesses." : "...";
+            ImVec2 ns = g_text->CalcTextSizeA(26, FLT_MAX, 0, none);
+            shadowText(d, g_text, 26, {at(115, 150).x - ns.x / 2, at(115, 150).y - ns.y / 2}, kWhite, none);
+        }
+    } else if (k == kSimClubs) {
+        // Social Groups (the game's club panel): per club its icon, name, leader, gathering now, description,
+        // members' faces (the leader's ringed gold) and its rules, encouraged and discouraged.
+        const float small = 19 * g_phoneText, wrap = (right - left - 12) * S;
+        for (const SimClub& c : g_sim.clubs) {
+            const std::string& desc = c.description;
+            const float dh = desc.empty() ? 0 : g_text->CalcTextSizeA(small, FLT_MAX, wrap, desc.c_str()).y / S + 4;
+            const float mh = c.members.empty() ? 0 : 40;
+            float rh = 0;
+            for (const auto& rl : c.rules) rh += g_text->CalcTextSizeA(small, FLT_MAX, wrap - 14 * S, rl.second.c_str()).y / S + 2;
+            const float h = 44 + dh + mh + rh + 6;
+            d->AddRectFilled(at(left, y), at(right, y + h), IM_COL32(255, 255, 255, 228), 6 * S);
+            if (c.icon) {
+                shown.push_back(c.icon);
+                icon(d, c.icon, at(left + 21, y + 21), 36 * S);
+            }
+            d->AddText(g_title, 24 * g_phoneText, at(left + 44, y + 5), kBlue, c.name.c_str());
+            std::string sub = c.leader.empty() ? std::string() : "Leader: " + c.leader;
+            if (c.gathering) sub += sub.empty() ? "Gathering now" : "  -  Gathering now";
+            d->AddText(g_text, small, at(left + 44, y + 7 + 12 * g_phoneText), IM_COL32(50, 60, 80, 255), sub.c_str());
+            float yy = y + 44;
+            if (!desc.empty()) {
+                d->AddText(g_text, small, at(left + 6, yy), IM_COL32(50, 60, 80, 255), desc.c_str(), nullptr, wrap);
+                yy += dh;
+            }
+            if (!c.members.empty()) {
+                for (size_t m = 0; m < c.members.size(); ++m) {
+                    const ImVec2 mc = at(left + 20 + m * 30, yy + 18);
+                    if (mc.x > at(right - 10, 0).x) break;
+                    if (c.members[m].leader) d->AddCircleFilled(mc, 15 * S, IM_COL32(235, 175, 30, 255));
+                    if (c.members[m].face) {
+                        shown.push_back(c.members[m].face);
+                        icon(d, c.members[m].face, mc, 28 * S);
+                    }
+                }
+                yy += mh;
+            }
+            for (const auto& rl : c.rules) {
+                const ImVec2 dot = at(left + 12, yy + 6);
+                d->AddCircleFilled(dot, 4.5f * S, rl.first ? IM_COL32(70, 170, 50, 255) : IM_COL32(220, 70, 50, 255));
+                d->AddLine({dot.x - 2.2f * S, dot.y}, {dot.x + 2.2f * S, dot.y}, kWhite, 1.2f * S);
+                if (rl.first) d->AddLine({dot.x, dot.y - 2.2f * S}, {dot.x, dot.y + 2.2f * S}, kWhite, 1.2f * S);
+                d->AddText(g_text, small, at(left + 20, yy), kBlue, rl.second.c_str(), nullptr, wrap - 14 * S);
+                yy += g_text->CalcTextSizeA(small, FLT_MAX, wrap - 14 * S, rl.second.c_str()).y / S + 2;
+            }
+            y += h + 6;
+        }
+        if (g_sim.clubs.empty()) {
+            const char* none = g_sim.age ? "Not in any club." : "...";
+            ImVec2 ns = g_text->CalcTextSizeA(26, FLT_MAX, 0, none);
+            shadowText(d, g_text, 26, {at(115, 150).x - ns.x / 2, at(115, 150).y - ns.y / 2}, kWhite, none);
         }
     } else if (k == kSimInventory) {
         // The Sim's inventory (the game's inventory panel): a tile a stack, its picture, count and name; press one
@@ -4318,6 +4432,28 @@ void setPhoneSim(const char* data, size_t size) {
             j.companyJson = f[8];
             j.shift = f[9];
             c.jobs.push_back(j);
+        } else if (f[0] == "biz" && f.size() >= 8 && c.businesses.size() < 10) {
+            SimBusiness b;
+            b.type = std::atoi(f[1].c_str());
+            b.name = f[2];
+            b.open = f[3] == "1";
+            b.funds = std::atoi(f[4].c_str());
+            b.stars = static_cast<float>(std::atof(f[5].c_str()));
+            b.revenue = std::atoi(f[6].c_str());
+            b.employees = std::atoi(f[7].c_str());
+            c.businesses.push_back(b);
+        } else if (f[0] == "club" && f.size() >= 7 && c.clubs.size() < 10) {
+            SimClub k;
+            k.icon = std::strtoull(f[2].c_str(), nullptr, 10);
+            k.name = f[3];
+            k.description = f[4];
+            k.leader = f[5];
+            k.gathering = f[6] == "1";
+            c.clubs.push_back(k);
+        } else if (f[0] == "cmem" && f.size() >= 5 && !c.clubs.empty()) {
+            c.clubs.back().members.push_back({std::strtoull(f[2].c_str(), nullptr, 10), f[3], f[4] == "1"});
+        } else if (f[0] == "crule" && f.size() >= 4 && !c.clubs.empty()) {
+            c.clubs.back().rules.emplace_back(f[2] == "1", f[3]);
         } else if (f[0] == "inv" && f.size() >= 6 && c.inventory.size() < 120) {
             SimItem it;
             it.picture = std::strtoull(f[2].c_str(), nullptr, 10);

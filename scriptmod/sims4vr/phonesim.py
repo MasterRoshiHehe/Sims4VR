@@ -56,6 +56,13 @@ social hover: what your Sim knows of each Sim, sim_knowledge.py, as sim_relation
 Inventory (the game's Sim inventory panel: the visible storage, one entry a stack):
   "inv"   \x1f <index> \x1f <picture> \x1f <name> \x1f <count> \x1f <value>
 Control 7500000 + n = the pie menu of "inv" n (at your hand, as a click on it in the inventory panel).
+Social Groups (the game's club panel, clubs/club.py: the Sim's clubs from the club service):
+  "club"  \x1f <index> \x1f <icon> \x1f <name> \x1f <description> \x1f <leader name> \x1f <gathering now 0/1>
+  "cmem"  \x1f <club index> \x1f <face picture> \x1f <first name> \x1f <leader 0/1>
+  "crule" \x1f <club index> \x1f <encouraged 0/1> \x1f <text>
+Owned Businesses (business_service: the household's business managers, by zone or by owner for small businesses):
+  "biz"   \x1f <type (BusinessType)> \x1f <name> \x1f <open 0/1> \x1f <funds> \x1f <stars> \x1f <today's revenue>
+          \x1f <employees>
 Control 87 = Contacts is open (send with contacts).
 Control 7200000 + n = play as "hh" n (user 2026-10-24 00:39Z: eyes close, the game switches Sim, eyes open).
 Control 7000000 + n = change to "atrack" n. Control 85 = My Sim is open (send; the DLL asks again every 2 s while it is).
@@ -511,6 +518,70 @@ def _inventory_list(sim_info, records):
         _inventory.append(obj.id)
 
 
+def _clubs(sim_info, records):
+    import services
+    from sims4vr import hudinfo
+    service = services.get_club_service()
+    if service is None:
+        return
+    gathering = getattr(service, 'clubs_to_gatherings_map', {}) or {}
+    for n, club in enumerate(sorted(service.get_clubs_for_sim_info(sim_info), key=lambda c: c.club_id)[:10]):
+        leader = club.leader
+        records.append('club\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}'.format(
+            n, hudinfo._icon(club.icon), _loc(club.name), _loc(club.description) if club.description is not None else '',
+            '{} {}'.format(leader.first_name, leader.last_name) if leader is not None else '', int(club in gathering)))
+        for member in list(club.members)[:12]:
+            records.append('cmem\x1f{}\x1f{}\x1f{}\x1f{}'.format(
+                n, hudinfo._thumb('sims/f_{}_m_0'.format(member.id)), member.first_name, int(member is leader)))
+        for rule in list(club.rules)[:12]:
+            try:
+                encouraged = rule.is_encouraged() if callable(rule.is_encouraged) else rule.is_encouraged
+                records.append('crule\x1f{}\x1f{}\x1f{}'.format(n, int(bool(encouraged)), _loc(rule.action.name)))
+            except Exception:
+                continue
+
+
+_BUSINESS_TYPES = {1: 'Retail store', 2: 'Restaurant', 3: 'Vet clinic', 4: 'Rental', 5: 'Small business'}
+
+
+def _businesses(sim_info, records):
+    import services
+    service = services.business_service()
+    household = sim_info.household
+    if service is None or household is None:
+        return
+    managers = service.get_business_managers_for_household(household.id) or {}
+    seen = set()
+    for key, manager in managers.items():
+        if id(manager) in seen:
+            continue
+        seen.add(id(manager))
+        name = ''
+        zone_id = getattr(manager, 'business_zone_id', None)
+        try:
+            if zone_id:
+                proto = services.get_persistence_service().get_zone_proto_buff(zone_id)
+                name = proto.name if proto is not None else ''
+        except Exception:
+            pass
+        if not name:
+            owner = services.sim_info_manager().get(key)
+            name = "{}'s business".format(owner.first_name) if owner is not None else ''
+        kind = int(getattr(manager, 'business_type', 0) or 0)
+        def num(attr, call=False):
+            try:
+                v = getattr(manager, attr)
+                v = v() if call else v
+                return v
+            except Exception:
+                return 0
+        funds = num('funds')
+        money = getattr(funds, 'money', 0) if funds else 0
+        records.append('biz\x1f{}\x1f{}\x1f{}\x1f{}\x1f{:.1f}\x1f{}\x1f{}'.format(
+            kind, name or _BUSINESS_TYPES.get(kind, 'Business'), int(bool(num('is_open'))), int(money or 0),
+            float(num('get_star_rating', True) or 0), int(num('daily_revenue') or 0), int(num('employee_count') or 0)))
+
+
 def inventory_pie(index):
     import services
     from sims4vr import pie
@@ -580,7 +651,7 @@ def send(fresh=False, contacts=False):
                 records.append('cat\x1f{}\x1f{}'.format(category, _key(title)))
             for s in skills:
                 records.append('skill\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{:.4f}\x1f{}\x1f{}'.format(*s))
-            for part in (_careers, _mood, _members, _inventory_list) + ((_contact_list, _contact_page) if contacts else ()):
+            for part in (_careers, _mood, _members, _inventory_list, _clubs, _businesses) + ((_contact_list, _contact_page) if contacts else ()):
                 try:
                     part(sim_info, records)
                 except Exception as e:
