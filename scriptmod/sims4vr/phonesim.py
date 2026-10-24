@@ -50,6 +50,9 @@ social hover: what your Sim knows of each Sim, sim_knowledge.py, as sim_relation
   "cdk"   \x1f <label> \x1f <text json>                     (known career, major, net worth, romantic interest)
   "cds"   \x1f <icon> \x1f <name json> \x1f <description json> (sentiments, your Sim's toward them)
   "cdb"   \x1f <icon> \x1f <name json>                      (other visible relationship bits: spouse, roommate...)
+  "cda"   \x1f <phone menu node> \x1f <name json> \x1f <disabled text json>  (the phone's Social app entries, user
+          2026-10-24 01:17Z: control 7400000 + node runs it and its Sim picker is answered with this contact;
+          the Social app itself is left as it is)
 Control 87 = Contacts is open (send with contacts).
 Control 7200000 + n = play as "hh" n (user 2026-10-24 00:39Z: eyes close, the game switches Sim, eyes open).
 Control 7000000 + n = change to "atrack" n. Control 85 = My Sim is open (send; the DLL asks again every 2 s while it is).
@@ -407,6 +410,12 @@ def _contact_page(sim_info, records):
                 records.append('cdk\x1fRomantic interest\x1f{}'.format(text))
         except Exception:
             pass
+    try:
+        from sims4vr import phoneapp
+        for node, name, disabled in phoneapp.social:
+            records.append('cda\x1f{}\x1f{}\x1f{}'.format(node, name, disabled))
+    except Exception as e:
+        _log_error('social entries', e)
     from relationships.relationship_enums import RelationshipTrackType
     try:
         for track in tracker.relationship_tracks_gen(target.id, track_type=RelationshipTrackType.SENTIMENT):
@@ -434,6 +443,41 @@ def _contact_page(sim_info, records):
                 records.append('cdb\x1f{}\x1f{}'.format(hudinfo._icon(getattr(bit, 'icon', None)), name))
     except Exception as e:
         _log_error('relationship bits', e)
+
+
+_auto_pick = None  # [sim id, until (monotonic)]: the next Sim picker of yours picks this Sim
+
+
+def contact_action(node):
+    """A Social entry on a contact's page: the phone's own entry (phoneapp.select), its Sim picker answered with the contact."""
+    global _auto_pick
+    import time
+    from sims4vr import phoneapp
+    if _contact is None:
+        return
+    _auto_pick = [_contact, time.monotonic() + 20.0]
+    native._log('phonesim: contact action {} for sim {}'.format(node, _contact))
+    phoneapp.select(node)
+
+
+def auto_pick_option(dialog):
+    """objmenu's dialog_show: the option of the contact's row in this Sim picker, if a Contacts action waits for one."""
+    global _auto_pick
+    import time
+    if _auto_pick is None:
+        return None
+    if time.monotonic() > _auto_pick[1]:
+        _auto_pick = None
+        return None
+    rows = getattr(dialog, 'picker_rows', None)
+    if not rows:
+        return None
+    target, _auto_pick = _auto_pick[0], None
+    for row in rows:
+        if getattr(row, 'sim_id', None) == target:
+            return row.option_id
+    native._log('phonesim: the picker has no row for sim {}, shown as it is'.format(target))
+    return None
 
 
 def select_contact(index):

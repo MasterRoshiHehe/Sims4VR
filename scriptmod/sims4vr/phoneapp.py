@@ -182,6 +182,8 @@ _last = None  # (sim id, records) of the menu sent last: shown at once while the
 _built_at = 0.0  # time.monotonic() the last menu was finished
 _live = False  # _choice_ids belong to a menu set on the client (a press can be picked now)
 _pending = None  # an entry pressed before that: its key (_keys), picked once the menu is set
+SOCIAL_CATEGORY = 105919  # phoneCategory_Social: its entries also on each Contacts page (phonesim.py)
+social = []  # (node, name, disabled text) of the entries under it in the menu sent last
 _keys = {}  # node -> its place in the tree (the names above it and its own), to find it in a fresh menu
 
 
@@ -402,6 +404,7 @@ def _send_message(sim, msg, live=True):
     global _revision, _last, _live, _pending
     _choice_ids.clear()
     _keys.clear()
+    del social[:]
     _revision = None
     from sims4vr import objmenu
     disabled = objmenu._loc(msg.disabled_tooltip) if msg.HasField('disabled_tooltip') else ''
@@ -412,7 +415,8 @@ def _send_message(sim, msg, live=True):
         root = _tree(sim, msg)
         counter = [0]
 
-        def emit(node, parent, path):
+        def emit(node, parent, path, in_social=False):
+            in_social = in_social or (node['kind'] == 'cat' and node.get('key') == SOCIAL_CATEGORY)
             index = counter[0]
             counter[0] += 1
             key = path + '\x1d' + node['name']
@@ -422,10 +426,12 @@ def _send_message(sim, msg, live=True):
                     index, parent, node['icon'], node['name'], node['priority']))
             else:
                 _choice_ids[index] = node['id']
+                if in_social:
+                    social.append((index, node['name'], node['disabled']))
                 records.append('item\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}'.format(
                     index, parent, node['name'], node['disabled'], 1 if node['notif'] else 0, node['priority']))
             for child in node['children']:
-                emit(child, index, key)
+                emit(child, index, key, in_social)
         for child in root['children']:
             emit(child, -1, '')
         _log('{} entries for {} ({} apps, menu {}{})'.format(

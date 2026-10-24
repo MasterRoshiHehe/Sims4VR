@@ -292,6 +292,8 @@ struct ContactPage {  // the picked contact: what your Sim knows of them ("cd", 
     std::vector<Trait> traits;
     std::vector<Fact> facts;
     std::vector<Bit> sentiments, bits;
+    struct Act { int node = 0; std::string nameJson, disabledJson; };
+    std::vector<Act> actions;  // the phone's Social app entries, run for this contact
 };
 struct SimContent {
     std::vector<SimContact> contacts;
@@ -2685,6 +2687,35 @@ void drawContacts(ImDrawList* d, const Rect& r, Button& button, std::vector<uint
             shadowText(d, g_title, 24 * g_phoneText, at(left + 2, y), kWhite, title);
             y += 13 * g_phoneText + 3;
         };
+        if (ready && !c.actions.empty()) {
+            // The Social app's entries for this Sim (user 2026-10-24 01:17Z), two to a row; its picker is answered
+            // with this Sim (phonesim.auto_pick_option).
+            section("Social");
+            static ULONGLONG pressedAt = 0;
+            static int pressedNode = -1;
+            const float bw = (right - left - 6) / 2, bh = 28 * std::max(1.0f, g_phoneText / 1.2f);
+            for (size_t i = 0; i < c.actions.size(); ++i) {
+                const auto& a = c.actions[i];
+                const float bx = left + (i % 2) * (bw + 6), byy = y + (i / 2) * (bh + 4);
+                const ImVec2 ba = at(bx, byy), bb = at(bx + bw, byy + bh);
+                const bool off = !a.disabledJson.empty() && !found(a.disabledJson).empty();
+                const bool busy = pressedNode == a.node && now - pressedAt < 1500;
+                bool over = false;
+                if (button(ba, bb, &over) && !off) {
+                    action = kContactAction;
+                    if (index) *index = a.node;
+                    pressedNode = a.node, pressedAt = now;
+                }
+                d->AddRectFilled(ba, bb, busy ? IM_COL32(205, 235, 190, 240) : IM_COL32(255, 255, 255, off ? 150 : 232), 6 * S);
+                if (over && !off) d->AddRect(ba, bb, kBlue, 6 * S, 0, 1.4f * S);
+                const std::string& name = found(a.nameJson);
+                const float ts = 20 * g_phoneText, wrap = (bw - 6) * S;
+                ImVec2 sz = g_text->CalcTextSizeA(ts, FLT_MAX, wrap, name.c_str());
+                d->AddText(g_text, ts, {ba.x + 3 * S, (ba.y + bb.y - sz.y) / 2}, off ? IM_COL32(120, 128, 140, 255) : kBlue,
+                           name.c_str(), nullptr, wrap);
+            }
+            y += ((c.actions.size() + 1) / 2) * (bh + 4) + 4;
+        }
         if (!ready) {
             ImVec2 ns = g_text->CalcTextSizeA(26, FLT_MAX, 0, "...");
             shadowText(d, g_text, 26, {at(115, 0).x - ns.x / 2, at(0, y + 10).y}, kWhite, "...");
@@ -4227,6 +4258,8 @@ void setPhoneSim(const char* data, size_t size) {
             c.contact.facts.push_back({f[1], f[2]});
         } else if (f[0] == "cds" && f.size() >= 4 && c.contact.sentiments.size() < 20) {
             c.contact.sentiments.push_back({std::strtoull(f[1].c_str(), nullptr, 10), f[2], f[3]});
+        } else if (f[0] == "cda" && f.size() >= 4 && c.contact.actions.size() < 40) {
+            c.contact.actions.push_back({std::atoi(f[1].c_str()), f[2], f[3]});
         } else if (f[0] == "cdb" && f.size() >= 3 && c.contact.bits.size() < 30) {
             c.contact.bits.push_back({std::strtoull(f[1].c_str(), nullptr, 10), f[2], std::string()});
         } else if (f[0] == "hh" && f.size() >= 9 && c.household.size() < 16) {

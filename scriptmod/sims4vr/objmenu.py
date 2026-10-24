@@ -1247,6 +1247,26 @@ def _wrap():
                 return original_show(self, dialog, *args, **kwargs)
         except Exception as e:
             _log('map view check failed: {!r}'.format(e))
+        # A Social action from a Contacts page (phonesim.contact_action): its Sim picker answered with that Sim.
+        try:
+            from sims4vr import phonesim
+            pick = phonesim.auto_pick_option(dialog)
+        except Exception as e:
+            pick = None
+            _log('the Contacts pick failed: {!r}'.format(e))
+        if pick is not None:
+            result = original_show(self, dialog, *args, **kwargs)
+            try:
+                from ui.ui_dialog import ButtonType
+                if self.dialog_pick_result(dialog.dialog_id, picked_results=[pick]):
+                    self.dialog_respond(dialog.dialog_id, ButtonType.DIALOG_RESPONSE_OK)
+                    _close_on_game_ui(dialog.dialog_id, 'picker')
+                    _log('{}: answered with the contact (option {})'.format(type(dialog).__name__, pick))
+                else:
+                    _log('{}: the game refused the contact (option {})'.format(type(dialog).__name__, pick))
+            except Exception as e:
+                _log('answering with the contact failed: {!r}'.format(e))
+            return result
         try:
             answer = _others_decide(dialog, kwargs.get('zone_id'))
         except Exception as e:

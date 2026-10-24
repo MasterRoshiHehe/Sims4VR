@@ -340,6 +340,9 @@ def _tick(_handle):
             elif 6000000 <= what < 7000000:
                 from sims4vr import objmenu
                 objmenu.list_control(what - 6000000)
+            elif 7400000 <= what < 7500000:
+                from sims4vr import phonesim
+                phonesim.contact_action(what - 7400000)
             elif 7300000 <= what < 7400000:
                 from sims4vr import phonesim
                 phonesim.select_contact(what - 7300000)
