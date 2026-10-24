@@ -3227,10 +3227,11 @@ Action drawPhone(ImDrawList* d, int* index) {
             ImVec2 hs = g_title->CalcTextSizeA(34, FLT_MAX, 0, head);
             shadowText(d, g_title, 34, {at(115, 22).x - hs.x / 2, at(115, 22).y - hs.y / 2}, kWhite, head);
         }
-        // Gallery and Manage Worlds: the GameTray's top right buttons (user 2026-10-24 01:00Z), sending what they send.
-        static const int kApps[5] = {-10, -11, -12, -13, -14};
-        static const char* kNames[5] = {"Game Options", "Phone Options", "VR Options", "Gallery", "Manage Worlds"};
-        for (int k = 0; k < 5; ++k) {
+        // Gallery: the GameTray's top right button (user 2026-10-24 01:00Z), sending what it sends. (Manage Worlds
+        // dropped 01:22Z: it is in Game Options already; kManageWorlds / app -14 kept unused.)
+        static const int kApps[4] = {-10, -11, -12, -13};
+        static const char* kNames[4] = {"Game Options", "Phone Options", "VR Options", "Gallery"};
+        for (int k = 0; k < 4; ++k) {
             const float x = 13 + (k % 3) * 68 + 4, y = 101 + 6 + (k / 3) * 92;
             const ImVec2 c = at(x + 32, y + 32);
             bool over = false;
