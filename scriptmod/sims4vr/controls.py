@@ -365,6 +365,9 @@ def _tick(_handle):
             elif 7200000 <= what < 7300000:
                 from sims4vr import phonesim
                 phonesim.play_as(what - 7200000)
+            elif 7100200 <= what < 7100202:
+                from sims4vr import phonesound
+                phonesound.click(what - 7100200)
             elif 7100000 <= what < 7101000:
                 from sims4vr import phonesound
                 phonesound.preview(what - 7100000)

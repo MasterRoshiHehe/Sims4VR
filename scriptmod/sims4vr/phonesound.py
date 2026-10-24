@@ -97,6 +97,36 @@ def _ring(kind):
         _log_error('a tone', e)
 
 
+# The game's own phone beeps (re/audio/configs.tsv; the id is the FNV-1 64 of the name): phone_on_ui, the beep
+# of a Sim's phone switching on in its animations, and phone_tapscreenicon_touch, a Sim tapping an app.
+# The game has no vibrate sound (no config named for it), so vibrate mode stays silent (the controller buzzes).
+CLICKS = (0x2B04ADACD6479E66, 0x8BAB942224BE342A)
+_click = None
+
+
+def click(kind):
+    """kind 0: the screen woke, 1: a press on it (not a swipe). Sound mode only, first person (user 2026-10-24 05:16Z)."""
+    global _click
+    try:
+        if not hooks.in_first_person() or _index('sound_mode', 3, 0) != 0 or not 0 <= kind < len(CLICKS):
+            return
+        import services
+        from audio.primitive import PlaySound
+        sim_info = services.active_sim_info()
+        sim = sim_info.get_sim_instance() if sim_info is not None else None
+        if sim is None:
+            return
+        try:
+            if _click is not None:
+                _click.stop()
+        except Exception:
+            pass
+        _click = PlaySound(sim, CLICKS[kind], joint_name_hash=_phone_joint())
+        _click.start()
+    except Exception as e:
+        _log_error('a click', e)
+
+
 def on_popup(dialog):
     """objmenu.py: a popup shows; its phone ring type picks the tone."""
     try:

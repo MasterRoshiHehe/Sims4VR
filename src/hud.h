@@ -70,6 +70,8 @@ enum Action { kNone = 0, kPausePressed = 1, kSpeed1, kSpeed2, kSpeed3, kFullUi, 
 // kBuildTool: the build tablet's tray tool `index` (TrayTool).
 // kInventorySell: the inventory's multiselect, inventoryPicked() its rows; index 0 sell, 1 favorite, 2 unfavorite.
 std::vector<int> inventoryPicked();
+// Presses on the phone screen (buttons, not swipes) since the last call.
+int phoneTaps();
 // kSimsForever: the phone's Sims Forever app (Sims 1 on the phone, held in front of you).
 // kVrOptions: the phone's Settings > VR Options (opens the VR debug menu).
 // kListPick: the list picker's row `index` (one pick); kListDone: Done with listPicked(); kListClose: its X.

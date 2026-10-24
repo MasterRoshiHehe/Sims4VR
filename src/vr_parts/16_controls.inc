@@ -245,6 +245,7 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
             hud::setPhoneAsleep(false);
             if (g_phoneOut && !g_tablet) {
                 buzz(g_phoneHand, 0.35f, 0.04f);
+                grab::pushControl(7100200);  // phonesound.click: the phone's beep
                 LOG("Phone: screen on (grip of the hand holding it)");
             }
         }

@@ -1011,6 +1011,7 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
     hud::Action action = hud::render(device, context, f, &index);
     context->Release();
     device->Release();
+    if (hud::phoneTaps() > 0) grab::pushControl(7100201);  // phonesound.click: a press on the phone's screen
     switch (action) {
         case hud::kFullUi:
             g_fullUi = !g_fullUi;

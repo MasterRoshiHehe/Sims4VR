@@ -358,6 +358,7 @@ std::mutex g_simMutex;
 SimContent g_simIn;      // g_simMutex
 bool g_simNew = false;   // g_simMutex
 SimContent g_sim;        // present thread
+std::atomic<int> g_phoneTaps{0};  // presses on the phone's screen since the last phoneTaps()
 int g_mySim = -1;        // present thread: -1 closed, 0 its apps, 1 + k sub-app k (kMySimApps)
 float g_mySimScroll = 0; // game pixels the list is scrolled
 ULONGLONG g_mySimAsked = 0;
@@ -3639,6 +3640,7 @@ Action drawPhone(ImDrawList* d, int* index) {
         ImGui::PushID(3000 + id++);
         bool pressed = ImGui::InvisibleButton("phone", {std::max(1.0f, b.x - a.x), std::max(1.0f, b.y - a.y)});
         if (swiping || blocked) pressed = false;
+        if (pressed) ++g_phoneTaps;  // the phone's beep (phonesound.click), never for a swipe or a held slider
         if (hover) *hover = !blocked && ImGui::IsItemHovered();
         if (held) *held = !blocked && ImGui::IsItemActive();
         ImGui::PopID();
@@ -5379,6 +5381,7 @@ void setPopupContent(const char* data, size_t size) {
 }
 
 std::vector<int> listPicked() { return g_listPicked; }
+int phoneTaps() { return g_phoneTaps.exchange(0); }
 std::vector<int> inventoryPicked() { return g_invPicked; }
 
 void setTexts(int kind, const char* data, size_t size) {
