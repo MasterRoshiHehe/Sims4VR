@@ -320,16 +320,39 @@ def heart_mask(cx, cy, r):
 
 
 def relationships():
-    img, inner = tile((255, 205, 215), (225, 80, 110), (140, 30, 60, 255))
-    tinted(img, heart_mask(405, 400, 62), (140, 30, 60))
-    h2 = heart_mask(310, 230, 115)
-    shadow(img, h2)
-    fill(img, h2, (255, 160, 190), (200, 60, 100), 90, outline=(120, 25, 55, 255), width=6)
-    h1 = heart_mask(200, 290, 130)
-    shadow(img, h1)
-    fill(img, h1, (255, 120, 140), (205, 25, 55), 90, outline=(110, 15, 35, 255), width=7)
-    gloss(img, h1, (90, 190, 220, 300), 150)
+    """Contacts (user 2026-10-24: a generic phone contacts icon, as on Android and iPhone): an address book card
+    with a person's head and shoulders in a circle and the index tabs on its right edge."""
+    img, inner = tile((120, 190, 245), (30, 100, 200), (15, 60, 140, 255))
+    card = mask_of(lambda d: d.rounded_rectangle((105, 80, 385, 432), radius=34, fill=255))
+    shadow(img, card)
+    fill(img, card, (255, 255, 255), (214, 222, 232), 90, outline=(40, 70, 120, 255), width=6)
+    for i, colour in enumerate(((235, 90, 80), (250, 180, 50), (90, 190, 90), (70, 150, 230))):
+        t = mask_of(lambda d, i=i: d.rounded_rectangle((372, 118 + i * 76, 420, 172 + i * 76), radius=14, fill=255))
+        fill(img, t, tuple(min(255, c + 40) for c in colour), colour, 90, outline=(40, 70, 120, 255), width=5, shade=False)
+    ring = mask_of(lambda d: d.ellipse((150, 140, 340, 330), fill=255))
+    fill(img, ring, (205, 214, 226), (160, 172, 190), 90, shade=False)
+    who = ImageChops.multiply(person(245, 250, 0.95), ring)
+    fill(img, who, (110, 122, 140), (70, 82, 100), 90, shade=False)
+    for k in range(3):
+        line = mask_of(lambda d, k=k: d.rounded_rectangle((160, 352 + k * 24, 330 - k * 40, 364 + k * 24), radius=6, fill=255))
+        tinted(img, line, (150, 162, 180), 230)
+    gloss(img, card, (60, 30, 360, 200), 110)
     finish(img, inner, 'relationships')
+
+
+def simology():
+    """Simology (the Sim's traits page): a Sim's head and shoulders with three trait bubbles round it."""
+    img, inner = tile((175, 225, 255), (60, 120, 210), (25, 70, 150, 255))
+    for cx, cy, r, c in ((120, 150, 52, (250, 200, 60)), (395, 135, 46, (120, 210, 90)), (410, 300, 40, (240, 110, 160))):
+        b = mask_of(lambda d, cx=cx, cy=cy, r=r: d.ellipse((cx - r, cy - r, cx + r, cy + r), fill=255))
+        shadow(img, b, 6, 8, 70)
+        fill(img, b, tuple(min(255, v + 50) for v in c), c, 90, outline=(30, 60, 120, 255), width=5)
+        gloss(img, b, (cx - r, cy - r, cx + r, cy), 120)
+    who = person(250, 330, 1.55)
+    shadow(img, who)
+    fill(img, who, (255, 255, 255), (200, 212, 230), 90, outline=(30, 60, 120, 255), width=7)
+    gloss(img, who, (150, 150, 350, 300), 110)
+    finish(img, inner, 'simology')
 
 
 def inventory():
@@ -614,6 +637,6 @@ if __name__ == '__main__':
     os.makedirs(OUT, exist_ok=True)
     for f in (settings, calendar, build, game_options, phone_options, vr_options, my_sim, aspirations, career, skills,
               relationships, inventory, needs, social_groups, owned_businesses, household, weather, wants,
-              need_hunger, need_hygiene, need_bladder, need_energy, need_fun, need_social, god_view, sims_forever):
+              need_hunger, need_hygiene, need_bladder, need_energy, need_fun, need_social, god_view, sims_forever, simology):
         f()
     print('phone icons in', OUT)

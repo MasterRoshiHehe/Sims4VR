@@ -50,6 +50,10 @@ social hover: what your Sim knows of each Sim, sim_knowledge.py, as sim_relation
   "cdk"   \x1f <label> \x1f <text json>                     (known career, major, net worth, romantic interest)
   "cds"   \x1f <icon> \x1f <name json> \x1f <description json> (sentiments, your Sim's toward them)
   "cdb"   \x1f <icon> \x1f <name json>                      (other visible relationship bits: spouse, roommate...)
+  "cdg"   \x1f <age icon> \x1f <age name>                  (the game's relationship tooltip, RelationshipTooltip:
+  "cdj"   \x1f <icon> \x1f <career> \x1f <company> \x1f <hours> \x1f <work days, 7 x 0/1 from Sunday>   known careers
+  "cdc"   \x1f <icon> \x1f <name> \x1f <description>        compatibility (CompatibilityTuning icons map)
+  "cdx"   \x1f <icon> \x1f <name> \x1f <description>        attraction (AttractionTuning track's bit), your Sim's)
   "cda"   \x1f <phone menu node> \x1f <name json> \x1f <disabled text json>  (the phone's Social app entries, user
           2026-10-24 01:17Z: control 7400000 + node runs it and its Sim picker is answered with this contact;
           the Social app itself is left as it is)
@@ -421,6 +425,7 @@ def _contact_page(sim_info, records):
             group = 'Also'
         records.append('cdt\x1f{}\x1f{}\x1f{}'.format(group, hudinfo._icon(getattr(trait, 'icon', None)),
                                                       _text_for(getattr(trait, 'display_name', None), target)))
+    _tooltip(sim_info, target, knowledge, records)
     if knowledge is not None:
         try:
             for career in knowledge.get_known_careers():
@@ -482,6 +487,73 @@ def _contact_page(sim_info, records):
                 records.append('cdb\x1f{}\x1f{}'.format(hudinfo._icon(getattr(bit, 'icon', None)), name))
     except Exception as e:
         _log_error('relationship bits', e)
+
+
+def _clock2(t):
+    hour, minute = int(t.hour()), int(t.minute())
+    return '{}:{:02d} {}'.format((hour + 11) % 12 + 1, minute, 'AM' if hour < 12 else 'PM')
+
+
+def _tooltip(sim_info, target, knowledge, records):
+    """What the game's relationship tooltip shows (RelationshipTooltip.UpdateDataAndReposition): age, known careers
+    with company, next work hours and work days, compatibility, attraction."""
+    from sims4vr import hudinfo
+    try:
+        trait = target.get_age_transition_data(target.age).age_trait
+        records.append('cdg\x1f{}\x1f{}'.format(hudinfo._icon(getattr(trait, 'icon', None)),
+                                                 _text_for(getattr(trait, 'display_name', None), target, target)))
+    except Exception as e:
+        _log_error('the age', e)
+    if knowledge is not None:
+        try:
+            known = list(knowledge.get_known_careers())
+        except Exception:
+            known = []
+        for career in known:
+            try:
+                track = career.current_track_tuning
+                name = _text(getattr(track, 'career_name', None), target)
+                company = ''
+                try:
+                    company = _loc(career.get_company_name())
+                except Exception:
+                    pass
+                hours, days = '', ['0'] * 7
+                try:
+                    scheduler = career._get_work_scheduler()
+                    entries = list(scheduler.get_schedule_entries()) if scheduler is not None else []
+                    for start, end in entries:
+                        days[int(start.day()) % 7] = '1'
+                    if entries:
+                        _, start, end = career.get_next_work_time()
+                        if start is not None and end is not None:
+                            hours = '{} - {}'.format(_clock2(start), _clock2(end))
+                except Exception:
+                    pass
+                records.append('cdj\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}'.format(hudinfo._icon(getattr(track, 'icon', None)), name,
+                                                                       company, hours, ''.join(days)))
+            except Exception as e:
+                _log_error('a tooltip career', e)
+    try:
+        import services
+        from relationships.compatibility_tuning import CompatibilityTuning
+        level = services.relationship_service().get_compatibility_level(sim_info.sim_id, target.sim_id)
+        data = CompatibilityTuning.COMPATIBILITY_LEVEL_ICONS_MAP.get(level) if level is not None else None
+        if data is not None and data.icon is not None:
+            records.append('cdc\x1f{}\x1f{}\x1f{}'.format(hudinfo._icon(data.icon), _loc(data.level_name), _loc(data.descriptive_text)))
+    except Exception as e:
+        _log_error('compatibility', e)
+    try:
+        from relationships.attraction_tuning import AttractionTuning
+        track_type = AttractionTuning.ATTRACTION_RELATIONSHIP_TRACK
+        track = sim_info.relationship_tracker.get_relationship_track(target.sim_id, track_type) if track_type is not None else None
+        bit = track.get_active_bit() if track is not None else None
+        icon = getattr(bit, 'small_icon', None) or getattr(bit, 'icon', None) if bit is not None else None
+        if bit is not None and icon is not None:
+            records.append('cdx\x1f{}\x1f{}\x1f{}'.format(hudinfo._icon(icon), _text_for(bit.display_name, sim_info, target),
+                                                           _text_for(getattr(bit, 'bit_description', None), sim_info, target)))
+    except Exception as e:
+        _log_error('attraction', e)
 
 
 _auto_pick = None  # [sim id, until (monotonic)]: the next Sim picker of yours picks this Sim
@@ -551,6 +623,39 @@ def _inventory_list(sim_info, records):
             len(_inventory), picture, name, obj.stack_count(), int(getattr(obj, 'current_value', 0) or 0), favorite,
             int(bool(getattr(obj, 'non_deletable_by_user', False)))))
         _inventory.append(obj.id)
+
+
+_SIMOLOGY_TYPES = (0, 1, 5, 6, 10, 12, 25, 28, 29, 30)  # SimTraitsPanel's order: personality, gameplay, ghost, aspiration,
+# phase, infection, tradition, pack friend, fear, high school (traits.trait_type.TraitType)
+_SIMOLOGY_STYLE = {0: 0, 10: 2, 25: 3, 29: 4}  # the cell's highlight: personality, phase, tradition, fear; others reward
+
+
+def _simology(sim_info, records):
+    """Simology (SimInfoSummaryPanel): "sy" \x1f <group T/L/D/O/F> \x1f <cell style> \x1f <icon> \x1f <name>: the traits
+    in SimTraitsPanel's order, then likes, dislikes, turn-ons, turn-offs."""
+    from sims4vr import hudinfo
+    try:
+        from traits.attraction_preference import AttractionPreference
+    except Exception:
+        AttractionPreference = None
+    traits = [t for t in sim_info.trait_tracker if getattr(t, 'display_name', None) is not None]
+    order = {t: i for i, t in enumerate(_SIMOLOGY_TYPES)}
+
+    def kind(t):
+        return int(getattr(t, 'trait_type', -1))
+
+    rows = []
+    for t in sorted((t for t in traits if kind(t) in order), key=lambda t: order[kind(t)]):
+        rows.append(('T', _SIMOLOGY_STYLE.get(kind(t), 1), t))
+    for t in traits:
+        if kind(t) not in (22, 23):
+            continue
+        romantic = AttractionPreference is not None and isinstance(t, type) and issubclass(t, AttractionPreference)
+        rows.append((('O' if kind(t) == 22 else 'F') if romantic else ('L' if kind(t) == 22 else 'D'), 0, t))
+    for group, style, t in rows:
+        name = _text_for(t.display_name, sim_info, sim_info)
+        if name:
+            records.append('sy\x1f{}\x1f{}\x1f{}\x1f{}'.format(group, style, hudinfo._icon(getattr(t, 'icon', None)), name))
 
 
 def _clubs(sim_info, records):
@@ -809,14 +914,14 @@ def send(fresh=False, contacts=False):
     records = []
     try:
         if sim_info is not None:
-            records.append('sim\x1f{}'.format(int(sim_info.age)))
+            records.append('sim\x1f{}\x1f{} {}'.format(int(sim_info.age), sim_info.first_name, sim_info.last_name))
             skills = _skills(sim_info)
             for category in sorted({s[0] for s in skills}, reverse=True):
                 title = _CATEGORY_TITLES[category] if 0 <= category < len(_CATEGORY_TITLES) else _CATEGORY_TITLES[0]
                 records.append('cat\x1f{}\x1f{}'.format(category, _key(title)))
             for s in skills:
                 records.append('skill\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{:.4f}\x1f{}\x1f{}'.format(*s))
-            for part in (_careers, _mood, _members, _inventory_list, _clubs, _businesses, _weather) + ((_contact_list, _contact_page) if contacts else ()):
+            for part in (_careers, _mood, _members, _inventory_list, _simology, _clubs, _businesses, _weather) + ((_contact_list, _contact_page) if contacts else ()):
                 try:
                     part(sim_info, records)
                 except Exception as e:
