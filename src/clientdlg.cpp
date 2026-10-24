@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <atomic>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <mutex>
 #include <string>
@@ -58,6 +59,10 @@ struct ServiceCall {
     bool uiMessage;
 };
 std::mutex g_serviceMutex;
+// The tablet's UI scale (setTabletUiScale): wanted (0 = the player's own), applied, and the player's own to go back to.
+std::atomic<bool> g_tabletScaleWanted{false};
+bool g_tabletScaleOn = false;  // UI thread
+double g_ownUiScale = 0;
 std::vector<ServiceCall> g_services;
 std::string g_shownId;   // UI thread only
 std::string g_skippedId;
@@ -276,6 +281,58 @@ void sendServices() {
     }
 }
 
+// The build tablet (user 2026-10-24 02:39Z: its UI far too small): while it is out, the game's own UI scale
+// (Options > Accessibility > UI Scale: SetUIScale {scale, save}) goes to the largest the game allows
+// (GetUIScalingMinMax), not saved; the player's own (GetUIScaleOption) comes back when it is put away. As
+// AccessibilityTab.as calls them.
+void applyTabletScale() {
+    const bool want = g_tabletScaleWanted.load();
+    if (want == g_tabletScaleOn) return;
+    Held comms;
+    if (!definition("olympus.io.CommunicationManager", comms)) return;
+    auto setScale = [&](double scale) {
+        char json[96];
+        std::snprintf(json, sizeof json, "{\"scale\":%.4f,\"save\":false}", scale);
+        Held parser, payload;
+        if (!definition("JSON", parser)) return false;
+        Value arg;
+        arg.type = kString;
+        arg.data = json;
+        if (!callMember(parser.v, "parse", &arg, 1, &payload)) return false;
+        Value args[2];
+        args[0].type = kString;
+        args[0].data = const_cast<char*>("SetUIScale");
+        args[1] = payload.v;
+        return callMember(comms.v, "CallGameService", args, 2, nullptr);
+    };
+    if (want) {
+        Value name;
+        name.type = kString;
+        name.data = const_cast<char*>("GetUIScaleOption");
+        Held own, limits, top;
+        if (!callMember(comms.v, "CallGameService", &name, 1, &own)) return;
+        g_ownUiScale = number(own.v);
+        name.data = const_cast<char*>("GetUIScalingMinMax");
+        double biggest = 0;
+        if (callMember(comms.v, "CallGameService", &name, 1, &limits) && member(limits.v, "scale_max", top))
+            biggest = number(top.v);
+        if (!(g_ownUiScale > 0) || !(biggest > 0)) {
+            LOG("Tablet: the game's UI scale not read (own %.3f, largest %.3f); left as it is", g_ownUiScale, biggest);
+            g_tabletScaleOn = true;  // not tried again until the tablet is put away
+            g_ownUiScale = 0;
+            return;
+        }
+        const bool set = biggest > g_ownUiScale && setScale(biggest);
+        LOG("Tablet: the game's UI scale %.3f -> %.3f while it is out (%s)", g_ownUiScale, biggest,
+            set ? "set" : biggest > g_ownUiScale ? "SetUIScale failed" : "already the largest");
+    } else if (g_ownUiScale > 0) {
+        const bool set = setScale(g_ownUiScale);
+        LOG("Tablet: the game's UI scale back to %.3f (%s)", g_ownUiScale, set ? "set" : "SetUIScale failed");
+        g_ownUiScale = 0;
+    }
+    g_tabletScaleOn = want;
+}
+
 void closeGameUi(int what) {
     Held comms;
     if (what == 2) {
@@ -336,6 +393,7 @@ void poll() {
     if (g_hidePie.exchange(false)) hideGamePie();
     if (int which = g_gameTray.exchange(-1); which >= 0) gameTray(which);
     sendServices();
+    applyTabletScale();
     if (int what = g_closeGameUi.exchange(0)) closeGameUi(what);
     int pressed = g_press.exchange(-1);
     static int tick = 0;
@@ -452,6 +510,8 @@ bool gameService(const char* name, const char* json, bool uiMessage) {
     if (g_services.size() < 64) g_services.push_back({name, json ? json : "", uiMessage});
     return true;
 }
+
+void setTabletUiScale(bool on) { g_tabletScaleWanted = on; }
 
 bool closeGameDialog(bool picker) {
     if (!g_update) return false;

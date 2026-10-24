@@ -7,7 +7,7 @@
 
 // Where it sits on the tablet's screen: 0..1 from its top left. Its width follows from the height and the
 // screen's shape (the atlas area's shape kept).
-static constexpr float kTrayRight = 0.99f, kTrayTop = 0.20f, kTrayBottom = 0.72f;
+static constexpr float kTrayRight = 0.995f, kTrayTop = 0.15f, kTrayBottom = 0.82f;
 
 static bool trayOn(int tool) { return (g_trayLit >> tool) & 1; }
 static void setTrayLit(int tool, bool on) {
@@ -36,6 +36,7 @@ static void placeTray(phone3d::Phone& p3, const XrVector3f& centre, const XrVect
         LOG("Build tray: on the tablet, %.1f x %.1f cm", w * menuW * 100, h * menuH * 100);
     }
     placeHud(g_traySheet, at, x, y, w * menuW, hud::kBuildTray);
+    clientdlg::setTabletUiScale(true);  // the game's UI as large as it goes while the tablet is out
 }
 
 // Raise / lower / bigger / smaller work with bb.moveobjects on (the game's controller build mode only sends them
@@ -93,6 +94,7 @@ static void trayTool(int tool) {
 static void hideTray() {
     if (!g_traySheet.m.active) return;
     hideHud(g_traySheet);
+    clientdlg::setTabletUiScale(false);
     setTrayLit(hud::kTrayAlt, false);
     setTrayLit(hud::kTrayShift, false);
     LOG("Build tray: away");

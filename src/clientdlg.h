@@ -36,6 +36,8 @@ bool sendGameTray(int which);
 // mode sends it, or (uiMessage) SendUIMessage(name[, arg]); json the argument as JSON ("true", "-0.5",
 // "{\"value\":1}"; empty: none). Sent on the UI thread at the next poll. False when the game isn't hooked.
 bool gameService(const char* name, const char* json = "", bool uiMessage = false);
+// Any thread: the build tablet is out (the game's UI scale at its largest, not saved) or away (the player's own back).
+void setTabletUiScale(bool on);
 // Any thread: a server popup (picker: a picker) answered on our card closes on the game's UI too (UI thread).
 bool closeGameDialog(bool picker);
 
