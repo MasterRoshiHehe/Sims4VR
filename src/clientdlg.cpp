@@ -15,6 +15,7 @@
 #include "gameaddr.h"
 #include "hud.h"
 #include "log.h"
+#include "rtti.h"
 #include "vr.h"
 
 namespace s4vr::clientdlg {
@@ -60,10 +61,8 @@ struct ServiceCall {
     bool uiMessage;
 };
 std::mutex g_serviceMutex;
-// The tablet's UI scale (setTabletUiScale): wanted (0 = the player's own), applied, and the player's own to go back to.
+// The tablet's build menu size (setTabletUiScale, applyTabletScale): wanted, 0 = the game's own.
 std::atomic<float> g_tabletScaleWanted{0};
-double g_tabletScaleApplied = 0;  // UI thread; 0 = the player's own
-double g_ownUiScale = 0;
 std::vector<ServiceCall> g_services;
 std::string g_shownId;   // UI thread only
 std::string g_skippedId;
@@ -282,50 +281,68 @@ void sendServices() {
     }
 }
 
-// The build tablet (user 2026-10-24 02:39Z: its UI far too small; 03:14Z: a live setting): while it is out, the
-// game's own UI scale (Options > Accessibility > UI Scale: SetUIScale {scale, save}) is [tablet] ui_scale, not saved;
-// the player's own (GetUIScaleOption) comes back when it is put away. As AccessibilityTab.as calls them. The UI's
-// stage stays the window's, so the bigger UI still fills the tablet's screen edge to edge.
+// The build tablet (user 2026-10-24 02:39Z: its UI far too small; 12:28Z: scaled by the mod, not the game's UI scale
+// option, whose SetUIScale service fails from here). While it is out, the game's UI movie (S4MovieImpl, a Scaleform
+// GFx::MovieImpl) gets a smaller pixel scale in its viewport: Viewport.Scale (MovieImpl::SetViewport, vtable slot 12,
+// 0x1000050 in 1.128; GetViewport slot 13) sizes the stage as the viewport's pixels times Scale in NoScale mode
+// (0x1001b30), so Scale = 1 / [tablet] ui_scale gives a stage that much smaller, drawn that much bigger. SetViewport
+// tells the AS3 stage it resized, so the game lays its UI out again for the smaller stage: every panel stays at its
+// edge of the UI texture, which is the tablet's whole screen, and the mouse goes through the same viewport. The
+// game's own Scale comes back when the tablet is put away (and is taken again if the game sets another meanwhile).
+struct GfxViewport {
+    int bufferWidth, bufferHeight, left, top, width, height, scissorLeft, scissorTop, scissorWidth, scissorHeight;
+    unsigned flags;
+    float scale, aspectRatio;
+};
+static_assert(sizeof(GfxViewport) == 0x34, "Scaleform 4 Viewport");
+using SetViewportFn = void (*)(void* movie, const GfxViewport* viewport);
+using GetViewportFn = void (*)(void* movie, GfxViewport* viewport);
+constexpr size_t kSetViewportSlot = 12, kGetViewportSlot = 13;
+float g_gameViewScale = 0;  // the game's Viewport.Scale while ours is on (0 = ours off)
+float g_ourViewScale = 0;   // the Scale we last set
+
 void applyTabletScale() {
-    const double want = g_tabletScaleWanted.load();
-    if (std::fabs(want - g_tabletScaleApplied) < 0.001) return;
-    Held comms;
-    if (!definition("olympus.io.CommunicationManager", comms)) return;
-    auto setScale = [&](double scale) {
-        char json[96];
-        std::snprintf(json, sizeof json, "{\"scale\":%.4f,\"save\":false}", scale);
-        Held parser, payload;
-        if (!definition("JSON", parser)) return false;
-        Value arg;
-        arg.type = kString;
-        arg.data = json;
-        if (!callMember(parser.v, "parse", &arg, 1, &payload)) return false;
-        Value args[2];
-        args[0].type = kString;
-        args[0].data = const_cast<char*>("SetUIScale");
-        args[1] = payload.v;
-        return callMember(comms.v, "CallGameService", args, 2, nullptr);
-    };
-    if (want > 0 && !(g_ownUiScale > 0)) {
-        Value name;
-        name.type = kString;
-        name.data = const_cast<char*>("GetUIScaleOption");
-        Held own;
-        if (callMember(comms.v, "CallGameService", &name, 1, &own)) g_ownUiScale = number(own.v);
-        if (!(g_ownUiScale > 0)) g_ownUiScale = 1;
+    const float want = g_tabletScaleWanted.load();
+    if (!(want > 0) && !(g_gameViewScale > 0)) return;
+    void* m = movie();
+    if (!m) return;
+    static int known = 0;  // 1 = the movie is the game's S4MovieImpl, -1 = something else (off)
+    if (!known) {
+        char name[96] = {};
+        known = rtti::className(reinterpret_cast<uintptr_t>(m), name, sizeof name) &&
+                        std::strcmp(name, ".?AVS4MovieImpl@GFx@UI@Sims4@EA@@") == 0
+                    ? 1
+                    : -1;
+        if (known < 0) LOG("Tablet: the game's UI movie not recognised (%s); the build menu keeps its size", name);
     }
+    if (known < 0) return;
+    void** vtable = *reinterpret_cast<void***>(m);
+    GfxViewport vp{};
+    reinterpret_cast<GetViewportFn>(vtable[kGetViewportSlot])(m, &vp);
     if (want > 0) {
-        const bool set = setScale(want);
+        if (!(g_gameViewScale > 0) || std::fabs(vp.scale - g_ourViewScale) > 1e-5f) {
+            // First time, or the game set its own since (a resize, its UI scale): that is the one to go back to.
+            if (g_gameViewScale > 0) LOG("Tablet: the game set its UI viewport scale %.3f; ours again", vp.scale);
+            g_gameViewScale = vp.scale > 0 ? vp.scale : 1.0f;
+            g_ourViewScale = 0;
+        }
+        const float scale = g_gameViewScale / want;
+        if (std::fabs(scale - g_ourViewScale) < 1e-5f) return;
+        vp.scale = scale;
+        reinterpret_cast<SetViewportFn>(vtable[kSetViewportSlot])(m, &vp);
+        g_ourViewScale = scale;
         static int logged = 0;
         if (logged++ < 40)
-            LOG("Tablet: the game's UI scale %.2f while it is out (yours %.2f): %s", want, g_ownUiScale,
-                set ? "set" : "SetUIScale failed");
-    } else if (g_ownUiScale > 0) {
-        const bool set = setScale(g_ownUiScale);
-        LOG("Tablet: the game's UI scale back to %.2f (%s)", g_ownUiScale, set ? "set" : "SetUIScale failed");
-        g_ownUiScale = 0;
+            LOG("Tablet: build menu at %.0f %% (UI viewport %dx%d, scale %.3f, the game's %.3f)", want * 100,
+                vp.width, vp.height, scale, g_gameViewScale);
+    } else {
+        if (std::fabs(vp.scale - g_ourViewScale) <= 1e-5f) {
+            vp.scale = g_gameViewScale;
+            reinterpret_cast<SetViewportFn>(vtable[kSetViewportSlot])(m, &vp);
+        }
+        LOG("Tablet: build menu back to the game's UI viewport scale %.3f", g_gameViewScale);
+        g_gameViewScale = g_ourViewScale = 0;
     }
-    g_tabletScaleApplied = want;
 }
 
 void closeGameUi(int what) {

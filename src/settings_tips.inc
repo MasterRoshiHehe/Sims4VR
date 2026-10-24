@@ -242,7 +242,7 @@ const TipText kTips[] = {
     {"tablet.depth", L"Tablet thickness."},
     {"tablet.bezel", L"Width of the border around the tablet screen."},
     {"tablet.hold", L"How far in from the edge your hand holds the tablet."},
-    {"tablet.ui_scale", L"Size of the build menus on the tablet: the game's own UI scale while the tablet is out, not saved. Changes live; 100 % is the game's normal size."},
+    {"tablet.ui_scale", L"Size of the build menus on the tablet. The mod lays the game's UI out smaller and draws it bigger while the tablet is out, so it still fills the tablet's screen. Changes live; 100 % is the game's normal size."},
     {"tablet.tray_scale", L"Size of the tool tray on the tablet's right side. Changes live."},
     // Sound
     {"audio.follow_head", L"Sound comes from where your head is, not from the camera. Takes effect next start."},
