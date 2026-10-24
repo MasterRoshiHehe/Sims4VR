@@ -355,6 +355,7 @@ bool g_reorder = false;
 std::string g_reorderPick;  // the app picked to move (its key), empty: none
 std::vector<std::string> g_appOrder;
 bool g_appOrderRead = false;
+std::string utf8(const std::wstring& w);  // below
 std::string appKey(const PhoneContent& p, int node) {
     return node < 0 ? "#" + std::to_string(node) : node < static_cast<int>(p.nodes.size()) ? p.nodes[node].name : std::string();
 }
@@ -3123,7 +3124,8 @@ Action drawPhone(ImDrawList* d, int* index) {
     if (g_phoneHomeAsked.exchange(false))
         g_phoneApp = g_phoneRoot = -1, g_phonePage = 0, g_phoneScroll = 0, g_phoneColorsOpen = false, g_phoneNotesOpen = false,
         g_phoneCalOpen = false, g_phoneSettingsOpen = false, g_phoneOptsGroup.clear(), g_mySim = -1, g_mySimMoodlet = -1,
-        g_phoneSoundsOpen = false, g_hhSim = -1, g_contacts = -1, g_gameMenuPhone = false, g_weatherOpen = false;
+        g_phoneSoundsOpen = false, g_hhSim = -1, g_contacts = -1, g_gameMenuPhone = false, g_weatherOpen = false,
+        g_reorder = false, g_reorderPick.clear();
     if (g_phoneApp >= 0) g_phoneNotesOpen = g_phoneCalOpen = g_phoneSettingsOpen = g_phoneSoundsOpen = false, g_phoneOptsGroup.clear(), g_mySim = -1, g_contacts = -1;
     if (g_phoneApp >= 0 || p.colors.empty()) g_phoneColorsOpen = false;
 
@@ -3616,6 +3618,20 @@ Action drawPhone(ImDrawList* d, int* index) {
         {
             // The notifications: a bell in the header's top right (user 2026-10-23 23:55Z, where the
             // battery was), the number unread on its lower right (the game's red badge).
+            // Rearrange (user 2026-10-24 02:06Z): left of the bell; press, move apps, press again when done.
+            {
+                bool over = false;
+                if (button(at(166, 9), at(188, 31), &over) && !open) {
+                    g_reorder = !g_reorder;
+                    g_reorderPick.clear();
+                }
+                const ImVec2 c = at(177, 20);
+                const ImU32 ink = g_reorder ? IM_COL32(120, 230, 70, 255) : over ? IM_COL32(186, 240, 120, 255) : IM_COL32(240, 244, 248, 255);
+                for (int gy = 0; gy < 2; ++gy)
+                    for (int gx = 0; gx < 2; ++gx)
+                        d->AddRectFilled({c.x + (gx ? 1.2f : -7.2f) * S, c.y + (gy ? 1.2f : -7.2f) * S},
+                                         {c.x + (gx ? 7.2f : -1.2f) * S, c.y + (gy ? 7.2f : -1.2f) * S}, ink, 1.5f * S);
+            }
             bool bellHover = false;
             if (button(at(194, 9), at(216, 31), &bellHover) && !open) {
                 g_phoneNotesOpen = true;
@@ -3698,8 +3714,9 @@ Action drawPhone(ImDrawList* d, int* index) {
                     auto from = std::find(keys.begin(), keys.end(), g_reorderPick);
                     if (from != keys.end()) {
                         const std::string moved = *from;
+                        const bool forward = (from - keys.begin()) < i;  // moved later: it goes after the one pressed
                         keys.erase(from);
-                        keys.insert(std::find(keys.begin(), keys.end(), key) + (from - keys.begin() <= i ? 1 : 0), moved);
+                        keys.insert(std::find(keys.begin(), keys.end(), key) + (forward ? 1 : 0), moved);
                         // (keep the order of saved apps that aren't on the phone now, e.g. another Sim's)
                         for (const std::string& k : g_appOrder)
                             if (std::find(keys.begin(), keys.end(), k) == keys.end()) keys.push_back(k);
