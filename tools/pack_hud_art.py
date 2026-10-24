@@ -238,6 +238,15 @@ PIECES = [
     # The calendar app (Calendar SWF: CalendarDayView, SchedulePane; the HUD's
     # calendar button), drawn small on the phone: 1x pieces (third field).
     ('kCalendarButton', 'liveui/art/SimInfoTray/404__CalendarButton@over.png'),
+    # My Sim's apps (user 2026-10-24 03:37Z: the game's own assets): the SimInfo tray's panel buttons.
+    ('kTrayAspiration', 'liveui/art/SimInfoTray/283__AspirationPanelButton@over.png'),
+    ('kTrayCareer', 'liveui/art/SimInfoTray/252__CareerPanelButton@over__CareerPanelButton@selected_up.png'),
+    ('kTraySkill', 'liveui/art/SimInfoTray/266__SkillPanelButton@controller_selected_down__SkillPanelButton@controller_selected_over.png'),
+    ('kTraySummary', 'liveui/art/SimInfoTray/233__SummaryPanelButton@controller_selected_over__SummaryPanelButton@flair_over.png'),
+    ('kTrayInventory', 'liveui/art/SimInfoTray/240__InventoryPanelButton@controller_selected_over__InventoryPanelButton@over.png'),
+    ('kTrayClub', 'liveui/art/SimInfoTray/184__ClubPanelButton@controller_selected_over__ClubPanelButton@flair_over.png'),
+    ('kTrayHousehold', 'liveui/art/SimInfoTray/199__HouseholdInfoVenuePanelButton@controller_selected_over__HouseholdInfoVenuePanelButton@flair_over.png'),
+    ('kTrayRelationship', 'liveui/art/SimInfoTray/259__RelationshipPanelButton@flair_over__RelationshipPanelButton@over.png'),
     ('kCalSpring', 'liveui/art/Calendar/207__SeasonalBackgrounds_20@none.png', 1),
     ('kCalSummer', 'liveui/art/Calendar/209__SeasonalBackgrounds_20@summer.png', 1),
     ('kCalFall', 'liveui/art/Calendar/211__SeasonalBackgrounds_20@fall.png', 1),

@@ -2382,7 +2382,7 @@ void drawMySim(ImDrawList* d, const Rect& r, Button& button, std::vector<uint64_
     }
     if (g_mySimMoodlet >= moodletCount) g_mySimMoodlet = -1;
     const uint32_t pageMood = g_mySimMoodlet >= 0 ? moodlets[g_mySimMoodlet].colour : static_cast<uint32_t>(g_sim.mood);
-    d->AddRectFilled(at(0, 0), at(230, 400), moodTint(pageMood, 170));
+    if (g_mySim != 0 || g_mySimMoodlet >= 0) d->AddRectFilled(at(0, 0), at(230, 400), moodTint(pageMood, 170));
     auto header = [&](const char* head) {
         pieceIn(d, art::kPhoneTint, at(0, 0), at(230, 44));
         ImVec2 hs = g_title->CalcTextSizeA(34, FLT_MAX, 0, head);
@@ -2425,58 +2425,55 @@ void drawMySim(ImDrawList* d, const Rect& r, Button& button, std::vector<uint64_
         return;
     }
     if (g_mySim == 0) {
-        header("My Sim");
-        // The mood under the header, the moodlets under it (a press opens one's page).
-        {
-            const std::string& mood = found(g_sim.moodJson);
-            if (!mood.empty()) {
-                ImVec2 ms = g_title->CalcTextSizeA(28, FLT_MAX, 0, mood.c_str());
-                shadowText(d, g_title, 28, {at(115, 0).x - ms.x / 2, at(0, 54).y - ms.y / 2}, kWhite, mood.c_str());
-            }
-            const float step = moodletCount > 7 ? 27.0f : 31.0f, size = step - 3;
-            const float x0 = 115 - (moodletCount * step) / 2 + step / 2;
-            for (int i = 0; i < moodletCount; ++i) {
-                const ImVec2 c = at(x0 + i * step, 80);
-                bool over = false;
-                if (button(at(x0 + i * step - step / 2, 66), at(x0 + i * step + step / 2, 94), &over))
-                    g_mySimMoodlet = i;
-                piece(d, art::kMoodTile, c, (over ? size + 3 : size) * S / art::kMoodTile.w, moodTint(moodlets[i].colour));
-                if (moodlets[i].icon) {
-                    shown.push_back(moodlets[i].icon);
-                    icon(d, moodlets[i].icon, c, (over ? size - 2 : size - 5) * S);
-                }
-            }
-        }
+        // My Sim as a page of the game's phone (user 2026-10-24 03:37Z, the game's phone screenshot): the
+        // wallpaper, the page's name where the home screen shows its name (mcCategoryName, the app pointed at
+        // instead while pointing), the game's 64-unit app cells three to a row with its pointed-at ring, and
+        // each app's icon from the game itself: the SimInfo tray's panel buttons, the wants cloud.
         std::vector<int> apps;
         for (int k = 0; k < kMySimApps; ++k)
             if (k != kSimCareer || careerName(g_sim.age)) apps.push_back(k);
         bool peek = false;
+        int hovered = -1;
         for (size_t i = 0; i < apps.size(); ++i) {
             const int k = apps[i];
-            const float x = 7 + (i % 4) * 54 + 4, y = 104 + (i / 4) * 82;
-            const ImVec2 c = at(x + 23, y + 23);
-            const bool built = mySimBuilt(k);
+            const float x = 13 + (i % 3) * 68 + 4, y = 84 + (i / 3) * 68;
+            const ImVec2 c = at(x + 32, y + 32);
             bool over = false;
-            if (button(at(x, y), at(x + 46, y + 46), &over) && built)
+            if (button(at(x, y), at(x + 64, y + 64), &over))
                 g_mySim = 1 + k, g_mySimScroll = 0, g_aspChange = false, g_aspPicked = -1, g_hhSim = -1;
-            if (over && built) piece(d, art::kPhoneAppOver, c, A * 46 / 64);
-            const ImU32 tint = built ? kWhite : IM_COL32(255, 255, 255, 110);
-            if (k == kSimAspirations && g_sim.aspiration.valid) {
-                // The live tile: a ring round it filling with the current milestone's goals.
-                const float rad = 26 * S, p = g_sim.aspiration.done ? 1.0f : std::max(0.0f, std::min(1.0f, g_sim.aspiration.progress));
-                d->AddCircle(c, rad, IM_COL32(0, 0, 0, 90), 48, 4.5f * S);
-                if (p > 0) {
-                    d->PathArcTo(c, rad, -3.14159265f / 2, -3.14159265f / 2 + 2 * 3.14159265f * p, 48);
-                    d->PathStroke(IM_COL32(120, 230, 70, 255), 0, 3.2f * S);
-                }
-                if (over) peek = true;
+            if (over) {
+                hovered = k;
+                piece(d, art::kPhoneAppOver, c, A);
+                if (k == kSimAspirations && g_sim.aspiration.valid) peek = true;
             }
-            pieceIn(d, *kIcons[k], {c.x - 23 * S, c.y - 23 * S}, {c.x + 23 * S, c.y + 23 * S}, tint);
-            const char* name = k == kSimCareer ? careerName(g_sim.age) : kMySimNames[k];
-            const float ns = 19 * g_phoneText;
-            ImVec2 size = g_small->CalcTextSizeA(ns, FLT_MAX, 0, name);
-            const float fit = std::min(1.0f, 53 * S / std::max(1.0f, size.x));
-            shadowText(d, g_small, ns * fit, {c.x - size.x * fit / 2, at(0, y + 49).y}, tint, name);
+            const float h = 30 * S;
+            nine(d, art::kPhonePill, {c.x - h, c.y - h}, {c.x + h, c.y + h}, 37, 37, 37, 37, A * 0.8f);
+            const art::Piece* glyph = k == kSimAspirations ? &art::kTrayAspiration : k == kSimCareer ? &art::kTrayCareer
+                                    : k == kSimWants ? &art::kWantCloud : k == kSimSkills ? &art::kTraySkill
+                                    : k == kSimSimology ? &art::kTraySummary : k == kSimInventory ? &art::kTrayInventory
+                                    : k == kSimClubs ? &art::kTrayClub : k == kSimBusinesses ? &art::kTrayHousehold
+                                    : k == kSimHousehold ? &art::kTrayRelationship : nullptr;
+            if (glyph) {
+                piece(d, *glyph, c, 44 * S / std::max(glyph->w, glyph->h));
+            } else {
+                // Needs: the tray's motive button, its need bars (drawn by the game as live bars, not art).
+                static const ImU32 kBars[4] = {IM_COL32(120, 220, 70, 255), IM_COL32(120, 220, 70, 255), IM_COL32(240, 200, 60, 255),
+                                               IM_COL32(120, 220, 70, 255)};
+                static const float kFill[4] = {0.9f, 0.7f, 0.45f, 0.8f};
+                for (int n = 0; n < 4; ++n) {
+                    const float bx = c.x + (n - 1.5f) * 8 * S, top = c.y - 15 * S, bottom = c.y + 15 * S;
+                    d->AddRectFilled({bx - 2.6f * S, top}, {bx + 2.6f * S, bottom}, IM_COL32(40, 46, 52, 220), 2.6f * S);
+                    d->AddRectFilled({bx - 2.6f * S, bottom - (bottom - top) * kFill[n]}, {bx + 2.6f * S, bottom}, kBars[n], 2.6f * S);
+                }
+            }
+        }
+        {
+            const char* name = hovered < 0 ? "My Sim" : hovered == kSimCareer ? careerName(g_sim.age) : kMySimNames[hovered];
+            ImVec2 size = g_small->CalcTextSizeA(34 * g_phoneText, FLT_MAX, 0, name);
+            const float scale = g_phoneText * std::min(1.0f, 206 * S / std::max(1.0f, size.x));
+            size.x /= g_phoneText, size.y /= g_phoneText;
+            const ImVec2 t = at(115, 56);
+            shadowText(d, g_small, 34 * scale, {t.x - size.x * scale / 2, t.y - size.y * scale / 2}, kWhite, name);
         }
         // The peek card (user 2026-10-23 23:22Z): pointed at for a moment, the Aspirations tile shows
         // the current milestone and its goals, as the game's aspiration button does under the pointer.
