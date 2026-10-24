@@ -312,6 +312,14 @@ struct SimTraitRow {  // Simology: a trait, like or turn-on (phonesim.py "sy")
     uint64_t icon = 0;
     std::string name;
 };
+struct SimSouls {  // Soul's Journey ("sj", "sjg": phonesim._souls_journey)
+    bool sent = false, ghost = false, complete = false;
+    int rank = 0;
+    float progress = 0;  // in the rank, 0..1
+    std::string first;
+    struct Goal { std::string text; bool done = false; int value = 0, goal = 1; bool show = true; };
+    std::vector<Goal> goals;
+};
 struct SimClub {  // Social Groups: one club ("club", "cmem", "crule")
     uint64_t icon = 0;
     bool gathering = false;
@@ -340,6 +348,7 @@ struct SimContent {
     std::vector<SimClub> clubs;
     std::vector<SimItem> inventory;
     std::vector<SimTraitRow> simology;
+    SimSouls souls;
     std::vector<SimContact> contacts;
     ContactPage contact;
     std::vector<SimMember> household;
@@ -2113,12 +2122,12 @@ float sliderFollow(const Rect& r, float top, float bottom, float thumbH) {
 }
 
 // The My Sim app's sub-apps, in its grid's order (user 2026-10-23 21:35Z); their icons are kApp*.
-constexpr int kMySimApps = 10;
+constexpr int kMySimApps = 11;
 const char* const kMySimNames[kMySimApps] = {"Aspirations", "Career", "Wants", "Skills", "Needs", "Simology",
-                                             "Inventory", "Social Groups", "Owned Businesses", "Household"};
+                                             "Inventory", "Social Groups", "Owned Businesses", "Household", "Soul's Journey"};
 constexpr int kSimAspirations = 0, kSimCareer = 1, kSimWants = 2, kSimSkills = 3, kSimNeeds = 4, kSimSimology = 5, kSimInventory = 6,
-              kSimClubs = 7, kSimBusinesses = 8, kSimHousehold = 9;
-bool mySimBuilt(int k) { return k >= 0 && k <= kSimHousehold; }
+              kSimClubs = 7, kSimBusinesses = 8, kSimHousehold = 9, kSimSouls = 10;
+bool mySimBuilt(int k) { return k >= 0 && k <= kSimSouls; }
 // sims.sim_info_types.Age's names, as the game shows them.
 const char* ageName(int age) {
     switch (age) {
@@ -2376,7 +2385,7 @@ void drawMySim(ImDrawList* d, const Rect& r, Button& button, std::vector<uint64_
     static const art::Piece* const kIcons[kMySimApps] = {&art::kAppAspirations, &art::kAppCareer, &art::kAppWants,
                                                          &art::kAppSkills, &art::kAppNeeds, &art::kAppSimology,
                                                          &art::kAppInventory, &art::kAppSocialGroups, &art::kAppBusinesses,
-                                                         &art::kAppHousehold};
+                                                         &art::kAppHousehold, &art::kAppSoulsJourney};
     // The whole app in the colours of the Sim's mood (user 2026-10-23 23:55Z); a moodlet's page in its own.
     Item moodlets[kMaxItems];
     std::vector<Tip> moodletTips;
@@ -2438,7 +2447,7 @@ void drawMySim(ImDrawList* d, const Rect& r, Button& button, std::vector<uint64_
         // (PhonePageButton) or a sideways swipe, as the home screen.
         std::vector<int> apps;
         for (int k = 0; k < kMySimApps; ++k)
-            if (k != kSimCareer || careerName(g_sim.age)) apps.push_back(k);
+            if ((k != kSimCareer || careerName(g_sim.age)) && (k != kSimSouls || g_sim.souls.sent)) apps.push_back(k);  // Life & Death only
         const int perPage = 9, pages = static_cast<int>((apps.size() + perPage - 1) / perPage);
         g_mySimPage = std::max(0, std::min(pages - 1, g_mySimPage));
         float slide = g_phoneSwipeX ? g_phoneDx : 0;
@@ -2845,6 +2854,71 @@ void drawMySim(ImDrawList* d, const Rect& r, Button& button, std::vector<uint64_
             ImVec2 ns = g_text->CalcTextSizeA(26, FLT_MAX, 0, none);
             shadowText(d, g_text, 26, {at(115, 150).x - ns.x / 2, at(115, 150).y - ns.y / 2}, kWhite, none);
         }
+    } else if (k == kSimSouls) {
+        // Soul's Journey (user 2026-10-24 12:55Z, mark 14-53-59): the aspiration panel's UnfinishedBusinessPanel as
+        // the game draws it. Its RankedStatUnfinishedBusinessMeter: the background, the dashed ring (living or
+        // ghost), its coloured dashes lit up to the rank, the nine pips round it (lit from their rank; pip 9 the
+        // ghost lock, living only), the soul in the middle; then "<name>'s Bucket List" and the bucket list's goals.
+        const SimSouls& sj = g_sim.souls;
+        const float q = 0.75f;  // phone units a ring pixel (the ring's picture is 202 x 170)
+        const float bgH = (right - left) * 280 / 354;
+        pieceIn(d, sj.ghost ? art::kSjBackGhost : art::kSjBack, at(left, y), at(right, y + bgH));
+        const float y0 = y + (bgH - 170 * q) / 2;
+        auto ring = [&](float rx, float ry) { return at(115 + (rx - 102) * q, y0 + ry * q); };
+        pieceIn(d, sj.ghost ? art::kSjTrackGhost : art::kSjTrack, ring(0, 0), ring(202, 170));
+        static const art::Piece* const kFills[8] = {&art::kSjFill0, &art::kSjFill1, &art::kSjFill2, &art::kSjFill3,
+                                                    &art::kSjFill4, &art::kSjFill5, &art::kSjFill6, &art::kSjFill7};
+        static const float kFillAt[8][4] = {{28, 134, 25, 25}, {16, 95, 14, 20}, {20, 47, 20, 25}, {49, 14, 24, 23},
+                                            {94, 8, 32, 15},   {144, 21, 23, 23}, {176, 78, 13, 27}, {161, 128, 20, 22}};
+        for (int n = 0; n < 8; ++n)
+            if (sj.rank > n || (sj.rank == n && sj.progress > 0))
+                pieceIn(d, *kFills[n], ring(kFillAt[n][0], kFillAt[n][1]), ring(kFillAt[n][0] + kFillAt[n][2], kFillAt[n][1] + kFillAt[n][3]));
+        const art::Piece& soul = sj.ghost ? art::kSjGhost : art::kSjLiving;
+        pieceIn(d, soul, ring(102 - 46, 95 - 46), ring(102 + 46, 95 + 46));
+        // The pips on the ring (their places measured from the game's panel), clockwise from the bottom left.
+        static const art::Piece* const kOn[8] = {&art::kSjPip1On, &art::kSjPip2On, &art::kSjPip3On, &art::kSjPip4On,
+                                                 &art::kSjPip5On, &art::kSjPip6On, &art::kSjPip7On, &art::kSjPip8On};
+        static const art::Piece* const kOff[8] = {&art::kSjPip1Off, &art::kSjPip2Off, &art::kSjPip3Off, &art::kSjPip4Off,
+                                                  &art::kSjPip5Off, &art::kSjPip6Off, &art::kSjPip7Off, &art::kSjPip8Off};
+        static const float kPipAngle[9] = {155, 183, 213, 255, 298, 333, 19, 49, 358};  // pips 1-8, then 9
+        for (int n = 0; n < 9; ++n) {
+            if (n == 8 && sj.ghost) continue;
+            const float rad = kPipAngle[n] * 3.14159265f / 180;
+            const float px = 102 + 80 * std::cos(rad), py = 95 + 80 * std::sin(rad);
+            const art::Piece& pip = n == 8 ? art::kSjPip9 : sj.rank > n ? *kOn[n] : *kOff[n];
+            pieceIn(d, pip, ring(px - 18, py - 18), ring(px + 18, py + 18));
+        }
+        y += bgH + 6;
+        // "<name>'s Bucket List" (living) or "<name>'s Unfinished Business" (ghost), then the goals as cards.
+        {
+            const std::string head = sj.first + (sj.ghost ? "'s Unfinished Business" : "'s Bucket List");
+            ImVec2 hs = g_title->CalcTextSizeA(24 * g_phoneText, FLT_MAX, 0, head.c_str());
+            shadowText(d, g_title, 24 * g_phoneText, {at(115, 0).x - hs.x / 2, at(0, y).y}, kWhite, head.c_str());
+            y += hs.y / S + 6;
+        }
+        const ImU32 kGoalBlue = IM_COL32(36, 108, 196, 255);
+        for (const SimSouls::Goal& g : sj.goals) {
+            const std::string text = g.text.empty() ? std::string("...") : g.text;
+            char count[24] = "";
+            if (g.show) std::snprintf(count, sizeof count, "%d/%d", g.value, g.goal);
+            const float cw = g_text->CalcTextSizeA(20 * g_phoneText, FLT_MAX, 0, count).x / S;
+            const float wrap = (right - left - 18 - cw) * S;
+            const float th = g_text->CalcTextSizeA(20 * g_phoneText, FLT_MAX, wrap, text.c_str()).y / S;
+            const float h = th + 10;
+            d->AddRectFilled(at(left, y), at(right, y + h), IM_COL32(255, 255, 255, g.done ? 200 : 240), 5 * S);
+            d->AddRect(at(left, y), at(right, y + h), IM_COL32(205, 214, 228, 255), 5 * S, 0, 0.8f * S);
+            d->AddText(g_text, 20 * g_phoneText, at(left + 6, y + 5), g.done ? IM_COL32(120, 128, 140, 255) : kGoalBlue,
+                       text.c_str(), nullptr, wrap);
+            if (g.done) {
+                const ImVec2 c = at(right - 10, y + h / 2);
+                d->AddLine({c.x - 3 * S, c.y}, {c.x - 0.6f * S, c.y + 2.6f * S}, IM_COL32(60, 150, 40, 255), 1.8f * S);
+                d->AddLine({c.x - 0.6f * S, c.y + 2.6f * S}, {c.x + 3.6f * S, c.y - 2.6f * S}, IM_COL32(60, 150, 40, 255), 1.8f * S);
+            } else if (count[0]) {
+                d->AddText(g_text, 20 * g_phoneText, at(right - 5 - cw, y + 5), IM_COL32(50, 60, 80, 255), count);
+            }
+            y += h + 3;
+        }
+        y += 4;
     } else if (k == kSimSimology) {
         // Simology (SimInfoSummaryPanel, mark 2026-10-24 04-46-51): the name field, then green section headers
         // (press to fold) over two-column grids of the game's trait cells (personality white, reward sunburst,
@@ -5210,6 +5284,15 @@ void setPhoneSim(const char* data, size_t size) {
             c.clubs.back().members.push_back({std::strtoull(f[2].c_str(), nullptr, 10), f[3], f[4] == "1"});
         } else if (f[0] == "crule" && f.size() >= 4 && !c.clubs.empty()) {
             c.clubs.back().rules.emplace_back(f[2] == "1", f[3]);
+        } else if (f[0] == "sj" && f.size() >= 6) {
+            c.souls.sent = true;
+            c.souls.ghost = f[1] == "1";
+            c.souls.rank = std::atoi(f[2].c_str());
+            c.souls.progress = static_cast<float>(std::atof(f[3].c_str()));
+            c.souls.first = f[4];
+            c.souls.complete = f[5] == "1";
+        } else if (f[0] == "sjg" && f.size() >= 6 && c.souls.goals.size() < 20) {
+            c.souls.goals.push_back({f[1], f[2] == "1", std::atoi(f[3].c_str()), std::atoi(f[4].c_str()), f[5] == "1"});
         } else if (f[0] == "sy" && f.size() >= 5 && c.simology.size() < 120) {
             c.simology.push_back({f[1].empty() ? 'T' : f[1][0], std::atoi(f[2].c_str()), std::strtoull(f[3].c_str(), nullptr, 10), f[4]});
         } else if (f[0] == "inv" && f.size() >= 6 && c.inventory.size() < 120) {

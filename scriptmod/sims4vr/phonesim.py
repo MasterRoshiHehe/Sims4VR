@@ -658,6 +658,66 @@ def _simology(sim_info, records):
             records.append('sy\x1f{}\x1f{}\x1f{}\x1f{}'.format(group, style, hudinfo._icon(getattr(t, 'icon', None)), name))
 
 
+def _souls_journey(sim_info, records):
+    """Soul's Journey (the aspiration panel's UnfinishedBusinessPanel, Life & Death): "sj" \x1f <ghost 0/1> \x1f <rank>
+    \x1f <progress in the rank 0..1> \x1f <first name> \x1f <complete 0/1>, then "sjg" \x1f <goal text> \x1f <done> \x1f <value>
+    \x1f <goal> \x1f <show progress> for the bucket list (the aspiration tracker's additional objectives)."""
+    try:
+        from aspirations.unfinished_business_aspiration_tuning import UnfinishedBusiness
+    except Exception:
+        return
+    stat_type = UnfinishedBusiness.UNFINISHED_BUSINESS_STAT
+    aspiration = UnfinishedBusiness.global_unfinished_business_aspiration
+    if stat_type is None or aspiration is None:
+        return
+    stat = None
+    try:
+        stat = sim_info.get_statistic(stat_type, add=False)
+    except Exception:
+        try:
+            stat = sim_info.commodity_tracker.get_statistic(stat_type)
+        except Exception:
+            stat = None
+    rank, progress = 0, 0.0
+    if stat is not None:
+        try:
+            rank = int(stat.rank_level)
+            low, high = stat.points_to_rank(rank), stat.points_to_rank(rank + 1)
+            progress = max(0.0, min(1.0, (stat.get_value() - low) / float(high - low))) if high > low else 0.0
+        except Exception as e:
+            _log_error('the soul rank', e)
+    ghost = bool(getattr(sim_info, 'is_ghost', False))
+    try:
+        last = stat_type.max_rank
+        last = int(last() if callable(last) else last)
+    except Exception:
+        last = 9
+    complete = rank >= (last if ghost else last - 1)
+    records.append('sj\x1f{}\x1f{}\x1f{:.3f}\x1f{}\x1f{}'.format(int(ghost), rank, progress, sim_info.first_name, int(complete)))
+    tracker = getattr(sim_info, 'aspiration_tracker', None)
+    if tracker is None:
+        return
+    try:
+        objectives = list(tracker.get_additional_objectives(aspiration))
+    except Exception:
+        objectives = []
+    for objective in objectives:
+        try:
+            done = bool(tracker.objective_completed(objective))
+            try:
+                goal = float(objective.goal_value())
+            except Exception:
+                goal = 1.0
+            value = tracker.get_last_updated_value_for_objective(objective) if hasattr(
+                tracker, 'get_last_updated_value_for_objective') else None
+            value = goal if done else float(value or 0)
+            records.append('sjg\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}'.format(
+                _text(getattr(objective, 'display_text', None), sim_info), int(done), int(value), int(goal),
+                int(bool(getattr(objective, 'show_progress', True)))))
+        except Exception as e:
+            _log_error('a bucket list goal', e)
+
+
 def _clubs(sim_info, records):
     import services
     from sims4vr import hudinfo
@@ -921,7 +981,7 @@ def send(fresh=False, contacts=False):
                 records.append('cat\x1f{}\x1f{}'.format(category, _key(title)))
             for s in skills:
                 records.append('skill\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{:.4f}\x1f{}\x1f{}'.format(*s))
-            for part in (_careers, _mood, _members, _inventory_list, _simology, _clubs, _businesses, _weather) + ((_contact_list, _contact_page) if contacts else ()):
+            for part in (_careers, _mood, _members, _inventory_list, _simology, _souls_journey, _clubs, _businesses, _weather) + ((_contact_list, _contact_page) if contacts else ()):
                 try:
                     part(sim_info, records)
                 except Exception as e:

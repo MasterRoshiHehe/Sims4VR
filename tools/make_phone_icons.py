@@ -355,6 +355,25 @@ def simology():
     finish(img, inner, 'simology')
 
 
+def souls_journey():
+    """Soul's Journey: a soul sitting cross-legged in a glow, on a dusk-blue tile."""
+    img, inner = tile((110, 140, 235), (45, 40, 140), (30, 25, 100, 255))
+    glow = mask_of(lambda d: d.ellipse((96, 96, 416, 416), fill=255)).filter(ImageFilter.GaussianBlur(30))
+    w = Image.new('RGBA', (N, N), (255, 255, 255, 0))
+    w.putalpha(ImageChops.multiply(glow.point(lambda v: v * 0.4), inner))
+    img.alpha_composite(w)
+    ring = mask_of(lambda d: d.ellipse((120, 120, 392, 392), outline=255, width=14))
+    tinted(img, ring, (255, 255, 255), 200)
+    soul = mask_of(lambda d: (d.ellipse((222, 150, 290, 218), fill=255),
+                              d.polygon([(256, 222), (318, 318), (194, 318)], fill=255),
+                              d.rounded_rectangle((176, 236, 336, 262), radius=13, fill=255),
+                              d.ellipse((160, 300, 352, 352), fill=255)))
+    shadow(img, soul, 6, 8, 60)
+    tinted(img, soul.filter(ImageFilter.MaxFilter(13)), (40, 35, 120), 255)
+    tinted(img, soul, (255, 255, 255), 255)
+    finish(img, inner, 'souls_journey')
+
+
 def inventory():
     img, inner = tile((215, 240, 200), (110, 160, 80), (55, 95, 35, 255))
     tinted(img, mask_of(lambda d: d.rounded_rectangle((350, 350, 465, 465), radius=16, fill=255)), (55, 95, 35))
@@ -637,6 +656,6 @@ if __name__ == '__main__':
     os.makedirs(OUT, exist_ok=True)
     for f in (settings, calendar, build, game_options, phone_options, vr_options, my_sim, aspirations, career, skills,
               relationships, inventory, needs, social_groups, owned_businesses, household, weather, wants,
-              need_hunger, need_hygiene, need_bladder, need_energy, need_fun, need_social, god_view, sims_forever, simology):
+              need_hunger, need_hygiene, need_bladder, need_energy, need_fun, need_social, god_view, sims_forever, simology, souls_journey):
         f()
     print('phone icons in', OUT)
