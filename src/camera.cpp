@@ -2118,16 +2118,14 @@ void describe(const HeardSound& s, char* out, size_t size) {
 // 0.3-2 m. Sounds from the audio thread; the table is only touched there.
 std::unordered_map<uintptr_t, int> g_probeClass;
 int g_probeLogs = 0;
-constexpr int kProbeMaxLogs = 600;
+constexpr int kProbeMaxLogs = 4000;
 
 void probeSound(void* sound, const HeardSound& h, ULONGLONG now) {
     int cls = 0;
     if (!(h.flags & 1)) {
-        if (std::fabs(h.at[0]) + std::fabs(h.at[1]) + std::fabs(h.at[2]) >= 0.01f) cls = 1;
+        cls = std::fabs(h.at[0]) + std::fabs(h.at[1]) + std::fabs(h.at[2]) >= 0.01f ? 1 : 4;
     } else if (h.away < 0.3f) {
         cls = 2;
-    } else if (h.away < 2.0f) {
-        cls = 3;
     }
     if (g_probeClass.size() > 4096) g_probeClass.clear();
     int& last = g_probeClass[reinterpret_cast<uintptr_t>(sound)];
@@ -2137,7 +2135,7 @@ void probeSound(void* sound, const HeardSound& h, ULONGLONG now) {
     ++g_probeLogs;
     char text[300];
     describe(h, text, sizeof(text));
-    LOG("Sound probe: class %d (1 flat placed, 2 3D at head, 3 3D under 2 m) sound %p at +%llu ms: %s", cls, sound,
+    LOG("Sound probe: class %d (1 flat placed, 2 3D at head, 4 flat unplaced) sound %p at +%llu ms: %s", cls, sound,
         static_cast<unsigned long long>(now), text);
 }
 
