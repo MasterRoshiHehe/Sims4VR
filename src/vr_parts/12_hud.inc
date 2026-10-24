@@ -1121,6 +1121,15 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
             if (index >= 0 && index < 100000) grab::pushControl(7400000 + index);  // phonesim.contact_action
             LOG("Phone: contact action %d", index);
             break;
+        case hud::kInventorySell: {
+            const std::vector<int> rows = hud::inventoryPicked();
+            for (int row : rows)
+                if (row >= 0 && row < 100000) grab::pushControl(7800000 + row);  // phonesim.inventory_mark
+            grab::pushControl(7900000 + std::max(0, std::min(2, index)));        // phonesim.inventory_marked
+            LOG("Phone: inventory %s, %d stacks", index == 0 ? "sell" : index == 1 ? "favorite" : "unfavorite",
+                static_cast<int>(rows.size()));
+            break;
+        }
         case hud::kSimsForever:
             startSims1Phone();
             break;

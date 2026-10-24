@@ -358,10 +358,34 @@ def _contact_list(sim_info, records):
             except Exception:
                 return ''
         has_romance = romance is not None and tracker.get_relationship_track(target.id, romance) is not None
-        records.append('ct\x1f{}\x1f{}\x1f{}\x1f{:.0f}\x1f{}\x1f{}\x1f{}\x1f{}'.format(
+
+        def family_bit():
+            # The other bits the relationship panel shows (family: Husband, Daughter...), highest priority first:
+            # household members often have no friendship bit to show (user 2026-10-24 02:41Z).
+            try:
+                track_bits = set()
+                for track in tracker.relationship_tracks_gen(target.id):
+                    try:
+                        track_bits.add(track.get_bit_for_client())
+                    except Exception:
+                        pass
+                shown = []
+                for bit in tracker.get_all_bits(target.id):
+                    if bit in track_bits or not getattr(bit, 'visible', False) or getattr(bit, 'invisible_filterable', False):
+                        continue
+                    shown.append(bit)
+                shown.sort(key=lambda b: -(getattr(b, 'priority', 0) or 0))
+                for bit in shown:
+                    text = _text_for(getattr(bit, 'display_name', None), sim_info, target)
+                    if text:
+                        return text
+            except Exception:
+                pass
+            return ''
+        records.append('ct\x1f{}\x1f{}\x1f{}\x1f{:.0f}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}'.format(
             n, '{} {}'.format(target.first_name, target.last_name).strip(), hudinfo._thumb('sims/f_{}_m_0'.format(target.id)),
             f, '{:.0f}'.format(r) if has_romance else '', bit_of(friendship), bit_of(romance) if has_romance else '',
-            int(target.is_instanced())))
+            int(target.is_instanced()), family_bit()))
 
 
 def _contact_page(sim_info, records):
@@ -517,8 +541,15 @@ def _inventory_list(sim_info, records):
             name = _loc(LocalizationHelperTuning.get_object_name(obj)) if LocalizationHelperTuning else ''
         except Exception:
             pass
-        records.append('inv\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}'.format(len(_inventory), picture, name, obj.stack_count(),
-                                                               int(getattr(obj, 'current_value', 0) or 0)))
+        favorite = 0
+        try:
+            tracker = sim_info.favorites_tracker
+            favorite = int(bool(tracker is not None and tracker.is_favorite_stack(obj)))
+        except Exception:
+            pass
+        records.append('inv\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}'.format(
+            len(_inventory), picture, name, obj.stack_count(), int(getattr(obj, 'current_value', 0) or 0), favorite,
+            int(bool(getattr(obj, 'non_deletable_by_user', False)))))
         _inventory.append(obj.id)
 
 
@@ -587,37 +618,85 @@ def _businesses(sim_info, records):
 
 
 def _weather(sim_info, records):
+    """The Weather app = the game's weather and season tooltip (WeatherAndSeasonTooltip.as): the season and its
+    day, the current weather and temperature (WeatherService.WEATHER_TYPE_UI_INFO by group, as GetWeather /
+    GetTemperature), today's forecast, the lunar phase (and its effect text), the street's eco footprint."""
     import services
     from sims4vr import hudinfo
+    season = day = length = -1
+    try:
+        seasons = services.season_service()
+        if seasons is not None and seasons.season is not None:
+            season = int(seasons.season)
+            content = seasons.season_content
+            now = services.time_service().sim_now
+            day = int((now - content.start_time).in_days()) + 1
+            length = int(round(content.length.in_days()))
+    except Exception as e:
+        _log_error('the season', e)
+    weather = ['', '', '', '', '', '']  # icon, name: weather, temperature, forecast
+    enabled = 0
     service = services.weather_service()
-    seasons = services.season_service()
-    if service is None:
-        records.append('wx\x1f-1\x1f\x1f0\x1f0\x1f0')
-        return
-    season = -1
+    if service is not None:
+        enabled = 1
+        try:
+            from weather.weather_enums import WeatherTypeGroup
+            info = type(service).WEATHER_TYPE_UI_INFO
+            for weather_type in list(service._current_weather_types or ()):
+                entry = info.get(weather_type)
+                if entry is None:
+                    continue
+                slot = 0 if entry.weather_group_type == WeatherTypeGroup.WEATHER else 2 if entry.weather_group_type == WeatherTypeGroup.TEMPERATURE else -1
+                if slot < 0 or weather[slot]:
+                    continue
+                shown = entry.display_information
+                weather[slot] = hudinfo._icon(shown.icon_large or shown.icon)
+                weather[slot + 1] = _loc(shown.name)
+        except Exception as e:
+            _log_error('the weather now', e)
+        try:
+            forecasts = list(service._forecasts or ())
+            if forecasts and forecasts[0] is not None:
+                f = forecasts[0]
+                weather[4] = hudinfo._icon(getattr(f, 'calendar_icon_large', None) or getattr(f, 'calendar_icon', None))
+                weather[5] = _loc(f.forecast_name)
+        except Exception as e:
+            _log_error('the forecast', e)
+    phase, effect = -1, ''
     try:
-        season = int(seasons.season) if seasons is not None else -1
-    except Exception:
-        pass
-    temperature = ''
-    rain = snow = 0
-    try:
-        from weather.weather_enums import WeatherEffectType, PrecipitationType
-        temperature = str(int(service.get_weather_element_value(WeatherEffectType.TEMPERATURE)))
-        rain = int(service.get_weather_element_value(PrecipitationType.RAIN) > 0)
-        snow = int(service.get_weather_element_value(PrecipitationType.SNOW) > 0)
+        lunar = services.lunar_cycle_service()
+        if lunar is not None and lunar.current_phase is not None:
+            phase = int(lunar.current_phase)
+            tracker = getattr(sim_info, 'lunar_effect_tracker', None)
+            tip = tracker.find_active_effect_tooltip() if tracker is not None else None
+            effect = _loc(tip) if tip is not None else ''
     except Exception as e:
-        _log_error('the weather now', e)
-    records.append('wx\x1f{}\x1f{}\x1f{}\x1f{}\x1f1'.format(season, temperature, rain, snow))
+        _log_error('the lunar phase', e)
+    eco = [-1, 0.5, 0, '', '']  # state, progress in it, delta, name, description
     try:
-        for n, forecast in enumerate(list(service._forecasts or ())[:7]):
-            if forecast is None:
-                continue
-            records.append('fc\x1f{}\x1f{}\x1f{}\x1f{}'.format(
-                n, hudinfo._icon(getattr(forecast, 'calendar_icon_large', None) or getattr(forecast, 'calendar_icon', None)),
-                _loc(forecast.forecast_name), _loc(forecast.forecast_description)))
+        street_service = services.street_service()
+        if street_service is not None:
+            provider = street_service.get_provider(services.current_street())
+            if provider is not None and getattr(provider, '_is_eco_footprint_compatible', False):
+                from eco_footprint.eco_footprint_tuning import EcoFootprintTunables
+                from eco_footprint.eco_footprint_enums import EcoFootprintStateType
+                stat = provider.get_street_footprint()
+                value = stat.get_value()
+                state = provider.current_eco_footprint_state
+                data = EcoFootprintTunables.ECO_FOOTPRINT_STATE_DATA
+                if state == EcoFootprintStateType.GREEN:
+                    lo, hi = stat.min_value, data.green_threshold
+                elif state == EcoFootprintStateType.NEUTRAL:
+                    lo, hi = data.green_threshold, data.industrial_threshold
+                else:
+                    lo, hi = data.industrial_threshold, stat.max_value
+                ui = EcoFootprintTunables.ECO_FOOTPRINT_UI_TUNABLES.get(state)
+                eco = [int(state), (value - lo) / (hi - lo) if hi != lo else 0.5, stat.convergence_value - value,
+                       _loc(ui.name_text) if ui is not None else '', _loc(ui.HUD_tooltip_description_text) if ui is not None else '']
     except Exception as e:
-        _log_error('the forecast', e)
+        _log_error('the eco footprint', e)
+    records.append('wx2\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{:.3f}\x1f{:.3f}\x1f{}\x1f{}\x1f{}'.format(
+        season, day, length, *weather, phase, effect, eco[0], eco[1], eco[2], eco[3], eco[4], enabled))
 
 
 def inventory_pie(index):
@@ -625,6 +704,54 @@ def inventory_pie(index):
     from sims4vr import pie
     if 0 <= index < len(_inventory):
         pie.open_on(services.object_manager().get(_inventory[index]) or services.inventory_manager().get(_inventory[index]))
+
+
+_marked = []  # inventory rows picked on the phone's multiselect (control 7800000 + row), then sold or favorited
+
+
+def inventory_mark(index):
+    if 0 <= index < len(_inventory) and _inventory[index] not in _marked:
+        _marked.append(_inventory[index])
+
+
+def inventory_marked(what):
+    """The phone's multiselect buttons (SimInfoInventoryPanelMain): 0 sells the picked stacks (as
+    inventory.sim_inventory_sell_multiple does: value x count x your sell modifier, then destroyed), 1 / 2 adds
+    or removes them as favorites (inventory.sim_inventory_favorite_multiple)."""
+    import services
+    picked, _marked[:] = list(_marked), []
+    sim_info = services.active_sim_info()
+    sim = sim_info.get_sim_instance() if sim_info is not None else None
+    inventory = getattr(sim, 'inventory_component', None) if sim is not None else None
+    if inventory is None:
+        return
+    manager = services.inventory_manager()
+    items = [manager.get(i) for i in picked]
+    items = [i for i in items if i is not None and i in inventory]
+    if what == 0:
+        from protocolbuffers import Consts_pb2
+        value, sold, tags = 0, [], set()
+        for item in items:
+            if item.non_deletable_by_user:
+                continue
+            value += item.current_value * item.stack_count() * sim_info.get_item_sell_price_modifier(item)
+            sold.append(item)
+            tags.update(item.get_tags())
+        if sold:
+            services.active_household().funds.add(round(value), Consts_pb2.TELEMETRY_OBJECT_SELL, sim)
+            services.get_reset_and_delete_service().trigger_batch_destroy(sold)
+        native._log('phonesim: sold {} stacks for {}'.format(len(sold), round(value)))
+    else:
+        tracker = sim_info.favorites_tracker
+        if tracker is None:
+            return
+        for item in items:
+            if what == 1:
+                tracker.set_favorite_stack(item)
+            else:
+                tracker.unset_favorite_stack(item)
+            inventory.push_inventory_item_stack_update_msg(item)
+    send(fresh=True)
 
 
 def select_contact(index):

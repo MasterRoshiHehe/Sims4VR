@@ -279,7 +279,7 @@ struct SimMember {  // the Household app: one of the household tray's Sims
     std::string first, name;
 };
 struct SimContact {  // Contacts: one Sim your Sim has a relationship with (phonesim.py "ct")
-    std::string name, friendBitJson, romanceBitJson;
+    std::string name, friendBitJson, romanceBitJson, familyBitJson;  // family: Husband, Daughter... (other visible bits)
     uint64_t face = 0;
     float friendship = 0, romance = 0;
     bool hasRomance = false, here = false;
@@ -298,7 +298,8 @@ struct ContactPage {  // the picked contact: what your Sim knows of them ("cd", 
 };
 struct SimItem {  // Inventory: one stack (phonesim.py "inv")
     uint64_t picture = 0;
-    int count = 1, value = 0;
+    int count = 1, value = 0, order = 0;
+    bool favorite = false, locked = false;  // locked: non_deletable_by_user (can't be sold)
     std::string name;
 };
 struct SimClub {  // Social Groups: one club ("club", "cmem", "crule")
@@ -315,12 +316,13 @@ struct SimBusiness {  // Owned Businesses ("biz")
     bool open = false;
     std::string name;
 };
-struct SimWeather {  // the Weather app ("wx", "fc")
-    bool sent = false, pack = false, rain = false, snow = false;
-    int season = -1;
-    std::string temperature;
-    struct Day { int day = 0; uint64_t icon = 0; std::string name, text; };
-    std::vector<Day> forecast;
+struct SimWeather {  // the Weather app ("wx2": what the game's weather and season tooltip shows)
+    bool sent = false, enabled = false;
+    int season = -1, day = 0, length = 0, phase = -1, eco = -1;
+    uint64_t icon[3] = {};          // the weather now, the temperature, today's forecast (large icons)
+    std::string nameJson[3];
+    std::string effectJson, ecoNameJson, ecoTextJson;  // the lunar effect; the eco footprint state and its text
+    float ecoProgress = 0.5f, ecoDelta = 0;
 };
 struct SimContent {
     SimWeather weather;
@@ -2134,6 +2136,214 @@ void drawPhoneClock(ImDrawList* d, const Rect& r, bool home) {
 // SimInfoSkillPanel: per category its title, each skill's icon, name, level and its progress
 // through the level, gold once mastered, an arrow while rising) and Needs (the wrist's needs,
 // hudinfo.py: each one's icon, name and bar in its state's colours).
+// Inventory (user 2026-10-24 02:42Z: as the game's inventory panel, vertical): SimInfoInventoryPanel laid out
+// for the phone (mark 2026-10-24 04-41-36): the search field and Collections button, Multiselect On/Off, the
+// filter button and sort dropdown (New, Name, Price, Type), the grid of InventoryCellView tiles in the
+// droppable background, and the sell area ("Drag here to sell"; with Multiselect on: Select All, Favorite and
+// Sell, as btnMSSelectAll / btnMSFavorite / btnMSSell). Pressing a tile opens its pie menu at your hand; with
+// Multiselect on it picks it. Sell asks a second press (the game asks in a dialog).
+bool g_invMulti = false;
+int g_invSort = 0;  // New, Name, Price, Type
+std::vector<int> g_invPicked;  // rows of g_sim.inventory
+ULONGLONG g_invSellAsked = 0;
+template <class Button>
+void drawInventory(ImDrawList* d, const Rect& r, Button& button, std::vector<uint64_t>& shown, Action& action, bool swipeY,
+                   float dy, const PhoneDrag& drag, int* index) {
+    constexpr float S = 2.5f, A = S / art::kScale;
+    auto at = [&](float x, float y) { return ImVec2{r.x + x * S, r.y + y * S}; };
+    const ImU32 kBlue = IM_COL32(28, 72, 150, 255), kRed = IM_COL32(214, 40, 40, 255), kGreen = IM_COL32(60, 150, 40, 255);
+    const ULONGLONG now = GetTickCount64();
+    // The panel (SimInfo panels' grey), its parts in the game's greys.
+    d->AddRectFilled(at(0, 0), at(230, 356), IM_COL32(212, 212, 212, 246), 6 * S);
+    // Search field and Collections.
+    d->AddRectFilled(at(8, 8), at(194, 26), IM_COL32(178, 180, 186, 255), 4 * S);
+    {
+        bool over = false;
+        button(at(200, 5), at(224, 29), &over);
+        pieceIn(d, art::kInvRoundButton, at(199, 4), at(225, 30));
+        piece(d, art::kInvGem, at(212, 17), A * 0.95f);
+    }
+    // Multiselect: On / Off.
+    {
+        const char* label = "Multiselect:";
+        ImVec2 ls = g_text->CalcTextSizeA(20, FLT_MAX, 0, label);
+        d->AddText(g_text, 20, {at(184, 0).x - ls.x, at(0, 39).y - ls.y / 2}, kBlue, label);
+        bool over = false;
+        if (button(at(186, 32), at(224, 46), &over)) {
+            g_invMulti = !g_invMulti;
+            g_invPicked.clear();
+            g_invSellAsked = 0;
+        }
+        d->AddRectFilled(at(186, 32), at(224, 46), IM_COL32(250, 250, 250, 255), 7 * S);
+        d->AddRect(at(186, 32), at(224, 46), over ? kBlue : IM_COL32(190, 190, 195, 255), 7 * S, 0, 0.8f * S);
+        const char* state = g_invMulti ? "On" : "Off";
+        ImVec2 ss = g_title->CalcTextSizeA(20, FLT_MAX, 0, state);
+        d->AddText(g_title, 20, {at(205, 0).x - ss.x / 2, at(0, 39).y - ss.y / 2}, g_invMulti ? kGreen : kRed, state);
+    }
+    // The grid's background, the filter button and the sort dropdown on it.
+    const float gx0 = 4, gx1 = 226, gy0 = 52, gy1 = 298;
+    d->AddRectFilled(at(gx0, gy0), at(gx1, gy1), IM_COL32(172, 174, 180, 255), 6 * S);
+    {
+        d->AddCircleFilled(at(18, 64), 9 * S, IM_COL32(250, 250, 250, 255), 24);
+        d->AddCircle(at(18, 64), 9 * S, IM_COL32(150, 152, 160, 255), 24, 0.8f * S);
+        // A funnel, as the filter button's.
+        const ImVec2 f = at(18, 64);
+        d->AddTriangleFilled({f.x - 4.5f * S, f.y - 3.5f * S}, {f.x + 4.5f * S, f.y - 3.5f * S}, {f.x, f.y + 1.5f * S}, kBlue);
+        d->AddRectFilled({f.x - 1 * S, f.y}, {f.x + 1 * S, f.y + 4 * S}, kBlue);
+        static const char* const kSorts[4] = {"New", "Name", "Price", "Type"};
+        bool over = false;
+        if (button(at(118, 56), at(222, 72), &over)) g_invSort = (g_invSort + 1) % 4;
+        d->AddRectFilled(at(118, 56), at(222, 72), IM_COL32(252, 252, 252, 255), 3 * S);
+        d->AddRect(at(118, 56), at(222, 72), over ? kBlue : IM_COL32(160, 162, 170, 255), 3 * S, 0, 0.8f * S);
+        ImVec2 ts = g_text->CalcTextSizeA(21, FLT_MAX, 0, kSorts[g_invSort]);
+        d->AddText(g_text, 21, {at(124, 0).x, at(0, 64).y - ts.y / 2}, kBlue, kSorts[g_invSort]);
+        const ImVec2 t = at(213, 64);
+        d->AddTriangleFilled({t.x - 4 * S, t.y - 2 * S}, {t.x + 4 * S, t.y - 2 * S}, {t.x, t.y + 3 * S}, IM_COL32(20, 70, 170, 255));
+    }
+    // The tiles, sorted as picked.
+    const int n = static_cast<int>(g_sim.inventory.size());
+    std::vector<int> rows(n);
+    for (int i = 0; i < n; ++i) rows[i] = i;
+    const auto& inv = g_sim.inventory;
+    std::stable_sort(rows.begin(), rows.end(), [&](int a, int b) {
+        switch (g_invSort) {
+        case 1: return found(inv[a].name) < found(inv[b].name);
+        case 2: return inv[a].value * inv[a].count > inv[b].value * inv[b].count;
+        case 3: return inv[a].picture < inv[b].picture;
+        default: return inv[a].order > inv[b].order;  // newest first
+        }
+    });
+    const float top = 76, bottom = gy1 - 4, cell = 52.5f, gap = 1.5f, x0 = gx0 + 4;
+    const int perRow = 4;
+    const float total = ((n + perRow - 1) / perRow) * (cell + gap), room = bottom - top;
+    if (swipeY) g_mySimScroll = drag.sim - dy;
+    g_mySimScroll = std::max(0.0f, std::min(std::max(0.0f, total - room), g_mySimScroll));
+    d->PushClipRect(at(gx0, top), at(gx1, bottom), true);
+    int hovered = -1;
+    ImVec2 hoverAt{};
+    for (int j = 0; j < n; ++j) {
+        const int i = rows[j];
+        const SimItem& it = inv[i];
+        const float x = x0 + (j % perRow) * (cell + gap), y = top + (j / perRow) * (cell + gap) - g_mySimScroll;
+        if (y + cell < top || y > bottom) continue;
+        ImVec2 ca = at(x, y), cb = at(x + cell, y + cell);
+        ImVec2 ha{ca.x, std::max(ca.y, at(0, top).y)}, hb{cb.x, std::min(cb.y, at(0, bottom).y)};
+        bool over = false;
+        if (hb.y - ha.y > 1 && button(ha, hb, &over)) {
+            if (g_invMulti) {
+                auto f = std::find(g_invPicked.begin(), g_invPicked.end(), i);
+                if (f == g_invPicked.end()) g_invPicked.push_back(i);
+                else g_invPicked.erase(f);
+                g_invSellAsked = 0;
+            } else {
+                action = kInventoryPie;
+                if (index) *index = i;
+            }
+        }
+        const bool picked = std::find(g_invPicked.begin(), g_invPicked.end(), i) != g_invPicked.end();
+        pieceIn(d, art::kInvCell, ca, cb);
+        if (picked || over) {
+            d->AddRect({ca.x + 1 * S, ca.y + 1 * S}, {cb.x - 1 * S, cb.y - 1 * S}, picked ? IM_COL32(110, 200, 60, 255) : IM_COL32(120, 190, 80, 200),
+                       4 * S, 0, (picked ? 2.2f : 1.4f) * S);
+        }
+        if (it.picture) {
+            shown.push_back(it.picture);
+            icon(d, it.picture, at(x + cell / 2, y + cell / 2), (cell - 8) * S);
+        }
+        if (it.count > 1) {  // the stack's count, bottom right as the game's
+            char cnt[12];
+            std::snprintf(cnt, sizeof cnt, "%d", it.count);
+            ImVec2 cs = g_title->CalcTextSizeA(20, FLT_MAX, 0, cnt);
+            shadowText(d, g_title, 20, {at(x + cell - 4, 0).x - cs.x, at(0, y + cell - 4).y - cs.y}, kWhite, cnt);
+        }
+        if (it.favorite) piece(d, art::kInvFavorite, at(x + 8, y + 8), A * 0.8f);
+        if (it.locked) piece(d, art::kInvLock, at(x + cell - 7, y + 7), A * 0.8f);
+        if (over) hovered = i, hoverAt = at(x + cell / 2, y);
+    }
+    d->PopClipRect();
+    if (total > room) {  // the scroll bar at the grid's right
+        const float thumbH = std::max(18.0f, room * room / total);
+        const float thumbY = top + (room - thumbH) * g_mySimScroll / std::max(1.0f, total - room);
+        d->AddRectFilled(at(gx1 - 5, thumbY), at(gx1 - 2, thumbY + thumbH), IM_COL32(250, 250, 250, 255), 1.5f * S);
+    }
+    if (!n) {
+        const char* none = g_sim.age ? "No items" : "...";
+        ImVec2 ns = g_text->CalcTextSizeA(24, FLT_MAX, 0, none);
+        d->AddText(g_text, 24, {at(115, 0).x - ns.x / 2, at(0, 170).y}, kBlue, none);
+    }
+    // The sell area.
+    const float sy0 = 302, sy1 = 352;
+    d->AddRectFilled(at(gx0, sy0), at(gx1, sy1), IM_COL32(192, 193, 197, 255), 6 * S);
+    if (!g_invMulti) {
+        piece(d, art::kInvRegister, at(26, (sy0 + sy1) / 2), A * 1.15f);
+        const char* sell = "Drag here to sell";
+        ImVec2 ss = g_title->CalcTextSizeA(24, FLT_MAX, 0, sell);
+        d->AddText(g_title, 24, {at(124, 0).x - ss.x / 2, at(0, (sy0 + sy1) / 2).y - ss.y / 2}, kBlue, sell);
+    } else {
+        const float cy = (sy0 + sy1) / 2;
+        bool over = false;
+        if (button(at(10, cy - 10), at(80, cy + 10), &over)) {
+            const bool all = static_cast<int>(g_invPicked.size()) == n;
+            g_invPicked.clear();
+            if (!all)
+                for (int i = 0; i < n; ++i) g_invPicked.push_back(i);
+        }
+        d->AddRectFilled(at(10, cy - 10), at(80, cy + 10), IM_COL32(250, 250, 250, 255), 10 * S);
+        d->AddRect(at(10, cy - 10), at(80, cy + 10), over ? kBlue : IM_COL32(170, 170, 176, 255), 10 * S, 0, 0.8f * S);
+        const char* sel = static_cast<int>(g_invPicked.size()) == n && n ? "Deselect All" : "Select All";
+        ImVec2 ts = g_text->CalcTextSizeA(19, FLT_MAX, 0, sel);
+        d->AddText(g_text, 19, {at(45, 0).x - ts.x / 2, at(0, cy).y - ts.y / 2}, kBlue, sel);
+        const bool any = !g_invPicked.empty();
+        bool allFav = any;
+        for (int i : g_invPicked) allFav = allFav && i < n && inv[i].favorite;
+        bool favOver = false;
+        if (button(at(132, cy - 22), at(176, cy + 22), &favOver) && any) {
+            action = kInventorySell;
+            if (index) *index = allFav ? 2 : 1;
+        }
+        pieceIn(d, favOver && any ? art::kInvMsFavoriteOver : art::kInvMsFavorite, at(132, cy - 22), at(176, cy + 22),
+                any ? kWhite : IM_COL32(255, 255, 255, 120));
+        bool sellOver = false;
+        const bool asked = g_invSellAsked && now - g_invSellAsked < 3000;
+        if (button(at(180, cy - 22), at(224, cy + 22), &sellOver) && any) {
+            if (asked) {
+                action = kInventorySell;
+                if (index) *index = 0;
+                g_invSellAsked = 0;
+            } else {
+                g_invSellAsked = now;
+            }
+        }
+        pieceIn(d, asked || (sellOver && any) ? art::kInvMsSellOver : art::kInvMsSell, at(180, cy - 22), at(224, cy + 22),
+                any ? kWhite : IM_COL32(255, 255, 255, 120));
+        if (asked) {
+            int value = 0;
+            for (int i : g_invPicked)
+                if (i < n && !inv[i].locked) value += inv[i].value * inv[i].count;
+            char text[64];
+            std::snprintf(text, sizeof text, "Sell for §%d? Press again", value);
+            ImVec2 as = g_text->CalcTextSizeA(18, FLT_MAX, 0, text);
+            d->AddText(g_text, 18, {at(224, 0).x - as.x, at(0, sy0 - 2).y - as.y}, kBlue, text);
+        }
+    }
+    // The hovered tile's tooltip (the game's: its name and value), above it.
+    if (hovered >= 0) {
+        const SimItem& it = inv[hovered];
+        const std::string name = found(it.name);
+        char value[32];
+        std::snprintf(value, sizeof value, "§%d", it.value);
+        ImVec2 ns = g_title->CalcTextSizeA(22, FLT_MAX, 120 * S, name.c_str()), vs = g_text->CalcTextSizeA(19, FLT_MAX, 0, value);
+        const float w = std::max(ns.x, vs.x) + 12 * S, h = ns.y + vs.y + 8 * S;
+        float x = std::max(r.x + 2 * S, std::min(r.x + 228 * S - w, hoverAt.x - w / 2)), y = hoverAt.y - h - 2 * S;
+        if (y < r.y + 2 * S) y = hoverAt.y + 56 * S;
+        d->AddRectFilledMultiColor({x, y}, {x + w, y + h}, IM_COL32(255, 255, 255, 250), IM_COL32(255, 255, 255, 250),
+                                   IM_COL32(238, 238, 238, 250), IM_COL32(238, 238, 238, 250));
+        d->AddRect({x, y}, {x + w, y + h}, IM_COL32(200, 200, 200, 255), 3 * S, 0, 0.8f * S);
+        d->AddText(g_title, 22, {x + 6 * S, y + 4 * S}, kBlue, name.c_str(), nullptr, 120 * S);
+        d->AddText(g_text, 19, {x + 6 * S, y + 4 * S + ns.y}, kBlue, value);
+    }
+}
+
 template <class Button>
 void drawMySim(ImDrawList* d, const Rect& r, Button& button, std::vector<uint64_t>& shown, Action& action, bool swipeY,
                float dy, const PhoneDrag& drag, int* index) {
@@ -2287,6 +2497,10 @@ void drawMySim(ImDrawList* d, const Rect& r, Button& button, std::vector<uint64_
         return;
     }
     const int k = g_mySim - 1;
+    if (k == kSimInventory) {
+        drawInventory(d, r, button, shown, action, swipeY, dy, drag, index);
+        return;
+    }
     if (k == kSimHousehold && g_hhSim >= static_cast<int>(g_sim.household.size())) g_hhSim = -1;
     header(k == kSimAspirations && g_aspChange ? "Change Aspiration" : k == kSimCareer ? careerName(g_sim.age)
            : k == kSimHousehold && g_hhSim >= 0 ? g_sim.household[g_hhSim].first.c_str() : kMySimNames[k]);
@@ -2294,6 +2508,16 @@ void drawMySim(ImDrawList* d, const Rect& r, Button& button, std::vector<uint64_
     const float top = 48, bottom = 354, left = 6, right = g_scrolls0 ? 206.0f : 224.0f;
     float y = top - g_mySimScroll;
     d->PushClipRect(at(0, top), at(230, bottom), true);
+    // Buttons in the scrolled list only where it shows: a row under the Back button can't take its press.
+    auto inList = [&](ImVec2 a, ImVec2 b, bool* over) {
+        a.y = std::max(a.y, at(0, top).y);
+        b.y = std::min(b.y, at(0, bottom).y);
+        if (b.y - a.y < 1) {
+            if (over) *over = false;
+            return false;
+        }
+        return button(a, b, over);
+    };
     const float ts = 22 * g_phoneText;
     auto bar = [&](float x0, float x1, float by, float h, float fraction, ImU32 back, ImU32 fill) {
         d->AddRectFilled(at(x0, by), at(x1, by + h), back, h / 2 * S);
@@ -2320,7 +2544,7 @@ void drawMySim(ImDrawList* d, const Rect& r, Button& button, std::vector<uint64_
             if (y + rowH > top - 40 && y < bottom + 10) {
                 const ImVec2 ra = at(left, y + 2), rb = at(right, y + rowH - 2);
                 bool over = false;
-                if (button(ra, rb, &over) && !t.current) {
+                if (inList(ra, rb, &over) && !t.current) {
                     if (g_aspPicked == n) {
                         action = kAspirationPicked;
                         if (index) *index = n;
@@ -2414,7 +2638,7 @@ void drawMySim(ImDrawList* d, const Rect& r, Button& button, std::vector<uint64_
             if (!g_sim.tracks.empty()) {
                 const ImVec2 ba = at(left + 30, y), bb = at(right - 30, y + 26);
                 bool over = false;
-                if (button(ba, bb, &over)) g_aspChange = true, g_aspPicked = -1, g_mySimScroll = 0;
+                if (inList(ba, bb, &over)) g_aspChange = true, g_aspPicked = -1, g_mySimScroll = 0;
                 if (over) nine(d, art::kDialogButtonOver, {ba.x - 2, ba.y - 3}, {bb.x + 2, bb.y + 6}, 48, 36, 48, 54, 0.6f);
                 else nine(d, art::kDialogButton, ba, bb, 48, 36, 48, 42, 0.6f);
                 const char* label = "Change Aspiration";
@@ -2649,7 +2873,7 @@ void drawMySim(ImDrawList* d, const Rect& r, Button& button, std::vector<uint64_
             if (cy + ch < top - 10 || cy > bottom + 10) continue;
             const ImVec2 ca = at(x, cy), cb = at(x + cw, cy + ch);
             bool over = false;
-            if (button(ca, cb, &over)) {
+            if (inList(ca, cb, &over)) {
                 action = kInventoryPie;
                 if (index) *index = i;
             }
@@ -2836,6 +3060,16 @@ void drawContacts(ImDrawList* d, const Rect& r, Button& button, std::vector<uint
     const float top = 48, bottom = 354, left = 6, right = g_scrolls1 ? 206.0f : 224.0f;
     float y = top - g_mySimScroll;
     d->PushClipRect(at(0, top), at(230, bottom), true);
+    // Buttons in the scrolled list only where it shows: a row under the Back button can't take its press.
+    auto inList = [&](ImVec2 a, ImVec2 b, bool* over) {
+        a.y = std::max(a.y, at(0, top).y);
+        b.y = std::min(b.y, at(0, bottom).y);
+        if (b.y - a.y < 1) {
+            if (over) *over = false;
+            return false;
+        }
+        return button(a, b, over);
+    };
     auto bar = [&](float x0, float x1, float by, float h, float value, ImU32 pos, ImU32 neg) {
         // The relationship panel's bar: centred at 0, filling right (liked) or left (disliked).
         d->AddRectFilled(at(x0, by), at(x1, by + h), IM_COL32(200, 206, 214, 255), h / 2 * S);
@@ -2854,7 +3088,7 @@ void drawContacts(ImDrawList* d, const Rect& r, Button& button, std::vector<uint
             const SimContact& k = g_sim.contacts[n];
             const ImVec2 ra = at(left, y + 2), rb = at(right, y + rowH - 2);
             bool over = false;
-            if (button(ra, rb, &over)) {
+            if (inList(ra, rb, &over)) {
                 g_contacts = 1, g_contactSel = n, g_mySimScroll = 0;
                 action = kContactPicked;
                 if (index) *index = n;
@@ -2867,8 +3101,9 @@ void drawContacts(ImDrawList* d, const Rect& r, Button& button, std::vector<uint
                 icon(d, k.face, at(left + 22, y + rowH / 2), 40 * S);
             }
             d->AddText(g_text, 22 * g_phoneText, at(left + 46, y + 4), kBlue, k.name.c_str());
+            std::string bits = k.familyBitJson.empty() ? std::string() : found(k.familyBitJson);
             const std::string& fb = found(k.friendBitJson);
-            std::string bits = fb;
+            if (!fb.empty()) bits += bits.empty() ? fb : ", " + fb;
             if (k.hasRomance) {
                 const std::string& rbit = found(k.romanceBitJson);
                 if (!rbit.empty()) bits += bits.empty() ? rbit : ", " + rbit;
@@ -2926,7 +3161,7 @@ void drawContacts(ImDrawList* d, const Rect& r, Button& button, std::vector<uint
                 const bool off = !a.disabledJson.empty() && !found(a.disabledJson).empty();
                 const bool busy = pressedNode == a.node && now - pressedAt < 1500;
                 bool over = false;
-                if (button(ba, bb, &over) && !off) {
+                if (inList(ba, bb, &over) && !off) {
                     action = kContactAction;
                     if (index) *index = a.node;
                     pressedNode = a.node, pressedAt = now;
@@ -3026,6 +3261,170 @@ void drawContacts(ImDrawList* d, const Rect& r, Button& button, std::vector<uint
         const float t = sliderFollow(r, top, bottom, thumbH);
         if (t >= 0) g_mySimScroll = t * (total - room);
     }
+}
+
+// Weather (user 2026-10-24 02:48Z: identical to the game's weather overlay): the game's weather and season
+// tooltip (WeatherAndSeasonTooltip, TimeControls SWF art), filling the phone's width and scrolling: the season
+// header with its day, the four season icons and the season bar, Current Weather (weather, temperature),
+// Today's Forecast, Current Lunar Phase (and its effect), Eco Footprint. Laid out in the tooltip's own pixels
+// (247 wide), measured from the game's (mark 2026-10-24 04-48-22); stacked as SetData stacks them.
+template <class Button>
+void drawWeather(ImDrawList* d, const Rect& r, Button& button, std::vector<uint64_t>& shown, Action& action, bool swipeY,
+                 float dy, const PhoneDrag& drag) {
+    constexpr float S = 2.5f;
+    const float k = 230.0f / 247;  // phone units a tooltip pixel
+    const float top = 0, bottom = 354;
+    static ULONGLONG asked = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (now - asked > 2000 && action == kNone) action = kMySimOpened, asked = now;
+    const SimWeather& w = g_sim.weather;
+    const float y0 = top - g_mySimScroll;
+    auto at = [&](float x, float y) { return ImVec2{r.x + x * k * S, r.y + (y0 + y * k) * S}; };
+    auto px = [&](float size) { return size * k * S; };  // a tooltip font size in atlas pixels
+    const ImU32 kSection = IM_COL32(48, 96, 168, 255), kName = IM_COL32(34, 62, 118, 255), kGrey = IM_COL32(120, 120, 120, 255);
+    d->PushClipRect(ImVec2{r.x, r.y + top * S}, ImVec2{r.x + 230 * S, r.y + bottom * S}, true);
+    float y = 0;
+    auto centred = [&](ImFont* f, float size, ImU32 col, float cy, const std::string& t) {
+        ImVec2 ts = f->CalcTextSizeA(px(size), FLT_MAX, 0, t.c_str());
+        d->AddText(f, px(size), {at(123.5f, 0).x - ts.x / 2, at(0, cy).y - ts.y / 2}, col, t.c_str());
+    };
+    auto left = [&](ImFont* f, float size, ImU32 col, float x, float cy, const std::string& t) {
+        ImVec2 ts = f->CalcTextSizeA(px(size), FLT_MAX, 0, t.c_str());
+        d->AddText(f, px(size), {at(x, 0).x, at(0, cy).y - ts.y / 2}, col, t.c_str());
+    };
+    // The tooltip's card (TooltipBase: white to light grey, rounded).
+    const float bodyTop = 0;
+    float height = 520;
+    {
+        static float lastHeight = 520;
+        height = lastHeight;
+        const ImVec2 a = at(0, bodyTop), b = at(247, height);
+        d->AddRectFilledMultiColor(a, b, IM_COL32(254, 253, 253, 255), IM_COL32(254, 253, 253, 255), IM_COL32(238, 238, 238, 255),
+                                   IM_COL32(238, 238, 238, 255));
+        d->AddRect(a, b, IM_COL32(205, 205, 205, 255), 4 * S, 0, 1.0f * S);
+        if (!w.sent) {
+            centred(g_text, 16, kName, 60, "...");
+            d->PopClipRect();
+            return;
+        }
+        static const char* const kSeasons[4] = {"Summer", "Fall", "Winter", "Spring"};
+        static const ImU32 kSeasonInk[4] = {IM_COL32(196, 108, 16, 255), IM_COL32(170, 78, 30, 255), IM_COL32(40, 108, 186, 255),
+                                            IM_COL32(170, 36, 124, 255)};
+        if (w.season >= 0 && w.season < 4) {
+            const art::Piece* heads[4] = {&art::kWxHeaderSummer, &art::kWxHeaderFall, &art::kWxHeaderWinter, &art::kWxHeaderSpring};
+            pieceIn(d, *heads[w.season], at(0, 0), at(247, 74));
+            centred(g_title, 17, kSeasonInk[w.season], 23, kSeasons[w.season]);
+            if (w.length > 0) {
+                char day[48];
+                std::snprintf(day, sizeof day, "Day %d of %d", w.day, w.length);
+                centred(g_text, 13, kSeasonInk[w.season], 41, day);
+            }
+            // Spring, summer, fall, winter (mSeasonDisplayOrder), their icons over the bar's quarters.
+            const int order[4] = {3, 0, 1, 2};
+            const art::Piece* icons[4] = {&art::kWxSeasonSummer, &art::kWxSeasonFall, &art::kWxSeasonWinter, &art::kWxSeasonSpring};
+            const art::Piece* fills[4] = {&art::kWxBarSummer, &art::kWxBarFall, &art::kWxBarWinter, &art::kWxBarSpring};
+            const float barX = 18, barW = 211, quarter = barW / 4;
+            int current = 0;
+            for (int i = 0; i < 4; ++i)
+                if (order[i] == w.season) current = i;
+            for (int i = 0; i < 4; ++i) {
+                const float cx = barX + quarter * (i + 0.5f);
+                pieceIn(d, *icons[order[i]], at(cx - 13, 51), at(cx + 13, 77));
+            }
+            pieceIn(d, art::kWxBarBack, at(barX, 86), at(barX + barW, 104));
+            for (int i = 0; i < 4; ++i) {
+                const float done = i < current ? 1.0f : i > current ? 0.0f
+                                 : w.length > 0 ? std::min(1.0f, static_cast<float>(w.day) / w.length) : 0.0f;
+                if (done > 0) pieceIn(d, *fills[order[i]], at(barX + quarter * i, 86), at(barX + quarter * (i + done), 104));
+            }
+            pieceIn(d, art::kWxBarFrame, at(barX - 5, 81), at(barX + barW + 5, 109));
+            y = 112;
+        } else {
+            y = 10;
+        }
+        auto row = [&](uint64_t ic, const art::Piece* art, const std::string& name, float& yy) {
+            if (ic) {
+                shown.push_back(ic);
+                icon(d, ic, at(33, yy + 24), px(48));
+            } else if (art) {
+                pieceIn(d, *art, at(9, yy), at(57, yy + 48));
+            }
+            left(g_text, 13, kName, 65, yy + 24, name);
+            yy += 54;
+        };
+        if (w.enabled) {
+            left(g_text, 12, kSection, 11, y + 8, "Current Weather:");
+            y += 18;
+            if (w.icon[0] || !w.nameJson[0].empty()) row(w.icon[0], nullptr, found(w.nameJson[0]), y);
+            if (w.icon[1] || !w.nameJson[1].empty()) row(w.icon[1], nullptr, found(w.nameJson[1]), y);
+            left(g_text, 12, kSection, 11, y + 4, "Today's Forecast:");
+            y += 14;
+            if (w.icon[2] || !w.nameJson[2].empty()) row(w.icon[2], nullptr, found(w.nameJson[2]), y);
+            y += 6;
+        }
+        if (w.phase >= 0 && w.phase < 8) {
+            static const char* const kPhases[8] = {"New Moon", "Waxing Crescent", "First Quarter", "Waxing Gibbous",
+                                                   "Full Moon", "Waning Gibbous", "Third Quarter", "Waning Crescent"};
+            const art::Piece* moons[8] = {&art::kMoon0, &art::kMoon1, &art::kMoon2, &art::kMoon3,
+                                          &art::kMoon4, &art::kMoon5, &art::kMoon6, &art::kMoon7};
+            left(g_text, 12, kSection, 11, y + 8, "Current Lunar Phase:");
+            y += 18;
+            const std::string effect = w.effectJson.empty() ? std::string() : found(w.effectJson);
+            pieceIn(d, *moons[w.phase], at(9, y), at(57, y + 48));
+            if (effect.empty()) {
+                left(g_text, 13, kName, 65, y + 24, kPhases[w.phase]);
+                y += 54;
+            } else {
+                left(g_text, 13, kName, 65, y + 10, kPhases[w.phase]);
+                const float wrap = px(247 - 65 - 10);
+                ImVec2 es = g_text->CalcTextSizeA(px(10), FLT_MAX, wrap, effect.c_str());
+                d->AddText(g_text, px(10), at(65, y + 20), kSection, effect.c_str(), nullptr, wrap);
+                y += std::max(54.0f, 22 + es.y / (k * S) + 6);
+            }
+        }
+        if (w.eco >= 0 && w.eco <= 2) {
+            left(g_text, 12, kSection, 17, y + 8, "Eco Footprint");
+            y += 22;
+            // EcoProgressBarContainer: the frame, the state's fill from the middle (neutral) or the end, its handle.
+            const float bx0 = 27, bx1 = 212, by0 = y + 4, by1 = y + 24, mid = (bx0 + bx1) / 2, p = std::max(0.0f, std::min(1.0f, w.ecoProgress));
+            pieceIn(d, art::kEcoBack, at(bx0, by0), at(bx1, by1));
+            float hx = mid;
+            if (w.eco == 1) {
+                pieceIn(d, art::kEcoNeutralGreen, at(bx0, by0), at(mid, by1));
+                pieceIn(d, art::kEcoNeutralIndustrial, at(mid, by0), at(bx1, by1));
+                hx = bx0 + (bx1 - bx0) * p;
+            } else if (w.eco == 0) {
+                pieceIn(d, art::kEcoGreen, at(bx0, by0), at(bx0 + (bx1 - bx0) * (1 - p), by1));
+                hx = bx0 + (bx1 - bx0) * (1 - p);
+            } else {
+                pieceIn(d, art::kEcoIndustrial, at(bx0, by0), at(bx0 + (bx1 - bx0) * p, by1));
+                hx = bx0 + (bx1 - bx0) * p;
+            }
+            nine(d, art::kEcoFrame, at(bx0 - 4, by0 - 4), at(bx1 + 4, by1 + 4), 45, 45, 45, 45, k * S / 3);
+            if (w.ecoDelta > 0) {  // heading industrial: the yellow arrow at the right end
+                const ImVec2 c = at(bx1 - 10, (by0 + by1) / 2);
+                d->AddTriangleFilled({c.x - 4 * S, c.y - 5 * S}, {c.x - 4 * S, c.y + 5 * S}, {c.x + 5 * S, c.y}, IM_COL32(240, 196, 40, 255));
+            } else if (w.ecoDelta < 0) {
+                const ImVec2 c = at(bx0 + 10, (by0 + by1) / 2);
+                d->AddTriangleFilled({c.x + 4 * S, c.y - 5 * S}, {c.x + 4 * S, c.y + 5 * S}, {c.x - 5 * S, c.y}, IM_COL32(96, 196, 72, 255));
+            }
+            const art::Piece& handle = w.eco == 0 ? art::kEcoHandleGreen : w.eco == 2 ? art::kEcoHandleIndustrial : art::kEcoHandleNeutral;
+            pieceIn(d, handle, at(hx - 20, (by0 + by1) / 2 - 20), at(hx + 20, (by0 + by1) / 2 + 20));
+            y = by1 + 6;
+            centred(g_title, 13, kName, y + 8, found(w.ecoNameJson));
+            y += 16;
+            const std::string text = found(w.ecoTextJson);
+            const float wrap = px(220);
+            ImVec2 ts = g_text->CalcTextSizeA(px(10), FLT_MAX, wrap, text.c_str());
+            d->AddText(g_text, px(10), {at(123.5f, 0).x - ts.x / 2, at(0, y).y}, kGrey, text.c_str(), nullptr, wrap);
+            y += ts.y / (k * S) + 8;
+        }
+        lastHeight = y + 6;
+    }
+    d->PopClipRect();
+    const float total = (height + 4) * k, room = bottom - top;
+    if (swipeY) g_mySimScroll = drag.sim - dy;
+    g_mySimScroll = std::max(0.0f, std::min(std::max(0.0f, total - room), g_mySimScroll));
 }
 
 // The game's phone screen (SimInfoTray: PhonePanel's PhoneCategoryScreen and
@@ -3488,61 +3887,7 @@ Action drawPhone(ImDrawList* d, int* index) {
         if (button(at(96, 361), at(129, 392), &over)) g_phoneSettingsOpen = false;
         piece(d, over ? art::kPhoneBackOver : art::kPhoneBack, at(96 + 16.5f, 361 + 15.5f), A);
     } else if (g_weatherOpen) {
-        // Weather (user 2026-10-23 21:35Z: the clock's hover, bigger): the season, the temperature and what falls
-        // now, then the forecast a day a card (the game's calendar icons, names and descriptions).
-        static ULONGLONG asked = 0;
-        const ULONGLONG now = GetTickCount64();
-        if (now - asked > 2000 && action == kNone) action = kMySimOpened, asked = now;
-        const SimWeather& w = g_sim.weather;
-        d->AddRectFilled(at(0, 0), at(230, 400), IM_COL32(40, 110, 190, 235));
-        pieceIn(d, art::kPhoneTint, at(0, 0), at(230, 44));
-        {
-            const char* head = "Weather";
-            ImVec2 hs = g_title->CalcTextSizeA(34, FLT_MAX, 0, head);
-            shadowText(d, g_title, 34, {at(115, 24).x - hs.x / 2, at(115, 24).y - hs.y / 2}, kWhite, head);
-        }
-        static const char* const kSeasons[4] = {"Summer", "Fall", "Winter", "Spring"};
-        static const char* const kTemps[6] = {"Freezing", "Cold", "Cool", "Warm", "Hot", "Burning"};
-        float y = 52;
-        if (!w.sent) {
-            ImVec2 ns = g_text->CalcTextSizeA(26, FLT_MAX, 0, "...");
-            shadowText(d, g_text, 26, {at(115, 150).x - ns.x / 2, at(115, 150).y - ns.y / 2}, kWhite, "...");
-        } else if (!w.pack) {
-            const char* none = "Weather comes with Seasons.";
-            ImVec2 ns = g_text->CalcTextSizeA(24, FLT_MAX, 0, none);
-            shadowText(d, g_text, 24, {at(115, 150).x - ns.x / 2, at(115, 150).y - ns.y / 2}, kWhite, none);
-        } else {
-            std::string now1 = w.season >= 0 && w.season < 4 ? kSeasons[w.season] : "";
-            if (!w.temperature.empty()) {
-                const int t = std::atoi(w.temperature.c_str()) + 3;
-                if (t >= 0 && t < 6) now1 += now1.empty() ? kTemps[t] : std::string(", ") + kTemps[t];
-            }
-            if (w.snow) now1 += ", snowing";
-            else if (w.rain) now1 += ", raining";
-            ImVec2 ns = g_title->CalcTextSizeA(30 * g_phoneText, FLT_MAX, 0, now1.c_str());
-            shadowText(d, g_title, 30 * g_phoneText, {at(115, 0).x - ns.x / 2, at(0, y).y}, kWhite, now1.c_str());
-            y += 16 * g_phoneText + 6;
-            static const char* const kDays[7] = {"Sun.", "Mon.", "Tue.", "Wed.", "Thu.", "Fri.", "Sat."};
-            const float small = 18 * g_phoneText, wrap = (224 - 6 - 56) * S;
-            d->PushClipRect(at(0, 48), at(230, 354), true);
-            for (const auto& day : w.forecast) {
-                const std::string& text = day.text;
-                const float th = g_text->CalcTextSizeA(small, FLT_MAX, wrap, text.c_str()).y / S;
-                const float h = std::max(52.0f, 22 + th + 6);
-                if (y > 354) break;
-                d->AddRectFilled(at(6, y), at(224, y + h), IM_COL32(255, 255, 255, 228), 6 * S);
-                if (day.icon) {
-                    shown.push_back(day.icon);
-                    icon(d, day.icon, at(30, y + h / 2), 44 * S);
-                }
-                std::string head = day.day == 0 ? "Today" : day.day == 1 ? "Tomorrow" : kDays[((g_day.load() % 7 + 7) + day.day) % 7];
-                head += "  " + day.name;
-                d->AddText(g_title, 22 * g_phoneText, at(58, y + 4), IM_COL32(9, 73, 171, 255), head.c_str());
-                d->AddText(g_text, small, at(58, y + 6 + 11 * g_phoneText), IM_COL32(50, 60, 80, 255), text.c_str(), nullptr, wrap);
-                y += h + 5;
-            }
-            d->PopClipRect();
-        }
+        drawWeather(d, r, button, shown, action, swipeY, dy, drag);
         bool over = false;
         if (button(at(96, 361), at(129, 392), &over)) g_weatherOpen = false;
         piece(d, over ? art::kPhoneBackOver : art::kPhoneBack, at(96 + 16.5f, 361 + 15.5f), A);
@@ -3733,7 +4078,7 @@ Action drawPhone(ImDrawList* d, int* index) {
                 if (node == -7) {
                     action = kSimsForever;
                 } else if (node == -6) {
-                    g_weatherOpen = true;
+                    g_weatherOpen = true, g_mySimScroll = 0;
                     action = kMySimFresh;
                     g_phoneDataUntil = GetTickCount64() + 1500;
                 } else if (node == -5) {
@@ -4604,15 +4949,24 @@ void setPhoneSim(const char* data, size_t size) {
             j.companyJson = f[8];
             j.shift = f[9];
             c.jobs.push_back(j);
-        } else if (f[0] == "wx" && f.size() >= 6) {
-            c.weather.sent = true;
-            c.weather.season = std::atoi(f[1].c_str());
-            c.weather.temperature = f[2];
-            c.weather.rain = f[3] == "1";
-            c.weather.snow = f[4] == "1";
-            c.weather.pack = f[5] == "1";
-        } else if (f[0] == "fc" && f.size() >= 5 && c.weather.forecast.size() < 7) {
-            c.weather.forecast.push_back({std::atoi(f[1].c_str()), std::strtoull(f[2].c_str(), nullptr, 10), f[3], f[4]});
+        } else if (f[0] == "wx2" && f.size() >= 18) {
+            SimWeather& w = c.weather;
+            w.sent = true;
+            w.season = std::atoi(f[1].c_str());
+            w.day = std::atoi(f[2].c_str());
+            w.length = std::atoi(f[3].c_str());
+            for (int k = 0; k < 3; ++k) {
+                w.icon[k] = std::strtoull(f[4 + 2 * k].c_str(), nullptr, 10);
+                w.nameJson[k] = f[5 + 2 * k];
+            }
+            w.phase = std::atoi(f[10].c_str());
+            w.effectJson = f[11];
+            w.eco = std::atoi(f[12].c_str());
+            w.ecoProgress = static_cast<float>(std::atof(f[13].c_str()));
+            w.ecoDelta = static_cast<float>(std::atof(f[14].c_str()));
+            w.ecoNameJson = f[15];
+            w.ecoTextJson = f[16];
+            w.enabled = f[17] == "1";
         } else if (f[0] == "biz" && f.size() >= 8 && c.businesses.size() < 10) {
             SimBusiness b;
             b.type = std::atoi(f[1].c_str());
@@ -4641,6 +4995,8 @@ void setPhoneSim(const char* data, size_t size) {
             it.name = f[3];
             it.count = std::atoi(f[4].c_str());
             it.value = std::atoi(f[5].c_str());
+            it.order = static_cast<int>(c.inventory.size());
+            if (f.size() >= 8) it.favorite = f[6] == "1", it.locked = f[7] == "1";
             c.inventory.push_back(it);
         } else if (f[0] == "ct" && f.size() >= 9 && c.contacts.size() < 60) {
             SimContact k;
@@ -4652,6 +5008,7 @@ void setPhoneSim(const char* data, size_t size) {
             k.friendBitJson = f[6];
             k.romanceBitJson = f[7];
             k.here = f[8] == "1";
+            if (f.size() >= 10) k.familyBitJson = f[9];
             c.contacts.push_back(k);
         } else if (f[0] == "cd" && f.size() >= 4) {
             c.contact.index = std::atoi(f[1].c_str());
@@ -4824,6 +5181,7 @@ void setPopupContent(const char* data, size_t size) {
 }
 
 std::vector<int> listPicked() { return g_listPicked; }
+std::vector<int> inventoryPicked() { return g_invPicked; }
 
 void setTexts(int kind, const char* data, size_t size) {
     if (kind < 0 || kind >= kKinds) return;
