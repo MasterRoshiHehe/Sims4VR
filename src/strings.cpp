@@ -1098,6 +1098,10 @@ void loadAll() {
 
 }  // namespace
 
+bool unzlib(const unsigned char* data, size_t size, std::vector<unsigned char>& out, size_t expected) {
+    return inflate(data, size, out, expected);
+}
+
 void start() {
 #ifdef _WIN32
     if (g_started.exchange(true)) return;

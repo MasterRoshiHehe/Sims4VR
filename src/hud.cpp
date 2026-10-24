@@ -491,15 +491,19 @@ bool g_failed = false;
 
 // The embedded art into a texture.
 bool loadArt(ID3D11Device* device) {
-    const unsigned char* p = s4vr_hud_art;
-    const size_t size = static_cast<size_t>(s4vr_hud_art_end - s4vr_hud_art);
-    if (size < 8) return false;
-    uint32_t w, h;
-    std::memcpy(&w, p, 4);
-    std::memcpy(&h, p + 4, 4);
+    const size_t packed = static_cast<size_t>(s4vr_hud_art_end - s4vr_hud_art);
+    if (packed < 12) return false;
+    uint32_t w, h, runs;
+    std::memcpy(&w, s4vr_hud_art, 4);
+    std::memcpy(&h, s4vr_hud_art + 4, 4);
+    std::memcpy(&runs, s4vr_hud_art + 8, 4);
     if (w != art::kAtlasW || h != art::kAtlasH) return false;
+    std::vector<unsigned char> unpacked;
+    if (!strings::unzlib(s4vr_hud_art + 12, packed - 12, unpacked, runs) || unpacked.size() != runs) return false;
+    const unsigned char* p = unpacked.data();
+    const size_t size = unpacked.size();
     std::vector<uint32_t> pixels(static_cast<size_t>(w) * h, 0);
-    size_t at = 8, i = 0;
+    size_t at = 0, i = 0;
     while (at + 4 <= size && i < pixels.size()) {
         uint32_t n;
         std::memcpy(&n, p + at, 4);

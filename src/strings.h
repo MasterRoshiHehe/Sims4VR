@@ -9,6 +9,8 @@
 // in the Mods folder (a mod wins over the game on the same key). Python sends
 // a LocalizedString as JSON and resolve() fills in its tokens: Sim names,
 // he/she, numbers, money, object names, nested strings.
+#include <vector>
+
 namespace s4vr::strings {
 
 // Starts loading the strings (once; any thread).
@@ -21,5 +23,8 @@ bool ready();
 // become new lines, <li> a bullet). "" when the hash isn't known or the
 // strings aren't loaded yet.
 std::string resolve(const std::string& json);
+
+// zlib data to out (expected = its unpacked size). False when broken.
+bool unzlib(const unsigned char* data, size_t size, std::vector<unsigned char>& out, size_t expected);
 
 }  // namespace s4vr::strings
