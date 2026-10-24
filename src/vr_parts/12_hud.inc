@@ -753,7 +753,8 @@ static void updateHud(const armik::Hand hands[2], bool firstPerson, bool headOk,
         HudSheet& pause = g_hud[kHudPause];
         pause.onTop = true;
         static HeldPlace anchor;
-        if (c.wristPause && (g_paused.load() || previewSheet() == kHudPause) && !asleep) {
+        // Never in build/buy (user 2026-10-24 13:33Z): the game is always paused there.
+        if (c.wristPause && (g_paused.load() || previewSheet() == kHudPause) && !asleep && !g_buildBuy) {
             XrVector3f aEye, dir;
             holdPlace(anchor, eye, flat, !pause.m.active, "Pause symbol", aEye, dir);
             float distance = std::max(0.3f, c.popupDistance);
