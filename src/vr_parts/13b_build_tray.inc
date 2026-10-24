@@ -7,7 +7,8 @@
 
 // Where it sits on the tablet's screen: 0..1 from its top left. Its width follows from the height and the
 // screen's shape (the atlas area's shape kept).
-static constexpr float kTrayRight = 0.995f, kTrayTop = 0.15f, kTrayBottom = 0.82f;
+// [tablet] tray_scale (live) sizes it: 1 = two thirds of the screen's height, centred a little above the middle.
+static constexpr float kTrayRight = 0.995f, kTrayMiddle = 0.485f, kTrayHeight = 0.67f;
 
 static bool trayOn(int tool) { return (g_trayLit >> tool) & 1; }
 static void setTrayLit(int tool, bool on) {
@@ -18,16 +19,17 @@ static void setTrayLit(int tool, bool on) {
 // Every frame the tablet is drawn: the tray on its glass (p3's overlay) and its sheet for pokes and the laser.
 static void placeTray(phone3d::Phone& p3, const XrVector3f& centre, const XrVector3f& x, const XrVector3f& y,
                       const XrVector3f& z, float menuW, float menuH) {
-    const float h = kTrayBottom - kTrayTop;
+    const float h = std::min(0.96f, kTrayHeight * g_config.tabletTrayScale);
+    const float top = std::max(0.02f, std::min(0.98f - h, kTrayMiddle - h / 2)), bottom = top + h;
     const float w = h * menuH / menuW * hud::kBuildTray.w / hud::kBuildTray.h;
     const float x0 = kTrayRight - w, x1 = kTrayRight;
     p3.overlay = true;
-    p3.overlayDst[0] = x0, p3.overlayDst[1] = kTrayTop, p3.overlayDst[2] = x1, p3.overlayDst[3] = kTrayBottom;
+    p3.overlayDst[0] = x0, p3.overlayDst[1] = top, p3.overlayDst[2] = x1, p3.overlayDst[3] = bottom;
     p3.overlayCrop[0] = hud::kBuildTray.x / hud::kWidth;
     p3.overlayCrop[1] = hud::kBuildTray.y / hud::kHeight;
     p3.overlayCrop[2] = (hud::kBuildTray.x + hud::kBuildTray.w) / hud::kWidth;
     p3.overlayCrop[3] = (hud::kBuildTray.y + hud::kBuildTray.h) / hud::kHeight;
-    const float lx = ((x0 + x1) / 2 - 0.5f) * menuW, ly = (0.5f - (kTrayTop + kTrayBottom) / 2) * menuH, lz = 0.0005f;
+    const float lx = ((x0 + x1) / 2 - 0.5f) * menuW, ly = (0.5f - (top + bottom) / 2) * menuH, lz = 0.0005f;
     const XrVector3f at{centre.x + x.x * lx + y.x * ly + z.x * lz, centre.y + x.y * lx + y.y * ly + z.y * lz,
                         centre.z + x.z * lx + y.z * ly + z.z * lz};
     static bool logged = false;
@@ -36,7 +38,7 @@ static void placeTray(phone3d::Phone& p3, const XrVector3f& centre, const XrVect
         LOG("Build tray: on the tablet, %.1f x %.1f cm", w * menuW * 100, h * menuH * 100);
     }
     placeHud(g_traySheet, at, x, y, w * menuW, hud::kBuildTray);
-    clientdlg::setTabletUiScale(true);  // the game's UI as large as it goes while the tablet is out
+    clientdlg::setTabletUiScale(g_config.tabletUiScale);  // the game's UI at the tablet's size ([tablet] ui_scale, live)
 }
 
 // Raise / lower / bigger / smaller work with bb.moveobjects on (the game's controller build mode only sends them
@@ -94,7 +96,7 @@ static void trayTool(int tool) {
 static void hideTray() {
     if (!g_traySheet.m.active) return;
     hideHud(g_traySheet);
-    clientdlg::setTabletUiScale(false);
+    clientdlg::setTabletUiScale(0);
     setTrayLit(hud::kTrayAlt, false);
     setTrayLit(hud::kTrayShift, false);
     LOG("Build tray: away");

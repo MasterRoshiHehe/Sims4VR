@@ -99,17 +99,19 @@ Action drawBuildTray(const Frame& f, int* index) {
     ImDrawList* d = ImGui::GetBackgroundDrawList();
     const Rect r = kBuildTray;
     uikit::dialogPanel(d, {r.x, r.y}, {r.x + r.w, r.y + r.h});
-    const float pad = 14, tabW = 136;
+    // The tray sits at the tablet's far right (user 2026-10-24 03:14Z): its tabs down the right edge, the
+    // category's buttons to their left.
+    const float pad = 14, tabW = 136, tabX = r.x + r.w - pad - tabW;
     Action action = kNone;
     // The category tabs, top to bottom, and under them leaving first person (user 2026-10-24 02:02Z).
     const float tabH = (r.h - 2 * pad) / (kTrayCategoryCount + 1);
     for (int k = 0; k < kTrayCategoryCount; ++k) {
-        ImVec2 a{r.x + pad, r.y + pad + k * tabH}, b{r.x + pad + tabW, r.y + pad + (k + 1) * tabH - 6};
+        ImVec2 a{tabX, r.y + pad + k * tabH}, b{tabX + tabW, r.y + pad + (k + 1) * tabH - 6};
         if (trayButton(d, 100 + k, kTrayCategories[k].name, kTrayCategories[k].icon, a, b, k == g_trayCategory, false)) g_trayCategory = k;
     }
     {
         const int k = kTrayCategoryCount;
-        ImVec2 a{r.x + pad, r.y + pad + k * tabH}, b{r.x + pad + tabW, r.y + pad + (k + 1) * tabH - 6};
+        ImVec2 a{tabX, r.y + pad + k * tabH}, b{tabX + tabW, r.y + pad + (k + 1) * tabH - 6};
         if (trayButton(d, 120, "Exit first person", &art::kTrayExitFirstPerson, a, b, false, false)) {
             action = kBuildTool;
             if (index) *index = kTrayExitFirstPerson;
@@ -117,7 +119,7 @@ Action drawBuildTray(const Frame& f, int* index) {
     }
     // Its buttons, two columns, rows as tall as twelve would allow.
     const TrayCategory& cat = kTrayCategories[g_trayCategory];
-    const float x0 = r.x + pad + tabW + 10, colW = (r.x + r.w - pad - x0 - 8) / 2, rowH = (r.h - 2 * pad) / 6;
+    const float x0 = r.x + pad, colW = (tabX - 10 - x0 - 8) / 2, rowH = (r.h - 2 * pad) / 6;
     for (int i = 0; i < cat.count; ++i) {
         const TrayButton& t = cat.buttons[i];
         ImVec2 a{x0 + (i % 2) * (colW + 8), r.y + pad + (i / 2) * rowH};

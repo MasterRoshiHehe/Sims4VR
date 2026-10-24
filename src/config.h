@@ -339,6 +339,8 @@ struct Config {
     float tabletDepth = 0.008f;
     float tabletBezel = 0.010f;   // the dark border around its screen
     float tabletHold = 0.035f;    // how far in from its side edge the hand holds it (metres)
+    float tabletUiScale = 1.5f;   // the game's UI scale while the tablet is out (Options' UI Scale, not saved); 0 = the player's own
+    float tabletTrayScale = 1.0f; // the tool tray's size (1 = two thirds of the screen's height)
 
     // Voice: your mic moves your Sim's mouth (voice.cpp)
     bool voiceMic = false;         // [voice] mic = true / false
