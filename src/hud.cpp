@@ -317,8 +317,9 @@ struct SimSouls {  // Soul's Journey ("sj", "sjg": phonesim._souls_journey)
     int rank = 0;
     float progress = 0;  // in the rank, 0..1
     std::string first;
-    struct Goal { std::string text; bool done = false; int value = 0, goal = 1; bool show = true; };
+    struct Goal { std::string text; bool done = false; int value = 0, goal = 1; bool show = true; std::string tip; };
     std::vector<Goal> goals;
+    std::string tips[12];  // "sjt": 0-7 the pips', 8 the ghost lock's, 9-11 the help button's parts
 };
 struct SimClub {  // Social Groups: one club ("club", "cmem", "crule")
     uint64_t icon = 0;
@@ -2860,6 +2861,14 @@ void drawMySim(ImDrawList* d, const Rect& r, Button& button, std::vector<uint64_
         // ghost), its coloured dashes lit up to the rank, the nine pips round it (lit from their rank; pip 9 the
         // ghost lock, living only), the soul in the middle; then "<name>'s Bucket List" and the bucket list's goals.
         const SimSouls& sj = g_sim.souls;
+        // The hover popups (user 2026-10-24 14:26Z): the game's tooltips on the pips, the help button and the goals
+        // (TooltipExtension: title and description), drawn last as the game's tooltip card under (or over) the item.
+        std::string tipTitle, tipText;
+        float tipBelow = 0, tipAbove = 0;
+        auto tipAt = [&](float below, float above, const std::string& title, const std::string& text) {
+            if (title.empty() && text.empty()) return;
+            tipTitle = title, tipText = text, tipBelow = below, tipAbove = above;
+        };
         const float q = 0.75f;  // phone units a ring pixel (the ring's picture is 202 x 170)
         const float bgH = (right - left) * 280 / 354;
         pieceIn(d, sj.ghost ? art::kSjBackGhost : art::kSjBack, at(left, y), at(right, y + bgH));
@@ -2886,7 +2895,28 @@ void drawMySim(ImDrawList* d, const Rect& r, Button& button, std::vector<uint64_
             const float rad = kPipAngle[n] * 3.14159265f / 180;
             const float px = 102 + 80 * std::cos(rad), py = 95 + 80 * std::sin(rad);
             const art::Piece& pip = n == 8 ? art::kSjPip9 : sj.rank > n ? *kOn[n] : *kOff[n];
+            bool pipOver = false;
+            inList(ring(px - 14, py - 14), ring(px + 14, py + 14), &pipOver);
+            if (pipOver) tipAt(ring(px, py + 16).y, ring(px, py - 16).y, std::string(), found(sj.tips[n]));
             pieceIn(d, pip, ring(px - 18, py - 18), ring(px + 18, py + 18));
+        }
+        {
+            // The panel's help button (its "?", the help component): the living or ghost help, then the packs' parts.
+            const ImVec2 hc = at(right - 11, y + 11);
+            bool helpOver = false;
+            inList({hc.x - 9 * S, hc.y - 9 * S}, {hc.x + 9 * S, hc.y + 9 * S}, &helpOver);
+            d->AddCircleFilled(hc, 7.5f * S, helpOver ? IM_COL32(92, 170, 240, 255) : IM_COL32(52, 132, 214, 255));
+            d->AddCircle(hc, 7.5f * S, IM_COL32(255, 255, 255, 230), 0, 0.9f * S);
+            ImVec2 qs = g_title->CalcTextSizeA(30, FLT_MAX, 0, "?");
+            d->AddText(g_title, 30, {hc.x - qs.x / 2, hc.y - qs.y / 2}, kWhite, "?");
+            if (helpOver) {
+                std::string help = found(sj.tips[9]);
+                for (int i = 10; i < 12; ++i) {
+                    const std::string& more = found(sj.tips[i]);
+                    if (!more.empty()) help += (help.empty() ? "" : "\n\n") + more;
+                }
+                tipAt(hc.y + 9 * S, hc.y - 9 * S, std::string(), help);
+            }
         }
         y += bgH + 6;
         // "<name>'s Bucket List" (living) or "<name>'s Unfinished Business" (ghost), then the goals as cards.
@@ -2905,6 +2935,9 @@ void drawMySim(ImDrawList* d, const Rect& r, Button& button, std::vector<uint64_
             const float wrap = (right - left - 18 - cw) * S;
             const float th = g_text->CalcTextSizeA(20 * g_phoneText, FLT_MAX, wrap, text.c_str()).y / S;
             const float h = th + 10;
+            bool goalOver = false;
+            inList(at(left, y), at(right, y + h), &goalOver);
+            if (goalOver) tipAt(at(0, y + h).y, at(0, y).y, text, found(g.tip));
             d->AddRectFilled(at(left, y), at(right, y + h), IM_COL32(255, 255, 255, g.done ? 200 : 240), 5 * S);
             d->AddRect(at(left, y), at(right, y + h), IM_COL32(205, 214, 228, 255), 5 * S, 0, 0.8f * S);
             d->AddText(g_text, 20 * g_phoneText, at(left + 6, y + 5), g.done ? IM_COL32(120, 128, 140, 255) : kGoalBlue,
@@ -2919,6 +2952,28 @@ void drawMySim(ImDrawList* d, const Rect& r, Button& button, std::vector<uint64_
             y += h + 3;
         }
         y += 4;
+        if (!tipTitle.empty() || !tipText.empty()) {
+            // The game's tooltip card (as the contact page's): white to light grey, a thin border, the title
+            // navy and bold, the description under it; under the item, or over it when there's no room.
+            const float pad = 6 * S, wrap = (right - left - 12) * S, tsz = 20 * g_phoneText, dsz = 18 * g_phoneText;
+            const ImVec2 th = tipTitle.empty() ? ImVec2{0, 0} : g_title->CalcTextSizeA(tsz, FLT_MAX, wrap, tipTitle.c_str());
+            const ImVec2 dh = tipText.empty() ? ImVec2{0, 0} : g_text->CalcTextSizeA(dsz, FLT_MAX, wrap, tipText.c_str());
+            const float h = pad * 2 + th.y + dh.y + (th.y > 0 && dh.y > 0 ? 3 * S : 0);
+            const float lo = at(0, top).y, hi = at(0, bottom).y;
+            float ty = tipBelow + 2 * S;
+            if (ty + h > hi) ty = std::max(lo, tipAbove - 2 * S - h);
+            const ImVec2 a = {at(left, 0).x, ty}, b = {at(right, 0).x, ty + h};
+            d->AddRectFilled({a.x + 1.5f * S, a.y + 1.5f * S}, {b.x + 1.5f * S, b.y + 1.5f * S}, IM_COL32(0, 0, 0, 60), 4 * S);
+            d->AddRectFilledMultiColor(a, b, IM_COL32(255, 255, 255, 252), IM_COL32(255, 255, 255, 252), IM_COL32(234, 238, 244, 252),
+                                       IM_COL32(234, 238, 244, 252));
+            d->AddRect(a, b, IM_COL32(200, 208, 220, 255), 4 * S, 0, 0.8f * S);
+            float ly = a.y + pad;
+            if (th.y > 0) {
+                d->AddText(g_title, tsz, {a.x + pad, ly}, IM_COL32(28, 44, 82, 255), tipTitle.c_str(), nullptr, wrap);
+                ly += th.y + 3 * S;
+            }
+            if (dh.y > 0) d->AddText(g_text, dsz, {a.x + pad, ly}, IM_COL32(36, 108, 196, 255), tipText.c_str(), nullptr, wrap);
+        }
     } else if (k == kSimSimology) {
         // Simology (SimInfoSummaryPanel, mark 2026-10-24 04-46-51): the name field, then green section headers
         // (press to fold) over two-column grids of the game's trait cells (personality white, reward sunburst,
@@ -5303,7 +5358,11 @@ void setPhoneSim(const char* data, size_t size) {
             c.souls.first = f[4];
             c.souls.complete = f[5] == "1";
         } else if (f[0] == "sjg" && f.size() >= 6 && c.souls.goals.size() < 20) {
-            c.souls.goals.push_back({f[1], f[2] == "1", std::atoi(f[3].c_str()), std::atoi(f[4].c_str()), f[5] == "1"});
+            c.souls.goals.push_back({f[1], f[2] == "1", std::atoi(f[3].c_str()), std::atoi(f[4].c_str()), f[5] == "1",
+                                     f.size() >= 7 ? f[6] : std::string()});
+        } else if (f[0] == "sjt" && f.size() >= 3) {
+            const int which = std::atoi(f[1].c_str());
+            if (which >= 0 && which < 12) c.souls.tips[which] = f[2];
         } else if (f[0] == "sy" && f.size() >= 5 && c.simology.size() < 120) {
             c.simology.push_back({f[1].empty() ? 'T' : f[1][0], std::atoi(f[2].c_str()), std::strtoull(f[3].c_str(), nullptr, 10), f[4]});
         } else if (f[0] == "inv" && f.size() >= 6 && c.inventory.size() < 120) {

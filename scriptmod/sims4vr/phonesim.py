@@ -694,6 +694,7 @@ def _souls_journey(sim_info, records):
         last = 9
     complete = rank >= (last if ghost else last - 1)
     records.append('sj\x1f{}\x1f{}\x1f{:.3f}\x1f{}\x1f{}'.format(int(ghost), rank, progress, sim_info.first_name, int(complete)))
+    _souls_tips(sim_info, stat_type, ghost, records)
     tracker = getattr(sim_info, 'aspiration_tracker', None)
     if tracker is None:
         return
@@ -711,11 +712,53 @@ def _souls_journey(sim_info, records):
             value = tracker.get_last_updated_value_for_objective(objective) if hasattr(
                 tracker, 'get_last_updated_value_for_objective') else None
             value = goal if done else float(value or 0)
-            records.append('sjg\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}'.format(
-                _text(getattr(objective, 'display_text', None), sim_info), int(done), int(value), int(goal),
-                int(bool(getattr(objective, 'show_progress', True)))))
+            records.append('sjg\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}'.format(
+                _text_for(getattr(objective, 'display_text', None), sim_info, int(goal)), int(done), int(value), int(goal),
+                int(bool(getattr(objective, 'show_progress', True))),
+                _text_for(getattr(objective, 'tooltip', None), sim_info, int(goal))))
         except Exception as e:
             _log_error('a bucket list goal', e)
+
+
+# The panel's tooltips (UnfinishedBusinessPanel / RankedStatUnfinishedBusinessMeter, KeysGP).
+_SJ_GHOST_LOCK = 3679656623
+_SJ_HELP, _SJ_HELP_EP05, _SJ_HELP_EP13, _SJ_GHOST_HELP = 3028011275, 1610422057, 1627199644, 701526614
+
+
+def _souls_tips(sim_info, stat_type, ghost, records):
+    """"sjt" \x1f <which> \x1f <text>: 0-7 the pips' (each rank's first level's event tooltip, as RankedStatisticData.GetRank),
+    8 the ninth pip's ghost lock, 9-11 the help button's parts (living or ghost, then Seasons' and Growing Together's)."""
+    from sims4.localization import _create_localized_string
+    try:
+        levels = len(stat_type.get_level_list())
+        rank, seen = 0, set()
+        for level in range(levels):
+            data = stat_type.event_data.get(level)
+            if data is not None and data.rank_up:
+                rank += 1
+            if rank in seen or rank > 7:
+                continue
+            seen.add(rank)
+            tip = getattr(data, 'tooltip', None) if data is not None else None
+            text = _text_for(tip, sim_info, sim_info)
+            if text:
+                records.append('sjt\x1f{}\x1f{}'.format(rank, text))
+    except Exception as e:
+        _log_error('the soul ranks\' tooltips', e)
+    parts = [(8, _SJ_GHOST_LOCK), (9, _SJ_GHOST_HELP if ghost else _SJ_HELP)]
+    try:
+        from sims4.common import Pack, is_available_pack
+        if is_available_pack(Pack.EP05):
+            parts.append((10, _SJ_HELP_EP05))
+        if is_available_pack(Pack.EP13):
+            parts.append((11, _SJ_HELP_EP13))
+    except Exception as e:
+        _log_error('the packs', e)
+    for which, key in parts:
+        try:
+            records.append('sjt\x1f{}\x1f{}'.format(which, _loc(_create_localized_string(key, sim_info))))
+        except Exception as e:
+            _log_error('a Soul\'s Journey tooltip', e)
 
 
 def _clubs(sim_info, records):
