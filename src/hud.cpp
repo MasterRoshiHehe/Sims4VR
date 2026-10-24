@@ -3650,7 +3650,24 @@ Action drawPhone(ImDrawList* d, int* index) {
         // Our apps: our own icons in the game's phone app style (tools/make_phone_icons.py).
         const art::Piece* own = node == -1 ? &art::kAppSettings : node == -2 ? &art::kAppCalendar : node == -3 ? &art::kAppBuild
                               : node == -10 ? &art::kAppGameOptions : node == -11 ? &art::kAppPhoneOptions
-                              : node == -12 ? &art::kAppVrOptions : node == -4 ? &art::kAppMySim : node == -5 ? &art::kAppRelationships : node == -6 ? &art::kAppWeather : node == -7 ? &art::kAppSimsForever : node == -15 ? &art::kAppGodView : nullptr;
+                              : node == -12 ? &art::kAppVrOptions : node == -4 ? &art::kAppMySim : node == -5 ? &art::kAppRelationships : node == -7 ? &art::kAppSimsForever : node == -15 ? &art::kAppGodView : nullptr;
+        if (node == -6) {
+            // Weather (user 2026-10-24 05:12Z: game art): the game's dark cell with the current weather's own large
+            // icon (WEATHER_TYPE_UI_INFO), the season's tooltip icon until the weather has been sent.
+            const float h = 30 * S;
+            nine(d, art::kPhonePill, {c.x - h, c.y - h}, {c.x + h, c.y + h}, 37, 37, 37, 37, A * 0.8f,
+                 IM_COL32(255, 255, 255, (tint >> 24) & 0xff));
+            const SimWeather& w = g_sim.weather;
+            if (w.sent && w.icon[0]) {
+                shown.push_back(w.icon[0]);
+                icon(d, w.icon[0], c, 50 * S);
+            } else {
+                const art::Piece* seasons[4] = {&art::kWxSeasonSummer, &art::kWxSeasonFall, &art::kWxSeasonWinter, &art::kWxSeasonSpring};
+                const art::Piece& p = *seasons[w.season >= 0 && w.season < 4 ? w.season : 3];
+                piece(d, p, c, 44 * S / std::max(p.w, p.h), tint);
+            }
+            return;
+        }
         if (own) {
             const float h = 32 * S;
             pieceIn(d, *own, {c.x - h, c.y - h}, {c.x + h, c.y + h}, tint);
@@ -4179,6 +4196,13 @@ Action drawPhone(ImDrawList* d, int* index) {
     apps.push_back(-4);  // My Sim (phonesim.py)
         apps.push_back(-5);  // Contacts (phonesim.py)
         apps.push_back(-6);  // Weather (phonesim.py)
+        {
+            // The Weather app's icon is the current weather: ask phonesim for it now and then while home shows.
+            static ULONGLONG weatherAsked = 0;
+            const ULONGLONG t = GetTickCount64();
+            if (action == kNone && (weatherAsked == 0 || t - weatherAsked > (g_sim.weather.sent ? 60000 : 5000)))
+                action = kMySimOpened, weatherAsked = t;
+        }
         if (simsforever::available()) apps.push_back(-7);  // Sims Forever: only with Sims 1 set up
         apps.insert(apps.end(), p.home.begin(), p.home.end());
         // Your order: the saved apps first in theirs, the rest after in the game's.
