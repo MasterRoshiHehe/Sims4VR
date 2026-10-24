@@ -21,7 +21,7 @@ static bool atRightHip(const armik::Hand& hand, int side, const grab::HeadPose& 
 static void phoneOpen(int hand) {
     g_phoneOut = true;
     g_phoneHand = hand;
-    g_phoneAsleep = true, g_phoneWokeAt = 0;
+    g_phoneAsleep = true, g_phoneWokeAt = 0, g_phoneSleptAt = 0;
     hud::setPhoneAsleep(true);
     g_phoneAwayAt = 0;
     g_tablet = g_buildBuy && g_config.tablet;
@@ -315,7 +315,7 @@ static void updatePhone(const armik::Hand& hand, int side) {
     p3.crop[3] = static_cast<float>(crop[1] + crop[3]) / H;
     p3.tiles = tiles;
     p3.wallpaper = g_tablet || app;  // the Sim's phone background (buildbuy.py) behind the game's phone menu
-    if (!g_tablet && g_phoneAsleep) dim = 1;
+    if (!g_tablet && g_phoneAsleep) dim = g_phoneSleptAt && now - g_phoneSleptAt < 150 ? std::max(dim, (now - g_phoneSleptAt) / 150.0f) : 1;
     else if (!g_tablet && g_phoneWokeAt && now - g_phoneWokeAt < 150) dim = std::max(dim, 1 - (now - g_phoneWokeAt) / 150.0f);
     p3.dim = g_tablet ? 0 : g_sims1Phone.on ? 1 : dim;  // Sims Forever: black under Sims 1's picture
     p3.free = g_sims1Phone.on;

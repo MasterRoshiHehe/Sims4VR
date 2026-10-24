@@ -358,7 +358,10 @@ std::mutex g_simMutex;
 SimContent g_simIn;      // g_simMutex
 bool g_simNew = false;   // g_simMutex
 SimContent g_sim;        // present thread
-std::atomic<int> g_phoneTaps{0};
+std::atomic<int> g_phoneTaps{0};    // presses (selects) on the phone's screen since the last phoneTaps()
+std::atomic<int> g_phoneHovers{0};  // a new thing pointed at (highlighted) on it since the last phoneHovers()
+std::atomic<int> g_phoneModeSet{-1};  // the Sounds screen's mode just picked (0 sound, 1 vibrate, 2 mute)
+uint32_t g_hoverKey = 0, g_hoverKeySeen = 0;  // the button under the pointer last frame / this frame (its rect)
 int g_mySimPage = 0;  // My Sim's page of apps (9 a page, as the phone's home)
 bool g_phoneSwipeX = false, g_phoneSwipeEnd = false;  // this frame's sideways swipe on the phone, and its end
 float g_phoneDx = 0;                                    // how far it went (phone units)  // presses on the phone's screen since the last phoneTaps()
@@ -3654,12 +3657,20 @@ Action drawPhone(ImDrawList* d, int* index) {
     const bool onSlider = drag.on && (drag.start.x - r.x) / S >= 203;  // a press on a list's slider moves its thumb (sliderFollow)
     const bool swipeX = swiping && drag.horizontal, swipeY = swiping && !drag.horizontal && !onSlider;
     g_phoneSwipeX = swipeX, g_phoneSwipeEnd = swipeEnded, g_phoneDx = dx;
+    g_hoverKey = g_hoverKeySeen, g_hoverKeySeen = 0;
     auto button = [&](ImVec2 a, ImVec2 b, bool* hover, bool* held = nullptr) {
         ImGui::SetCursorScreenPos(a);
         ImGui::PushID(3000 + id++);
         bool pressed = ImGui::InvisibleButton("phone", {std::max(1.0f, b.x - a.x), std::max(1.0f, b.y - a.y)});
         if (swiping || blocked) pressed = false;
         if (pressed) ++g_phoneTaps;  // the phone's beep (phonesound.click), never for a swipe or a held slider
+        if (!blocked && !swiping && ImGui::IsItemHovered()) {
+            // Pointed at something new: the phone's tap sound (user 2026-10-24 12:36Z), not while scrolling.
+            const uint32_t key = ((static_cast<uint32_t>(a.x - r.x) * 73856093u) ^ (static_cast<uint32_t>(a.y - r.y) * 19349663u) ^
+                                  (static_cast<uint32_t>(b.x - a.x) * 83492791u)) | 1u;
+            if (key != g_hoverKey && g_hoverKeySeen == 0) ++g_phoneHovers;
+            g_hoverKeySeen = key;
+        }
         if (hover) *hover = !blocked && ImGui::IsItemHovered();
         if (held) *held = !blocked && ImGui::IsItemActive();
         ImGui::PopID();
@@ -3984,7 +3995,7 @@ Action drawPhone(ImDrawList* d, int* index) {
             const float x0 = left + i * (right - left) / 3, x1 = left + (i + 1) * (right - left) / 3 - 2;
             const ImVec2 a = at(x0, y + 4), b = at(x1, y + 30);
             bool over = false;
-            if (button(a, b, &over)) setTo(modeRow, mode, i);
+            if (button(a, b, &over) && i != mode) setTo(modeRow, mode, i), g_phoneModeSet = i;
             d->AddRectFilled(a, b, i == mode ? IM_COL32(9, 73, 171, 255) : over ? IM_COL32(230, 238, 250, 240) : IM_COL32(255, 255, 255, 225),
                              6 * S);
             const std::string label = utf8(kModes[i]);
@@ -5401,6 +5412,8 @@ void setPopupContent(const char* data, size_t size) {
 
 std::vector<int> listPicked() { return g_listPicked; }
 int phoneTaps() { return g_phoneTaps.exchange(0); }
+int phoneHovers() { return g_phoneHovers.exchange(0); }
+int phoneModeSet() { return g_phoneModeSet.exchange(-1); }
 std::vector<int> inventoryPicked() { return g_invPicked; }
 
 void setTexts(int kind, const char* data, size_t size) {

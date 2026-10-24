@@ -36,6 +36,7 @@ static void startSims1Phone() {
     LOG("Phone: Sims Forever, the phone turned sideways in front of you");
 }
 static ULONGLONG g_phoneWokeAt = 0;
+static ULONGLONG g_phoneSleptAt = 0;  // shut off with the grip: the screen fades out
 static bool g_phoneWindow = false, g_phoneWindowSeen = false;
 static ULONGLONG g_phoneWindowSince = 0;
 static bool g_phoneOptions = false;      // the Options app is open: the game menu on the screen (else the game's phone menu)

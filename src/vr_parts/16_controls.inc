@@ -248,6 +248,15 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
                 grab::pushControl(7100200);  // phonesound.click: the phone's beep
                 LOG("Phone: screen on (grip of the hand holding it)");
             }
+        } else if (!g_phoneAsleep && g_phoneOut && !g_tablet && !g_sims1Phone.on && phoneWasOut && closed[g_phoneHand] &&
+                   !closedWas[g_phoneHand] && g_phoneWokeAt && GetTickCount64() - g_phoneWokeAt > 300) {
+            // Shut off (user 2026-10-24 12:36Z): the same grip again, the reverse of waking it.
+            g_phoneAsleep = true;
+            g_phoneSleptAt = GetTickCount64();
+            hud::setPhoneAsleep(true);
+            buzz(g_phoneHand, 0.35f, 0.04f);
+            grab::pushControl(7100200);
+            LOG("Phone: screen off (grip of the hand holding it)");
         }
         // Your notebook: the same at the LEFT hip.
         if (g_bookOut && ((closed[g_bookHand] && !closedWas[g_bookHand] && hands[g_bookHand].valid && head.valid &&

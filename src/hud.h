@@ -72,6 +72,10 @@ enum Action { kNone = 0, kPausePressed = 1, kSpeed1, kSpeed2, kSpeed3, kFullUi, 
 std::vector<int> inventoryPicked();
 // Presses on the phone screen (buttons, not swipes) since the last call.
 int phoneTaps();
+// New things pointed at on the phone screen since the last call (not while swiping).
+int phoneHovers();
+// The phone mode just picked on its Sounds screen (0 sound, 1 vibrate, 2 mute), or -1.
+int phoneModeSet();
 // kSimsForever: the phone's Sims Forever app (Sims 1 on the phone, held in front of you).
 // kVrOptions: the phone's Settings > VR Options (opens the VR debug menu).
 // kListPick: the list picker's row `index` (one pick); kListDone: Done with listPicked(); kListClose: its X.
