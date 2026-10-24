@@ -314,7 +314,15 @@ struct SimBusiness {  // Owned Businesses ("biz")
     bool open = false;
     std::string name;
 };
+struct SimWeather {  // the Weather app ("wx", "fc")
+    bool sent = false, pack = false, rain = false, snow = false;
+    int season = -1;
+    std::string temperature;
+    struct Day { int day = 0; uint64_t icon = 0; std::string name, text; };
+    std::vector<Day> forecast;
+};
 struct SimContent {
+    SimWeather weather;
     std::vector<SimBusiness> businesses;
     std::vector<SimClub> clubs;
     std::vector<SimItem> inventory;
@@ -341,6 +349,7 @@ ULONGLONG g_mySimAsked = 0;
 int g_mySimMoodlet = -1;   // My Sim shows this moodlet's page
 bool g_aspChange = false;   // Aspirations shows the tracks to change to
 std::atomic<bool> g_phoneAsleep{false};  // the phone's screen is off (setPhoneAsleep)
+bool g_weatherOpen = false;    // the home screen's Weather app
 bool g_gameMenuPhone = false;  // Settings > Game Options: the game's Escape menu drawn on the phone
 int g_contacts = -1;        // Contacts: -1 closed, 0 the list, 1 a contact's page
 int g_contactSel = -1;      // the contact whose page is open
@@ -3026,7 +3035,7 @@ Action drawPhone(ImDrawList* d, int* index) {
         // Our apps: our own icons in the game's phone app style (tools/make_phone_icons.py).
         const art::Piece* own = node == -1 ? &art::kAppSettings : node == -2 ? &art::kAppCalendar : node == -3 ? &art::kAppBuild
                               : node == -10 ? &art::kAppGameOptions : node == -11 ? &art::kAppPhoneOptions
-                              : node == -12 ? &art::kAppVrOptions : node == -4 ? &art::kAppMySim : node == -5 ? &art::kAppRelationships : nullptr;
+                              : node == -12 ? &art::kAppVrOptions : node == -4 ? &art::kAppMySim : node == -5 ? &art::kAppRelationships : node == -6 ? &art::kAppWeather : nullptr;
         if (own) {
             const float h = 32 * S;
             pieceIn(d, *own, {c.x - h, c.y - h}, {c.x + h, c.y + h}, tint);
@@ -3064,7 +3073,7 @@ Action drawPhone(ImDrawList* d, int* index) {
     if (g_phoneHomeAsked.exchange(false))
         g_phoneApp = g_phoneRoot = -1, g_phonePage = 0, g_phoneScroll = 0, g_phoneColorsOpen = false, g_phoneNotesOpen = false,
         g_phoneCalOpen = false, g_phoneSettingsOpen = false, g_phoneOptsGroup.clear(), g_mySim = -1, g_mySimMoodlet = -1,
-        g_phoneSoundsOpen = false, g_hhSim = -1, g_contacts = -1, g_gameMenuPhone = false;
+        g_phoneSoundsOpen = false, g_hhSim = -1, g_contacts = -1, g_gameMenuPhone = false, g_weatherOpen = false;
     if (g_phoneApp >= 0) g_phoneNotesOpen = g_phoneCalOpen = g_phoneSettingsOpen = g_phoneSoundsOpen = false, g_phoneOptsGroup.clear(), g_mySim = -1, g_contacts = -1;
     if (g_phoneApp >= 0 || p.colors.empty()) g_phoneColorsOpen = false;
 
@@ -3417,6 +3426,65 @@ Action drawPhone(ImDrawList* d, int* index) {
         bool over = false;
         if (button(at(96, 361), at(129, 392), &over)) g_phoneSettingsOpen = false;
         piece(d, over ? art::kPhoneBackOver : art::kPhoneBack, at(96 + 16.5f, 361 + 15.5f), A);
+    } else if (g_weatherOpen) {
+        // Weather (user 2026-10-23 21:35Z: the clock's hover, bigger): the season, the temperature and what falls
+        // now, then the forecast a day a card (the game's calendar icons, names and descriptions).
+        static ULONGLONG asked = 0;
+        const ULONGLONG now = GetTickCount64();
+        if (now - asked > 2000 && action == kNone) action = kMySimOpened, asked = now;
+        const SimWeather& w = g_sim.weather;
+        d->AddRectFilled(at(0, 0), at(230, 400), IM_COL32(40, 110, 190, 235));
+        pieceIn(d, art::kPhoneTint, at(0, 0), at(230, 44));
+        {
+            const char* head = "Weather";
+            ImVec2 hs = g_title->CalcTextSizeA(34, FLT_MAX, 0, head);
+            shadowText(d, g_title, 34, {at(115, 24).x - hs.x / 2, at(115, 24).y - hs.y / 2}, kWhite, head);
+        }
+        static const char* const kSeasons[4] = {"Summer", "Fall", "Winter", "Spring"};
+        static const char* const kTemps[6] = {"Freezing", "Cold", "Cool", "Warm", "Hot", "Burning"};
+        float y = 52;
+        if (!w.sent) {
+            ImVec2 ns = g_text->CalcTextSizeA(26, FLT_MAX, 0, "...");
+            shadowText(d, g_text, 26, {at(115, 150).x - ns.x / 2, at(115, 150).y - ns.y / 2}, kWhite, "...");
+        } else if (!w.pack) {
+            const char* none = "Weather comes with Seasons.";
+            ImVec2 ns = g_text->CalcTextSizeA(24, FLT_MAX, 0, none);
+            shadowText(d, g_text, 24, {at(115, 150).x - ns.x / 2, at(115, 150).y - ns.y / 2}, kWhite, none);
+        } else {
+            std::string now1 = w.season >= 0 && w.season < 4 ? kSeasons[w.season] : "";
+            if (!w.temperature.empty()) {
+                const int t = std::atoi(w.temperature.c_str()) + 3;
+                if (t >= 0 && t < 6) now1 += now1.empty() ? kTemps[t] : std::string(", ") + kTemps[t];
+            }
+            if (w.snow) now1 += ", snowing";
+            else if (w.rain) now1 += ", raining";
+            ImVec2 ns = g_title->CalcTextSizeA(30 * g_phoneText, FLT_MAX, 0, now1.c_str());
+            shadowText(d, g_title, 30 * g_phoneText, {at(115, 0).x - ns.x / 2, at(0, y).y}, kWhite, now1.c_str());
+            y += 16 * g_phoneText + 6;
+            static const char* const kDays[7] = {"Sun.", "Mon.", "Tue.", "Wed.", "Thu.", "Fri.", "Sat."};
+            const float small = 18 * g_phoneText, wrap = (206 - 6 - 56) * S;
+            d->PushClipRect(at(0, 48), at(230, 354), true);
+            for (const auto& day : w.forecast) {
+                const std::string& text = day.text;
+                const float th = g_text->CalcTextSizeA(small, FLT_MAX, wrap, text.c_str()).y / S;
+                const float h = std::max(52.0f, 22 + th + 6);
+                if (y > 354) break;
+                d->AddRectFilled(at(6, y), at(206, y + h), IM_COL32(255, 255, 255, 228), 6 * S);
+                if (day.icon) {
+                    shown.push_back(day.icon);
+                    icon(d, day.icon, at(30, y + h / 2), 44 * S);
+                }
+                std::string head = day.day == 0 ? "Today" : day.day == 1 ? "Tomorrow" : kDays[((g_day.load() % 7 + 7) + day.day) % 7];
+                head += "  " + day.name;
+                d->AddText(g_title, 22 * g_phoneText, at(58, y + 4), IM_COL32(9, 73, 171, 255), head.c_str());
+                d->AddText(g_text, small, at(58, y + 6 + 11 * g_phoneText), IM_COL32(50, 60, 80, 255), text.c_str(), nullptr, wrap);
+                y += h + 5;
+            }
+            d->PopClipRect();
+        }
+        bool over = false;
+        if (button(at(96, 361), at(129, 392), &over)) g_weatherOpen = false;
+        piece(d, over ? art::kPhoneBackOver : art::kPhoneBack, at(96 + 16.5f, 361 + 15.5f), A);
     } else if (g_gameMenuPhone) {
         // Game Options (user 2026-10-24 01:26Z): the Escape menu's buttons (Sims4EscapeMenu, in its order), drawn
         // as the game draws them; each sends what its button sends (clientdlg), the window it opens shows in front
@@ -3526,6 +3594,7 @@ Action drawPhone(ImDrawList* d, int* index) {
         apps.push_back(-3);  // Build Mode (as the wrist's build button: F2)
     apps.push_back(-4);  // My Sim (phonesim.py)
         apps.push_back(-5);  // Contacts (phonesim.py)
+        apps.push_back(-6);  // Weather (phonesim.py)
         apps.insert(apps.end(), p.home.begin(), p.home.end());
         const int perPage = 9, pages = static_cast<int>((apps.size() + perPage - 1) / perPage);
         g_phonePage = std::max(0, std::min(pages - 1, g_phonePage));
@@ -3550,7 +3619,11 @@ Action drawPhone(ImDrawList* d, int* index) {
             const ImVec2 c = at(x + 32, y + 32);
             bool over = false;
             if (!open && button(at(x, y), at(x + 64, y + 64), &over)) {
-                if (node == -5) {
+                if (node == -6) {
+                    g_weatherOpen = true;
+                    action = kMySimFresh;
+                    g_phoneDataUntil = GetTickCount64() + 1500;
+                } else if (node == -5) {
                     g_contacts = 0, g_contactSel = -1, g_mySimScroll = 0, g_contactsAsked = GetTickCount64();
                     action = kContactsOpened;
                     g_phoneDataUntil = GetTickCount64() + 1500;
@@ -3584,7 +3657,7 @@ Action drawPhone(ImDrawList* d, int* index) {
         // mcCategoryName: the app pointed at.
         if (hovered != -100) {
             std::string name = hovered == -1 ? std::string("Settings") : hovered == -2 ? std::string("Calendar")
-                             : hovered == -3 ? std::string("Build Mode") : hovered == -4 ? std::string("My Sim") : hovered == -5 ? std::string("Contacts")
+                             : hovered == -3 ? std::string("Build Mode") : hovered == -4 ? std::string("My Sim") : hovered == -5 ? std::string("Contacts") : hovered == -6 ? std::string("Weather")
                              : p.nodes[hovered].name;
             ImVec2 size = g_small->CalcTextSizeA(34 * g_phoneText, FLT_MAX, 0, name.c_str());
             float scale = g_phoneText * std::min(1.0f, 206 * S / std::max(1.0f, size.x));
@@ -3757,7 +3830,7 @@ bool phonePicturesIn() {
 int phoneScreenKey() {
     const int opts = static_cast<int>(std::hash<std::wstring>()(g_phoneOptsGroup) & 0xffff);
     return (((g_phoneApp + 2) * 8 + (g_phoneNotesOpen ? 1 : 0) + (g_phoneCalOpen ? 2 : 0) + (g_phoneSettingsOpen ? 4 : 0)) *
-                65537 + opts) * 31 + g_phoneSerial + (g_mySim + 1) * 7919 + (g_aspChange ? 104729 : 0) + (g_mySimMoodlet + 1) * 1299709 + (g_hhSim + 1) * 7907 + (g_contacts + 1) * 6151 + (g_gameMenuPhone ? 49157 : 0) + (g_contacts == 1 ? g_contactSel * 104723 : 0) + (g_phoneSoundsOpen ? 15485863 : 0);
+                65537 + opts) * 31 + g_phoneSerial + (g_mySim + 1) * 7919 + (g_aspChange ? 104729 : 0) + (g_mySimMoodlet + 1) * 1299709 + (g_hhSim + 1) * 7907 + (g_contacts + 1) * 6151 + (g_gameMenuPhone ? 49157 : 0) + (g_weatherOpen ? 98317 : 0) + (g_contacts == 1 ? g_contactSel * 104723 : 0) + (g_phoneSoundsOpen ? 15485863 : 0);
 }
 
 // The still and the cover's blend: premultiplied colours (the atlas's), drawn with ImGui's straight blend otherwise.
@@ -4432,6 +4505,15 @@ void setPhoneSim(const char* data, size_t size) {
             j.companyJson = f[8];
             j.shift = f[9];
             c.jobs.push_back(j);
+        } else if (f[0] == "wx" && f.size() >= 6) {
+            c.weather.sent = true;
+            c.weather.season = std::atoi(f[1].c_str());
+            c.weather.temperature = f[2];
+            c.weather.rain = f[3] == "1";
+            c.weather.snow = f[4] == "1";
+            c.weather.pack = f[5] == "1";
+        } else if (f[0] == "fc" && f.size() >= 5 && c.weather.forecast.size() < 7) {
+            c.weather.forecast.push_back({std::atoi(f[1].c_str()), std::strtoull(f[2].c_str(), nullptr, 10), f[3], f[4]});
         } else if (f[0] == "biz" && f.size() >= 8 && c.businesses.size() < 10) {
             SimBusiness b;
             b.type = std::atoi(f[1].c_str());

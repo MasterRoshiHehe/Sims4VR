@@ -63,6 +63,10 @@ Social Groups (the game's club panel, clubs/club.py: the Sim's clubs from the cl
 Owned Businesses (business_service: the household's business managers, by zone or by owner for small businesses):
   "biz"   \x1f <type (BusinessType)> \x1f <name> \x1f <open 0/1> \x1f <funds> \x1f <stars> \x1f <today's revenue>
           \x1f <employees>
+Weather (the home screen's Weather app: what the game's clock hover shows, weather_service / season_service):
+  "wx"    \x1f <season (SeasonType) or -1> \x1f <temperature (weather_enums.Temperature) or ""> \x1f <raining 0/1>
+          \x1f <snowing 0/1> \x1f <seasons pack 0/1>
+  "fc"    \x1f <day from today> \x1f <icon> \x1f <name> \x1f <description>   (the forecast, today first)
 Control 87 = Contacts is open (send with contacts).
 Control 7200000 + n = play as "hh" n (user 2026-10-24 00:39Z: eyes close, the game switches Sim, eyes open).
 Control 7000000 + n = change to "atrack" n. Control 85 = My Sim is open (send; the DLL asks again every 2 s while it is).
@@ -582,6 +586,40 @@ def _businesses(sim_info, records):
             float(num('get_star_rating', True) or 0), int(num('daily_revenue') or 0), int(num('employee_count') or 0)))
 
 
+def _weather(sim_info, records):
+    import services
+    from sims4vr import hudinfo
+    service = services.weather_service()
+    seasons = services.season_service()
+    if service is None:
+        records.append('wx\x1f-1\x1f\x1f0\x1f0\x1f0')
+        return
+    season = -1
+    try:
+        season = int(seasons.season) if seasons is not None else -1
+    except Exception:
+        pass
+    temperature = ''
+    rain = snow = 0
+    try:
+        from weather.weather_enums import WeatherEffectType, PrecipitationType
+        temperature = str(int(service.get_weather_element_value(WeatherEffectType.TEMPERATURE)))
+        rain = int(service.get_weather_element_value(PrecipitationType.RAIN) > 0)
+        snow = int(service.get_weather_element_value(PrecipitationType.SNOW) > 0)
+    except Exception as e:
+        _log_error('the weather now', e)
+    records.append('wx\x1f{}\x1f{}\x1f{}\x1f{}\x1f1'.format(season, temperature, rain, snow))
+    try:
+        for n, forecast in enumerate(list(service._forecasts or ())[:7]):
+            if forecast is None:
+                continue
+            records.append('fc\x1f{}\x1f{}\x1f{}\x1f{}'.format(
+                n, hudinfo._icon(getattr(forecast, 'calendar_icon_large', None) or getattr(forecast, 'calendar_icon', None)),
+                _loc(forecast.forecast_name), _loc(forecast.forecast_description)))
+    except Exception as e:
+        _log_error('the forecast', e)
+
+
 def inventory_pie(index):
     import services
     from sims4vr import pie
@@ -651,7 +689,7 @@ def send(fresh=False, contacts=False):
                 records.append('cat\x1f{}\x1f{}'.format(category, _key(title)))
             for s in skills:
                 records.append('skill\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{:.4f}\x1f{}\x1f{}'.format(*s))
-            for part in (_careers, _mood, _members, _inventory_list, _clubs, _businesses) + ((_contact_list, _contact_page) if contacts else ()):
+            for part in (_careers, _mood, _members, _inventory_list, _clubs, _businesses, _weather) + ((_contact_list, _contact_page) if contacts else ()):
                 try:
                     part(sim_info, records)
                 except Exception as e:

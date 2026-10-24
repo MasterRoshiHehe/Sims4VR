@@ -340,6 +340,9 @@ def _tick(_handle):
             elif 6000000 <= what < 7000000:
                 from sims4vr import objmenu
                 objmenu.list_control(what - 6000000)
+            elif 7600000 <= what < 7600002:
+                from sims4vr import notebook
+                notebook.flip_sound(what - 7600000)
             elif 7500000 <= what < 7600000:
                 from sims4vr import phonesim
                 phonesim.inventory_pie(what - 7500000)

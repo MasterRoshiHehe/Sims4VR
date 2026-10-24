@@ -141,3 +141,33 @@ def clear():
         native.notebook_content(b'')
     except Exception:
         pass
+
+
+BOOK_TURNPAGE = 0xAB42743162A6BA2D  # the game's book_turnpage foley (re/audio/BOOK.tsv): FNV-1 64 of its name
+
+
+def flip_sound(hand):
+    """A page turned (user 2026-10-24): the game's book_turnpage played on the joint of the hand holding the
+    book (0 left, 1 right), so the game places it at the book in 3D."""
+    global _flip
+    try:
+        import services
+        from audio.primitive import PlaySound
+        from sims4vr import phone
+        sim_info = services.active_sim_info()
+        sim = sim_info.get_sim_instance() if sim_info is not None else None
+        if sim is None:
+            return
+        try:
+            if _flip is not None:
+                _flip.stop()
+        except Exception:
+            pass
+        sound = PlaySound(sim, BOOK_TURNPAGE, joint_name_hash=phone._joint_hash('b__R_Hand__' if hand else 'b__L_Hand__'))
+        sound.start()
+        _flip = sound
+    except Exception as e:
+        _log('page sound failed: {!r}'.format(e))
+
+
+_flip = None

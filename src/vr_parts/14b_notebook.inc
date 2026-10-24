@@ -26,76 +26,11 @@ static bool atLeftHip(const armik::Hand& hand, int side, const grab::HeadPose& h
 
 static ULONGLONG g_bookOpenedAt = 0;
 
-// A page turning: a short swish of paper and a soft tap, made once as a wave and played through the system's
-// default output (the headset's audio follows it).
-static bool bookFrameWorld(int side, float c[3], XrVector3f& x, XrVector3f& y, XrVector3f& z, float& metre);
-
+// A page turning: the game's own book_turnpage foley, started by notebook.py on the joint of the hand holding the
+// book, so the game places it there in 3D.
 static void bookFlipSound() {
     if (!g_config.bookSound) return;
-    static std::vector<int16_t> pcm;
-    const int rate = 22050;
-    if (pcm.empty()) {
-        const int n = static_cast<int>(rate * 0.42f);
-        pcm.resize(n);
-        uint32_t seed = 0x1234567u;
-        float lp = 0, lp2 = 0;
-        for (int i = 0; i < n; ++i) {
-            const float t = static_cast<float>(i) / rate;
-            seed ^= seed << 13;
-            seed ^= seed >> 17;
-            seed ^= seed << 5;
-            const float noise = (seed & 0xffff) / 32768.0f - 1;
-            const float sweep = 0.10f + 0.55f * std::sin(std::min(1.0f, t / 0.22f) * 3.14159f);  // the brightness rises and falls
-            lp += (noise - lp) * sweep;
-            lp2 += (lp - lp2) * 0.6f;
-            const float env = std::min(1.0f, t / 0.03f) * std::exp(-std::max(0.0f, t - 0.08f) * 9.0f);
-            float v = (lp - lp2) * 2.2f * env;
-            const float tap = t - 0.27f;  // the page landing
-            if (tap > 0) v += std::sin(tap * 2 * 3.14159f * 140) * std::exp(-tap * 60) * 0.5f;
-            pcm[i] = static_cast<int16_t>(std::max(-1.0f, std::min(1.0f, v * 0.7f)) * 32000);
-        }
-    }
-    // Placed at the book: louder on the ear side it is at, a little later in the far ear, softer with distance.
-    float left = 1, right = 1;
-    int delay = 0;  // samples the far ear lags
-    camera::View view;
-    float c[3], metre = 1;
-    XrVector3f wx, wy, wz;
-    if (camera::lastView(view) && bookFrameWorld(g_bookHand, c, wx, wy, wz, metre)) {
-        const float rx = c[0] - view.position.x, ry = c[1] - view.position.y, rz = c[2] - view.position.z;
-        const float m = metre > 0.01f ? metre : 1;
-        const float dist = std::sqrt(rx * rx + ry * ry + rz * rz) / m;
-        if (dist > 0.01f) {
-            const float side = (rx * view.right.x + ry * view.right.y + rz * view.right.z) / (dist * m);  // -1 left .. 1 right
-            const float gain = 1.0f / (1.0f + std::max(0.0f, dist - 0.3f) * 1.5f);
-            const float pan = std::max(-1.0f, std::min(1.0f, side));
-            left = gain * std::sqrt(0.5f * (1 - pan) + 0.08f);
-            right = gain * std::sqrt(0.5f * (1 + pan) + 0.08f);
-            delay = static_cast<int>(std::fabs(pan) * 0.0006f * rate);
-        }
-    }
-    static std::vector<uint8_t> wave[2];
-    static int which = 0;
-    std::vector<uint8_t>& w = wave[which ^= 1];
-    w.clear();
-    const int n = static_cast<int>(pcm.size()) + delay;
-    auto put32 = [&](uint32_t v) { for (int k = 0; k < 4; ++k) w.push_back(static_cast<uint8_t>(v >> (8 * k))); };
-    auto put16 = [&](uint16_t v) { for (int k = 0; k < 2; ++k) w.push_back(static_cast<uint8_t>(v >> (8 * k))); };
-    for (char ch : {'R', 'I', 'F', 'F'}) w.push_back(static_cast<uint8_t>(ch));
-    put32(36 + n * 4);
-    for (char ch : {'W', 'A', 'V', 'E', 'f', 'm', 't', ' '}) w.push_back(static_cast<uint8_t>(ch));
-    put32(16), put16(1), put16(2), put32(rate), put32(rate * 4), put16(4), put16(16);
-    for (char ch : {'d', 'a', 't', 'a'}) w.push_back(static_cast<uint8_t>(ch));
-    put32(n * 4);
-    const bool rightFar = right < left;
-    for (int i = 0; i < n; ++i) {
-        const int il = rightFar ? i : i - delay, ir = rightFar ? i - delay : i;
-        const int16_t sl = il >= 0 && il < static_cast<int>(pcm.size()) ? pcm[il] : 0;
-        const int16_t sr = ir >= 0 && ir < static_cast<int>(pcm.size()) ? pcm[ir] : 0;
-        put16(static_cast<uint16_t>(static_cast<int16_t>(sl * left)));
-        put16(static_cast<uint16_t>(static_cast<int16_t>(sr * right)));
-    }
-    PlaySoundW(reinterpret_cast<LPCWSTR>(w.data()), nullptr, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
+    grab::pushControl(7600000 + g_bookHand);
 }
 
 static void bookOpen(int hand) {
