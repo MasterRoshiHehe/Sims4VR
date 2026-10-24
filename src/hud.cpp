@@ -295,7 +295,13 @@ struct ContactPage {  // the picked contact: what your Sim knows of them ("cd", 
     struct Act { int node = 0; std::string nameJson, disabledJson; };
     std::vector<Act> actions;  // the phone's Social app entries, run for this contact
 };
+struct SimItem {  // Inventory: one stack (phonesim.py "inv")
+    uint64_t picture = 0;
+    int count = 1, value = 0;
+    std::string name;
+};
 struct SimContent {
+    std::vector<SimItem> inventory;
     std::vector<SimContact> contacts;
     ContactPage contact;
     std::vector<SimMember> household;
@@ -2022,8 +2028,9 @@ float sliderFollow(const Rect& r, float top, float bottom, float thumbH) {
 constexpr int kMySimApps = 10;
 const char* const kMySimNames[kMySimApps] = {"Aspirations", "Career", "Wants", "Skills", "Needs", "Relationships",
                                              "Inventory", "Social Groups", "Owned Businesses", "Household"};
-constexpr int kSimAspirations = 0, kSimCareer = 1, kSimWants = 2, kSimSkills = 3, kSimNeeds = 4, kSimHousehold = 9;
-bool mySimBuilt(int k) { return k <= kSimNeeds || k == kSimHousehold; }
+constexpr int kSimAspirations = 0, kSimCareer = 1, kSimWants = 2, kSimSkills = 3, kSimNeeds = 4, kSimInventory = 6,
+              kSimHousehold = 9;
+bool mySimBuilt(int k) { return k <= kSimNeeds || k == kSimInventory || k == kSimHousehold; }
 // sims.sim_info_types.Age's names, as the game shows them.
 const char* ageName(int age) {
     switch (age) {
@@ -2468,6 +2475,48 @@ void drawMySim(ImDrawList* d, const Rect& r, Button& button, std::vector<uint64_
                 }
             }
             y += rowH;
+        }
+    } else if (k == kSimInventory) {
+        // The Sim's inventory (the game's inventory panel): a tile a stack, its picture, count and name; press one
+        // for its pie menu at your hand (phonesim.inventory_pie).
+        const float cw = 64, ch = 78;
+        const int n = static_cast<int>(g_sim.inventory.size());
+        for (int i = 0; i < n; ++i) {
+            const SimItem& it = g_sim.inventory[i];
+            const float x = left + (i % 3) * (cw + 4), cy = y + (i / 3) * (ch + 4);
+            if (cy + ch < top - 10 || cy > bottom + 10) continue;
+            const ImVec2 ca = at(x, cy), cb = at(x + cw, cy + ch);
+            bool over = false;
+            if (button(ca, cb, &over)) {
+                action = kInventoryPie;
+                if (index) *index = i;
+            }
+            d->AddRectFilled(ca, cb, IM_COL32(255, 255, 255, 228), 6 * S);
+            if (over) d->AddRect(ca, cb, kBlue, 6 * S, 0, 1.4f * S);
+            if (it.picture) {
+                shown.push_back(it.picture);
+                icon(d, it.picture, at(x + cw / 2, cy + 28), 48 * S);
+            }
+            if (it.count > 1) {
+                char cnt[12];
+                std::snprintf(cnt, sizeof cnt, "%d", it.count);
+                ImVec2 cs = g_title->CalcTextSizeA(22, FLT_MAX, 0, cnt);
+                const ImVec2 bc = at(x + cw - 10, cy + 9);
+                d->AddCircleFilled(bc, std::max(7 * S, cs.x / 2 + 2 * S), kBlue);
+                d->AddText(g_title, 22, {bc.x - cs.x / 2, bc.y - cs.y / 2}, kWhite, cnt);
+            }
+            const float ns = 17 * g_phoneText, wrap = (cw - 4) * S;
+            ImVec2 sz = g_text->CalcTextSizeA(ns, FLT_MAX, wrap, it.name.c_str());
+            d->PushClipRect(at(x, cy), at(x + cw, cy + ch), true);
+            d->AddText(g_text, ns, {at(x + cw / 2, 0).x - std::min(sz.x, wrap) / 2, at(0, cy + 55).y}, IM_COL32(40, 50, 70, 255),
+                       it.name.c_str(), nullptr, wrap);
+            d->PopClipRect();
+        }
+        y += ((n + 2) / 3) * (ch + 4);
+        if (!n) {
+            const char* none = g_sim.age ? "Empty." : "...";
+            ImVec2 ns = g_text->CalcTextSizeA(26, FLT_MAX, 0, none);
+            shadowText(d, g_text, 26, {at(115, 150).x - ns.x / 2, at(115, 150).y - ns.y / 2}, kWhite, none);
         }
     } else if (k == kSimHousehold && g_hhSim >= 0) {
         // A household Sim's page (user 2026-10-24 00:39Z): the bust on top, name, age, and Play as:
@@ -4269,6 +4318,13 @@ void setPhoneSim(const char* data, size_t size) {
             j.companyJson = f[8];
             j.shift = f[9];
             c.jobs.push_back(j);
+        } else if (f[0] == "inv" && f.size() >= 6 && c.inventory.size() < 120) {
+            SimItem it;
+            it.picture = std::strtoull(f[2].c_str(), nullptr, 10);
+            it.name = f[3];
+            it.count = std::atoi(f[4].c_str());
+            it.value = std::atoi(f[5].c_str());
+            c.inventory.push_back(it);
         } else if (f[0] == "ct" && f.size() >= 9 && c.contacts.size() < 60) {
             SimContact k;
             k.name = f[2];

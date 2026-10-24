@@ -264,6 +264,27 @@ def open_self():
         _log_error('own pie menu', e)
 
 
+def open_on(obj):
+    """A pie menu on an object (the phone's Inventory: what a click on it in the game's inventory panel asks,
+    interactions.choices on the object), answered at your hand like any pie menu in first person."""
+    try:
+        sim = services.get_active_sim()
+        client = services.client_manager().get_first_client()
+        if sim is None or client is None or obj is None:
+            return
+        if _last_reference is None:
+            native._log('pie: inventory pie menu needs one click on anything first (the game\'s menu has no click to answer yet)')
+            return
+        from server.pick_info import PickType
+        position = sim.position
+        choices = _debug_choices if _choices is not None else interaction_commands.generate_choices
+        items = choices(obj.id, PickType.PICK_OBJECT, position.x, position.y, position.z, services.active_lot_id() or 0,
+                        sim.level, 0, 0, 0, _last_reference, 0, 0, True, _connection=client.id)
+        native._log('pie: pie menu on {} asked for ({} options)'.format(obj, items))
+    except Exception as e:
+        _log_error('object pie menu', e)
+
+
 def cheats_enabled():
     service = services.get_cheat_service()
     return bool(service is not None and service.cheats_enabled)

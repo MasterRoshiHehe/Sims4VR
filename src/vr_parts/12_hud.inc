@@ -1113,6 +1113,10 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
             if (index >= 0 && index < 100000) grab::pushControl(7400000 + index);  // phonesim.contact_action
             LOG("Phone: contact action %d", index);
             break;
+        case hud::kInventoryPie:
+            if (index >= 0 && index < 100000) grab::pushControl(7500000 + index);  // phonesim.inventory_pie
+            LOG("Phone: inventory item %d", index);
+            break;
         case hud::kContactsOpened:
             grab::pushControl(87);  // phonesim.send(contacts=True)
             break;

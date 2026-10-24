@@ -53,6 +53,9 @@ social hover: what your Sim knows of each Sim, sim_knowledge.py, as sim_relation
   "cda"   \x1f <phone menu node> \x1f <name json> \x1f <disabled text json>  (the phone's Social app entries, user
           2026-10-24 01:17Z: control 7400000 + node runs it and its Sim picker is answered with this contact;
           the Social app itself is left as it is)
+Inventory (the game's Sim inventory panel: the visible storage, one entry a stack):
+  "inv"   \x1f <index> \x1f <picture> \x1f <name> \x1f <count> \x1f <value>
+Control 7500000 + n = the pie menu of "inv" n (at your hand, as a click on it in the inventory panel).
 Control 87 = Contacts is open (send with contacts).
 Control 7200000 + n = play as "hh" n (user 2026-10-24 00:39Z: eyes close, the game switches Sim, eyes open).
 Control 7000000 + n = change to "atrack" n. Control 85 = My Sim is open (send; the DLL asks again every 2 s while it is).
@@ -64,6 +67,7 @@ _sent = None
 _errors = 0
 _contacts = []  # the "ct" Sims sent last, by index (sim ids)
 _contact = None  # the sim id of the contact whose page is open
+_inventory = []  # the "inv" objects sent last, by index (object ids)
 _household = []  # the "hh" Sims sent last, by index (sim ids)
 _switch = None  # Play as under way: [target sim id, started (monotonic), switched]
 _tracks = (None, [], [])  # (sim id and age, categories, tracks) of the Change Aspiration list sent last
@@ -480,6 +484,40 @@ def auto_pick_option(dialog):
     return None
 
 
+def _inventory_list(sim_info, records):
+    from sims4vr import hudinfo
+    from distributor.shared_messages import create_icon_info_msg
+    sim = sim_info.get_sim_instance()
+    _inventory.clear()
+    inventory = getattr(sim, 'inventory_component', None) if sim is not None else None
+    if inventory is None:
+        return
+    try:
+        from sims4.localization import LocalizationHelperTuning
+    except Exception:
+        LocalizationHelperTuning = None
+    for obj in list(inventory.visible_storage)[:120]:
+        try:
+            picture = hudinfo._picture(create_icon_info_msg(obj.get_icon_info_data()))
+        except Exception:
+            picture = 0
+        name = ''
+        try:
+            name = _loc(LocalizationHelperTuning.get_object_name(obj)) if LocalizationHelperTuning else ''
+        except Exception:
+            pass
+        records.append('inv\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}'.format(len(_inventory), picture, name, obj.stack_count(),
+                                                               int(getattr(obj, 'current_value', 0) or 0)))
+        _inventory.append(obj.id)
+
+
+def inventory_pie(index):
+    import services
+    from sims4vr import pie
+    if 0 <= index < len(_inventory):
+        pie.open_on(services.object_manager().get(_inventory[index]) or services.inventory_manager().get(_inventory[index]))
+
+
 def select_contact(index):
     """Contacts: the page of contact n (its details are sent with the list)."""
     global _contact
@@ -542,7 +580,7 @@ def send(fresh=False, contacts=False):
                 records.append('cat\x1f{}\x1f{}'.format(category, _key(title)))
             for s in skills:
                 records.append('skill\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{:.4f}\x1f{}\x1f{}'.format(*s))
-            for part in (_careers, _mood, _members) + ((_contact_list, _contact_page) if contacts else ()):
+            for part in (_careers, _mood, _members, _inventory_list) + ((_contact_list, _contact_page) if contacts else ()):
                 try:
                     part(sim_info, records)
                 except Exception as e:
