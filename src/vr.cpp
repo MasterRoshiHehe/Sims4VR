@@ -69,6 +69,7 @@ namespace s4vr::vr {
 #include "vr_parts/08_wrist.inc"
 #include "vr_parts/09_hands_input.inc"
 #include "vr_parts/10_phone_screen.inc"
+#include "vr_parts/10b_tablet_tiles.inc"
 #include "vr_parts/11_object_menus.inc"
 #include "vr_parts/12_hud.inc"
 #include "vr_parts/13_sims1_screen.inc"

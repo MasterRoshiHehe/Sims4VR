@@ -38,7 +38,6 @@ static void placeTray(phone3d::Phone& p3, const XrVector3f& centre, const XrVect
         LOG("Build tray: on the tablet, %.1f x %.1f cm", w * menuW * 100, h * menuH * 100);
     }
     placeHud(g_traySheet, at, x, y, w * menuW, hud::kBuildTray);
-    clientdlg::setTabletUiScale(g_config.tabletUiScale);  // the game's UI at the tablet's size ([tablet] ui_scale, live)
 }
 
 // Raise / lower / bigger / smaller work with bb.moveobjects on (the game's controller build mode only sends them
@@ -96,7 +95,6 @@ static void trayTool(int tool) {
 static void hideTray() {
     if (!g_traySheet.m.active) return;
     hideHud(g_traySheet);
-    clientdlg::setTabletUiScale(0);
     setTrayLit(hud::kTrayAlt, false);
     setTrayLit(hud::kTrayShift, false);
     LOG("Build tray: away");

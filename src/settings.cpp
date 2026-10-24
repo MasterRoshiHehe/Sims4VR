@@ -749,7 +749,7 @@ std::vector<Row> makeRows() {
         number(tablet, L"Screen border", "tablet", "bezel", &Config::tabletBezel, 0, 0.03f, 0.001f, 100, L"%.1f cm"),
         number(tablet, L"Hand in from the edge", "tablet", "hold", &Config::tabletHold, 0, 0.12f, 0.005f, 100,
                L"%.1f cm"),
-        number(tablet, L"Build menu size", "tablet", "ui_scale", &Config::tabletUiScale, 0.5f, 3.0f, 0.05f, 100,
+        number(tablet, L"Build menu size", "tablet", "menu_size", &Config::tabletUiScale, 0.3f, 3.0f, 0.05f, 100,
                L"%.0f %%"),
         number(tablet, L"Tool tray size", "tablet", "tray_scale", &Config::tabletTrayScale, 0.3f, 1.45f, 0.05f, 100,
                L"%.0f %%"),

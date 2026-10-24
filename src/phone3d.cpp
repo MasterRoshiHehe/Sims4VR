@@ -38,8 +38,8 @@ cbuffer Draw : register(b0) {
     float4 tileInfo;                    // x: tiles on the screen (the tablet; 0 = the crop above);
                                         // y: 1 = the wallpaper behind the UI, z: its width / height,
                                         // w: black over the glass (0..1)
-    float4 tileDst[10];                 // each tile on the menu rect, from its top left: x0, y0, x1, y1 (0..1)
-    float4 tileSrc[10];                  // its part of the UI: u0, v0, u1, v1
+    float4 tileDst[16];                 // each tile on the menu rect, from its top left: x0, y0, x1, y1 (0..1)
+    float4 tileSrc[16];                  // its part of the UI: u0, v0, u1, v1
     float4 overlayDst;                  // the tablet's tool tray on the menu rect, from its top left: x0, y0, x1, y1
     float4 overlayCrop;                 // its part of the overlay texture (the HUD atlas): u0, v0, u1, v1
 };

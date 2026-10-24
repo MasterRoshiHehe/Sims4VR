@@ -644,6 +644,10 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
             !g_phoneFitPending && now - g_phoneMenuSince >= 600)
             startPhoneFit();
         pollPhoneFit();
+        if (g_tablet && g_phone.active) {
+            updateTabletScan(now);
+            dumpTabletUi();
+        }
     }
 
     // Your own pie menu: poke your stomach with the grip held.

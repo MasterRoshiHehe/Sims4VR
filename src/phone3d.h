@@ -14,7 +14,7 @@
 // the projection rebuilt from its frustum and clip distances.
 namespace s4vr::phone3d {
 
-constexpr int kMaxTiles = 10;
+constexpr int kMaxTiles = 16;
 
 struct Phone {
     bool show = false;

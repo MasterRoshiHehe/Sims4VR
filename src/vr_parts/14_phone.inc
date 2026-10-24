@@ -33,6 +33,7 @@ static void phoneOpen(int hand) {
         hideWrist();
         if (g_pie.active) dismissPie("tablet out");
         g_phoneFitted = true;
+        resetTabletScan();
         buzz(hand, 0.4f, 0.05f);
         static int logged = 0;
         if (logged++ < 30) LOG("Tablet: out in the %s hand (build/buy)", hand ? "right" : "left");
@@ -182,11 +183,13 @@ static void updatePhone(const armik::Hand& hand, int side) {
     }
     float tileDst[phone3d::kMaxTiles][4], tileSrc[phone3d::kMaxTiles][4];
     int tiles = 0;
-    if (g_tablet) {  // the tablet: the whole vanilla build/buy UI, the Sim's phone background behind it
+    if (g_tablet) {  // the tablet: the build/buy UI's pieces at the mod's size (10b_tablet_tiles.inc), the Sim's phone background behind them
         crop[0] = crop[1] = 0;
         crop[2] = W;
         crop[3] = H;
-        g_tabletAspect = static_cast<float>(W) / static_cast<float>(H);
+        float sheet = 1;
+        tiles = tabletLayout(W, H, tileDst, tileSrc, sheet);
+        g_tabletAspect = tiles ? sheet : static_cast<float>(W) / static_cast<float>(H);  // none: the whole UI
     }
     crop[2] = std::min(crop[2], W);
     crop[3] = std::min(crop[3], H);
