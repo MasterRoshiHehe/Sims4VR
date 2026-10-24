@@ -1017,7 +1017,12 @@ def send(fresh=False, contacts=False):
     records = []
     try:
         if sim_info is not None:
-            records.append('sim\x1f{}\x1f{} {}'.format(int(sim_info.age), sim_info.first_name, sim_info.last_name))
+            funds = ''
+            try:
+                funds = int(sim_info.household.funds.money)
+            except Exception:
+                pass
+            records.append('sim\x1f{}\x1f{} {}\x1f{}'.format(int(sim_info.age), sim_info.first_name, sim_info.last_name, funds))
             skills = _skills(sim_info)
             for category in sorted({s[0] for s in skills}, reverse=True):
                 title = _CATEGORY_TITLES[category] if 0 <= category < len(_CATEGORY_TITLES) else _CATEGORY_TITLES[0]

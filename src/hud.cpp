@@ -355,6 +355,7 @@ struct SimContent {
     std::vector<SimMember> household;
     int age = 0;  // sims.sim_info_types.Age (0: not sent)
     std::string name;  // first and last
+    long long funds = -1;  // the household's ("sim" f[3]; -1: not sent)
     int mood = 0;  // hudinfo MOODS index
     std::string moodJson;
     std::vector<SimJob> jobs;
@@ -2507,6 +2508,14 @@ void drawMySim(ImDrawList* d, const Rect& r, Button& button, std::vector<uint64_
             const ImVec2 t = at(115, 56);
             shadowText(d, g_small, 34 * scale, {t.x - size.x * scale / 2, t.y - size.y * scale / 2}, kWhite, name);
         }
+        if (g_sim.funds >= 0) {
+            // The household's funds under the banner (user 2026-10-24 16:10Z), as the HUD's funds: "§12,345".
+            const std::string funds = moneyText(g_sim.funds).substr(1);
+            const float fs = 26 * g_phoneText;
+            ImVec2 size = g_title->CalcTextSizeA(fs, FLT_MAX, 0, funds.c_str());
+            const ImVec2 t = at(115, 80);
+            shadowText(d, g_title, fs, {t.x - size.x / 2, t.y - size.y / 2}, IM_COL32(150, 230, 90, 255), funds.c_str());
+        }
         // The peek card (user 2026-10-23 23:22Z): pointed at for a moment, the Aspirations tile shows
         // the current milestone and its goals, as the game's aspiration button does under the pointer.
         if (!peek) g_aspHoverSince = 0;
@@ -3817,6 +3826,117 @@ Action drawPhone(ImDrawList* d, int* index) {
         return pressed;
     };
     std::vector<uint64_t> shown;
+    // The home screen's header (PhoneCategoryScreen): the Sounds button on its pill, the wallpaper colour button,
+    // rearrange (home only) and the notifications bell; My Sim's grid page has it too (user 2026-10-24 16:10Z).
+    const float cs = 22 * 0.96f;  // btnBackgroundColorSelector (39, 10, 0.96)
+    auto phoneHeader = [&](bool rearrange) {
+        const bool colors = !p.colors.empty();
+        const bool open = g_phoneColorsOpen;  // the selector takes the presses while it is up
+        nine(d, art::kPhonePill, at(8, 8), at(63, 33), 37, 37, 37, 37, A);
+        bool hover = false;
+        if (button(at(9, 9), at(31, 31), &hover) && !open) g_phoneSoundsOpen = true, g_mySimScroll = 0;  // the Sounds screen
+        const art::Piece& silence = p.silenced ? (hover ? art::kPhoneSilencedOver : art::kPhoneSilenced)
+                                               : (hover ? art::kPhoneSilenceOver : art::kPhoneSilence);
+        piece(d, silence, at(20, 20), A);
+        // btnBackgroundColorSelector (39, 10, 0.96): a toggle showing the colour selector.
+        bool colorHover = false;
+        if (colors && button(at(39, 10), at(39 + cs, 10 + cs), &colorHover)) g_phoneColorsOpen = !g_phoneColorsOpen;
+        if (colors)
+            pieceIn(d, g_phoneColorsOpen ? art::kPhoneColorBtnDown : colorHover ? art::kPhoneColorBtnOver : art::kPhoneColorBtn,
+                    at(39, 10), at(39 + cs, 10 + cs));
+        {
+            // The notifications: a bell in the header's top right (user 2026-10-23 23:55Z, where the
+            // battery was), the number unread on its lower right (the game's red badge).
+            // Rearrange (user 2026-10-24 02:06Z): left of the bell; press, move apps, press again when done.
+            if (rearrange) {
+                bool over = false;
+                if (button(at(166, 9), at(188, 31), &over) && !open) {
+                    g_reorder = !g_reorder;
+                    g_reorderPick.clear();
+                }
+                const ImVec2 c = at(177, 20);
+                const ImU32 ink = g_reorder ? IM_COL32(120, 230, 70, 255) : over ? IM_COL32(186, 240, 120, 255) : IM_COL32(240, 244, 248, 255);
+                for (int gy = 0; gy < 2; ++gy)
+                    for (int gx = 0; gx < 2; ++gx)
+                        d->AddRectFilled({c.x + (gx ? 1.2f : -7.2f) * S, c.y + (gy ? 1.2f : -7.2f) * S},
+                                         {c.x + (gx ? 7.2f : -1.2f) * S, c.y + (gy ? 7.2f : -1.2f) * S}, ink, 1.5f * S);
+            }
+            bool bellHover = false;
+            if (button(at(194, 9), at(216, 31), &bellHover) && !open) {
+                g_phoneNotesOpen = true;
+                g_notesScroll = 0;
+                action = kNotesOpened;
+            }
+            const ImU32 ink = bellHover ? IM_COL32(186, 240, 120, 255) : IM_COL32(240, 244, 248, 255);
+            const ImVec2 c = at(205, 19);
+            const float u = S;  // one game pixel
+            // The bell: a dome over a flaring skirt, its rim, the clapper.
+            d->PathArcTo({c.x, c.y - 2 * u}, 4.6f * u, 3.14159f, 2 * 3.14159f, 14);
+            d->PathLineTo({c.x + 5.4f * u, c.y + 4.2f * u});
+            d->PathLineTo({c.x + 7.2f * u, c.y + 5.6f * u});
+            d->PathLineTo({c.x - 7.2f * u, c.y + 5.6f * u});
+            d->PathLineTo({c.x - 5.4f * u, c.y + 4.2f * u});
+            d->PathFillConvex(ink);
+            d->AddRectFilled({c.x - 4.6f * u, c.y - 2.2f * u}, {c.x + 4.6f * u, c.y + 4.4f * u}, ink);
+            d->AddCircleFilled({c.x, c.y - 7.2f * u}, 1.1f * u, ink);
+            d->AddCircleFilled({c.x, c.y + 7.0f * u}, 1.5f * u, ink);
+            if (g_notes.unread > 0) {
+                char count[8];
+                std::snprintf(count, sizeof count, "%d", std::min(99, g_notes.unread));
+                const ImVec2 b = at(212, 27);
+                ImVec2 ns = g_small->CalcTextSizeA(22, FLT_MAX, 0, count);
+                const float rad = std::max(6.0f * u, ns.x / 2 + 3 * u);
+                d->AddCircleFilled(b, rad + 1.2f * u, IM_COL32(255, 255, 255, 255));
+                d->AddCircleFilled(b, rad, IM_COL32(214, 34, 34, 255));
+                d->AddText(g_small, 22, {b.x - ns.x / 2, b.y - ns.y / 2}, kWhite, count);
+            }
+        }
+    };
+    // PhoneBackgroundColorSelector, under the header's colour button while it is up.
+    auto phoneColorSelector = [&]() {
+        if (g_phoneColorsOpen) {
+            // PhoneBackgroundColorSelector: its panel (mcBg), the arrow to its
+            // button (mcArrow) and the swatches (VariationGrid, 8 a row, margins
+            // 1,1,2,2 and 3,3,5,2). The game puts it above the phone; on our
+            // screen it opens under the button, its arrow pointing up at it.
+            const int n = static_cast<int>(p.colors.size()), cols = 8, rows = (n + cols - 1) / cols;
+            const float sw = 24, cell = sw + 3, gw = cols * cell + 5, gh = rows * cell + 8;
+            const float px = (230 - gw) / 2, py = 44;
+            nine(d, art::kPhonePill, at(px, py), at(px + gw, py + gh), 37, 37, 37, 37, A * 0.6f);
+            {
+                const art::Piece& a = art::kPhoneSelectorArrow;  // drawn pointing down: flipped
+                const ImVec2 c = at(39 + cs / 2, py - 5);
+                const float w = 22 * 0.727f * S, h = 17 * 0.706f * S;
+                d->AddImage(reinterpret_cast<ImTextureID>(g_art), {c.x - w / 2, c.y - h / 2}, {c.x + w / 2, c.y + h / 2},
+                            {static_cast<float>(a.x) / art::kAtlasW, static_cast<float>(a.y + a.h) / art::kAtlasH},
+                            {static_cast<float>(a.x + a.w) / art::kAtlasW, static_cast<float>(a.y) / art::kAtlasH});
+            }
+            for (int i = 0; i < n; ++i) {
+                const float x = px + 2 + (i % cols) * cell + 2, y = py + 3 + (i / cols) * cell + 1;
+                bool over = false;
+                if (button(at(x, y), at(x + sw, y + sw), &over)) {
+                    action = kPhoneColor;
+                    if (index) *index = i;
+                    g_phoneColorsOpen = false;  // OnPhoneColorVariationSelected: Hide
+                }
+                const ImVec2 c = at(x + sw / 2, y + sw / 2);
+                shown.push_back(p.colors[i]);
+                icon(d, p.colors[i], c, sw * S);
+                if (i == p.color || over)
+                    d->AddRect(at(x - 1, y - 1), at(x + sw + 1, y + sw + 1),
+                               i == p.color ? IM_COL32(120, 200, 40, 255) : IM_COL32(255, 255, 255, 200), 3 * S, 0,
+                               (i == p.color ? 2.0f : 1.2f) * S);
+            }
+            // A press anywhere else hides it (PhoneColorSelector.OnFocusChange).
+            const ImVec2 m = ImGui::GetIO().MousePos, a0 = at(px, py), b0 = at(px + gw, py + gh), ba = at(39, 10),
+                         bb = at(39 + cs, 10 + cs);
+            const bool inside = (m.x >= a0.x && m.x <= b0.x && m.y >= a0.y && m.y <= b0.y) ||
+                                (m.x >= ba.x && m.x <= bb.x && m.y >= ba.y && m.y <= bb.y);
+            if (!blocked && ImGui::IsMouseClicked(0) && !inside && m.x >= r.x && m.x <= r.x + r.w && m.y >= r.y &&
+                m.y <= r.y + r.h)
+                g_phoneColorsOpen = false;
+        }
+    };
     // An app's picture: its category icon, 64 game pixels (mcImage at 0.64).
     auto appIcon = [&](int node, ImVec2 c, ImU32 tint = kWhite) {
         // Our apps: our own icons in the game's phone app style (tools/make_phone_icons.py).
@@ -4292,7 +4412,18 @@ Action drawPhone(ImDrawList* d, int* index) {
         }
         piece(d, over ? art::kPhoneBackOver : art::kPhoneBack, at(96 + 16.5f, 361 + 15.5f), A);
     } else if (g_mySim >= 0) {
+        // The home screen's header on My Sim's grid (user 2026-10-24 16:10Z): its buttons go first, so the colour
+        // selector takes the presses over the apps under it, and are drawn last, over them.
+        const bool header = g_mySim == 0 && g_mySimMoodlet < 0;
+        if (header) {
+            d->ChannelsSplit(2);
+            d->ChannelsSetCurrent(1);
+            phoneHeader(false);
+            phoneColorSelector();
+            d->ChannelsSetCurrent(0);
+        }
         drawMySim(d, r, button, shown, action, swipeY, dy, drag, index);
+        if (header) d->ChannelsMerge();
         bool over = false;
         if (button(at(96, 361), at(129, 392), &over)) {
             if (g_aspChange) g_aspChange = false;
@@ -4312,66 +4443,7 @@ Action drawPhone(ImDrawList* d, int* index) {
         // the apps 3 x 3 a page (the Options app first), the page dots.
         const bool colors = !p.colors.empty();
         const bool open = g_phoneColorsOpen;  // the selector takes the presses while it is up
-        nine(d, art::kPhonePill, at(8, 8), at(63, 33), 37, 37, 37, 37, A);
-        bool hover = false;
-        if (button(at(9, 9), at(31, 31), &hover) && !open) g_phoneSoundsOpen = true, g_mySimScroll = 0;  // the Sounds screen
-        const art::Piece& silence = p.silenced ? (hover ? art::kPhoneSilencedOver : art::kPhoneSilenced)
-                                               : (hover ? art::kPhoneSilenceOver : art::kPhoneSilence);
-        piece(d, silence, at(20, 20), A);
-        // btnBackgroundColorSelector (39, 10, 0.96): a toggle showing the colour selector.
-        const float cs = 22 * 0.96f;
-        bool colorHover = false;
-        if (colors && button(at(39, 10), at(39 + cs, 10 + cs), &colorHover)) g_phoneColorsOpen = !g_phoneColorsOpen;
-        if (colors)
-            pieceIn(d, g_phoneColorsOpen ? art::kPhoneColorBtnDown : colorHover ? art::kPhoneColorBtnOver : art::kPhoneColorBtn,
-                    at(39, 10), at(39 + cs, 10 + cs));
-        {
-            // The notifications: a bell in the header's top right (user 2026-10-23 23:55Z, where the
-            // battery was), the number unread on its lower right (the game's red badge).
-            // Rearrange (user 2026-10-24 02:06Z): left of the bell; press, move apps, press again when done.
-            {
-                bool over = false;
-                if (button(at(166, 9), at(188, 31), &over) && !open) {
-                    g_reorder = !g_reorder;
-                    g_reorderPick.clear();
-                }
-                const ImVec2 c = at(177, 20);
-                const ImU32 ink = g_reorder ? IM_COL32(120, 230, 70, 255) : over ? IM_COL32(186, 240, 120, 255) : IM_COL32(240, 244, 248, 255);
-                for (int gy = 0; gy < 2; ++gy)
-                    for (int gx = 0; gx < 2; ++gx)
-                        d->AddRectFilled({c.x + (gx ? 1.2f : -7.2f) * S, c.y + (gy ? 1.2f : -7.2f) * S},
-                                         {c.x + (gx ? 7.2f : -1.2f) * S, c.y + (gy ? 7.2f : -1.2f) * S}, ink, 1.5f * S);
-            }
-            bool bellHover = false;
-            if (button(at(194, 9), at(216, 31), &bellHover) && !open) {
-                g_phoneNotesOpen = true;
-                g_notesScroll = 0;
-                action = kNotesOpened;
-            }
-            const ImU32 ink = bellHover ? IM_COL32(186, 240, 120, 255) : IM_COL32(240, 244, 248, 255);
-            const ImVec2 c = at(205, 19);
-            const float u = S;  // one game pixel
-            // The bell: a dome over a flaring skirt, its rim, the clapper.
-            d->PathArcTo({c.x, c.y - 2 * u}, 4.6f * u, 3.14159f, 2 * 3.14159f, 14);
-            d->PathLineTo({c.x + 5.4f * u, c.y + 4.2f * u});
-            d->PathLineTo({c.x + 7.2f * u, c.y + 5.6f * u});
-            d->PathLineTo({c.x - 7.2f * u, c.y + 5.6f * u});
-            d->PathLineTo({c.x - 5.4f * u, c.y + 4.2f * u});
-            d->PathFillConvex(ink);
-            d->AddRectFilled({c.x - 4.6f * u, c.y - 2.2f * u}, {c.x + 4.6f * u, c.y + 4.4f * u}, ink);
-            d->AddCircleFilled({c.x, c.y - 7.2f * u}, 1.1f * u, ink);
-            d->AddCircleFilled({c.x, c.y + 7.0f * u}, 1.5f * u, ink);
-            if (g_notes.unread > 0) {
-                char count[8];
-                std::snprintf(count, sizeof count, "%d", std::min(99, g_notes.unread));
-                const ImVec2 b = at(212, 27);
-                ImVec2 ns = g_small->CalcTextSizeA(22, FLT_MAX, 0, count);
-                const float rad = std::max(6.0f * u, ns.x / 2 + 3 * u);
-                d->AddCircleFilled(b, rad + 1.2f * u, IM_COL32(255, 255, 255, 255));
-                d->AddCircleFilled(b, rad, IM_COL32(214, 34, 34, 255));
-                d->AddText(g_small, 22, {b.x - ns.x / 2, b.y - ns.y / 2}, kWhite, count);
-            }
-        }
+        phoneHeader(true);
         std::vector<int> apps;
         apps.push_back(-1);  // Options
         apps.push_back(-2);  // Calendar
@@ -4509,48 +4581,7 @@ Action drawPhone(ImDrawList* d, int* index) {
                       at(x + 14, 378), A);
             }
         }
-        if (g_phoneColorsOpen) {
-            // PhoneBackgroundColorSelector: its panel (mcBg), the arrow to its
-            // button (mcArrow) and the swatches (VariationGrid, 8 a row, margins
-            // 1,1,2,2 and 3,3,5,2). The game puts it above the phone; on our
-            // screen it opens under the button, its arrow pointing up at it.
-            const int n = static_cast<int>(p.colors.size()), cols = 8, rows = (n + cols - 1) / cols;
-            const float sw = 24, cell = sw + 3, gw = cols * cell + 5, gh = rows * cell + 8;
-            const float px = (230 - gw) / 2, py = 44;
-            nine(d, art::kPhonePill, at(px, py), at(px + gw, py + gh), 37, 37, 37, 37, A * 0.6f);
-            {
-                const art::Piece& a = art::kPhoneSelectorArrow;  // drawn pointing down: flipped
-                const ImVec2 c = at(39 + cs / 2, py - 5);
-                const float w = 22 * 0.727f * S, h = 17 * 0.706f * S;
-                d->AddImage(reinterpret_cast<ImTextureID>(g_art), {c.x - w / 2, c.y - h / 2}, {c.x + w / 2, c.y + h / 2},
-                            {static_cast<float>(a.x) / art::kAtlasW, static_cast<float>(a.y + a.h) / art::kAtlasH},
-                            {static_cast<float>(a.x + a.w) / art::kAtlasW, static_cast<float>(a.y) / art::kAtlasH});
-            }
-            for (int i = 0; i < n; ++i) {
-                const float x = px + 2 + (i % cols) * cell + 2, y = py + 3 + (i / cols) * cell + 1;
-                bool over = false;
-                if (button(at(x, y), at(x + sw, y + sw), &over)) {
-                    action = kPhoneColor;
-                    if (index) *index = i;
-                    g_phoneColorsOpen = false;  // OnPhoneColorVariationSelected: Hide
-                }
-                const ImVec2 c = at(x + sw / 2, y + sw / 2);
-                shown.push_back(p.colors[i]);
-                icon(d, p.colors[i], c, sw * S);
-                if (i == p.color || over)
-                    d->AddRect(at(x - 1, y - 1), at(x + sw + 1, y + sw + 1),
-                               i == p.color ? IM_COL32(120, 200, 40, 255) : IM_COL32(255, 255, 255, 200), 3 * S, 0,
-                               (i == p.color ? 2.0f : 1.2f) * S);
-            }
-            // A press anywhere else hides it (PhoneColorSelector.OnFocusChange).
-            const ImVec2 m = ImGui::GetIO().MousePos, a0 = at(px, py), b0 = at(px + gw, py + gh), ba = at(39, 10),
-                         bb = at(39 + cs, 10 + cs);
-            const bool inside = (m.x >= a0.x && m.x <= b0.x && m.y >= a0.y && m.y <= b0.y) ||
-                                (m.x >= ba.x && m.x <= bb.x && m.y >= ba.y && m.y <= bb.y);
-            if (!blocked && ImGui::IsMouseClicked(0) && !inside && m.x >= r.x && m.x <= r.x + r.w && m.y >= r.y &&
-                m.y <= r.y + r.h)
-                g_phoneColorsOpen = false;
-        }
+        phoneColorSelector();
     } else {
         // PhoneInteractionScreen without its app carousel (user 2026-10-24 02:06Z: no bar to change apps inside
         // one; Back goes up): the app's name as the header, the list, the back button. Only our drawing changes:
@@ -5276,6 +5307,7 @@ void setPhoneSim(const char* data, size_t size) {
         if (f[0] == "sim" && f.size() >= 2) {
             c.age = std::atoi(f[1].c_str());
             if (f.size() >= 3) c.name = f[2];
+            if (f.size() >= 4 && !f[3].empty()) c.funds = std::atoll(f[3].c_str());
         } else if (f[0] == "cat" && f.size() >= 3) {
             c.categories.emplace_back(std::atoi(f[1].c_str()), f[2]);
         } else if (f[0] == "skill" && f.size() >= 9 && c.skills.size() < 100) {
