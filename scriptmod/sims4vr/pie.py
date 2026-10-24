@@ -264,7 +264,7 @@ def open_self():
         _log_error('own pie menu', e)
 
 
-def open_on(obj):
+def open_on(obj, pick_sim=False):
     """A pie menu on an object (the phone's Inventory: what a click on it in the game's inventory panel asks,
     interactions.choices on the object), answered at your hand like any pie menu in first person."""
     try:
@@ -278,7 +278,8 @@ def open_on(obj):
         from server.pick_info import PickType
         position = sim.position
         choices = _debug_choices if _choices is not None else interaction_commands.generate_choices
-        items = choices(obj.id, PickType.PICK_OBJECT, position.x, position.y, position.z, services.active_lot_id() or 0,
+        items = choices(obj.id, PickType.PICK_SIM if pick_sim else PickType.PICK_OBJECT, position.x, position.y, position.z,
+                        services.active_lot_id() or 0,
                         sim.level, 0, 0, 0, _last_reference, 0, 0, True, _connection=client.id)
         native._log('pie: pie menu on {} asked for ({} options)'.format(obj, items))
     except Exception as e:

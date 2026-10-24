@@ -350,10 +350,16 @@ def _contact_list(sim_info, records):
             r = tracker.get_relationship_score(target_id, romance) if romance is not None else 0
         except Exception:
             continue
-        found.append((max(abs(f), abs(r)) + (5 if target.household is sim_info.household else 0), target, f, r))
+        found.append((max(abs(f), abs(r)) + (500 if target.household is sim_info.household else 0), target, f, r))
+    # Household members with no relationship yet are contacts too (the Household filter shows them all).
+    have = set(t.id for _, t, _, _ in found)
+    for member in (sim_info.household.sim_info_gen() if sim_info.household is not None else ()):
+        if member is not sim_info and member.id not in have:
+            found.append((500, member, 0.0, 0.0))
     found.sort(key=lambda x: -x[0])
-    _contacts[:] = [t.id for _, t, _, _ in found[:60]]
-    for n, (_, target, f, r) in enumerate(found[:60]):
+    _contacts[:] = [t.id for _, t, _, _ in found[:80]]
+    tags_of = _contact_tagger(sim_info)
+    for n, (_, target, f, r) in enumerate(found[:80]):
         def bit_of(track):
             try:
                 t = tracker.get_relationship_track(target.id, track)
@@ -389,7 +395,76 @@ def _contact_list(sim_info, records):
         records.append('ct\x1f{}\x1f{}\x1f{}\x1f{:.0f}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}'.format(
             n, '{} {}'.format(target.first_name, target.last_name).strip(), hudinfo._thumb('sims/f_{}_m_0'.format(target.id)),
             f, '{:.0f}'.format(r) if has_romance else '', bit_of(friendship), bit_of(romance) if has_romance else '',
-            int(target.is_instanced()), family_bit()))
+            int(target.is_instanced()), family_bit(), tags_of(target, f, r)))
+
+
+def _contact_tagger(sim_info):
+    """The Contacts filters a Sim is in (user 2026-10-24 17:54Z), as letters: H household, F family, f friend,
+    R romance, E rival, W coworker, S schoolmate, L on this lot, C same club, P pet."""
+    import services
+    from sims.sim_info_types import Age
+    tracker = sim_info.relationship_tracker
+    family = set()
+    try:
+        family = set(sim_info.genealogy.get_family_sim_ids_gen())
+    except Exception as e:
+        _log_error('the family', e)
+    coworker_bit = None
+    try:
+        from careers.coworker import CoworkerMixin
+        coworker_bit = CoworkerMixin.COWORKER_RELATIONSHIP_BIT
+    except Exception:
+        pass
+    young = sim_info.age in (Age.CHILD, Age.TEEN)
+    school = set()
+    try:
+        if young:
+            school = set(c.guid64 for c in sim_info.career_tracker)
+    except Exception:
+        pass
+    clubs = set()
+    try:
+        service = services.get_club_service()
+        if service is not None:
+            clubs = set(service.get_clubs_for_sim_info(sim_info))
+    except Exception:
+        pass
+    lot = services.active_lot()
+
+    def tags(target, f, r):
+        out = ''
+        if target.household is sim_info.household:
+            out += 'H'
+        if target.id in family:
+            out += 'F'
+        if f >= 30:
+            out += 'f'
+        if r >= 10 or (tracker.has_romantic_relationship(target.id) if hasattr(tracker, 'has_romantic_relationship') else False):
+            out += 'R'
+        if f <= -30:
+            out += 'E'
+        try:
+            if coworker_bit is not None and tracker.has_bit(target.id, coworker_bit):
+                out += 'S' if young else 'W'
+            elif young and target.age in (Age.CHILD, Age.TEEN) and school & set(c.guid64 for c in target.career_tracker):
+                out += 'S'
+        except Exception:
+            pass
+        try:
+            sim = target.get_sim_instance()
+            if sim is not None and lot is not None and lot.is_position_on_lot(sim.position):
+                out += 'L'
+        except Exception:
+            pass
+        try:
+            if clubs and clubs & set(services.get_club_service().get_clubs_for_sim_info(target)):
+                out += 'C'
+        except Exception:
+            pass
+        if getattr(target, 'is_pet', False):
+            out += 'P'
+        return out
+    return tags
 
 
 def _contact_page(sim_info, records):
@@ -967,6 +1042,34 @@ def select_contact(index):
     global _contact
     _contact = _contacts[index] if 0 <= index < len(_contacts) else None
     send(fresh=True, contacts=True)
+
+
+def contact_pie(index):
+    """Contacts: the portrait on a contact's page pressed (user 2026-10-24 17:59Z): their pie menu, as a click
+    on them asks, so a first person Sim can interact from afar (reach.py brings them over for a social)."""
+    import services
+    from sims4vr import pie
+    target = services.sim_info_manager().get(_contacts[index]) if 0 <= index < len(_contacts) else None
+    sim = target.get_sim_instance() if target is not None else None
+    if sim is None:
+        native._log('phonesim: contact {} is not here, no pie menu'.format(index))
+        return
+    pie.open_on(sim, pick_sim=True)
+
+
+def contact_play_as(index):
+    """Contacts: Play as on a household member's page (as the Household app's)."""
+    global _switch
+    import time
+    import services
+    if _switch is not None or not 0 <= index < len(_contacts):
+        return
+    target = services.sim_info_manager().get(_contacts[index])
+    active = services.active_sim_info()
+    if target is None or active is None or target.household is not active.household:
+        return
+    _switch = [target.id, time.monotonic(), False]
+    native.set_eyes_held(True)
 
 
 def play_as(index):

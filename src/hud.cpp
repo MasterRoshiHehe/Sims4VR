@@ -283,6 +283,7 @@ struct SimContact {  // Contacts: one Sim your Sim has a relationship with (phon
     uint64_t face = 0;
     float friendship = 0, romance = 0;
     bool hasRomance = false, here = false;
+    std::string tags;  // the filters it is in (phonesim._contact_tagger): H F f R E W S L C P
 };
 struct ContactPage {  // the picked contact: what your Sim knows of them ("cd", "cdt", "cdk", "cds", "cdb")
     int index = -1, unknown = 0;
@@ -422,6 +423,8 @@ void saveAppOrder() {
 bool g_weatherOpen = false;    // the home screen's Weather app
 bool g_gameMenuPhone = false;  // Settings > Game Options: the game's Escape menu drawn on the phone
 int g_contacts = -1;        // Contacts: -1 closed, 0 the list, 1 a contact's page
+int g_contactFilter = 0;     // Contacts: the filter (All, Household, Family...)
+bool g_contactFilterOpen = false;
 int g_contactSel = -1;      // the contact whose page is open
 ULONGLONG g_contactsAsked = 0;
 int g_hhSim = -1;           // Household shows this member's page
@@ -3333,36 +3336,81 @@ void drawContacts(ImDrawList* d, const Rect& r, Button& button, std::vector<uint
     const float small = 19 * g_phoneText;
     if (!page) {
         g_contacts = 0;
-        const float rowH = 50 * std::max(1.0f, g_phoneText / 1.2f);
-        for (int n = 0; n < static_cast<int>(g_sim.contacts.size()); ++n, y += rowH) {
-            if (y + rowH < top - 10 || y > bottom + 10) continue;
-            const SimContact& k = g_sim.contacts[n];
-            const ImVec2 ra = at(left, y + 2), rb = at(right, y + rowH - 2);
+        // The filter (user 2026-10-24 17:54Z): a dropdown over a 2-wide grid of portrait cards as the Household
+        // app's (your relationship's bars under the name, Sims not here dimmed). Only filters someone is in show.
+        static const char* const kFilterNames[11] = {"All", "Household", "Family", "Friends", "Romance", "Rivals",
+                                                    "Work", "School", "On this lot", "Clubs", "Pets"};
+        static const char kFilterTags[11] = {0, 'H', 'F', 'f', 'R', 'E', 'W', 'S', 'L', 'C', 'P'};
+        int counts[11] = {};
+        for (const SimContact& k : g_sim.contacts) {
+            ++counts[0];
+            for (int i = 1; i < 11; ++i) counts[i] += k.tags.find(kFilterTags[i]) != std::string::npos;
+        }
+        if (g_contactFilter < 0 || g_contactFilter >= 11 || (g_contactFilter > 0 && !counts[g_contactFilter] && !g_sim.contacts.empty()))
+            g_contactFilter = 0;
+        {
+            char label[48];
+            std::snprintf(label, sizeof label, "%s (%d)", kFilterNames[g_contactFilter], counts[g_contactFilter]);
+            const ImVec2 fa = at(left, y + 2), fb = at(right, y + 28);
             bool over = false;
-            if (inList(ra, rb, &over)) {
-                g_contacts = 1, g_contactSel = n, g_mySimScroll = 0;
-                action = kContactPicked;
-                if (index) *index = n;
-                g_phoneDataUntil = now + 1500;
+            if (inList(fa, fb, &over)) g_contactFilterOpen = !g_contactFilterOpen;
+            d->AddRectFilled(fa, fb, IM_COL32(255, 255, 255, over || g_contactFilterOpen ? 250 : 230), 13 * S);
+            d->AddText(g_title, 22 * g_phoneText, at(left + 10, y + 15 - 6 * g_phoneText), kBlue, label);
+            const ImVec2 c = at(right - 14, y + 15);  // the dropdown's arrow
+            const float u = S * (g_contactFilterOpen ? -1.0f : 1.0f);
+            d->AddTriangleFilled({c.x - 5 * S, c.y - 2.5f * u}, {c.x + 5 * S, c.y - 2.5f * u}, {c.x, c.y + 3.5f * u}, kBlue);
+            y += 34;
+        }
+        if (g_contactFilterOpen) {
+            for (int i = 0; i < 11; ++i) {
+                if (i && !counts[i]) continue;
+                char label[48];
+                std::snprintf(label, sizeof label, "%s (%d)", kFilterNames[i], counts[i]);
+                const ImVec2 ra = at(left + 8, y), rb = at(right - 8, y + 30);
+                bool over = false;
+                if (inList(ra, rb, &over)) g_contactFilter = i, g_contactFilterOpen = false;
+                d->AddRectFilled(ra, rb, i == g_contactFilter ? IM_COL32(205, 222, 246, 245) : over ? IM_COL32(232, 241, 255, 245)
+                                                                                                : IM_COL32(255, 255, 255, 225), 6 * S);
+                d->AddText(g_text, 22 * g_phoneText, at(left + 18, y + 15 - 6 * g_phoneText), kBlue, label);
+                y += 33;
             }
-            d->AddRectFilled(ra, rb, IM_COL32(255, 255, 255, k.here ? 232 : 200), 6 * S);
-            if (over) d->AddRect(ra, rb, IM_COL32(9, 73, 171, 180), 6 * S, 0, 1.4f * S);
-            if (k.face) {
-                shown.push_back(k.face);
-                icon(d, k.face, at(left + 22, y + rowH / 2), 40 * S);
+        } else {
+            const float cw = (right - left - 6) / 2, ch = 128;
+            int shownN = 0;
+            for (int n = 0; n < static_cast<int>(g_sim.contacts.size()); ++n) {
+                const SimContact& k = g_sim.contacts[n];
+                if (g_contactFilter > 0 && k.tags.find(kFilterTags[g_contactFilter]) == std::string::npos) continue;
+                const int i = shownN++;
+                const float x = left + (i % 2) * (cw + 6), cy = y + (i / 2) * (ch + 6);
+                if (cy + ch < top - 10 || cy > bottom + 10) continue;
+                const ImVec2 ca = at(x, cy), cb = at(x + cw, cy + ch);
+                bool over = false;
+                if (inList(ca, cb, &over)) {
+                    g_contacts = 1, g_contactSel = n, g_mySimScroll = 0;
+                    action = kContactPicked;
+                    if (index) *index = n;
+                    g_phoneDataUntil = now + 1500;
+                }
+                d->AddRectFilled(ca, cb, IM_COL32(255, 255, 255, k.here ? 228 : 150), 6 * S);
+                if (over) d->AddRect(ca, cb, kBlue, 6 * S, 0, 1.4f * S);
+                if (k.face) {
+                    shown.push_back(k.face);
+                    icon(d, k.face, at(x + cw / 2, cy + 42), 76 * S, k.here ? kWhite : IM_COL32(255, 255, 255, 120));
+                }
+                const size_t space = k.name.find(' ');
+                const std::string first = space == std::string::npos ? k.name : k.name.substr(0, space);
+                const float ns = 20 * g_phoneText;
+                ImVec2 sz = g_text->CalcTextSizeA(ns, FLT_MAX, 0, first.c_str());
+                const float fit = std::min(1.0f, (cw - 6) * S / std::max(1.0f, sz.x));
+                d->AddText(g_text, ns * fit, {at(x + cw / 2, 0).x - sz.x * fit / 2, at(0, cy + 84).y}, kBlue, first.c_str());
+                std::string sub = k.familyBitJson.empty() ? found(k.friendBitJson) : found(k.familyBitJson);
+                ImVec2 ss = g_text->CalcTextSizeA(16 * g_phoneText, FLT_MAX, 0, sub.c_str());
+                const float sfit = std::min(1.0f, (cw - 6) * S / std::max(1.0f, ss.x));
+                d->AddText(g_text, 16 * g_phoneText * sfit, {at(x + cw / 2, 0).x - ss.x * sfit / 2, at(0, cy + 97).y}, kInk, sub.c_str());
+                bar(x + 8, x + cw - 8, cy + ch - (k.hasRomance ? 18 : 11), 4, k.friendship, kFriend, kFoe);
+                if (k.hasRomance) bar(x + 8, x + cw - 8, cy + ch - 10, 4, k.romance, kLove, kFoe);
             }
-            d->AddText(g_text, 22 * g_phoneText, at(left + 46, y + 4), kBlue, k.name.c_str());
-            std::string bits = k.familyBitJson.empty() ? std::string() : found(k.familyBitJson);
-            const std::string& fb = found(k.friendBitJson);
-            if (!fb.empty()) bits += bits.empty() ? fb : ", " + fb;
-            if (k.hasRomance) {
-                const std::string& rbit = found(k.romanceBitJson);
-                if (!rbit.empty()) bits += bits.empty() ? rbit : ", " + rbit;
-            }
-            d->AddText(g_text, small * 0.9f, at(left + 46, y + 4 + 10 * g_phoneText), kInk, bits.c_str());
-            const float by = y + rowH - (k.hasRomance ? 15 : 10);
-            bar(left + 46, right - 6, by, 4, k.friendship, kFriend, kFoe);
-            if (k.hasRomance) bar(left + 46, right - 6, by + 6, 4, k.romance, kLove, kFoe);
+            y += ((shownN + 1) / 2) * (ch + 6);
         }
         if (g_sim.contacts.empty()) {
             ImVec2 ns = g_text->CalcTextSizeA(26, FLT_MAX, 0, "...");
@@ -3373,12 +3421,36 @@ void drawContacts(ImDrawList* d, const Rect& r, Button& button, std::vector<uint
         const ContactPage& c = g_sim.contact;
         const bool ready = c.index == g_contactSel;
         const uint64_t pic = ready && c.bust ? c.bust : k.face;
-        d->AddCircleFilled(at(115, y + 56), 52 * S, IM_COL32(255, 255, 255, 60), 64);
+        // The portrait: pressed, their pie menu in front of the phone (user 2026-10-24 17:59Z), when they're here.
+        bool picOver = false;
+        if (inList(at(63, y + 4), at(167, y + 108), &picOver) && k.here) {
+            action = kContactPie;
+            if (index) *index = g_contactSel;
+        }
+        d->AddCircleFilled(at(115, y + 56), 52 * S, IM_COL32(255, 255, 255, picOver && k.here ? 110 : 60), 64);
         if (pic) {
             shown.push_back(pic);
             icon(d, pic, at(115, y + 56), 104 * S);
         }
         y += 114;
+        if (k.tags.find('H') != std::string::npos) {
+            // Play as (household members), as the Household app's.
+            const bool busy = g_playAsAt && now - g_playAsAt < 2500, can = k.here && !busy;
+            const size_t space = k.name.find(' ');
+            const std::string label = "Play as " + (space == std::string::npos ? k.name : k.name.substr(0, space));
+            const ImVec2 ba = at(left + 20, y), bb = at(right - 20, y + 30);
+            bool over = false;
+            if (inList(ba, bb, &over) && can) {
+                action = kContactPlayAs;
+                if (index) *index = g_contactSel;
+                g_playAsAt = now;
+            }
+            d->AddRectFilled(ba, bb, over && can ? IM_COL32(232, 241, 255, 245) : IM_COL32(255, 255, 255, can ? 228 : 130), 8 * S);
+            ImVec2 bs = g_title->CalcTextSizeA(24 * g_phoneText, FLT_MAX, 0, label.c_str());
+            d->AddText(g_title, 24 * g_phoneText, {(ba.x + bb.x - bs.x) / 2, (ba.y + bb.y - bs.y) / 2}, can ? kBlue : IM_COL32(9, 73, 171, 120),
+                       label.c_str());
+            y += 36;
+        }
         auto card = [&](float h) {
             d->AddRectFilled(at(left, y), at(right, y + h), IM_COL32(255, 255, 255, 228), 6 * S);
         };
@@ -5417,7 +5489,7 @@ void setPhoneSim(const char* data, size_t size) {
             it.order = static_cast<int>(c.inventory.size());
             if (f.size() >= 8) it.favorite = f[6] == "1", it.locked = f[7] == "1";
             c.inventory.push_back(it);
-        } else if (f[0] == "ct" && f.size() >= 9 && c.contacts.size() < 60) {
+        } else if (f[0] == "ct" && f.size() >= 9 && c.contacts.size() < 80) {
             SimContact k;
             k.name = f[2];
             k.face = std::strtoull(f[3].c_str(), nullptr, 10);
@@ -5428,6 +5500,7 @@ void setPhoneSim(const char* data, size_t size) {
             k.romanceBitJson = f[7];
             k.here = f[8] == "1";
             if (f.size() >= 10) k.familyBitJson = f[9];
+            if (f.size() >= 11) k.tags = f[10];
             c.contacts.push_back(k);
         } else if (f[0] == "cd" && f.size() >= 4) {
             c.contact.index = std::atoi(f[1].c_str());
