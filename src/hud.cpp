@@ -2898,7 +2898,7 @@ void drawMySim(ImDrawList* d, const Rect& r, Button& button, std::vector<uint64_
         }
         const ImU32 kGoalBlue = IM_COL32(36, 108, 196, 255);
         for (const SimSouls::Goal& g : sj.goals) {
-            const std::string text = g.text.empty() ? std::string("...") : g.text;
+            const std::string text = g.text.empty() ? std::string("...") : found(g.text);
             char count[24] = "";
             if (g.show) std::snprintf(count, sizeof count, "%d/%d", g.value, g.goal);
             const float cw = g_text->CalcTextSizeA(20 * g_phoneText, FLT_MAX, 0, count).x / S;
@@ -3733,6 +3733,17 @@ Action drawPhone(ImDrawList* d, int* index) {
     g_phoneSwipeX = swipeX, g_phoneSwipeEnd = swipeEnded, g_phoneDx = dx;
     g_hoverKey = g_hoverKeySeen, g_hoverKeySeen = 0;
     auto button = [&](ImVec2 a, ImVec2 b, bool* hover, bool* held = nullptr) {
+        // The footer (Back and the page dots, under y 356) is theirs alone: anything else reaching into it, a
+        // row scrolled down or a card, stops at its top, so it never takes their presses (user 2026-10-24 13:32Z).
+        const float footer = r.y + 356 * S;
+        const bool footerButton = a.y >= footer - 0.5f * S && b.y <= r.y + 400 * S && b.x - a.x <= 40 * S;
+        if (b.y > footer && !footerButton) b.y = footer;
+        if (b.y - a.y < 1) {
+            ++id;
+            if (hover) *hover = false;
+            if (held) *held = false;
+            return false;
+        }
         ImGui::SetCursorScreenPos(a);
         ImGui::PushID(3000 + id++);
         bool pressed = ImGui::InvisibleButton("phone", {std::max(1.0f, b.x - a.x), std::max(1.0f, b.y - a.y)});

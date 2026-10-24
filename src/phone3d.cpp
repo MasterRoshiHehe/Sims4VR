@@ -42,6 +42,7 @@ cbuffer Draw : register(b0) {
     float4 tileSrc[16];                  // its part of the UI: u0, v0, u1, v1
     float4 overlayDst;                  // the tablet's tool tray on the menu rect, from its top left: x0, y0, x1, y1
     float4 overlayCrop;                 // its part of the overlay texture (the HUD atlas): u0, v0, u1, v1
+    float4 edges;                       // x: 1 = the menu's edge rows and columns carried out to the glass's edges
 };
 Texture2D ui : register(t0);
 Texture2D wallpaper : register(t2);
@@ -144,6 +145,7 @@ float4 psMain(Out i) : SV_Target {
             c = lerp(float3(0.10, 0.27, 0.40), float3(0.03, 0.09, 0.16), k);
         }
         float2 m = (i.local - menuRect.xy) / menuRect.zw + 0.5;
+        if (edges.x > 0.5) m = clamp(m, 0.0015, 0.9985);  // the HUD's apps: no strip of wallpaper above or below them
         // Its rate of change on screen, so a texture with mips (Claude's window) picks the level
         // that fits the distance; one-level textures sample as before.
         float2 uvRate = lerp(crop.xy, crop.zw, float2(m.x, 1 - m.y));
@@ -211,6 +213,7 @@ struct Constants {
     float tileInfo[4];
     float tileDst[kMaxTiles][4], tileSrc[kMaxTiles][4];
     float overlayDst[4], overlayCrop[4];
+    float edges[4];
 };
 
 std::mutex g_mutex;
@@ -1279,6 +1282,7 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
             k.tileInfo[2] = static_cast<float>(g_wallW) / static_cast<float>(g_wallH);
         }
         k.tileInfo[3] = std::max(0.0f, std::min(1.0f, p.dim));
+        k.edges[0] = p.edges ? 1.0f : 0.0f;
         std::memcpy(k.tileDst, p.tileDst, sizeof(k.tileDst));
         std::memcpy(k.tileSrc, p.tileSrc, sizeof(k.tileSrc));
         if (overlayView) {
