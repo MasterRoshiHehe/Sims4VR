@@ -38,6 +38,9 @@ To the DLL (native.phone_sim), records split by 0x1e, fields by 0x1f:
   "job"   \x1f <icon> \x1f <career name json> \x1f <title json> \x1f <level> \x1f <levels> \x1f <performance 0..1>
           \x1f <pay text> \x1f <company json> \x1f <shift text>
   "mood"  \x1f <mood index (hudinfo MOODS)> \x1f <name json>
+  "hh"    \x1f <index> \x1f <first name> \x1f <full name> \x1f <age> \x1f <here 0/1> \x1f <active 0/1>
+          \x1f <face picture> \x1f <bust picture>   (the Household app: the household tray's members)
+Control 7200000 + n = play as "hh" n (user 2026-10-24 00:39Z: eyes close, the game switches Sim, eyes open).
 Control 7000000 + n = change to "atrack" n. Control 85 = My Sim is open (send; the DLL asks again every 2 s while it is).
 """
 from sims4vr import native
@@ -45,6 +48,8 @@ from sims4vr import native
 _CATEGORY_TITLES = (675525327, 1883184146)  # KeysGP.SIM_INFO_SKILL_PANEL_CATEGORY_DEFAULT, _CHILD
 _sent = None
 _errors = 0
+_household = []  # the "hh" Sims sent last, by index (sim ids)
+_switch = None  # Play as under way: [target sim id, started (monotonic), switched]
 _tracks = (None, [], [])  # (sim id and age, categories, tracks) of the Change Aspiration list sent last
 
 
@@ -263,6 +268,63 @@ def _mood(sim_info, records):
     records.append('mood\x1f{}\x1f{}'.format(hudinfo._mood_index(mood), name))
 
 
+def _members(sim_info, records):
+    """The household tray's Sims (the active household, the game's skewer order: as the household's sim_info_gen)."""
+    from sims4vr import hudinfo
+    household = sim_info.household
+    _household.clear()
+    if household is None:
+        return
+    for n, member in enumerate(household.sim_info_gen()):
+        _household.append(member.id)
+        try:
+            here = int(member.is_instanced() and member.get_is_enabled_in_skewer())
+        except Exception:
+            here = 0
+        records.append('hh\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}'.format(
+            n, member.first_name, '{} {}'.format(member.first_name, member.last_name).strip(), int(member.age), here,
+            int(member is sim_info), hudinfo._thumb('sims/f_{}_l_0'.format(member.id)), hudinfo._sim_bust(member.id)))
+
+
+def play_as(index):
+    """The Household app's Play as: the eyes shut, then the game's own switch (client.set_active_sim_info,
+    as the skewer; onesim only refuses the next-Sim key and set_active_sim_by_id), then they open (tick)."""
+    global _switch
+    import time
+    if _switch is not None or not 0 <= index < len(_household):
+        return
+    _switch = [_household[index], time.monotonic(), False]
+    native.set_eyes_held(True)
+
+
+def tick():
+    """controls.py, every tick: carries Play as on (switch once the eyes are shut, open them after)."""
+    global _switch
+    if _switch is None:
+        return
+    import time
+    import services
+    elapsed = time.monotonic() - _switch[1]
+    if not _switch[2] and elapsed >= 0.35:
+        _switch[2] = True
+        try:
+            client = services.client_manager().get_first_client()
+            target = services.sim_info_manager().get(_switch[0])
+            if client is not None and target is not None and target.is_instanced() and target is not client.active_sim_info:
+                client.set_active_sim_info(target)
+                native._log('phonesim: now playing {} {}'.format(target.first_name, target.last_name))
+                from sims4vr import phone
+                if phone._out:  # the phone into the new Sim's hand
+                    phone._remove_prop()
+                    phone._make_prop()
+        except Exception as e:
+            _log_error('Play as', e)
+    if elapsed >= 1.6:
+        _switch = None
+        native.set_eyes_held(False)
+        send(fresh=True)
+
+
 def send(fresh=False):
     global _sent
     if native._optional('phone_sim') is None:
@@ -279,7 +341,7 @@ def send(fresh=False):
                 records.append('cat\x1f{}\x1f{}'.format(category, _key(title)))
             for s in skills:
                 records.append('skill\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{:.4f}\x1f{}\x1f{}'.format(*s))
-            for part in (_careers, _mood):
+            for part in (_careers, _mood, _members):
                 try:
                     part(sim_info, records)
                 except Exception as e:

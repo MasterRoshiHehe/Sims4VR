@@ -1109,6 +1109,10 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
         case hud::kTonePreview:
             if (index >= 0 && index < 1000) grab::pushControl(7100000 + index);  // phonesound.preview
             break;
+        case hud::kPlayAs:
+            if (index >= 0 && index < 100000) grab::pushControl(7200000 + index);  // phonesim.play_as
+            LOG("Phone: play as household Sim %d", index);
+            break;
         case hud::kAspirationPicked:
             if (index >= 0 && index < 100000) grab::pushControl(7000000 + index);  // phonesim.select_track
             LOG("Phone: aspiration track %d picked", index);

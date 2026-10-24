@@ -271,7 +271,14 @@ struct SimJob {
     float performance = 0;
     std::string nameJson, titleJson, pay, companyJson, shift;
 };
+struct SimMember {  // the Household app: one of the household tray's Sims
+    int index = 0, age = 0;
+    bool here = false, active = false;
+    uint64_t face = 0, bust = 0;
+    std::string first, name;
+};
 struct SimContent {
+    std::vector<SimMember> household;
     int age = 0;  // sims.sim_info_types.Age (0: not sent)
     int mood = 0;  // hudinfo MOODS index
     std::string moodJson;
@@ -291,6 +298,8 @@ float g_mySimScroll = 0; // game pixels the list is scrolled
 ULONGLONG g_mySimAsked = 0;
 int g_mySimMoodlet = -1;   // My Sim shows this moodlet's page
 bool g_aspChange = false;   // Aspirations shows the tracks to change to
+int g_hhSim = -1;           // Household shows this member's page
+ULONGLONG g_playAsAt = 0;   // Play as pressed (the button waits while the switch runs)
 int g_aspPicked = -1;       // the track pressed once (a second press changes to it)
 ULONGLONG g_aspPickedAt = 0, g_aspHoverSince = 0;
 // A press held and moved on the phone (laser or finger, user 2026-10-18 23:43Z):
@@ -1987,8 +1996,22 @@ float sliderFollow(const Rect& r, float top, float bottom, float thumbH) {
 constexpr int kMySimApps = 10;
 const char* const kMySimNames[kMySimApps] = {"Aspirations", "Career", "Wants", "Skills", "Needs", "Relationships",
                                              "Inventory", "Social Groups", "Owned Businesses", "Household"};
-constexpr int kSimAspirations = 0, kSimCareer = 1, kSimWants = 2, kSimSkills = 3, kSimNeeds = 4;
-bool mySimBuilt(int k) { return k <= kSimNeeds; }
+constexpr int kSimAspirations = 0, kSimCareer = 1, kSimWants = 2, kSimSkills = 3, kSimNeeds = 4, kSimHousehold = 9;
+bool mySimBuilt(int k) { return k <= kSimNeeds || k == kSimHousehold; }
+// sims.sim_info_types.Age's names, as the game shows them.
+const char* ageName(int age) {
+    switch (age) {
+        case 1: return "Baby";
+        case 2: return "Toddler";
+        case 4: return "Child";
+        case 8: return "Teen";
+        case 16: return "Young Adult";
+        case 32: return "Adult";
+        case 64: return "Elder";
+        case 128: return "Infant";
+        default: return "";
+    }
+}
 // The age's name for the Career app: School for children and teens (sims.sim_info_types.Age), none younger.
 const char* careerName(int age) {
     if (age == 4 || age == 8) return "School";
@@ -2113,7 +2136,7 @@ void drawMySim(ImDrawList* d, const Rect& r, Button& button, std::vector<uint64_
             const bool built = mySimBuilt(k);
             bool over = false;
             if (button(at(x, y), at(x + 46, y + 46), &over) && built)
-                g_mySim = 1 + k, g_mySimScroll = 0, g_aspChange = false, g_aspPicked = -1;
+                g_mySim = 1 + k, g_mySimScroll = 0, g_aspChange = false, g_aspPicked = -1, g_hhSim = -1;
             if (over && built) piece(d, art::kPhoneAppOver, c, A * 46 / 64);
             const ImU32 tint = built ? kWhite : IM_COL32(255, 255, 255, 110);
             if (k == kSimAspirations && g_sim.aspiration.valid) {
@@ -2168,7 +2191,9 @@ void drawMySim(ImDrawList* d, const Rect& r, Button& button, std::vector<uint64_
         return;
     }
     const int k = g_mySim - 1;
-    header(k == kSimAspirations && g_aspChange ? "Change Aspiration" : k == kSimCareer ? careerName(g_sim.age) : kMySimNames[k]);
+    if (k == kSimHousehold && g_hhSim >= static_cast<int>(g_sim.household.size())) g_hhSim = -1;
+    header(k == kSimAspirations && g_aspChange ? "Change Aspiration" : k == kSimCareer ? careerName(g_sim.age)
+           : k == kSimHousehold && g_hhSim >= 0 ? g_sim.household[g_hhSim].first.c_str() : kMySimNames[k]);
     const float top = 48, bottom = 354, left = 6, right = 206;
     float y = top - g_mySimScroll;
     d->PushClipRect(at(0, top), at(230, bottom), true);
@@ -2418,6 +2443,80 @@ void drawMySim(ImDrawList* d, const Rect& r, Button& button, std::vector<uint64_
             }
             y += rowH;
         }
+    } else if (k == kSimHousehold && g_hhSim >= 0) {
+        // A household Sim's page (user 2026-10-24 00:39Z): the bust on top, name, age, and Play as:
+        // the eyes close, the game switches to the Sim (phonesim.play_as), the eyes open.
+        const SimMember& m = g_sim.household[g_hhSim];
+        const uint64_t pic = m.bust ? m.bust : m.face;
+        d->AddCircleFilled(at(115, y + 72), 66 * S, IM_COL32(255, 255, 255, 70), 64);
+        if (pic) {
+            shown.push_back(pic);
+            icon(d, pic, at(115, y + 72), 130 * S);
+        }
+        y += 146;
+        ImVec2 ns = g_title->CalcTextSizeA(30 * g_phoneText, FLT_MAX, 0, m.name.c_str());
+        shadowText(d, g_title, 30 * g_phoneText, {at(115, 0).x - ns.x / 2, at(0, y).y}, kWhite, m.name.c_str());
+        y += 14 * g_phoneText + 4;
+        const char* state = m.active ? "Playing now" : m.here ? "Here" : "Not on this lot";
+        char line[64];
+        std::snprintf(line, sizeof line, "%s%s%s", ageName(m.age), *ageName(m.age) ? " - " : "", state);
+        ImVec2 ls = g_text->CalcTextSizeA(22 * g_phoneText, FLT_MAX, 0, line);
+        shadowText(d, g_text, 22 * g_phoneText, {at(115, 0).x - ls.x / 2, at(0, y).y}, kWhite, line);
+        y += 12 * g_phoneText + 10;
+        const bool busy = g_playAsAt && now - g_playAsAt < 2500;
+        const bool can = m.here && !m.active && !busy;
+        std::string label = m.active ? "Playing as " + m.first : "Play as " + m.first;
+        const ImVec2 ba = at(left + 20, y), bb = at(right - 20, y + 30);
+        bool over = false;
+        if (button(ba, bb, &over) && can) {
+            action = kPlayAs;
+            if (index) *index = m.index;
+            g_playAsAt = now;
+        }
+        const ImU32 fade = can ? kWhite : IM_COL32(255, 255, 255, 120);
+        if (over && can) nine(d, art::kDialogButtonOver, {ba.x - 2, ba.y - 3}, {bb.x + 2, bb.y + 6}, 48, 36, 48, 54, 0.6f);
+        else nine(d, art::kDialogButton, ba, bb, 48, 36, 48, 42, 0.6f, fade);
+        ImVec2 bs = g_text->CalcTextSizeA(26, FLT_MAX, 0, label.c_str());
+        d->AddText(g_text, 26, {(ba.x + bb.x - bs.x) / 2, (ba.y + bb.y - bs.y) / 2 - 2},
+                   can ? IM_COL32(30, 70, 128, 255) : IM_COL32(30, 70, 128, 130), label.c_str());
+        y += 36;
+        if (!m.here) {
+            const char* why = "Only Sims on this lot can be played.";
+            ImVec2 ws = g_text->CalcTextSizeA(19 * g_phoneText, FLT_MAX, 0, why);
+            shadowText(d, g_text, 19 * g_phoneText, {at(115, 0).x - ws.x / 2, at(0, y).y}, kWhite, why);
+            y += 12 * g_phoneText;
+        }
+    } else if (k == kSimHousehold) {
+        // The household tray as a 2-wide grid of portraits (user 2026-10-23 21:35Z): the Sim you play ringed
+        // in green, Sims not on the lot dimmed. Press one for its page.
+        const float cw = 97, ch = 118;
+        const int n = static_cast<int>(g_sim.household.size());
+        for (int i = 0; i < n; ++i) {
+            const SimMember& m = g_sim.household[i];
+            const float x = left + (i % 2) * (cw + 6), cy = y + (i / 2) * (ch + 6);
+            const ImVec2 ca = at(x, cy), cb = at(x + cw, cy + ch);
+            bool over = false;
+            if (button(ca, cb, &over)) g_hhSim = i, g_mySimScroll = 0;
+            d->AddRectFilled(ca, cb, IM_COL32(255, 255, 255, m.here ? 225 : 150), 6 * S);
+            if (m.active) d->AddRect(ca, cb, IM_COL32(70, 170, 50, 255), 6 * S, 0, 2 * S);
+            else if (over) d->AddRect(ca, cb, IM_COL32(9, 73, 171, 180), 6 * S, 0, 1.4f * S);
+            if (m.face) {
+                shown.push_back(m.face);
+                icon(d, m.face, at(x + cw / 2, cy + 44), 80 * S, m.here ? kWhite : IM_COL32(255, 255, 255, 120));
+            }
+            const float ns = 20 * g_phoneText;
+            ImVec2 sz = g_text->CalcTextSizeA(ns, FLT_MAX, 0, m.first.c_str());
+            const float fit = std::min(1.0f, (cw - 6) * S / std::max(1.0f, sz.x));
+            d->AddText(g_text, ns * fit, {at(x + cw / 2, 0).x - sz.x * fit / 2, at(0, cy + 88).y}, kBlue, m.first.c_str());
+            const char* sub = m.active ? "Playing" : m.here ? ageName(m.age) : "Away";
+            ImVec2 ss = g_text->CalcTextSizeA(17 * g_phoneText, FLT_MAX, 0, sub);
+            d->AddText(g_text, 17 * g_phoneText, {at(x + cw / 2, 0).x - ss.x / 2, at(0, cy + 101).y}, IM_COL32(80, 90, 110, 255), sub);
+        }
+        y += ((n + 1) / 2) * (ch + 6);
+        if (!n) {
+            ImVec2 ns = g_text->CalcTextSizeA(26, FLT_MAX, 0, "...");
+            shadowText(d, g_text, 26, {at(115, 150).x - ns.x / 2, at(115, 150).y - ns.y / 2}, kWhite, "...");
+        }
     } else if (k == kSimNeeds) {
         Item items[kMaxItems];
         std::vector<Tip> tips;
@@ -2556,7 +2655,7 @@ Action drawPhone(ImDrawList* d, int* index) {
     if (g_phoneHomeAsked.exchange(false))
         g_phoneApp = g_phoneRoot = -1, g_phonePage = 0, g_phoneScroll = 0, g_phoneColorsOpen = false, g_phoneNotesOpen = false,
         g_phoneCalOpen = false, g_phoneSettingsOpen = false, g_phoneOptsGroup.clear(), g_mySim = -1, g_mySimMoodlet = -1,
-        g_phoneSoundsOpen = false;
+        g_phoneSoundsOpen = false, g_hhSim = -1;
     if (g_phoneApp >= 0) g_phoneNotesOpen = g_phoneCalOpen = g_phoneSettingsOpen = g_phoneSoundsOpen = false, g_phoneOptsGroup.clear(), g_mySim = -1;
     if (g_phoneApp >= 0 || p.colors.empty()) g_phoneColorsOpen = false;
 
@@ -2911,6 +3010,7 @@ Action drawPhone(ImDrawList* d, int* index) {
         if (button(at(96, 361), at(129, 392), &over)) {
             if (g_aspChange) g_aspChange = false;
             else if (g_mySimMoodlet >= 0) g_mySimMoodlet = -1;
+            else if (g_hhSim >= 0) g_hhSim = -1;
             else g_mySim = g_mySim > 0 ? 0 : -1;
             g_mySimScroll = 0, g_aspPicked = -1;
         }
@@ -3203,7 +3303,7 @@ bool phonePicturesIn() {
 int phoneScreenKey() {
     const int opts = static_cast<int>(std::hash<std::wstring>()(g_phoneOptsGroup) & 0xffff);
     return (((g_phoneApp + 2) * 8 + (g_phoneNotesOpen ? 1 : 0) + (g_phoneCalOpen ? 2 : 0) + (g_phoneSettingsOpen ? 4 : 0)) *
-                65537 + opts) * 31 + g_phoneSerial + (g_mySim + 1) * 7919 + (g_aspChange ? 104729 : 0) + (g_mySimMoodlet + 1) * 1299709 + (g_phoneSoundsOpen ? 15485863 : 0);
+                65537 + opts) * 31 + g_phoneSerial + (g_mySim + 1) * 7919 + (g_aspChange ? 104729 : 0) + (g_mySimMoodlet + 1) * 1299709 + (g_hhSim + 1) * 7907 + (g_phoneSoundsOpen ? 15485863 : 0);
 }
 
 // The still and the cover's blend: premultiplied colours (the atlas's), drawn with ImGui's straight blend otherwise.
@@ -3876,6 +3976,17 @@ void setPhoneSim(const char* data, size_t size) {
             j.companyJson = f[8];
             j.shift = f[9];
             c.jobs.push_back(j);
+        } else if (f[0] == "hh" && f.size() >= 9 && c.household.size() < 16) {
+            SimMember m;
+            m.index = std::atoi(f[1].c_str());
+            m.first = f[2];
+            m.name = f[3];
+            m.age = std::atoi(f[4].c_str());
+            m.here = f[5] == "1";
+            m.active = f[6] == "1";
+            m.face = std::strtoull(f[7].c_str(), nullptr, 10);
+            m.bust = std::strtoull(f[8].c_str(), nullptr, 10);
+            c.household.push_back(m);
         } else if (f[0] == "mood" && f.size() >= 3) {
             c.mood = std::atoi(f[1].c_str());
             c.moodJson = f[2];

@@ -259,6 +259,8 @@ def _tick(_handle):
     try:
         _report_voice_sim()
         _build_buy()
+        from sims4vr import phonesim
+        phonesim.tick()
         for _ in range(4):
             what = native.control_event()
             if what == 1:
@@ -335,6 +337,9 @@ def _tick(_handle):
             elif 6000000 <= what < 7000000:
                 from sims4vr import objmenu
                 objmenu.list_control(what - 6000000)
+            elif 7200000 <= what < 7300000:
+                from sims4vr import phonesim
+                phonesim.play_as(what - 7200000)
             elif 7100000 <= what < 7101000:
                 from sims4vr import phonesound
                 phonesound.preview(what - 7100000)
