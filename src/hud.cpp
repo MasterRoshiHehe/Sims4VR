@@ -349,6 +349,42 @@ ULONGLONG g_mySimAsked = 0;
 int g_mySimMoodlet = -1;   // My Sim shows this moodlet's page
 bool g_aspChange = false;   // Aspirations shows the tracks to change to
 std::atomic<bool> g_phoneAsleep{false};  // the phone's screen is off (setPhoneAsleep)
+// Rearranging the home screen (user 2026-10-24 02:06Z): the order saved by app (ours "#-n", the game's and mods'
+// by their names) in sims4vr_user.ini [phone] app_order, '|' between; apps not in it follow in the game's order.
+bool g_reorder = false;
+std::string g_reorderPick;  // the app picked to move (its key), empty: none
+std::vector<std::string> g_appOrder;
+bool g_appOrderRead = false;
+std::string appKey(const PhoneContent& p, int node) {
+    return node < 0 ? "#" + std::to_string(node) : node < static_cast<int>(p.nodes.size()) ? p.nodes[node].name : std::string();
+}
+void readAppOrder() {
+    if (g_appOrderRead) return;
+    const std::wstring ini = settings::userIni();
+    if (ini.empty()) return;
+    g_appOrderRead = true;
+    char buf[8192] = {};
+    GetPrivateProfileStringW(L"phone", L"app_order", L"", reinterpret_cast<wchar_t*>(buf), sizeof buf / 2, ini.c_str());
+    std::string text = utf8(reinterpret_cast<const wchar_t*>(buf));
+    size_t at = 0;
+    while (at < text.size()) {
+        size_t end = text.find('|', at);
+        if (end == std::string::npos) end = text.size();
+        if (end > at) g_appOrder.push_back(text.substr(at, end - at));
+        at = end + 1;
+    }
+}
+void saveAppOrder() {
+    const std::wstring ini = settings::userIni();
+    if (ini.empty()) return;
+    std::string text;
+    for (const std::string& k : g_appOrder) text += (text.empty() ? "" : "|") + k;
+    const int n = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, nullptr, 0);
+    std::wstring w(static_cast<size_t>(std::max(1, n)), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, &w[0], n);
+    WritePrivateProfileStringW(L"phone", L"app_order", w.c_str(), ini.c_str());
+    LOG("Phone: app order saved (%zu apps)", g_appOrder.size());
+}
 bool g_weatherOpen = false;    // the home screen's Weather app
 bool g_gameMenuPhone = false;  // Settings > Game Options: the game's Escape menu drawn on the phone
 int g_contacts = -1;        // Contacts: -1 closed, 0 the list, 1 a contact's page
@@ -3049,7 +3085,7 @@ Action drawPhone(ImDrawList* d, int* index) {
         // Our apps: our own icons in the game's phone app style (tools/make_phone_icons.py).
         const art::Piece* own = node == -1 ? &art::kAppSettings : node == -2 ? &art::kAppCalendar : node == -3 ? &art::kAppBuild
                               : node == -10 ? &art::kAppGameOptions : node == -11 ? &art::kAppPhoneOptions
-                              : node == -12 ? &art::kAppVrOptions : node == -4 ? &art::kAppMySim : node == -5 ? &art::kAppRelationships : node == -6 ? &art::kAppWeather : nullptr;
+                              : node == -12 ? &art::kAppVrOptions : node == -4 ? &art::kAppMySim : node == -5 ? &art::kAppRelationships : node == -6 ? &art::kAppWeather : node == -15 ? &art::kAppGodView : nullptr;
         if (own) {
             const float h = 32 * S;
             pieceIn(d, *own, {c.x - h, c.y - h}, {c.x + h, c.y + h}, tint);
@@ -3423,9 +3459,10 @@ Action drawPhone(ImDrawList* d, int* index) {
         }
         // Gallery: the GameTray's top right button (user 2026-10-24 01:00Z), sending what it sends. (Manage Worlds
         // dropped 01:22Z: it is in Game Options already; kManageWorlds / app -14 kept unused.)
-        static const int kApps[4] = {-10, -11, -12, -13};
-        static const char* kNames[4] = {"Game Options", "Phone Options", "VR Options", "Gallery"};
-        for (int k = 0; k < 4; ++k) {
+        // God View (user 2026-10-24 02:03Z): out of first person to the game's own camera.
+        static const int kApps[5] = {-10, -11, -12, -13, -15};
+        static const char* kNames[5] = {"Game Options", "Phone Options", "VR Options", "Gallery", "God View"};
+        for (int k = 0; k < 5; ++k) {
             const float x = 13 + (k % 3) * 68 + 4, y = 101 + 6 + (k / 3) * 92;
             const ImVec2 c = at(x + 32, y + 32);
             bool over = false;
@@ -3433,6 +3470,7 @@ Action drawPhone(ImDrawList* d, int* index) {
                 if (kApps[k] == -10) g_gameMenuPhone = true;
                 else if (kApps[k] == -11) g_phoneOptsGroup = L"Phone", g_phoneOptsScroll = 0;
                 else if (kApps[k] == -13) action = kGallery;
+                else if (kApps[k] == -15) action = kGodView;
                 else if (kApps[k] == -14) action = kManageWorlds;
                 else action = kVrOptions;
             }
@@ -3616,6 +3654,17 @@ Action drawPhone(ImDrawList* d, int* index) {
         apps.push_back(-5);  // Contacts (phonesim.py)
         apps.push_back(-6);  // Weather (phonesim.py)
         apps.insert(apps.end(), p.home.begin(), p.home.end());
+        // Your order: the saved apps first in theirs, the rest after in the game's.
+        readAppOrder();
+        if (!g_appOrder.empty()) {
+            std::vector<int> ordered;
+            for (const std::string& k : g_appOrder)
+                for (int n : apps)
+                    if (appKey(p, n) == k && std::find(ordered.begin(), ordered.end(), n) == ordered.end()) ordered.push_back(n);
+            for (int n : apps)
+                if (std::find(ordered.begin(), ordered.end(), n) == ordered.end()) ordered.push_back(n);
+            apps.swap(ordered);
+        }
         const int perPage = 9, pages = static_cast<int>((apps.size() + perPage - 1) / perPage);
         g_phonePage = std::max(0, std::min(pages - 1, g_phonePage));
         int hovered = -100;
@@ -3638,7 +3687,30 @@ Action drawPhone(ImDrawList* d, int* index) {
             const float x = 13 + (k % 3) * 68 + 4 + slide + (pg - g_phonePage) * 230, y = 101 + (k / 3) * 70 + 6;
             const ImVec2 c = at(x + 32, y + 32);
             bool over = false;
-            if (!open && button(at(x, y), at(x + 64, y + 64), &over)) {
+            if (!open && g_reorder && button(at(x, y), at(x + 64, y + 64), &over)) {
+                // Rearranging: press one, then the place to put it.
+                const std::string key = appKey(p, node);
+                if (g_reorderPick.empty()) {
+                    g_reorderPick = key;
+                } else if (g_reorderPick != key) {
+                    std::vector<std::string> keys;
+                    for (int n : apps) keys.push_back(appKey(p, n));
+                    auto from = std::find(keys.begin(), keys.end(), g_reorderPick);
+                    if (from != keys.end()) {
+                        const std::string moved = *from;
+                        keys.erase(from);
+                        keys.insert(std::find(keys.begin(), keys.end(), key) + (from - keys.begin() <= i ? 1 : 0), moved);
+                        // (keep the order of saved apps that aren't on the phone now, e.g. another Sim's)
+                        for (const std::string& k : g_appOrder)
+                            if (std::find(keys.begin(), keys.end(), k) == keys.end()) keys.push_back(k);
+                        g_appOrder = keys;
+                        saveAppOrder();
+                    }
+                    g_reorderPick.clear();
+                } else {
+                    g_reorderPick.clear();
+                }
+            } else if (!open && !g_reorder && button(at(x, y), at(x + 64, y + 64), &over)) {
                 if (node == -6) {
                     g_weatherOpen = true;
                     action = kMySimFresh;
@@ -3672,6 +3744,11 @@ Action drawPhone(ImDrawList* d, int* index) {
             }
             appIcon(node, c);
             if (node >= 0 && p.nodes[node].notification) badge(at(x + 55, y + 8));
+            if (g_reorder) {
+                const bool picked = appKey(p, node) == g_reorderPick;
+                d->AddRect(at(x - 1, y - 1), at(x + 65, y + 65), picked ? IM_COL32(120, 230, 70, 255) : IM_COL32(255, 255, 255, 120),
+                           12 * S, 0, (picked ? 2.5f : 1.2f) * S);
+            }
         }
         if (slide != 0) d->PopClipRect();
         // mcCategoryName: the app pointed at.
@@ -3738,41 +3815,22 @@ Action drawPhone(ImDrawList* d, int* index) {
                 g_phoneColorsOpen = false;
         }
     } else {
-        // PhoneInteractionScreen: the app carousel on its dark band (the apps
-        // before and after under it, arrows over), the list, the back button.
+        // PhoneInteractionScreen without its app carousel (user 2026-10-24 02:06Z: no bar to change apps inside
+        // one; Back goes up): the app's name as the header, the list, the back button. Only our drawing changes:
+        // the entries are still the game's menu tree (vanilla, mods' apps and what mods add to them).
         const PhoneNode& app = p.nodes[g_phoneApp];
-        const std::vector<int>& line = g_phoneRoot == g_phoneApp ? p.home : app.children;  // (a sub-list: no neighbours)
-        int at0 = -1;
-        if (g_phoneRoot == g_phoneApp)
-            for (size_t i = 0; i < line.size(); ++i)
-                if (line[i] == g_phoneApp) at0 = static_cast<int>(i);
-        const int prev = at0 > 0 ? line[at0 - 1] : -2, next = at0 >= 0 && at0 + 1 < static_cast<int>(line.size()) ? line[at0 + 1] : -2;
-        if (prev >= 0) appIcon(prev, at(41, 44));
-        if (next >= 0) appIcon(next, at(190, 44));
-        pieceIn(d, art::kPhoneTint, at(0, 0), at(230, 84));
+        pieceIn(d, art::kPhoneTint, at(0, 0), at(230, 48));
+        {
+            const std::string& head = app.name;
+            ImVec2 hs = g_title->CalcTextSizeA(34, FLT_MAX, 0, head.c_str());
+            const float k = std::min(1.0f, 200 * S / std::max(1.0f, hs.x));
+            shadowText(d, g_title, 34 * k, {at(115, 30).x - hs.x * k / 2, at(115, 30).y - hs.y * k / 2}, kWhite, head.c_str());
+        }
         bool over = false;
-        if (prev >= 0) {
-            if (button(at(25, 29), at(53, 57), &over)) g_phoneApp = g_phoneRoot = prev, g_phoneScroll = 0;
-            piece(d, over ? art::kPhoneArrowOver : art::kPhoneArrow, at(39, 42.9f), A);
-        }
-        if (next >= 0) {
-            if (button(at(179, 29), at(207, 57), &over)) g_phoneApp = g_phoneRoot = next, g_phoneScroll = 0;
-            const art::Piece& a = over ? art::kPhoneArrowOver : art::kPhoneArrow;  // the same arrow, mirrored
-            ImVec2 c = at(193, 42.9f);
-            const float w = a.w * A, h = a.h * A;
-            d->AddImage(reinterpret_cast<ImTextureID>(g_art), {c.x - w / 2, c.y - h / 2}, {c.x + w / 2, c.y + h / 2},
-                        {static_cast<float>(a.x + a.w) / art::kAtlasW, static_cast<float>(a.y) / art::kAtlasH},
-                        {static_cast<float>(a.x) / art::kAtlasW, static_cast<float>(a.y + a.h) / art::kAtlasH});
-        }
-        // A sideways swipe goes to the app before or after (the carousel's arrows).
-        if (swipeEnded && swipeX && dx < -55 && next >= 0) g_phoneApp = g_phoneRoot = next, g_phoneScroll = 0;
-        else if (swipeEnded && swipeX && dx > 55 && prev >= 0) g_phoneApp = g_phoneRoot = prev, g_phoneScroll = 0;
-        pieceIn(d, art::kPhoneAppOver, at(79, 7), at(79 + 74 * 0.97f, 7 + 74 * 0.97f));
-        appIcon(g_phoneApp, at(115, 44));
-        if (app.notification) badge(at(115 - 32 + 55, 44 - 32 + 8));
         // The list (PhoneMenuScrollList at y 84, margins 6, 27, 50, 8), rows of PhoneItemCellView.
-        const float top = 90, bottom = 350, rowH = 58, left = 8, right = 203;
+        const float top = 52, bottom = 352, rowH = 58, left = 8;
         const int rows = static_cast<int>((bottom - top) / rowH), total = static_cast<int>(app.children.size());
+        const float right = total > rows ? 203.0f : 224.0f;  // room for the slider only when there is one
         if (swipeY) g_phoneScroll = drag.scroll - static_cast<int>(std::lround(dy / rowH));  // follows the swipe, a row a step
         g_phoneScroll = std::max(0, std::min(std::max(0, total - rows), g_phoneScroll));
         for (int k = 0; k < rows; ++k) {

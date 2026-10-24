@@ -655,6 +655,17 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
     g_turnChecking = false;
     g_stickRate = 0;
     if (!(mode() == Mode::Stereo && camera::bodyActive())) camera::holdBodyTurn(false);
+    // The build tablet's tray: the laser hand's stick turns and lifts the item being placed (not you).
+    if (laserHand >= 0 && g_traySheet.m.active) {
+        static ULONGLONG trayLast = 0;
+        const ULONGLONG t = GetTickCount64();
+        const float trayDt = trayLast && t - trayLast < 100 ? (t - trayLast) / 1000.0f : 0.0f;
+        trayLast = t;
+        XrVector2f& s = laserHand ? right : left;
+        if (trayStick(s, trayDt)) s = {0, 0};
+    }
+    c.alt = trayOn(hud::kTrayAlt) && g_traySheet.m.active;
+    c.shift = trayOn(hud::kTrayShift) && g_traySheet.m.active;
     if (mode() == Mode::Stereo && camera::bodyActive()) {
         // First person: the left stick walks the Sim (Python reads walkInput),
         // in the direction you are looking.
@@ -792,6 +803,7 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
     bool poking = pokingSims1 || (laserHand < 0 && ((g_pie.active && (g_pie.own ? pokeHud(g_hud[kHudPie], hands, pieHands)
                                                                                : pokeSheet(g_pie, hands, bothHands, triggerDown, pulled, c,
                                                                                            camera::bodyActive()))) ||
+                                    (g_traySheet.m.active && pokeHud(g_traySheet, hands, freeHand)) ||
                                     (g_phone.active && pokeSheet(g_phone, hands, freeHand, triggerDown, pulled, c, true)) ||
                                     (g_phoneSheet.m.active && pokeHud(g_phoneSheet, hands, freeHand)) ||
                                     (g_objMenu.active && pokeSheet(g_objMenu, hands, bothHands, triggerDown, pulled, c)) ||
@@ -895,6 +907,10 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
             g_hudInput.down = true;
             c.leftButton = false;
             g_laserValid = false;
+        } else if (!g_pie.active && g_traySheet.m.active && laserTray(o, d, c.leftButton, panelHit)) {
+            // The build tablet's tool tray, on the tablet's glass: our buttons, not the game's UI under it.
+            onPanel = onPie = true;
+            onTabletBlank = true;
         } else if (!g_pie.active && g_bookSheet[0].m.active && laserBook(o, d, c.leftButton, panelHit)) {
             // The notebook's pages in your hand.
             onPanel = onPie = true;

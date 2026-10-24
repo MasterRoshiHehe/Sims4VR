@@ -2360,4 +2360,6 @@ const uint32_t* image(int& width, int& height, uint64_t& version) {
     return g_pixels.empty() ? nullptr : g_pixels.data();
 }
 
+std::wstring userIni() { return g_ini.empty() ? std::wstring() : userIniPath(g_ini); }
+
 }  // namespace s4vr::settings

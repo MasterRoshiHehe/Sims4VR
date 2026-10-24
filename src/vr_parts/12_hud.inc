@@ -16,6 +16,9 @@ struct HudSheet {
 static HudSheet g_hud[kHudCount];
 static HudSheet g_bookSheet[2];  // the notebook's left and right page, while it lies open in your hand (14b_notebook.inc)
 static HudSheet g_phoneSheet;  // the phone's screen with the game's phone menu (hud::kPhone), while it shows
+static HudSheet g_traySheet;  // the build tablet's tool tray (13b_build_tray.inc), coplanar with its glass
+static uint32_t g_trayLit = 0;  // the tray's tools that are on, a bit per hud::TrayTool
+static void trayTool(int tool);  // 13b_build_tray.inc
 static bool g_fullUi = false;  // the full UI over your palm, shown with the watch's button
 static std::atomic<bool> g_paused{false};
 static hud::Frame g_hudInput;  // this frame's pointer on the atlas (a poke or the laser)
@@ -958,6 +961,8 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
     f.popup = hud::popupPending();
     f.picker = hud::pickerPending();
     f.phone = g_phoneSheet.m.active;
+    f.buildTray = g_traySheet.m.active;
+    f.trayLit = g_trayLit;
     f.phoneText = g_config.phoneTextSize <= 0 ? 1.0f : g_config.phoneTextSize == 1 ? 1.2f : 1.4f;
     // The phone's screen waits covered for Options' menu, and just after it comes out for its wallpaper.
     f.phoneWait = (g_phoneOptions && !g_optionsShown) ||
@@ -996,7 +1001,7 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
     }
     f.preview = previewArea();
     if (!f.watch && !f.pause && !f.build && !f.needs && !f.moodlets && !f.queue && !f.wants && !f.popup && !f.money &&
-        !f.picker && !f.phone && !f.note && !f.balloons && !f.bars && !f.pie && !f.book && !f.previewCard && !(f.preview.w > 0))
+        !f.picker && !f.phone && !f.buildTray && !f.note && !f.balloons && !f.bars && !f.pie && !f.book && !f.previewCard && !(f.preview.w > 0))
         return;
     ID3D11Device* device = nullptr;
     ID3D11DeviceContext* context = nullptr;
@@ -1018,6 +1023,9 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
             // controls.py: 20 pause (or back to the last speed), 21..23 speed 1..3.
             grab::pushControl(20 + (action - hud::kPausePressed));
             LOG("HUD: speed button %d", action - hud::kPausePressed);
+            break;
+        case hud::kBuildTool:
+            trayTool(index);
             break;
         case hud::kBuildPressed:
             g_buildKeyFrames = 3;
@@ -1112,6 +1120,10 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
         case hud::kContactAction:
             if (index >= 0 && index < 100000) grab::pushControl(7400000 + index);  // phonesim.contact_action
             LOG("Phone: contact action %d", index);
+            break;
+        case hud::kGodView:
+            grab::pushControl(1);  // controls.py _switch_view: first person off, the game's camera on your Sim
+            LOG("Phone: God View");
             break;
         case hud::kInventoryPie:
             if (index >= 0 && index < 100000) grab::pushControl(7500000 + index);  // phonesim.inventory_pie

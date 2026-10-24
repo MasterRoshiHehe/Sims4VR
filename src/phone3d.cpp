@@ -40,9 +40,12 @@ cbuffer Draw : register(b0) {
                                         // w: black over the glass (0..1)
     float4 tileDst[10];                 // each tile on the menu rect, from its top left: x0, y0, x1, y1 (0..1)
     float4 tileSrc[10];                  // its part of the UI: u0, v0, u1, v1
+    float4 overlayDst;                  // the tablet's tool tray on the menu rect, from its top left: x0, y0, x1, y1
+    float4 overlayCrop;                 // its part of the overlay texture (the HUD atlas): u0, v0, u1, v1
 };
 Texture2D ui : register(t0);
 Texture2D wallpaper : register(t2);
+Texture2D overlayTex : register(t3);
 #ifdef MS
 Texture2DMS<float> sceneDepth : register(t1);
 #define SCENE(p) sceneDepth.Load(p, 0)
@@ -145,6 +148,9 @@ float4 psMain(Out i) : SV_Target {
         // that fits the distance; one-level textures sample as before.
         float2 uvRate = lerp(crop.xy, crop.zw, float2(m.x, 1 - m.y));
         float2 uvDx = ddx(uvRate), uvDy = ddy(uvRate);
+        float2 ot = (float2(m.x, 1 - m.y) - overlayDst.xy) / max(overlayDst.zw - overlayDst.xy, 1e-6);
+        float2 ouv = lerp(overlayCrop.xy, overlayCrop.zw, ot);
+        float2 oDx = ddx(ouv), oDy = ddy(ouv);
         if (misc.x > 0.5 && all(m >= 0) && all(m <= 1)) {
             float2 t = float2(m.x, 1 - m.y);
             float2 uv = lerp(crop.xy, crop.zw, t);
@@ -164,6 +170,11 @@ float4 psMain(Out i) : SV_Target {
                 float4 u = ui.SampleGrad(linearClamp, uv, uvDx, uvDy);
                 c = u.rgb + (1 - u.a) * c;
             }
+        }
+        if (overlayDst.z > overlayDst.x && all(ot >= 0) && all(ot <= 1)) {
+            // The tablet's tool tray (the HUD atlas, premultiplied) over the UI.
+            float4 o = overlayTex.SampleGrad(linearClamp, ouv, oDx, oDy);
+            c = o.rgb + (1 - o.a) * c;
         }
         c = lerp(c, float3(0.01, 0.01, 0.012), saturate(tileInfo.w));
         float glare = pow(saturate(dot(reflect(-toEye, n), normalize(float3(0.3, 0.8, 0.5)))), 40) * 0.08;
@@ -199,12 +210,16 @@ struct Constants {
     float capA[kHandCapsules][4], capB[kHandCapsules][4];
     float tileInfo[4];
     float tileDst[kMaxTiles][4], tileSrc[kMaxTiles][4];
+    float overlayDst[4], overlayCrop[4];
 };
 
 std::mutex g_mutex;
 Phone g_phone;
 ID3D11ShaderResourceView* g_uiView = nullptr;
 ID3D11Texture2D* g_uiTexture = nullptr;  // what g_uiView shows (not owned)
+// The tablet's tool tray: the HUD atlas over the game's UI on its glass (Phone.overlay).
+ID3D11ShaderResourceView* g_overlayView = nullptr;
+ID3D11Texture2D* g_overlayTexture = nullptr;
 // The panel's own picture (a cut of the game's UI): the phone's app screen shows the HUD atlas in g_uiView.
 ID3D11ShaderResourceView* g_panelView = nullptr;
 ID3D11Texture2D* g_panelTexture = nullptr;
@@ -284,6 +299,8 @@ void safeRelease(T*& p) {
 
 void releaseAll() {
     safeRelease(g_uiView);
+    safeRelease(g_overlayView);
+    g_overlayTexture = nullptr;
     g_uiTexture = nullptr;
     safeRelease(g_panelView);
     g_panelTexture = nullptr;
@@ -699,10 +716,11 @@ static void viewOf(ID3D11Texture2D* ui, ID3D11ShaderResourceView*& view, ID3D11T
 
 static void useUi(ID3D11Texture2D* ui) { viewOf(ui, g_uiView, g_uiTexture); }
 
-void setPhone(const Phone& phone, ID3D11Texture2D* ui) {
+void setPhone(const Phone& phone, ID3D11Texture2D* ui, ID3D11Texture2D* overlay) {
     std::lock_guard<std::mutex> lock(g_mutex);
     g_phone = phone;
     if (phone.show) useUi(ui);
+    if (phone.show && phone.overlay) viewOf(overlay, g_overlayView, g_overlayTexture);
 }
 
 void setPanel(const Panel& panel, ID3D11Texture2D* ui) {
@@ -1121,6 +1139,8 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
     fromApp(pie, view);
     ID3D11ShaderResourceView* uiView = g_uiView;
     if (uiView) uiView->AddRef();
+    ID3D11ShaderResourceView* overlayView = showPhone && p.overlay ? g_overlayView : nullptr;
+    if (overlayView) overlayView->AddRef();
     ID3D11ShaderResourceView* panelView = showPanel ? g_panelView : nullptr;
     if (panelView) panelView->AddRef();
     ID3D11ShaderResourceView* pieView = showPie ? g_pieView : nullptr;
@@ -1170,6 +1190,7 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
             LOG("Phone 3D: depth %ux%u x%u doesn't fit the view %ux%u x%u; not drawn", dd.Width, dd.Height,
                 dd.SampleDesc.Count, td.Width, td.Height, td.SampleDesc.Count);
         if (uiView) uiView->Release();
+        if (overlayView) overlayView->Release();
         if (panelView) panelView->Release();
         if (pieView) pieView->Release();
         if (bubbleView) bubbleView->Release();
@@ -1260,6 +1281,10 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
         k.tileInfo[3] = std::max(0.0f, std::min(1.0f, p.dim));
         std::memcpy(k.tileDst, p.tileDst, sizeof(k.tileDst));
         std::memcpy(k.tileSrc, p.tileSrc, sizeof(k.tileSrc));
+        if (overlayView) {
+            std::memcpy(k.overlayDst, p.overlayDst, sizeof(k.overlayDst));
+            std::memcpy(k.overlayCrop, p.overlayCrop, sizeof(k.overlayCrop));
+        }
         k.misc[0] = uiView ? 1.0f : 0.0f;
         k.misc[1] = p.radius;
         k.misc[2] = (p.width - p.screen[2]) / 2;
@@ -1349,6 +1374,9 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
     ID3D11ShaderResourceView* savedSlot2 = nullptr;  // the wallpaper's slot, as the game left it
     context->PSGetShaderResources(2, 1, &savedSlot2);
     context->PSSetShaderResources(2, 1, &g_wallView);
+    ID3D11ShaderResourceView* savedSlot3 = nullptr;  // the tool tray's slot, as the game left it
+    context->PSGetShaderResources(3, 1, &savedSlot3);
+    context->PSSetShaderResources(3, 1, &overlayView);
     context->PSSetSamplers(0, 1, &g_sampler);
     context->RSSetState(g_raster);
     D3D11_VIEWPORT vp{0, 0, static_cast<float>(td.Width), static_cast<float>(td.Height), 0, 1};
@@ -1527,6 +1555,9 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
     context->PSSetShaderResources(0, 1, &none);
     context->PSSetShaderResources(2, 1, &savedSlot2);
     if (savedSlot2) savedSlot2->Release();
+    context->PSSetShaderResources(3, 1, &savedSlot3);
+    if (savedSlot3) savedSlot3->Release();
+    if (overlayView) overlayView->Release();
     if (sceneDepth) {
         context->PSSetShaderResources(1, 1, &savedSlot1);
         if (savedSlot1) savedSlot1->Release();

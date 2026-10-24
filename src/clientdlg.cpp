@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstring>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -51,6 +52,13 @@ std::atomic<int> g_press{-1};
 std::atomic<bool> g_hidePie{false};
 std::atomic<int> g_gameTray{-1};    // sendGameTray
 std::atomic<int> g_closeGameUi{0};  // 1: a server popup answered on our card, 2: a picker
+// Build mode services and UI messages asked for by the build tablet's tray (gameService), sent at the next poll.
+struct ServiceCall {
+    std::string name, json;
+    bool uiMessage;
+};
+std::mutex g_serviceMutex;
+std::vector<ServiceCall> g_services;
 std::string g_shownId;   // UI thread only
 std::string g_skippedId;
 
@@ -231,6 +239,43 @@ void gameTray(int which) {
     }
 }
 
+// The build tablet's tray: CommunicationManager.CallGameService(name[, arg]) as the game's controller build mode
+// sends them (BuildBuyCenterAdapterBase.as), or SendUIMessage(name[, arg]); the argument made by AS3's JSON.parse.
+void sendServices() {
+    std::vector<ServiceCall> calls;
+    {
+        std::lock_guard<std::mutex> lock(g_serviceMutex);
+        calls.swap(g_services);
+    }
+    if (calls.empty()) return;
+    Held comms, parser;
+    if (!definition("olympus.io.CommunicationManager", comms)) {
+        LOG("Build tray: %zu calls not sent (CommunicationManager not found)", calls.size());
+        return;
+    }
+    const bool canParse = definition("JSON", parser);
+    for (const ServiceCall& call : calls) {
+        Held payload;
+        bool parsed = false;
+        if (!call.json.empty() && canParse) {
+            Value arg;
+            arg.type = kString;
+            arg.data = const_cast<char*>(call.json.c_str());
+            parsed = callMember(parser.v, "parse", &arg, 1, &payload);
+        }
+        Value args[2];
+        args[0].type = kString;
+        args[0].data = const_cast<char*>(call.name.c_str());
+        if (parsed) args[1] = payload.v;
+        const size_t n = parsed ? 2 : 1;
+        bool sent = callMember(comms.v, call.uiMessage ? "SendUIMessage" : "CallGameService", args, n, nullptr);
+        static int logged = 0;
+        if (logged++ < 200 || !sent)
+            LOG("Build tray: %s %s(%s) %s", call.uiMessage ? "message" : "service", call.name.c_str(),
+                call.json.c_str(), sent ? "sent" : "NOT sent");
+    }
+}
+
 void closeGameUi(int what) {
     Held comms;
     if (what == 2) {
@@ -290,6 +335,7 @@ void answer(const Value& manager, const Value& data, int index) {
 void poll() {
     if (g_hidePie.exchange(false)) hideGamePie();
     if (int which = g_gameTray.exchange(-1); which >= 0) gameTray(which);
+    sendServices();
     if (int what = g_closeGameUi.exchange(0)) closeGameUi(what);
     int pressed = g_press.exchange(-1);
     static int tick = 0;
@@ -399,6 +445,13 @@ void setWanted(bool wanted) {
 bool showing() { return g_showing.load(); }
 
 void press(int index) { g_press = index; }
+
+bool gameService(const char* name, const char* json, bool uiMessage) {
+    if (!g_update) return false;
+    std::lock_guard<std::mutex> lock(g_serviceMutex);
+    if (g_services.size() < 64) g_services.push_back({name, json ? json : "", uiMessage});
+    return true;
+}
 
 bool closeGameDialog(bool picker) {
     if (!g_update) return false;

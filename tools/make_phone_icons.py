@@ -473,6 +473,32 @@ def wants():
     finish(img, inner, 'wants')
 
 
+def god_view():
+    """Settings > God View: an isometric house seen from above, a camera eye over it."""
+    img, inner = tile((200, 235, 200), (70, 150, 120), (30, 90, 70, 255))
+    ground = mask_of(lambda d: d.polygon([(256, 300), (470, 400), (256, 500), (42, 400)], fill=255))
+    tinted(img, ground, (30, 90, 70), 150)
+    # the house in isometric view: left wall, right wall, roof
+    left = mask_of(lambda d: d.polygon([(130, 300), (256, 360), (256, 470), (130, 410)], fill=255))
+    right = mask_of(lambda d: d.polygon([(256, 360), (382, 300), (382, 410), (256, 470)], fill=255))
+    roof = mask_of(lambda d: d.polygon([(110, 300), (256, 370), (402, 300), (300, 200), (212, 200)], fill=255))
+    house = ImageChops.lighter(ImageChops.lighter(left, right), roof)
+    shadow(img, house)
+    fill(img, left, (250, 245, 230), (200, 190, 170), 90, outline=(90, 70, 50, 255), width=5, shade=False)
+    fill(img, right, (215, 205, 185), (160, 150, 130), 90, outline=(90, 70, 50, 255), width=5, shade=False)
+    fill(img, roof, (235, 110, 80), (170, 60, 40), 90, outline=(100, 35, 20, 255), width=6)
+    gloss(img, roof, (180, 190, 330, 290), 120)
+    # the eye above
+    eye = mask_of(lambda d: d.ellipse((176, 60, 336, 150), fill=255))
+    shadow(img, eye, alpha=60)
+    fill(img, eye, (255, 255, 255), (200, 215, 230), 90, outline=(40, 60, 90, 255), width=6, shade=False)
+    iris = mask_of(lambda d: d.ellipse((226, 75, 286, 135), fill=255))
+    fill(img, iris, (90, 170, 240), (30, 80, 160), 90, shade=False)
+    pupil = mask_of(lambda d: d.ellipse((243, 92, 269, 118), fill=255))
+    tinted(img, pupil, (10, 20, 40), 255)
+    finish(img, inner, 'god_view')
+
+
 # The Needs app's own need icons (user 2026-10-24 01:58Z: HD, not the game's small ones): one glossy object each,
 # no tile, in the game's need colours.
 def plain(name, img):
@@ -556,6 +582,6 @@ if __name__ == '__main__':
     os.makedirs(OUT, exist_ok=True)
     for f in (settings, calendar, build, game_options, phone_options, vr_options, my_sim, aspirations, career, skills,
               relationships, inventory, needs, social_groups, owned_businesses, household, weather, wants,
-              need_hunger, need_hygiene, need_bladder, need_energy, need_fun, need_social):
+              need_hunger, need_hygiene, need_bladder, need_energy, need_fun, need_social, god_view):
         f()
     print('phone icons in', OUT)

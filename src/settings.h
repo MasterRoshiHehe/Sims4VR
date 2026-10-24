@@ -15,6 +15,8 @@ namespace s4vr::settings {
 
 // vr.cpp's live config: most rows change it in place.
 void init(const std::wstring& moduleDir, Config* live);
+// sims4vr_user.ini's path (empty before init): for things the headset saves itself (the phone's app order).
+std::wstring userIni();
 
 // The menu's current value for a key it has a row for (what the script mod
 // reads, so a change counts before the menu closes and saves). Any thread.

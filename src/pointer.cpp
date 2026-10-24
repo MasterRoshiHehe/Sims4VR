@@ -16,8 +16,9 @@ namespace {
 // Keyboard scan codes (set 1); games often read scan codes, not virtual keys.
 // 0xE0xx: an extended key (E0 prefix). Page Up/Down without it are the number
 // pad's 9 and 3, which with Num Lock on set the game to speed 3.
-enum Scan : WORD { kEscape = 0x01, kF2 = 0x3C, kW = 0x11, kA = 0x1E, kS = 0x1F, kD = 0x20, kPageUp = 0xE049, kPageDown = 0xE051 };
-const WORD kHeldKeys[] = {kW, kA, kS, kD, kEscape, kF2};
+enum Scan : WORD { kEscape = 0x01, kF2 = 0x3C, kW = 0x11, kA = 0x1E, kS = 0x1F, kD = 0x20, kPageUp = 0xE049, kPageDown = 0xE051,
+                   kAlt = 0x38, kShift = 0x2A };
+const WORD kHeldKeys[] = {kW, kA, kS, kD, kEscape, kF2, kAlt, kShift};
 constexpr int kKeyCount = sizeof(kHeldKeys) / sizeof(kHeldKeys[0]);
 
 bool g_keyDown[kKeyCount] = {};
@@ -139,14 +140,16 @@ void turn(HWND game, float value, float speed, float dt) {
     SendInput(1, &in, sizeof(in));
 }
 
-// Single key presses queued from other threads, sent one per frame.
+// Single key presses queued from other threads, sent one per frame (kWithShift: with Shift held around it).
+constexpr uint32_t kWithShift = 0x10000;
 std::mutex g_tapMutex;
-std::vector<WORD> g_taps;
-WORD g_tapDown = 0;
+std::vector<uint32_t> g_taps;
+uint32_t g_tapDown = 0;
 
 void sendTaps() {
     if (g_tapDown) {
-        sendKey(g_tapDown, false);
+        sendKey(static_cast<WORD>(g_tapDown), false);
+        if ((g_tapDown & kWithShift) && !g_keyDown[indexOf(kShift)]) sendKey(kShift, false);
         g_tapDown = 0;
         return;
     }
@@ -154,7 +157,8 @@ void sendTaps() {
     if (g_taps.empty()) return;
     g_tapDown = g_taps.front();
     g_taps.erase(g_taps.begin());
-    sendKey(g_tapDown, true);
+    if ((g_tapDown & kWithShift) && !g_keyDown[indexOf(kShift)]) sendKey(kShift, true);
+    sendKey(static_cast<WORD>(g_tapDown), true);
 }
 
 bool gameInFront(HWND game) {
@@ -267,6 +271,11 @@ void floorsDown(int count) {
     g_taps.assign(count < 6 ? count : 6, kPageDown);
 }
 
+void tapKey(WORD scan, bool withShift) {
+    std::lock_guard<std::mutex> lock(g_tapMutex);
+    if (g_taps.size() < 16) g_taps.push_back(scan | (withShift ? kWithShift : 0));
+}
+
 void releaseAll() {
     for (int i = 0; i < kKeyCount; ++i) setKey(i, false);
     stopTurn();
@@ -315,6 +324,8 @@ void update(HWND game, const Controls& c) {
     }
     setKey(indexOf(kEscape), c.escape);
     setKey(indexOf(kF2), c.buildMode);
+    setKey(indexOf(kAlt), c.alt);
+    setKey(indexOf(kShift), c.shift);
     sendTaps();
     panKeys(c.panX, c.panY);
     turn(game, c.rotate, c.turnSpeed, dt);

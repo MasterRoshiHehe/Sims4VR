@@ -39,6 +39,12 @@ constexpr int kBalloonW = 256, kBalloonH = 264, kBalloonSlots = 8;
 constexpr Rect kBars{0, 5136, 1024, 224};  // skill bars over Sims' heads, 4 slots of kBarSlot x kBarSlot
 constexpr int kBarSlot = 224, kBarSlots = 4;
 constexpr Rect kNote{576, 3584, 448, 360};  // a notification card over a Sim's head (notify.py)
+// The build tablet's tool tray (hud_buildtray.inc), on the tablet's glass at its right middle.
+constexpr Rect kBuildTray{576, 3944, 448, 664};
+// Its tools (kBuildTool's index; Frame.trayLit has a bit per tool that is on). docs/BUILD-TRAY.md.
+enum TrayTool { kTrayAlt, kTrayShift, kTraySnap, kTrayGrid, kTrayRotateLeft, kTrayRotateRight, kTrayRaise, kTrayLower,
+                kTrayBigger, kTraySmaller, kTraySwatch, kTraySlot, kTrayQuarter, kTrayRoofCurve, kTrayEraser,
+                kTrayMoveObjects, kTrayHidden, kTrayLiveEdit, kTrayExitFirstPerson, kTrayTools };
 // The pie menu drawn by us (first person), centred in it; pieScale() atlas pixels per game stage pixel.
 constexpr Rect kPie{0, 5360, 1024, 640};
 // The notebook in your hand (notebook pages, hud.cpp): the left and right page of the open spread, and the leather
@@ -59,8 +65,9 @@ constexpr Rect kBookPaper{256, 7376, 128, 128};        // the boards' endpapers
 // `index` (phoneapp.py's node); kPhoneSilence: the phone's silence button;
 // kPhoneOptions: the Options app (the game menu); kPhoneColor: wallpaper colour `index`.
 enum Action { kNone = 0, kPausePressed = 1, kSpeed1, kSpeed2, kSpeed3, kFullUi, kBuildPressed, kCancel, kDismissWant, kAnswer,
-              kPick, kPickerClose, kPhonePick, kPhoneSilence, kPhoneOptions, kPhoneColor, kNotesOpened, kNotesClear, kNoteDelete, kNoteDismiss, kCalendarOpened, kMySimOpened, kMySimFresh, kAspirationPicked, kTonePreview, kPlayAs, kGallery, kManageWorlds, kGameMenuButton, kInventoryPie, kContactsOpened, kContactPicked, kContactAction, kNoteAnswer,
-              kPiePick, kPieClose, kListPick, kListDone, kListClose, kVrOptions };
+              kPick, kPickerClose, kPhonePick, kPhoneSilence, kPhoneOptions, kPhoneColor, kNotesOpened, kNotesClear, kNoteDelete, kNoteDismiss, kCalendarOpened, kMySimOpened, kMySimFresh, kAspirationPicked, kTonePreview, kPlayAs, kGallery, kManageWorlds, kGameMenuButton, kInventoryPie, kGodView, kContactsOpened, kContactPicked, kContactAction, kNoteAnswer,
+              kPiePick, kPieClose, kListPick, kListDone, kListClose, kVrOptions, kBuildTool };
+// kBuildTool: the build tablet's tray tool `index` (TrayTool).
 // kVrOptions: the phone's Settings > VR Options (opens the VR debug menu).
 // kListPick: the list picker's row `index` (one pick); kListDone: Done with listPicked(); kListClose: its X.
 // The rows picked on the list picker when kListDone came (render's thread).
@@ -249,6 +256,8 @@ struct Frame {
     float phoneText = 1;     // the phone's text size ([phone] text_size)
     bool phoneWait = false;  // something the phone's screen needs is still coming (the wallpaper, Options' menu): it waits covered
     bool balloons = false;
+    bool buildTray = false;  // the build tablet's tool tray (kBuildTray)
+    uint32_t trayLit = 0;    // its tools that are on, a bit per TrayTool
     bool bars = false;       // the skill bars over Sims' heads   // the balloons over Sims' heads (addBalloon)
     uint64_t note = 0;       // the notification drawn as a card in kNote (notify.py), 0: none
     // The settings page open places this piece (user 2026-10-23): its area gets a see-through green box behind it,

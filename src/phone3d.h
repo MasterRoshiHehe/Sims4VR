@@ -41,6 +41,10 @@ struct Phone {
     float tileDst[kMaxTiles][4]{}, tileSrc[kMaxTiles][4]{};
     bool wallpaper = false;  // the tablet: the phone background picture (setWallpaper) fills the glass behind the UI
     float dim = 0;           // black over the glass, 0..1 (the screen changing between the HUD's and the game's UI)
+    // The tablet's tool tray: part of `overlay` (setPhone; the HUD atlas, premultiplied) over the UI, placed on
+    // the menu rect from its top left (x0, y0, x1, y1, 0..1), taking overlayCrop (u0, v0, u1, v1) of it.
+    bool overlay = false;
+    float overlayDst[4]{}, overlayCrop[4]{};
 };
 
 // Any thread: the played Sim's phone background picture (an image resource's
@@ -55,7 +59,7 @@ bool decodePicture(const uint8_t* data, size_t size, std::vector<uint32_t>& rgba
 
 // Present thread: what to draw from now on, and the UI texture to take the
 // menu from (single sample, shader-readable; null for a black screen).
-void setPhone(const Phone& phone, ID3D11Texture2D* ui);
+void setPhone(const Phone& phone, ID3D11Texture2D* ui, ID3D11Texture2D* overlay = nullptr);
 
 // The UI's render thread (uihook), just before the UI is drawn: draws the
 // phone into `target` (the game's main colour view) with `depth` (its scene

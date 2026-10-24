@@ -15,6 +15,7 @@ struct Controls {
     bool rightButton = false;
     bool escape = false;
     bool buildMode = false;  // F2, the game's Build Mode key (the HUD's build button)
+    bool alt = false, shift = false;  // held (the build tablet's tray toggles: free placement, copies, ...)
     // -1..1. Pan: WASD. Rotate: middle-mouse drag. Zoom: scroll wheel.
     float panX = 0, panY = 0, rotate = 0, zoom = 0;
     float turnSpeed = 900;  // mouse pixels per second at full deflection
@@ -33,6 +34,8 @@ bool inFront(HWND gameWindow);
 void showAllFloors();
 // Page Down this many times (back to the floor god view showed before).
 void floorsDown(int count);
+// Taps a key (scan code, set 1) at the next update; withShift: Shift held around it (any thread).
+void tapKey(WORD scan, bool withShift = false);
 // Let go of every key and button we hold.
 void releaseAll();
 

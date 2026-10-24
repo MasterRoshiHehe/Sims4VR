@@ -62,6 +62,7 @@ static void phoneClose(const char* why) {
     g_phoneMenuAt = 0;
     if (g_tablet) {
         g_tablet = false;
+        hideTray();
         g_phone.solid = false;
         g_phone.tiles = 0;
         g_phone.active = false;
@@ -155,6 +156,7 @@ static void updatePhone(const armik::Hand& hand, int side) {
     }
     if (!g_phoneOut || !hand.valid || (!app && !g_uiFrame)) {
         phone3d::setPhone(phone3d::Phone{}, nullptr);
+        hideTray();
         g_phone.active = false;
         g_phone.armed[0] = g_phone.armed[1] = false;
         g_phone.pressing = -1;
@@ -317,6 +319,7 @@ static void updatePhone(const armik::Hand& hand, int side) {
     if (app) {
         // The game's phone menu: our HUD atlas on the glass; pokes and the laser
         // go to its buttons (pokeHud / laserHud), not to the game's UI.
+        hideTray();
         phone3d::setPhone(p3, hud::texture());
         g_phone.active = false;
         g_phone.armed[0] = g_phone.armed[1] = false;
@@ -339,7 +342,9 @@ static void updatePhone(const armik::Hand& hand, int side) {
         return;
     }
     hideHud(g_phoneSheet);
-    phone3d::setPhone(p3, g_uiFrame);
+    if (g_tablet) placeTray(p3, menuCentre, x, y2, z2, menuW, menuH);
+    else hideTray();
+    phone3d::setPhone(p3, g_uiFrame, hud::texture());
     if (!g_phone.active) g_phone.opened = GetTickCount64();
     g_phone.active = true;
     g_phone.x = x;

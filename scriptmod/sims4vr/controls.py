@@ -340,6 +340,10 @@ def _tick(_handle):
             elif 6000000 <= what < 7000000:
                 from sims4vr import objmenu
                 objmenu.list_control(what - 6000000)
+            elif 7700000 <= what < 7700004:
+                # The build tablet's tray: bb.moveobjects on / off, hidden and live-edit objects (toggles).
+                _console(('bb.moveobjects on', 'bb.moveobjects off', 'bb.showhiddenobjects',
+                          'bb.showliveeditobjects')[what - 7700000], client_side=True)
             elif 7600000 <= what < 7600002:
                 from sims4vr import notebook
                 notebook.flip_sound(what - 7600000)
