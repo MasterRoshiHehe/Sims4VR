@@ -368,14 +368,13 @@ static int tabletLayout(int W, int H, float dst[][4], float src[][4], float& asp
             for (int i = 0; i < 3; ++i)
                 put(xs[i].from0, ys[j].from0, xs[i].from1, ys[j].from1, xs[i].at0, ys[j].at0, 1);
     } else {
-        // Taller than the screen (user 2026-10-24 14:24Z: the catalog, its tooltips and lists were cut): the empty
-        // middle goes. The top 40 % of the screen: the UI's top in three parts (lot name, tool bar, mode buttons and
-        // notifications), each at its anchor. The bottom 60 %: the UI's bottom across its whole width in one piece
-        // (the catalog's panel, items, tooltip and popped-up lists stay whole), made smaller when it is wider than
+        // Taller than the screen (user 2026-10-24 14:24Z, 15:06Z: the catalog, its tooltips and lists, and the tool
+        // bar's tooltips were cut): the empty middle goes. The UI's top and its bottom each across its whole width in
+        // one piece, so nothing in them is cut (top 40 % of the screen, bottom 60 %), made smaller when wider than
         // the screen.
-        const float topH = std::min(Hf / 2, SH * 0.4f);
-        for (int i = 0; i < 3; ++i) put(xs[i].from0, 0, xs[i].from1, topH, xs[i].at0, 0, 1);
-        const float k = std::min(1.0f, SW / Wf), bottomH = std::min(Hf - topH, (SH - topH) / k);
+        const float k = std::min(1.0f, SW / Wf);
+        const float topH = std::min(Hf / 2, SH * 0.4f / k), bottomH = std::min(Hf - topH, (SH - topH * k) / k);
+        put(0, 0, Wf, topH, 0, 0, k);
         put(0, Hf - bottomH, Wf, Hf, 0, SH - bottomH * k, k);
     }
     static float loggedZoom = 0, loggedAspect = 0;
