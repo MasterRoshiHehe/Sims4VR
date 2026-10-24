@@ -153,6 +153,7 @@ float4 psMain(Out i) : SV_Target {
         float2 ot = (float2(m.x, 1 - m.y) - overlayDst.xy) / max(overlayDst.zw - overlayDst.xy, 1e-6);
         float2 ouv = lerp(overlayCrop.xy, overlayCrop.zw, ot);
         float2 oDx = ddx(ouv), oDy = ddy(ouv);
+        float4 uiOver = 0;  // the game's UI here, premultiplied: on top of everything on the glass
         if (misc.x > 0.5 && all(m >= 0) && all(m <= 1)) {
             float2 t = float2(m.x, 1 - m.y);
             float2 uv = lerp(crop.xy, crop.zw, t);
@@ -168,16 +169,15 @@ float4 psMain(Out i) : SV_Target {
                     }
                 }
             }
-            if (shown) {
-                float4 u = ui.SampleGrad(linearClamp, uv, uvDx, uvDy);
-                c = u.rgb + (1 - u.a) * c;
-            }
+            if (shown) uiOver = ui.SampleGrad(linearClamp, uv, uvDx, uvDy);
         }
         if (overlayDst.z > overlayDst.x && all(ot >= 0) && all(ot <= 1)) {
-            // The tablet's tool tray (the HUD atlas, premultiplied) over the UI.
+            // The tablet's tool tray (the HUD atlas, premultiplied) under the game's UI (user 2026-10-24 15:30Z:
+            // the catalog's tooltips go over it).
             float4 o = overlayTex.SampleGrad(linearClamp, ouv, oDx, oDy);
             c = o.rgb + (1 - o.a) * c;
         }
+        c = uiOver.rgb + (1 - uiOver.a) * c;
         c = lerp(c, float3(0.01, 0.01, 0.012), saturate(tileInfo.w));
         float glare = pow(saturate(dot(reflect(-toEye, n), normalize(float3(0.3, 0.8, 0.5)))), 40) * 0.08;
         return float4(c + glare, 1);

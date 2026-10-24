@@ -284,4 +284,7 @@ Action render(ID3D11Device* device, ID3D11DeviceContext* context, const Frame& f
 ID3D11Texture2D* texture();
 void release();
 
+// The build tray closed (its tabs alone): where they start in kBuildTray, 0..1 from its left (0 = open).
+float buildTrayLeft();
+
 }  // namespace s4vr::hud

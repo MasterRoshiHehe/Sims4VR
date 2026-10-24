@@ -22,13 +22,18 @@ static void placeTray(phone3d::Phone& p3, const XrVector3f& centre, const XrVect
     const float h = std::min(0.96f, kTrayHeight * g_config.tabletTrayScale);
     const float top = std::max(0.02f, std::min(0.98f - h, kTrayMiddle - h / 2)), bottom = top + h;
     const float w = h * menuH / menuW * hud::kBuildTray.w / hud::kBuildTray.h;
-    const float x0 = kTrayRight - w, x1 = kTrayRight;
+    // Closed, the tabs alone: the overlay and the sheet only that wide, so the UI left of them takes the laser.
+    const float left = hud::buildTrayLeft();
+    hud::Rect area = hud::kBuildTray;
+    area.x += left * area.w;
+    area.w -= left * area.w;
+    const float x0 = kTrayRight - w * (1 - left), x1 = kTrayRight;
     p3.overlay = true;
     p3.overlayDst[0] = x0, p3.overlayDst[1] = top, p3.overlayDst[2] = x1, p3.overlayDst[3] = bottom;
-    p3.overlayCrop[0] = hud::kBuildTray.x / hud::kWidth;
-    p3.overlayCrop[1] = hud::kBuildTray.y / hud::kHeight;
-    p3.overlayCrop[2] = (hud::kBuildTray.x + hud::kBuildTray.w) / hud::kWidth;
-    p3.overlayCrop[3] = (hud::kBuildTray.y + hud::kBuildTray.h) / hud::kHeight;
+    p3.overlayCrop[0] = area.x / hud::kWidth;
+    p3.overlayCrop[1] = area.y / hud::kHeight;
+    p3.overlayCrop[2] = (area.x + area.w) / hud::kWidth;
+    p3.overlayCrop[3] = (area.y + area.h) / hud::kHeight;
     const float lx = ((x0 + x1) / 2 - 0.5f) * menuW, ly = (0.5f - (top + bottom) / 2) * menuH, lz = 0.0005f;
     const XrVector3f at{centre.x + x.x * lx + y.x * ly + z.x * lz, centre.y + x.y * lx + y.y * ly + z.y * lz,
                         centre.z + x.z * lx + y.z * ly + z.z * lz};
@@ -37,7 +42,7 @@ static void placeTray(phone3d::Phone& p3, const XrVector3f& centre, const XrVect
         logged = true;
         LOG("Build tray: on the tablet, %.1f x %.1f cm", w * menuW * 100, h * menuH * 100);
     }
-    placeHud(g_traySheet, at, x, y, w * menuW, hud::kBuildTray);
+    placeHud(g_traySheet, at, x, y, (x1 - x0) * menuW, area);
 }
 
 // Raise / lower / bigger / smaller work with bb.moveobjects on (the game's controller build mode only sends them

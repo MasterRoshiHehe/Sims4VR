@@ -49,7 +49,7 @@ const TrayCategory kTrayCategories[] = {
      3},
 };
 constexpr int kTrayCategoryCount = sizeof(kTrayCategories) / sizeof(kTrayCategories[0]);
-int g_trayCategory = 0;
+int g_trayCategory = -1;  // the open category, -1 = closed (the tabs alone)
 int g_trayHeld = -1;            // the repeating button held down
 ULONGLONG g_trayRepeatAt = 0;   // its next repeat
 
@@ -98,16 +98,17 @@ bool trayButton(ImDrawList* d, int id, const char* label, const art::Piece* icon
 Action drawBuildTray(const Frame& f, int* index) {
     ImDrawList* d = ImGui::GetBackgroundDrawList();
     const Rect r = kBuildTray;
-    uikit::dialogPanel(d, {r.x, r.y}, {r.x + r.w, r.y + r.h});
     // The tray sits at the tablet's far right (user 2026-10-24 03:14Z): its tabs down the right edge, the
-    // category's buttons to their left.
+    // category's buttons to their left. Closed (15:30Z: a category tapped again): the tabs alone.
     const float pad = 14, tabW = 136, tabX = r.x + r.w - pad - tabW;
+    uikit::dialogPanel(d, {g_trayCategory < 0 ? tabX - pad : r.x, r.y}, {r.x + r.w, r.y + r.h});
     Action action = kNone;
     // The category tabs, top to bottom, and under them leaving first person (user 2026-10-24 02:02Z).
     const float tabH = (r.h - 2 * pad) / (kTrayCategoryCount + 1);
     for (int k = 0; k < kTrayCategoryCount; ++k) {
         ImVec2 a{tabX, r.y + pad + k * tabH}, b{tabX + tabW, r.y + pad + (k + 1) * tabH - 6};
-        if (trayButton(d, 100 + k, kTrayCategories[k].name, kTrayCategories[k].icon, a, b, k == g_trayCategory, false)) g_trayCategory = k;
+        if (trayButton(d, 100 + k, kTrayCategories[k].name, kTrayCategories[k].icon, a, b, k == g_trayCategory, false))
+            g_trayCategory = k == g_trayCategory ? -1 : k;
     }
     {
         const int k = kTrayCategoryCount;
@@ -118,6 +119,7 @@ Action drawBuildTray(const Frame& f, int* index) {
         }
     }
     // Its buttons, two columns, rows as tall as twelve would allow.
+    if (g_trayCategory < 0) return action;
     const TrayCategory& cat = kTrayCategories[g_trayCategory];
     const float x0 = r.x + pad, colW = (tabX - 10 - x0 - 8) / 2, rowH = (r.h - 2 * pad) / 6;
     for (int i = 0; i < cat.count; ++i) {
@@ -133,3 +135,6 @@ Action drawBuildTray(const Frame& f, int* index) {
 }
 
 }  // namespace
+
+// The tray closed (the tabs alone): their part of kBuildTray, 0..1 from its left.
+float buildTrayLeft() { return g_trayCategory < 0 ? (kBuildTray.w - 14 - 136 - 14) / kBuildTray.w : 0; }
