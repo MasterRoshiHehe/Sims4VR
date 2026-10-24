@@ -138,7 +138,7 @@ target_compile_definitions(sims4vr PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE 
     S4VR_BUILD_VERSION="${S4VR_BUILD_VERSION}" S4VR_BUILD_COMMIT="${S4VR_BUILD_COMMIT}")
 # No d3d11: its functions come from System32 at runtime (d3d11_hook.cpp), so a d3d11.dll
 # overlay in the game folder is never loaded on the mod's account.
-target_link_libraries(sims4vr PRIVATE dxgi ole32 windowscodecs gdi32 pdh)
+target_link_libraries(sims4vr PRIVATE dxgi ole32 windowscodecs gdi32 pdh winmm)
 if(MSVC)
     target_compile_options(sims4vr PRIVATE /W4 /permissive-)
     set_property(TARGET sims4vr PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
