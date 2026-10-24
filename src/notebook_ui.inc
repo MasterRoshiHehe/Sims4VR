@@ -412,14 +412,18 @@ void drawNotebook(const Frame& f) {
         const float k = hover ? 1.15f : 1.0f;
         pieceIn(d, art::kNbCurl, {rr.x + rr.w - 112, rr.y + rr.h - 130}, {rr.x + rr.w - 112 + 90 * k, rr.y + rr.h - 130 + 90 * k});
     }
-    if (spread > 0) {
-        ImGui::SetCursorScreenPos({lr.x + 24, lr.y + lr.h - 110});
+    if (spread > 0) {  // back: the same curled corner, mirrored, on the left page
+        ImGui::SetCursorScreenPos({lr.x + 20, lr.y + lr.h - 140});
         ImGui::PushID(3002);
-        if (ImGui::InvisibleButton("nbprev", {90, 80})) g_nbWant = spread - 1;
+        if (ImGui::InvisibleButton("nbprev", {100, 100})) g_nbWant = spread - 1;
         const bool hover = ImGui::IsItemHovered();
         ImGui::PopID();
-        const ImU32 c = hover ? kNbBlue : IM_COL32(20, 70, 150, 150);
-        d->AddTriangleFilled({lr.x + 100, lr.y + lr.h - 100}, {lr.x + 100, lr.y + lr.h - 40}, {lr.x + 56, lr.y + lr.h - 70}, c);
+        const float k = hover ? 1.15f : 1.0f;
+        const art::Piece& c = art::kNbCurl;
+        const float u0 = static_cast<float>(c.x) / art::kAtlasW, u1 = static_cast<float>(c.x + c.w) / art::kAtlasW;
+        const float v0 = static_cast<float>(c.y) / art::kAtlasH, v1 = static_cast<float>(c.y + c.h) / art::kAtlasH;
+        d->AddImage(reinterpret_cast<ImTextureID>(g_art), {lr.x + 22 + 90 - 90 * k, lr.y + lr.h - 130},
+                    {lr.x + 22 + 90, lr.y + lr.h - 130 + 90 * k}, {u1, v0}, {u0, v1});
     }
     // The icons of the spreads near this one are read ahead.
     std::vector<uint64_t> icons;

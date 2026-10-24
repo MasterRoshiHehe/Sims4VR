@@ -58,6 +58,7 @@
 
 namespace s4vr::vr {
 
+#include <mmsystem.h>
 #include "vr_parts/01_xr_state.inc"
 #include "vr_parts/02_actions_instance.inc"
 #include "vr_parts/03_session.inc"

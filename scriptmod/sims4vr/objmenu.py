@@ -794,7 +794,7 @@ def _send_popup_content(dialog):
                   native.setting_flag('ui', 'own_pie', True) and native.setting('ui', 'pie_mode', '0') in ('1', '2'))
         if as_pie:
             left = right = 0
-        records = ['{}\x1f{}\x1f{}\x1f{}'.format(0 if as_pie else 1 if chat else 0, msg.dialog_id, left, right)]
+        records = ['{}\x1f{}\x1f{}\x1f{}'.format(3 if as_pie else 1 if chat else 0, msg.dialog_id, left, right)]
         if msg.HasField('title'):
             records.append('title\x1f' + _loc(msg.title))
         if msg.HasField('text'):

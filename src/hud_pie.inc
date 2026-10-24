@@ -485,7 +485,7 @@ Action drawPie(int* index) {
     // Fly-in: the buttons grow out of the centre over 150 ms (PieMenuBase optionN .. _appear_end).
     const float grow = std::min(1.0f, (GetTickCount64() - g_piePageAt) / 150.0f);
     std::vector<uint64_t> shown;
-    const ImU32 kText = IM_COL32(39, 58, 94, 255), kDim = IM_COL32(120, 128, 140, 255);
+    const ImU32 kText = IM_COL32(20, 44, 110, 255), kDim = IM_COL32(120, 128, 140, 255);
     const ImVec2 mouse = ImGui::GetIO().MousePos;
     int hovered = -1;
     for (size_t i = 0; i < buttons.size(); ++i) {

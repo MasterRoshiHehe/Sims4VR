@@ -108,6 +108,7 @@ PIECES = [
     ('kAppBusinesses', '../art/phone_icons/owned_businesses.png', 2),
     ('kAppHousehold', '../art/phone_icons/household.png', 2),
     ('kAppWeather', '../art/phone_icons/weather.png', 2),
+    ('kAppWants', '../art/phone_icons/wants.png', 2),
     ('kSpin0', 'liveui/art/ExchangeDetail/152.png'),  # the game's spinning plumbob (DetailLoadingAnimation)
     ('kSpin1', 'liveui/art/ExchangeDetail/154.png'),  # the game's spinning plumbob (DetailLoadingAnimation)
     ('kSpin2', 'liveui/art/ExchangeDetail/156.png'),  # the game's spinning plumbob (DetailLoadingAnimation)

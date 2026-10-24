@@ -310,6 +310,7 @@ Config loadConfig(const std::wstring& ini) {
     crop("crop_spine", c.bookCropSpine, 0.04f);
     crop("crop_top", c.bookCropTop, 0.02f);
     crop("crop_bottom", c.bookCropBottom, 0.05f);
+    c.bookSound = readBool(ini, "book", "sound", c.bookSound);
     c.bookPoke = readBool(ini, "book", "poke", c.bookPoke);
     c.bookOpenSeconds = readFloat(ini, "book", "open_seconds", c.bookOpenSeconds);
     if (!(c.bookOpenSeconds >= 0.1f && c.bookOpenSeconds <= 3)) c.bookOpenSeconds = 0.7f;

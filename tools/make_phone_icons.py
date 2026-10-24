@@ -443,9 +443,39 @@ def weather():
     finish(img, inner, 'weather')
 
 
+def wants():
+    img, inner = tile((255, 240, 200), (235, 170, 90), (140, 90, 30, 255))
+    tinted(img, mask_of(lambda d: d.ellipse((350, 340, 470, 460), outline=255, width=18)), (140, 85, 25))
+    cover = mask_of(lambda d: d.rounded_rectangle((110, 80, 380, 430), radius=26, fill=255))
+    shadow(img, cover)
+    fill(img, cover, (90, 160, 230), (35, 90, 170), 90, outline=(25, 45, 90, 255), width=7)
+    page = mask_of(lambda d: d.rounded_rectangle((150, 100, 365, 410), radius=14, fill=255))
+    fill(img, page, (255, 253, 240), (235, 228, 205), 90, shade=False)
+    lines = Image.new('L', (N, N), 0)
+    ld = ImageDraw.Draw(lines)
+    for k in range(6):
+        y = 150 + k * 42
+        ld.line((175, y, 345, y), fill=255, width=6)
+    tinted(img, lines, (120, 160, 210), 200)
+    tinted(img, mask_of(lambda d: d.line((175, 150, 290, 150), fill=255, width=12)), (40, 60, 120), 230)
+    rings = Image.new('L', (N, N), 0)
+    rd = ImageDraw.Draw(rings)
+    for k in range(6):
+        y = 125 + k * 52
+        rd.rounded_rectangle((128, y, 172, y + 16), radius=8, fill=255)
+    fill(img, rings, (245, 245, 250), (150, 155, 170), 0, outline=(60, 60, 70, 255), width=4, shade=False)
+    pen = mask_of(lambda d: d.line((260, 400, 420, 150), fill=255, width=40))
+    shadow(img, pen)
+    fill(img, pen, (255, 120, 110), (200, 40, 50), 0, outline=(100, 20, 25, 255), width=5)
+    tip = mask_of(lambda d: d.polygon([(245, 395), (285, 420), (238, 440)], fill=255))
+    fill(img, tip, (250, 230, 190), (200, 160, 110), 0, outline=(90, 60, 30, 255), width=4, shade=False)
+    gloss(img, cover, (100, 70, 330, 220), 110)
+    finish(img, inner, 'wants')
+
+
 if __name__ == '__main__':
     os.makedirs(OUT, exist_ok=True)
     for f in (settings, calendar, build, game_options, phone_options, vr_options, my_sim, aspirations, career, skills,
-              relationships, inventory, needs, social_groups, owned_businesses, household, weather):
+              relationships, inventory, needs, social_groups, owned_businesses, household, weather, wants):
         f()
     print('phone icons in', OUT)

@@ -15,7 +15,14 @@ way the game's panels gather it:
   of it against goal_value) and how far it is (the live tile's ring); and the
   tracks to change to (ui.aspirations.set_primary, as the game's Change
   Aspiration: available, valid for the Sim, by category ui_sort_order).
-The needs come from hudinfo.py (they are on the wrist already).
+- careers (the CareerPanel; school and after-school activities are careers
+  too): per career its track's icon and career_name, the level's title, the
+  user level of the track's levels, work performance between the performance
+  stat's minimum and the level's promote_performance_level, hourly pay, company,
+  and the next shift (get_next_work_time) or "At work";
+- the mood (Sim's mood: its mood_names at the current intensity, colour index
+  as hudinfo's moodlets).
+The needs, moodlets and wants come from hudinfo.py (they are on the wrist already).
 
 To the DLL (native.phone_sim), records split by 0x1e, fields by 0x1f:
   "sim"   \x1f <age (sims.sim_info_types.Age)>
@@ -28,6 +35,9 @@ To the DLL (native.phone_sim), records split by 0x1e, fields by 0x1f:
   "goal"  \x1f <text json> \x1f <done 0/1> \x1f <value> \x1f <goal> \x1f <shows progress 0/1>
   "acat"  \x1f <category index> \x1f <name json>
   "atrack" \x1f <index> \x1f <category index> \x1f <icon> \x1f <name json> \x1f <current 0/1>
+  "job"   \x1f <icon> \x1f <career name json> \x1f <title json> \x1f <level> \x1f <levels> \x1f <performance 0..1>
+          \x1f <pay text> \x1f <company json> \x1f <shift text>
+  "mood"  \x1f <mood index (hudinfo MOODS)> \x1f <name json>
 Control 7000000 + n = change to "atrack" n. Control 85 = My Sim is open (send; the DLL asks again every 2 s while it is).
 """
 from sims4vr import native
@@ -182,6 +192,77 @@ def select_track(index):
     send()
 
 
+_DAYS = ('Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat')
+
+
+def _clock(t):
+    hour, minute = int(t.hour()), int(t.minute())
+    return '{}{} {}'.format((hour + 11) % 12 + 1, ':{:02d}'.format(minute) if minute else '', 'AM' if hour < 12 else 'PM')
+
+
+def _careers(sim_info, records):
+    from sims4vr import hudinfo
+    tracker = getattr(sim_info, 'career_tracker', None)
+    if tracker is None:
+        return
+    for career in list(tracker.careers.values()):
+        try:
+            track = career.current_track_tuning
+            level = career.current_level_tuning
+            name = _text(getattr(track, 'career_name', None), sim_info)
+            title = _text(getattr(level, 'title', None), sim_info)
+            performance = 0.0
+            try:
+                stat = level.performance_stat
+                low = getattr(stat, 'min_value_tuning', None)
+                low = getattr(stat, 'min_value', -100) if low is None else low
+                high = career._get_promote_performance_level() if hasattr(career, '_get_promote_performance_level') else 100
+                performance = max(0.0, min(1.0, (career.work_performance - low) / float(high - low))) if high > low else 0.0
+            except Exception:
+                pass
+            pay = ''
+            try:
+                pay = '\u00a7{}/hour'.format(int(career.get_hourly_pay()))
+            except Exception:
+                pass
+            company = ''
+            try:
+                company = _loc(career.get_company_name())
+            except Exception:
+                pass
+            shift = ''
+            try:
+                if career.currently_at_work:
+                    shift = 'At work now'
+                else:
+                    _, start, end = career.get_next_work_time()
+                    if start is not None:
+                        shift = 'Next: {} {} - {}'.format(_DAYS[int(start.day()) % 7], _clock(start), _clock(end) if end is not None else '')
+            except Exception:
+                pass
+            records.append('job\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{:.3f}\x1f{}\x1f{}\x1f{}'.format(
+                hudinfo._icon(getattr(track, 'icon', None)), name, title, int(getattr(career, 'user_level', 0) or 0),
+                len(getattr(track, 'career_levels', ()) or ()), performance, pay, company, shift))
+        except Exception as e:
+            _log_error('a career', e)
+
+
+def _mood(sim_info, records):
+    from sims4vr import hudinfo
+    mood = sim_info.get_mood()
+    if mood is None:
+        return
+    names = list(getattr(mood, 'mood_names', ()) or ())
+    name = ''
+    if names:
+        try:
+            intensity = int(sim_info.get_mood_intensity())
+        except Exception:
+            intensity = 1
+        name = _loc(names[max(0, min(len(names) - 1, intensity - 1))])
+    records.append('mood\x1f{}\x1f{}'.format(hudinfo._mood_index(mood), name))
+
+
 def send():
     global _sent
     if native._optional('phone_sim') is None:
@@ -198,6 +279,11 @@ def send():
                 records.append('cat\x1f{}\x1f{}'.format(category, _key(title)))
             for s in skills:
                 records.append('skill\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{:.4f}\x1f{}\x1f{}'.format(*s))
+            for part in (_careers, _mood):
+                try:
+                    part(sim_info, records)
+                except Exception as e:
+                    _log_error(part.__name__, e)
             try:
                 _aspiration(sim_info, records)
             except Exception as e:

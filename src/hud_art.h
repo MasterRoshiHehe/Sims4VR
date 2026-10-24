@@ -75,6 +75,7 @@ constexpr Piece kAppSocialGroups{258, 3056, 256, 256};
 constexpr Piece kAppBusinesses{516, 3056, 256, 256};
 constexpr Piece kAppHousehold{0, 3314, 256, 256};
 constexpr Piece kAppWeather{258, 3314, 256, 256};
+constexpr Piece kAppWants{516, 3314, 256, 256};
 constexpr Piece kSpin0{485, 5275, 63, 126};
 constexpr Piece kSpin1{550, 5275, 63, 126};
 constexpr Piece kSpin2{615, 5275, 63, 126};

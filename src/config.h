@@ -318,6 +318,7 @@ struct Config {
     float bookHandOffset[3] = {0, 0, 0};
     float bookHandTurn[3] = {0, 0, 0};
     float bookCropOuter = 0.07f, bookCropSpine = 0.04f, bookCropTop = 0.02f, bookCropBottom = 0.05f;  // the page art's edges cut off (fractions), the rest zoomed to fill the page
+    bool bookSound = true;        // a page-flip sound when a page turns
     bool bookPoke = true;         // poke and laser work on the notebook's pages
     float bookOpenSeconds = 0.7f;  // the cover swinging open
     float bookSwipe = 0.10f;       // metres your other hand sweeps along the book to turn a page

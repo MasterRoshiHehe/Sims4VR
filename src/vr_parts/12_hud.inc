@@ -876,7 +876,8 @@ static bool pokeHud(HudSheet& s, const armik::Hand hands[2], const bool use[2]) 
 // never reach the game.
 static bool pokeHuds(const armik::Hand hands[2]) {
     static const bool right[2] = {false, true}, both[2] = {true, true};
-    const bool other[2] = {g_bookHand != 0, g_bookHand != 1};  // the hand holding the book doesn't poke it
+    // The hand holding the book doesn't poke it; the other one only with its grip held (a plain sweep turns pages).
+    const bool other[2] = {g_bookHand != 0 && hands[0].grip > 0.5f, g_bookHand != 1 && hands[1].grip > 0.5f};
     return pokeHud(g_bookSheet[0], hands, other) || pokeHud(g_bookSheet[1], hands, other) || pokeHud(g_hud[kHudPopup], hands, both) || pokeHud(g_hud[kHudPicker], hands, both) ||
            pokeHud(g_hud[kHudNote], hands, both) ||
            pokeHud(g_hud[kHudWatch], hands, right) ||

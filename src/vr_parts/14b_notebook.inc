@@ -26,6 +26,44 @@ static bool atLeftHip(const armik::Hand& hand, int side, const grab::HeadPose& h
 
 static ULONGLONG g_bookOpenedAt = 0;
 
+// A page turning: a short swish of paper and a soft tap, made once as a wave and played through the system's
+// default output (the headset's audio follows it).
+static void bookFlipSound() {
+    if (!g_config.bookSound) return;
+    static std::vector<uint8_t> wave;
+    if (wave.empty()) {
+        const int rate = 22050, n = static_cast<int>(rate * 0.42f);
+        std::vector<int16_t> pcm(n);
+        uint32_t seed = 0x1234567u;
+        float lp = 0, lp2 = 0;
+        for (int i = 0; i < n; ++i) {
+            const float t = static_cast<float>(i) / rate;
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            const float noise = (seed & 0xffff) / 32768.0f - 1;
+            const float sweep = 0.10f + 0.55f * std::sin(std::min(1.0f, t / 0.22f) * 3.14159f);  // the brightness rises and falls
+            lp += (noise - lp) * sweep;
+            lp2 += (lp - lp2) * 0.6f;
+            const float env = std::min(1.0f, t / 0.03f) * std::exp(-std::max(0.0f, t - 0.08f) * 9.0f);
+            float v = (lp - lp2) * 2.2f * env;
+            const float tap = t - 0.27f;  // the page landing
+            if (tap > 0) v += std::sin(tap * 2 * 3.14159f * 140) * std::exp(-tap * 60) * 0.5f;
+            pcm[i] = static_cast<int16_t>(std::max(-1.0f, std::min(1.0f, v * 0.7f)) * 32000);
+        }
+        auto put32 = [&](uint32_t v) { for (int k = 0; k < 4; ++k) wave.push_back(static_cast<uint8_t>(v >> (8 * k))); };
+        auto put16 = [&](uint16_t v) { for (int k = 0; k < 2; ++k) wave.push_back(static_cast<uint8_t>(v >> (8 * k))); };
+        for (char ch : {'R', 'I', 'F', 'F'}) wave.push_back(static_cast<uint8_t>(ch));
+        put32(36 + n * 2);
+        for (char ch : {'W', 'A', 'V', 'E', 'f', 'm', 't', ' '}) wave.push_back(static_cast<uint8_t>(ch));
+        put32(16), put16(1), put16(1), put32(rate), put32(rate * 2), put16(2), put16(16);
+        for (char ch : {'d', 'a', 't', 'a'}) wave.push_back(static_cast<uint8_t>(ch));
+        put32(n * 2);
+        for (int16_t s : pcm) put16(static_cast<uint16_t>(s));
+    }
+    PlaySoundW(reinterpret_cast<LPCWSTR>(wave.data()), nullptr, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
+}
+
 static void bookOpen(int hand) {
     g_bookOut = true;
     g_bookHand = hand;
@@ -313,6 +351,7 @@ static void updateBookSwipe(const armik::Hand hands[2]) {
     lastTurn = now;
     if (g_bookSpread != was) {
         buzz(other, 0.3f, 0.04f);
+        bookFlipSound();
         static int logged = 0;
         if (logged++ < 40) LOG("Book: turned to spread %d of %d", g_bookSpread + 1, spreads);
     }
@@ -323,7 +362,9 @@ static void bookApplyPick() {
     if (!g_bookOut) return;
     const int want = hud::notebookTakeSpread();
     if (want >= 0) {
+        const int was = g_bookSpread;
         g_bookSpread = std::max(0, std::min(std::max(1, hud::notebookSpreads()) - 1, want));
+        if (g_bookSpread != was) bookFlipSound();
         LOG("Book: pointer turned to spread %d", g_bookSpread + 1);
     }
 }
