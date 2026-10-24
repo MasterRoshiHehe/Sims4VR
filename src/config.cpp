@@ -366,7 +366,7 @@ Config loadConfig(const std::wstring& ini) {
     c.tabletHold = readFloat(ini, "tablet", "hold", c.tabletHold);
     if (!(c.tabletHold >= 0 && c.tabletHold < c.tabletWidth / 2)) c.tabletHold = 0.035f;
     c.tabletUiScale = readFloat(ini, "tablet", "menu_size", c.tabletUiScale);
-    if (!(c.tabletUiScale >= 0.3f && c.tabletUiScale <= 3.0f)) c.tabletUiScale = 1.0f;
+    if (!(c.tabletUiScale >= 0.3f && c.tabletUiScale <= 4.0f)) c.tabletUiScale = 2.0f;
     c.tabletTrayScale = readFloat(ini, "tablet", "tray_scale", c.tabletTrayScale);
     if (!(c.tabletTrayScale >= 0.3f && c.tabletTrayScale <= 1.45f)) c.tabletTrayScale = 1.0f;
     c.phoneCropWidth = readFloat(ini, "phone", "crop_width", c.phoneCropWidth);

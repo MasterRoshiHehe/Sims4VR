@@ -1,11 +1,9 @@
-// The build tablet's screen: the vanilla build/buy UI cut into its pieces and laid out on the tablet at a size the
-// mod chooses (user 2026-10-24 12:51Z: "the same way you made the crop outs", so it can be scaled; the game's own UI
-// scale and its viewport could not be changed from here). The old palette's cut-outs (v0.13.96, removed in 6e287d2)
-// come back with their scan of the UI; [tablet] menu_size ("Build menu size") is a plain zoom of the pieces, and the
-// catalog's items wrap into as many rows as the tablet's width (left of the tool tray) needs.
+// The build tablet's screen: the whole vanilla build/buy UI scaled by the mod to the tablet's screen (user
+// 2026-10-24: the game's own UI scale and its viewport could not be changed from here; 13:41Z: the full UI, cut and
+// placed with the old crop-outs' technique, not the old palette layout).
 // Included by vr.cpp after 10_phone_screen.inc.
 
-// Part of the old palette (v0.13.96), as it was: where the build/buy UI's pieces are, read from the UI's pixels.
+// The old palette's scan (v0.13.96): "something solid in the middle" shows the whole UI as one picture.
 struct TabletScan {
     bool middle = false;     // something solid in the middle of the UI
     bool tip = false;        // the item tooltip, in UI pixels:
@@ -321,113 +319,57 @@ static float tabletScreenAspect() {
     return g_config.tabletHeight >= 0.08f && h > 0.01f ? w / h : 1.4f;
 }
 
-// The pieces on the tablet (place on the screen 0..1 from its top left, part of the UI in pixels); 0 = the whole
-// UI (something solid in its middle: a dialog, the game menu). Later pieces lie over earlier ones.
-// The sheet is the tablet's screen in UI pixels: its height is the palette's at 100 % (916 px of a 2808 px high
-// UI) divided by [tablet] menu_size, so the pieces grow with it; its right part is the tool tray's.
+// The whole UI on the tablet's screen, scaled by the mod (user 2026-10-24 13:41Z: the full UI, not the old palette):
+// cut into a 3 x 3 grid, each part keeps its anchor (left / middle / right, top / middle / bottom) on the tablet's
+// screen, so the full UI is laid out as the game lays it out on a screen of the tablet's shape, at [tablet]
+// menu_size ("Build menu size"): 1 = the UI's height fills the screen's height, 2 = twice as big. Parts that would
+// run into each other are cut between them (the middle third keeps 30 % of the screen). 0 = the whole UI as one picture (something solid in its
+// middle: a dialog, the game menu). Place on the screen 0..1 from its top left, part of the UI in pixels.
 static int tabletLayout(int W, int H, float dst[][4], float src[][4], float& aspect) {
     aspect = tabletScreenAspect();
-    if (g_tabletScan.middle || W < H / 2) return 0;
-    const float s = H / 2808.0f, Wf = static_cast<float>(W), Hf = static_cast<float>(H);
+    if (g_tabletScan.middle) return 0;
+    const float Wf = static_cast<float>(W), Hf = static_cast<float>(H);
     const float zoom = std::max(0.3f, g_config.tabletUiScale);
-    const float SH = 916 * s / zoom, SW = SH * aspect;
-    // The tool tray's left edge (13b_build_tray.inc placeTray): the pieces stay left of it.
-    const float trayH = std::min(0.96f, 0.67f * g_config.tabletTrayScale);
-    const float trayLeft = 0.995f - trayH / aspect * hud::kBuildTray.w / hud::kBuildTray.h;
-    const float pad = 18 * s, gap = 12 * s;
-    const float right = std::max(SW * 0.3f, SW * trayLeft - gap);  // the pieces' right edge
-    const float left = 512 * s;                                     // the catalog's left panel's width
-    const float leftTop = g_tabletScan.leftTop ? static_cast<float>(g_tabletScan.leftTop) : Hf - 298 * s;
-    const float gridTop = g_tabletScan.gridTop ? static_cast<float>(g_tabletScan.gridTop) : Hf - 238 * s;
-    const float search = 52 * s, gridH = Hf - gridTop, panelH = Hf - leftTop - search;
-    struct Box { float x0, y0, x1, y1; };
-    struct Tile { Box at, from; };
-    Tile tiles[phone3d::kMaxTiles];
-    int n = 0;
-    auto put = [&](float dx, float dy, Box from, float k) {
-        if (n < phone3d::kMaxTiles) tiles[n++] = {{dx, dy, dx + (from.x1 - from.x0) * k, dy + (from.y1 - from.y0) * k}, from};
+    const float SH = Hf / zoom, SW = SH * aspect;  // the screen in UI pixels
+    // One axis: the UI's [0, size) in three parts, each placed on the screen's [0, room): the first from 0, the last
+    // up to room, the middle one centred; a part is cut where the screen has no room left for it.
+    struct Span { float from0, from1, at0; };
+    auto spans = [](float size, float room, Span out[3]) {
+        const float third = size / 3;
+        if (room >= size) {  // more room than UI: the parts move apart
+            out[0] = {0, third, 0};
+            out[1] = {third, 2 * third, (room - third) / 2};
+            out[2] = {2 * third, size, room - third};
+        } else {  // less: each keeps its anchor; the middle gets 30 % of the room (the tool bar), the edges the rest
+            const float m = std::min(third, room * 0.3f), e = (room - m) / 2;
+            out[0] = {0, e, 0};
+            out[1] = {(size - m) / 2, (size + m) / 2, e};
+            out[2] = {size - e, size, e + m};
+        }
     };
-    auto add = [&](float dx, float dy, Box from) { put(dx, dy, from, 1); };
-    // The top: the tool bar at the left, the mode buttons at the right (under it when they don't fit beside).
-    float y = pad;
-    const Box toolbar{Wf / 2 - 260 * s, 0, Wf / 2 + 260 * s, 56 * s}, modes{Wf - 454 * s, 0, Wf, 64 * s};
-    add(pad, y, toolbar);
-    if (right - 454 * s >= pad + 520 * s + gap) {
-        add(right - 454 * s, y, modes);
-    } else {
-        y += 56 * s + gap;
-        add(std::max(pad, right - 454 * s), y, modes);
-    }
-    y += 64 * s + gap;
-    // The search box, the lot name (smaller to fit), the items' filter at the right.
-    const float rowH = 60 * s;
-    add(pad, y + (rowH - search) / 2, {0, leftTop, 290 * s, leftTop + search});
-    const Box filter{Wf - 344 * s, gridTop - 60 * s, Wf, gridTop - 8 * s};
-    add(right - 344 * s, y + (rowH - (filter.y1 - filter.y0)) / 2, filter);
-    {
-        const Box lot{0, 0, std::min(520 * s, Wf), 60 * s};
-        const float room = right - pad - 290 * s - 344 * s - 2 * gap;
-        if (room > 60 * s) {
-            const float k = std::min(1.0f, room / (lot.x1 - lot.x0)), w = (lot.x1 - lot.x0) * k;
-            put(pad + 290 * s + gap + (room - w) / 2, y + (rowH - rowH * k) / 2, lot, k);
+    Span xs[3], ys[3];
+    spans(Wf, SW, xs);
+    spans(Hf, SH, ys);
+    int n = 0;
+    for (int j = 0; j < 3; ++j)
+        for (int i = 0; i < 3; ++i) {
+            dst[n][0] = xs[i].at0 / SW;
+            dst[n][1] = ys[j].at0 / SH;
+            dst[n][2] = (xs[i].at0 + xs[i].from1 - xs[i].from0) / SW;
+            dst[n][3] = (ys[j].at0 + ys[j].from1 - ys[j].from0) / SH;
+            src[n][0] = xs[i].from0;
+            src[n][1] = ys[j].from0;
+            src[n][2] = xs[i].from1;
+            src[n][3] = ys[j].from1;
+            ++n;
         }
-    }
-    y += rowH + gap;
-    // The catalog's left panel; its items beside it, cut between two items into rows as wide as there is room.
-    const float panelY = y, gx = pad + left + gap, room = std::max(116 * s, right - gx);
-    add(pad, y, {0, leftTop + search, left, Hf});
-    int rows = 0;
-    for (float from = left; from < Wf - 4 * s && n < phone3d::kMaxTiles - 1; ++rows) {
-        float to = Wf;
-        if (to - from > room) {
-            // The last gap between two items that still fits: measured, else every 116 px from 520 px (the
-            // old palette's); none fits: cut at the room's width.
-            to = 0;
-            for (int k = 0; k < g_tabletScan.gapCount; ++k) {
-                const float x = static_cast<float>(g_tabletScan.gaps[k]);
-                if (x > from + 58 * s && x - from <= room) to = std::max(to, x);
-            }
-            if (!g_tabletScan.gapCount)
-                for (float x = 520 * s; x < Wf; x += 116 * s)
-                    if (x > from + 58 * s && x - from <= room) to = std::max(to, x);
-            if (to <= 0) to = from + room;
-        }
-        add(gx, y, {from, gridTop, to, Hf});
-        y += gridH + gap;
-        from = to;
-    }
-    const float itemsBottom = y;
-    // A popped-up list (the categories): beside the left panel, over the items. Else the item's tooltip: under
-    // the items if it fits there, else over them at the bottom.
-    if (g_tabletScan.popup) {
-        const int* b = g_tabletScan.popBox;
-        const Box pop{static_cast<float>(b[0]), static_cast<float>(b[1]), static_cast<float>(b[2]), static_cast<float>(b[3])};
-        const float k = std::min(1.0f, std::min(room / (pop.x1 - pop.x0), (SH - pad - panelY) / (pop.y1 - pop.y0)));
-        put(gx, panelY, pop, k);
-    } else if (g_tabletScan.tip) {
-        const int* b = g_tabletScan.tipBox;
-        const Box tip{static_cast<float>(b[0]), static_cast<float>(b[1]), static_cast<float>(b[2]), static_cast<float>(b[3])};
-        const float tw = tip.x1 - tip.x0, th = tip.y1 - tip.y0, k = std::min(1.0f, room / tw);
-        const float ty = itemsBottom + th * k <= SH - pad ? itemsBottom : std::max(panelY, SH - pad - th * k);
-        put(gx, ty, tip, k);
-    }
-    for (int k = 0; k < n; ++k) {
-        dst[k][0] = tiles[k].at.x0 / SW;
-        dst[k][1] = tiles[k].at.y0 / SH;
-        dst[k][2] = tiles[k].at.x1 / SW;
-        dst[k][3] = tiles[k].at.y1 / SH;
-        src[k][0] = tiles[k].from.x0;
-        src[k][1] = tiles[k].from.y0;
-        src[k][2] = tiles[k].from.x1;
-        src[k][3] = tiles[k].from.y1;
-    }
-    static float loggedZoom = 0;
-    static int loggedRows = -1, logs = 0;
-    if ((zoom != loggedZoom || rows != loggedRows) && logs++ < 60) {
+    static float loggedZoom = 0, loggedAspect = 0;
+    static int logs = 0;
+    if ((zoom != loggedZoom || aspect != loggedAspect) && logs++ < 60) {
         loggedZoom = zoom;
-        loggedRows = rows;
-        LOG("Tablet: build menu at %.0f %%: %d pieces, items in %d row%s, %.0f of %.0f UI px high (UI %dx%d)",
-            zoom * 100, n, rows, rows == 1 ? "" : "s", itemsBottom, SH, W, H);
+        loggedAspect = aspect;
+        LOG("Tablet: build menu at %.0f %%: the whole UI (%dx%d) laid out on a %.0fx%.0f px screen (%.2f wide)",
+            zoom * 100, W, H, SW, SH, aspect);
     }
     return n;
 }
