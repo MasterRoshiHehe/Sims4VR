@@ -318,6 +318,8 @@ float g_mySimScroll = 0; // game pixels the list is scrolled
 ULONGLONG g_mySimAsked = 0;
 int g_mySimMoodlet = -1;   // My Sim shows this moodlet's page
 bool g_aspChange = false;   // Aspirations shows the tracks to change to
+std::atomic<bool> g_phoneAsleep{false};  // the phone's screen is off (setPhoneAsleep)
+bool g_gameMenuPhone = false;  // Settings > Game Options: the game's Escape menu drawn on the phone
 int g_contacts = -1;        // Contacts: -1 closed, 0 the list, 1 a contact's page
 int g_contactSel = -1;      // the contact whose page is open
 ULONGLONG g_contactsAsked = 0;
@@ -2827,7 +2829,7 @@ Action drawPhone(ImDrawList* d, int* index) {
     const ImGuiIO& io = ImGui::GetIO();
     const ImVec2 mouse = io.MousePos;
     PhoneDrag& drag = g_drag;
-    const bool blocked = g_cover.blocked;  // the cover is up: what is under it takes no presses
+    const bool blocked = g_cover.blocked || g_phoneAsleep.load();  // the cover is up: what is under it takes no presses
     if (blocked) drag = PhoneDrag{};
     if (!blocked && ImGui::IsMouseClicked(0) && mouse.x >= r.x && mouse.x <= r.x + r.w && mouse.y >= r.y && mouse.y <= r.y + r.h) {
         drag = PhoneDrag{};
@@ -2899,7 +2901,7 @@ Action drawPhone(ImDrawList* d, int* index) {
     if (g_phoneHomeAsked.exchange(false))
         g_phoneApp = g_phoneRoot = -1, g_phonePage = 0, g_phoneScroll = 0, g_phoneColorsOpen = false, g_phoneNotesOpen = false,
         g_phoneCalOpen = false, g_phoneSettingsOpen = false, g_phoneOptsGroup.clear(), g_mySim = -1, g_mySimMoodlet = -1,
-        g_phoneSoundsOpen = false, g_hhSim = -1, g_contacts = -1;
+        g_phoneSoundsOpen = false, g_hhSim = -1, g_contacts = -1, g_gameMenuPhone = false;
     if (g_phoneApp >= 0) g_phoneNotesOpen = g_phoneCalOpen = g_phoneSettingsOpen = g_phoneSoundsOpen = false, g_phoneOptsGroup.clear(), g_mySim = -1, g_contacts = -1;
     if (g_phoneApp >= 0 || p.colors.empty()) g_phoneColorsOpen = false;
 
@@ -3236,7 +3238,7 @@ Action drawPhone(ImDrawList* d, int* index) {
             const ImVec2 c = at(x + 32, y + 32);
             bool over = false;
             if (button(at(x, y), at(x + 64, y + 64), &over)) {
-                if (kApps[k] == -10) action = kPhoneOptions;
+                if (kApps[k] == -10) g_gameMenuPhone = true;
                 else if (kApps[k] == -11) g_phoneOptsGroup = L"Phone", g_phoneOptsScroll = 0;
                 else if (kApps[k] == -13) action = kGallery;
                 else if (kApps[k] == -14) action = kManageWorlds;
@@ -3251,6 +3253,33 @@ Action drawPhone(ImDrawList* d, int* index) {
         }
         bool over = false;
         if (button(at(96, 361), at(129, 392), &over)) g_phoneSettingsOpen = false;
+        piece(d, over ? art::kPhoneBackOver : art::kPhoneBack, at(96 + 16.5f, 361 + 15.5f), A);
+    } else if (g_gameMenuPhone) {
+        // Game Options (user 2026-10-24 01:26Z): the Escape menu's buttons (Sims4EscapeMenu, in its order), drawn
+        // as the game draws them; each sends what its button sends (clientdlg), the window it opens shows in front
+        // of you and a question to save shows on our popup card.
+        pieceIn(d, art::kPhoneTint, at(0, 0), at(230, 44));
+        {
+            const char* head = "Game Options";
+            ImVec2 hs = g_title->CalcTextSizeA(34, FLT_MAX, 0, head);
+            shadowText(d, g_title, 34, {at(115, 24).x - hs.x / 2, at(115, 24).y - hs.y / 2}, kWhite, head);
+        }
+        static const char* const kButtons[11] = {"Save", "Save As...", "Game Options", "Help", "Lessons", "Release Notes",
+                                                 "Credits", "Achievements", "Manage Worlds", "Exit to Main Menu", "Exit Game"};
+        d->AddRectFilled(at(8, 50), at(222, 320), IM_COL32(255, 255, 255, 235), 6 * S);
+        d->AddRectFilled(at(8, 322), at(222, 354), IM_COL32(196, 204, 222, 240), 6 * S);
+        for (int k = 0; k < 11; ++k) {
+            const float y = k < 10 ? 54 + k * 26.4f : 326;
+            const ImVec2 ba = at(22, y), bb = at(208, y + 23);
+            bool over = false;
+            if (button(ba, bb, &over)) action = kGameMenuButton, *index = k;
+            if (over) nine(d, art::kDialogButtonOver, {ba.x - 2, ba.y - 3}, {bb.x + 2, bb.y + 6}, 48, 36, 48, 54, 0.6f);
+            else nine(d, art::kDialogButton, ba, bb, 48, 36, 48, 42, 0.6f);
+            ImVec2 ls = g_text->CalcTextSizeA(24, FLT_MAX, 0, kButtons[k]);
+            d->AddText(g_text, 24, {(ba.x + bb.x - ls.x) / 2, (ba.y + bb.y - ls.y) / 2 - 2}, IM_COL32(30, 70, 128, 255), kButtons[k]);
+        }
+        bool over = false;
+        if (button(at(96, 361), at(129, 392), &over)) g_gameMenuPhone = false;
         piece(d, over ? art::kPhoneBackOver : art::kPhoneBack, at(96 + 16.5f, 361 + 15.5f), A);
     } else if (g_contacts >= 0) {
         drawContacts(d, r, button, shown, action, swipeY, dy, drag, index);
@@ -3565,7 +3594,7 @@ bool phonePicturesIn() {
 int phoneScreenKey() {
     const int opts = static_cast<int>(std::hash<std::wstring>()(g_phoneOptsGroup) & 0xffff);
     return (((g_phoneApp + 2) * 8 + (g_phoneNotesOpen ? 1 : 0) + (g_phoneCalOpen ? 2 : 0) + (g_phoneSettingsOpen ? 4 : 0)) *
-                65537 + opts) * 31 + g_phoneSerial + (g_mySim + 1) * 7919 + (g_aspChange ? 104729 : 0) + (g_mySimMoodlet + 1) * 1299709 + (g_hhSim + 1) * 7907 + (g_contacts + 1) * 6151 + (g_contacts == 1 ? g_contactSel * 104723 : 0) + (g_phoneSoundsOpen ? 15485863 : 0);
+                65537 + opts) * 31 + g_phoneSerial + (g_mySim + 1) * 7919 + (g_aspChange ? 104729 : 0) + (g_mySimMoodlet + 1) * 1299709 + (g_hhSim + 1) * 7907 + (g_contacts + 1) * 6151 + (g_gameMenuPhone ? 49157 : 0) + (g_contacts == 1 ? g_contactSel * 104723 : 0) + (g_phoneSoundsOpen ? 15485863 : 0);
 }
 
 // The still and the cover's blend: premultiplied colours (the atlas's), drawn with ImGui's straight blend otherwise.
@@ -4183,6 +4212,8 @@ void setPhoneCalendar(const char* data, size_t size) {
     g_calIn = c;
     g_calNew = true;
 }
+
+void setPhoneAsleep(bool asleep) { g_phoneAsleep = asleep; }
 
 void setPhoneSim(const char* data, size_t size) {
     SimContent c;

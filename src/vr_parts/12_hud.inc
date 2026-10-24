@@ -1163,10 +1163,19 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
             LOG("Phone: silence button");
             break;
         case hud::kGallery:
-        case hud::kManageWorlds:
-            clientdlg::sendGameTray(action == hud::kGallery ? 1 : 2);
-            LOG("Phone: %s", action == hud::kGallery ? "Gallery" : "Manage Worlds");
+        case hud::kGameMenuButton: {
+            const int which = action == hud::kGallery ? clientdlg::kGallery : index;
+            if (which < 0 || (which >= clientdlg::kEscButtons && which != clientdlg::kGallery)) break;
+            clientdlg::sendGameTray(which);
+            // A window of the game's in front of you (not for Save, or Help / Release Notes: a web page).
+            if (which != clientdlg::kEscSave && which != clientdlg::kEscHelp && which != clientdlg::kEscReleaseNotes) {
+                g_phoneWindow = true, g_phoneWindowSeen = false;
+                g_phoneWindowSince = g_phoneMenuSince = GetTickCount64();
+                g_phoneFitted = false;
+            }
+            LOG("Phone: game menu button %d", which);
             break;
+        }
         case hud::kVrOptions:
             g_vrOptionsAsked = true;  // opened in updateControls (it needs the frame time)
             LOG("Phone: VR Options (debug menu)");

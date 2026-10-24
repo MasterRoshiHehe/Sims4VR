@@ -21,13 +21,12 @@ static bool atRightHip(const armik::Hand& hand, int side, const grab::HeadPose& 
 static void phoneOpen(int hand) {
     g_phoneOut = true;
     g_phoneHand = hand;
+    g_phoneAsleep = true, g_phoneWokeAt = 0;
+    hud::setPhoneAsleep(true);
     g_phoneAwayAt = 0;
     g_tablet = g_buildBuy && g_config.tablet;
     g_phone.solid = g_tablet;
     g_phone.tiles = 0;
-    g_tabletScan = TabletScan{};
-    g_tabletLeftSeen = g_tabletGridSeen = 0;
-    g_tabletMiddleRuns = 0;
     if (g_tablet) {
         // Build/buy: the tablet shows the UI as it is; no Escape, no game menu,
         // nothing for Python (the game is paused in build/buy anyway).
@@ -181,11 +180,11 @@ static void updatePhone(const armik::Hand& hand, int side) {
     }
     float tileDst[phone3d::kMaxTiles][4], tileSrc[phone3d::kMaxTiles][4];
     int tiles = 0;
-    if (g_tablet) {  // the tablet: the build/buy UI's pieces packed together, or all of it
+    if (g_tablet) {  // the tablet: the whole vanilla build/buy UI, the Sim's phone background behind it
         crop[0] = crop[1] = 0;
         crop[2] = W;
         crop[3] = H;
-        tiles = tabletLayout(W, H, tileDst, tileSrc, g_tabletAspect);
+        g_tabletAspect = static_cast<float>(W) / static_cast<float>(H);
     }
     crop[2] = std::min(crop[2], W);
     crop[3] = std::min(crop[3], H);
@@ -304,6 +303,8 @@ static void updatePhone(const armik::Hand& hand, int side) {
     p3.crop[3] = static_cast<float>(crop[1] + crop[3]) / H;
     p3.tiles = tiles;
     p3.wallpaper = g_tablet || app;  // the Sim's phone background (buildbuy.py) behind the game's phone menu
+    if (!g_tablet && g_phoneAsleep) dim = 1;
+    else if (!g_tablet && g_phoneWokeAt && now - g_phoneWokeAt < 150) dim = std::max(dim, 1 - (now - g_phoneWokeAt) / 150.0f);
     p3.dim = g_tablet ? 0 : dim;
     g_phone.tiles = tiles;
     for (int k = 0; k < tiles; ++k) {

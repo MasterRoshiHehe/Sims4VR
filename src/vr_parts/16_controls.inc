@@ -109,6 +109,13 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
         bool down = triggerDown[hand] ? trigger[hand] > 0.35f : trigger[hand] > 0.6f;
         triggerDown[hand] = down;
     }
+    // The phone's screen wakes with the holding hand's trigger (that pull clicks nothing else).
+    if (g_phoneAsleep && (!g_phoneOut || g_tablet || (triggerDown[g_phoneHand] && !triggerWas[g_phoneHand]))) {
+        g_phoneAsleep = false;
+        g_phoneWokeAt = g_phoneOut ? GetTickCount64() : 0;
+        hud::setPhoneAsleep(false);
+        if (g_phoneOut && !g_tablet) LOG("Phone: screen on (trigger of the hand holding it)");
+    }
     // Picking things up (grab.cpp): a hand that closes near an object holds
     // it, and points or shows the laser no more until it opens.
     {
@@ -494,7 +501,6 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
     }
     // The phone's screen follows the hand holding it; the menu is measured once it has opened.
     updatePhone(hands[g_phoneHand], g_phoneHand);
-    if (g_tablet && g_phone.active) updateTabletScan(now);
     // A game popup (first person): the controllers buzz like a phone, two short pulses, again
     // every 5 s while the phone is away (3 rings); with the phone out, only
     // the hand holding it buzzes, once, and its screen is measured again.
@@ -543,6 +549,15 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
         menuWas = menu;
         // Options: once the game menu has closed (Resume, a choice in it), or
         // never opened, the phone shows the game's phone menu again.
+        // A window from the phone's Game Options: gone once the game's UI has no modal (or none came in 4 s).
+        if (g_phoneWindow) {
+            if (gameMenuOpen() || g_popupOpen) {
+                g_phoneWindowSeen = true;
+            } else if (g_phoneWindowSeen || now - g_phoneWindowSince > 4000 || !g_phoneOut) {
+                LOG("Phone: the game's window %s", g_phoneWindowSeen ? "closed" : "never showed (no modal reported)");
+                g_phoneWindow = g_phoneWindowSeen = false;
+            }
+        }
         if (g_phoneOptions && g_phoneOut && !g_tablet) {
             if (gameMenuOpen()) {
                 g_phoneOptionsSeen = true;
@@ -562,7 +577,7 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
             static int seen = 0;
             static ULONGLONG refitAt = 0;
             // The game's own question (Save and Exit) drawn as our card (clientdlg): not the game's UI in front too.
-            const bool options = g_phoneOptions && g_phoneOut && !g_tablet && menu && !clientdlg::showing();
+            const bool options = (g_phoneOptions || g_phoneWindow) && g_phoneOut && !g_tablet && menu && !clientdlg::showing();
             if (options && !wasOptions) menuW = menuH = 0, seen = g_menuFitDone;
             wasOptions = options;
             if (!options) {
@@ -573,10 +588,10 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
                 if (g_menuFitDone != seen) {
                     seen = g_menuFitDone;
                     // Not found (the game options fill the screen: "too wide") is another window too.
-                    if (menuW || (g_menuFitOk && g_phoneFound)) {
+                    if (menuW || g_phoneWindow || (g_menuFitOk && g_phoneFound)) {
                         const int32_t w = g_menuFitOk ? g_phoneCrop[2] : 0, h = g_menuFitOk ? g_phoneCrop[3] : 0;
                         if (!menuW) menuW = w, menuH = h;
-                        const bool other = !g_menuFitOk || std::abs(w - menuW) > menuW / 6 || std::abs(h - menuH) > menuH / 6;
+                        const bool other = g_phoneWindow || !g_menuFitOk || std::abs(w - menuW) > menuW / 6 || std::abs(h - menuH) > menuH / 6;
                         if (other != g_optionsFront)
                             LOG("Phone: %s (%dx%d, the game menu %dx%d)",
                                 other ? "Options opened a window: the game's UI in front of you"

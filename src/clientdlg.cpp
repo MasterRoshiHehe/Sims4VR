@@ -49,7 +49,7 @@ std::atomic<bool> g_wanted{false};
 std::atomic<bool> g_showing{false};
 std::atomic<int> g_press{-1};
 std::atomic<bool> g_hidePie{false};
-std::atomic<int> g_gameTray{0};     // sendGameTray
+std::atomic<int> g_gameTray{-1};    // sendGameTray
 std::atomic<int> g_closeGameUi{0};  // 1: a server popup answered on our card, 2: a picker
 std::string g_shownId;   // UI thread only
 std::string g_skippedId;
@@ -167,21 +167,16 @@ void hideGamePie() {
 // (UIContainerMain.DebugDialogCloseAll): DialogManager.CancelCurrentRequest(false) while the current request is
 // the server's, and SendUIMessage("HidePickers") for a picker. The server's own UiDialogCloseRequest didn't close
 // them (user 2026-10-23 19:22Z).
-// The GameTray's Gallery / Manage Worlds as the buttons send them; the payload object made by AS3's JSON.parse.
-void gameTray(int which) {
-    Held comms, json, payload;
-    const char* message = which == 1 ? "ShowExchangeShare" : "ShowExitToManageWorldsDialog";
-    const char* text = which == 1 ? "{\"mode\":\"share\"}" : "{\"context\":\"phone\"}";
-    if (!definition("olympus.io.CommunicationManager", comms)) {
-        LOG("Phone: %s not sent (CommunicationManager not found)", message);
-        return;
-    }
+// The phone's Game Options buttons (Sims4EscapeMenu's, user 2026-10-24 01:26Z) and the GameTray's Gallery, sending
+// what those buttons send (payload objects made by AS3's JSON.parse; Help / Release Notes ask the game for the URL).
+bool uiMessage(const Held& comms, const char* message, const std::string& json) {
+    Held parser, payload;
     bool parsed = false;
-    if (definition("JSON", json)) {
+    if (!json.empty() && definition("JSON", parser)) {
         Value arg;
         arg.type = kString;
-        arg.data = const_cast<char*>(text);
-        parsed = callMember(json.v, "parse", &arg, 1, &payload) && payload.ok();
+        arg.data = const_cast<char*>(json.c_str());
+        parsed = callMember(parser.v, "parse", &arg, 1, &payload) && payload.ok();
     }
     Value args[2];
     args[0].type = kString;
@@ -189,7 +184,51 @@ void gameTray(int which) {
     if (parsed) args[1] = payload.v;
     else args[1].type = kNull;
     bool sent = callMember(comms.v, "SendUIMessage", args, 2, nullptr);
-    LOG("Phone: %s %s (payload %s)", message, sent ? "sent" : "not sent (SendUIMessage failed)", parsed ? text : "null");
+    LOG("Phone: %s %s (payload %s)", message, sent ? "sent" : "not sent (SendUIMessage failed)",
+        parsed ? json.c_str() : json.empty() ? "none" : "null, JSON.parse failed");
+    return sent;
+}
+
+void gameTray(int which) {
+    Held comms;
+    if (!definition("olympus.io.CommunicationManager", comms)) {
+        LOG("Phone: game menu button %d not sent (CommunicationManager not found)", which);
+        return;
+    }
+    switch (which) {
+        case kEscSave:
+            uiMessage(comms, "SaveCurrentGame", "");
+            uiMessage(comms, "HideEscapeMenu", "");
+            break;
+        case kEscSaveAs: uiMessage(comms, "ShowSaveLoadMenu", "{\"isSaving\":true}"); break;
+        case kEscOptions: uiMessage(comms, "ShowOptionsMenu", ""); break;
+        case kEscHelp:
+        case kEscReleaseNotes: {
+            Value name;
+            name.type = kString;
+            name.data = const_cast<char*>(which == kEscHelp ? "GetHelpURL" : "GetPatchNotesURL");
+            Held url;
+            std::string u;
+            if (callMember(comms.v, "CallGameService", &name, 1, &url)) u = text(url.v);
+            std::string json = "{\"url\":\"";
+            for (char ch : u) {
+                if (ch == '"' || ch == '\\') json += '\\';
+                json += ch;
+            }
+            json += "\"}";
+            if (u.empty()) LOG("Phone: no URL from the game for %s", static_cast<const char*>(name.data));
+            else uiMessage(comms, "OpenExternalURL", json);
+            break;
+        }
+        case kEscLessons: uiMessage(comms, "ShowTutorial", "{\"source\":\"esc_menu\"}"); break;
+        case kEscCredits: uiMessage(comms, "ShowGameCredits", ""); break;
+        case kEscAchievements: uiMessage(comms, "ShowAchievements", ""); break;
+        case kEscManageWorlds: uiMessage(comms, "ShowExitToManageWorldsDialog", "{\"context\":1}"); break;
+        case kEscMainMenu: uiMessage(comms, "ShowExitToMainMenuDialog", ""); break;
+        case kEscQuit: uiMessage(comms, "ShowCloseGameDialog", ""); break;
+        case kGallery: uiMessage(comms, "ShowExchangeShare", "{\"mode\":\"share\"}"); break;
+        default: break;
+    }
 }
 
 void closeGameUi(int what) {
@@ -250,7 +289,7 @@ void answer(const Value& manager, const Value& data, int index) {
 
 void poll() {
     if (g_hidePie.exchange(false)) hideGamePie();
-    if (int which = g_gameTray.exchange(0)) gameTray(which);
+    if (int which = g_gameTray.exchange(-1); which >= 0) gameTray(which);
     if (int what = g_closeGameUi.exchange(0)) closeGameUi(what);
     int pressed = g_press.exchange(-1);
     static int tick = 0;
