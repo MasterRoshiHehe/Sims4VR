@@ -11,6 +11,7 @@
 #include <limits>
 #include <mutex>
 #include <thread>
+#include <unordered_map>
 
 #include "MinHook.h"
 #include "crashlog.h"
@@ -2111,9 +2112,38 @@ void describe(const HeardSound& s, char* out, size_t size) {
              static_cast<unsigned long long>(s.vtable >= game ? s.vtable - game : s.vtable));
 }
 
+// Per-sound probe (WickedWhims voices at the middle of the head): one line per
+// sound object the first time it turns up in a class, and again when its class
+// changes. Classes: 1 flat but placed, 2 3D within 0.3 m of the head, 3 3D
+// 0.3-2 m. Sounds from the audio thread; the table is only touched there.
+std::unordered_map<uintptr_t, int> g_probeClass;
+int g_probeLogs = 0;
+constexpr int kProbeMaxLogs = 600;
+
+void probeSound(void* sound, const HeardSound& h, ULONGLONG now) {
+    int cls = 0;
+    if (!(h.flags & 1)) {
+        if (std::fabs(h.at[0]) + std::fabs(h.at[1]) + std::fabs(h.at[2]) >= 0.01f) cls = 1;
+    } else if (h.away < 0.3f) {
+        cls = 2;
+    } else if (h.away < 2.0f) {
+        cls = 3;
+    }
+    if (g_probeClass.size() > 4096) g_probeClass.clear();
+    int& last = g_probeClass[reinterpret_cast<uintptr_t>(sound)];
+    if (cls == last) return;
+    last = cls;
+    if (!cls || g_probeLogs >= kProbeMaxLogs) return;
+    ++g_probeLogs;
+    char text[300];
+    describe(h, text, sizeof(text));
+    LOG("Sound probe: class %d (1 flat placed, 2 3D at head, 3 3D under 2 m) sound %p at +%llu ms: %s", cls, sound,
+        static_cast<unsigned long long>(now), text);
+}
+
 void hookedDistanceUpdate(void* sound) {
     g_originalDistanceUpdate(sound);
-    if (!g_panFirstPerson.load(std::memory_order_relaxed) || g_loudLogs >= kLoudMaxLogs) return;
+    if (!g_panFirstPerson.load(std::memory_order_relaxed)) return;
     LoudStats& s = g_loud;
     const ULONGLONG now = GetTickCount64();
     if (!s.since) s.since = now;
@@ -2136,6 +2166,8 @@ void hookedDistanceUpdate(void* sound) {
     h.falloff = falloff != 0;
     const float dx = h.at[0] - s.head[0], dy = h.at[1] - s.head[1], dz = h.at[2] - s.head[2];
     h.away = std::sqrt(dx * dx + dy * dy + dz * dz);
+    probeSound(sound, h, now);
+    if (g_loudLogs >= kLoudMaxLogs) return;
     ++s.updates;
     if (!(h.flags & 1)) {
         ++s.flat;
