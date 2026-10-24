@@ -346,6 +346,7 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
     static bool laserClickWas = false;
     const bool laserClick = c.leftButton && !laserClickWas;  // the laser's trigger just pulled
     laserClickWas = c.leftButton;
+    if (!(laserHand >= 0 && triggerDown[laserHand]) || !g_phoneSheet.m.active) g_laserPhoneHold = false;
     // A / X right-click, except while held as the laser's button.
     c.rightButton = (!laserButton[0] && boolState(g_primaryAction, 0)) || (!laserButton[1] && boolState(g_primaryAction, 1));
     // The left menu button is the game's Escape (its menu). Recentering is
@@ -870,6 +871,15 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
             // The phone's screen in your hand, in front of a popup card behind it.
             onPanel = onPie = true;
             onTabletBlank = true;
+            if (laserClick) g_laserPhoneHold = true;
+            g_laserPhoneAt[0] = g_hudInput.px, g_laserPhoneAt[1] = g_hudInput.py;
+        } else if (g_laserPhoneHold && g_phoneSheet.m.active) {
+            // A press that began on the phone (a swipe) and slid off it (user 2026-10-24 00:22Z): it stays the
+            // phone's until let go, held at its last place there; nothing behind gets the trigger (no pie menu).
+            g_hudInput.px = g_laserPhoneAt[0], g_hudInput.py = g_laserPhoneAt[1];
+            g_hudInput.down = true;
+            c.leftButton = false;
+            g_laserValid = false;
         } else if (!g_pie.active && g_bookSheet[0].m.active && laserBook(o, d, c.leftButton, panelHit)) {
             // The notebook's pages in your hand.
             onPanel = onPie = true;

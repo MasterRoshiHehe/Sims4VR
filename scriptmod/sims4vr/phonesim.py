@@ -263,7 +263,7 @@ def _mood(sim_info, records):
     records.append('mood\x1f{}\x1f{}'.format(hudinfo._mood_index(mood), name))
 
 
-def send():
+def send(fresh=False):
     global _sent
     if native._optional('phone_sim') is None:
         return
@@ -301,6 +301,6 @@ def send():
         _log_error('My Sim', e)
         return
     data = '\x1e'.join(records).encode('utf-8')
-    if data != _sent:
+    if fresh or data != _sent:
         _sent = data
         native.phone_sim(data)

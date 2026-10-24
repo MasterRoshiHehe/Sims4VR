@@ -19,6 +19,8 @@ static HudSheet g_phoneSheet;  // the phone's screen with the game's phone menu 
 static bool g_fullUi = false;  // the full UI over your palm, shown with the watch's button
 static std::atomic<bool> g_paused{false};
 static hud::Frame g_hudInput;  // this frame's pointer on the atlas (a poke or the laser)
+static bool g_laserPhoneHold = false;     // the laser's trigger was pulled on the phone and is still held
+static float g_laserPhoneAt[2] = {0, 0};  // where on the atlas the laser last was on the phone
 static Swapchain g_hudSwapchain;  // the asleep watch's layer
 
 void setPaused(bool paused) {
@@ -1110,6 +1112,9 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
         case hud::kAspirationPicked:
             if (index >= 0 && index < 100000) grab::pushControl(7000000 + index);  // phonesim.select_track
             LOG("Phone: aspiration track %d picked", index);
+            break;
+        case hud::kMySimFresh:
+            grab::pushControl(86);  // phonesim.send(fresh): sent even unchanged (the screen waits for it)
             break;
         case hud::kMySimOpened:
             grab::pushControl(85);  // phonesim.send

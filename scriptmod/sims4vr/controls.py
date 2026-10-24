@@ -314,6 +314,9 @@ def _tick(_handle):
             elif what == 85:
                 from sims4vr import phonesim
                 phonesim.send()
+            elif what == 86:
+                from sims4vr import phonesim
+                phonesim.send(fresh=True)
             elif what == 81:
                 from sims4vr import phonecal
                 phonecal.send()

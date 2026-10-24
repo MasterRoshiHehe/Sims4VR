@@ -327,8 +327,13 @@ struct PhoneCover {
     ULONGLONG waiting = 0;  // not ready since (0: ready)
     bool blocked = false;   // the cover is up: presses on the phone wait
     bool gaveUp = false;    // waited kCoverMaxWait: shown as it is
+    int readyKey = -1;      // the screen shown ready last: pictures coming in later don't hold it again (no flicker)
 };
+// A screen opened that waits for fresh values from Python (the calendar, My Sim; user 2026-10-24 00:22Z:
+// fully there before it opens, nothing filling in while you scroll): until they come, or this time.
+ULONGLONG g_phoneDataUntil = 0;  // present thread
 PhoneCover g_cover;                       // present thread
+float sliderFollow(const Rect& r, float top, float bottom, float thumbH);  // below
 std::atomic<bool> g_phoneTakenOut{false};
 ImDrawList* g_phoneList = nullptr;        // the phone's screen, drawn apart (shown or not, after the rest)
 ImDrawList* g_coverList = nullptr;        // over it: the black, the still, the plumbob
@@ -1653,6 +1658,7 @@ void resolvePhone() {
         if (g_calNew) {
             g_cal = g_calIn;
             g_calNew = false;
+            g_phoneDataUntil = 0;
         }
     }
     {
@@ -1660,6 +1666,7 @@ void resolvePhone() {
         if (g_simNew) {
             g_sim = g_simIn;
             g_simNew = false;
+            g_phoneDataUntil = 0;
         }
     }
     {
@@ -1957,11 +1964,23 @@ void drawCalendar(ImDrawList* d, const Rect& r, Button& button, std::vector<uint
         const float thumbY = top + (trackH - thumbH) * g_calScroll / std::max(1, total - fit);
         d->AddRectFilled(at(218, top), at(222, bottom), IM_COL32(255, 255, 255, 60), 2 * S);
         pieceIn(d, art::kPhoneSlider, at(214, thumbY), at(226, thumbY + thumbH));
-        bool o = false;
-        if (button(at(212, top), at(230, thumbY), &o)) g_calScroll -= fit;
-        if (button(at(212, thumbY + thumbH), at(230, bottom), &o)) g_calScroll += fit;
+        const float t = sliderFollow(r, top, bottom, thumbH);
+        if (t >= 0) g_calScroll = static_cast<int>(std::lround(t * (total - fit)));
     }
     (void)action;
+}
+
+// A phone list's slider held (user 2026-10-24 00:22Z: the sliders didn't work): a press that began on
+// its column (right of the list) moves the thumb to the pointer while held; where along the track
+// (0..1), or -1 when it isn't held.
+float sliderFollow(const Rect& r, float top, float bottom, float thumbH) {
+    constexpr float S = 2.5f;
+    const ImGuiIO& io = ImGui::GetIO();
+    if (!g_drag.on || !io.MouseDown[0] || g_cover.blocked) return -1;
+    const float sx = (g_drag.start.x - r.x) / S, sy = (g_drag.start.y - r.y) / S;
+    if (sx < 203 || sy < top - 6 || sy > bottom + 6) return -1;
+    const float t = ((io.MousePos.y - r.y) / S - top - thumbH / 2) / std::max(1.0f, bottom - top - thumbH);
+    return std::max(0.0f, std::min(1.0f, t));
 }
 
 // The My Sim app's sub-apps, in its grid's order (user 2026-10-23 21:35Z); their icons are kApp*.
@@ -2439,9 +2458,8 @@ void drawMySim(ImDrawList* d, const Rect& r, Button& button, std::vector<uint64_
         const float thumbY = top + (room - thumbH) * g_mySimScroll / std::max(1.0f, total - room);
         d->AddRectFilled(at(214, top), at(218, bottom), IM_COL32(255, 255, 255, 60), 2 * S);
         pieceIn(d, art::kPhoneSlider, at(210, thumbY), at(222, thumbY + thumbH));
-        bool o = false;
-        if (button(at(206, top), at(228, thumbY), &o)) g_mySimScroll -= room * 0.8f;
-        if (button(at(206, thumbY + thumbH), at(228, bottom), &o)) g_mySimScroll += room * 0.8f;
+        const float t = sliderFollow(r, top, bottom, thumbH);
+        if (t >= 0) g_mySimScroll = t * (total - room);
     }
 }
 
@@ -2486,7 +2504,8 @@ Action drawPhone(ImDrawList* d, int* index) {
         drag.horizontal = std::fabs(dx) > std::fabs(dy);
     }
     const bool swiping = drag.on && drag.moved, swipeEnded = swiping && !io.MouseDown[0];
-    const bool swipeX = swiping && drag.horizontal, swipeY = swiping && !drag.horizontal;
+    const bool onSlider = drag.on && (drag.start.x - r.x) / S >= 203;  // a press on a list's slider moves its thumb (sliderFollow)
+    const bool swipeX = swiping && drag.horizontal, swipeY = swiping && !drag.horizontal && !onSlider;
     auto button = [&](ImVec2 a, ImVec2 b, bool* hover, bool* held = nullptr) {
         ImGui::SetCursorScreenPos(a);
         ImGui::PushID(3000 + id++);
@@ -2653,9 +2672,8 @@ Action drawPhone(ImDrawList* d, int* index) {
             const float thumbY = top + (trackH - thumbH) * g_notesScroll / std::max(1, total - shownCount);
             d->AddRectFilled(at(214, top), at(218, bottom), IM_COL32(255, 255, 255, 60), 2 * S);
             pieceIn(d, art::kPhoneSlider, at(210, thumbY), at(222, thumbY + thumbH));
-            bool o = false;
-            if (button(at(206, top), at(228, thumbY), &o)) g_notesScroll -= std::max(1, shownCount);
-            if (button(at(206, thumbY + thumbH), at(228, bottom), &o)) g_notesScroll += std::max(1, shownCount);
+            const float t = sliderFollow(r, top, bottom, thumbH);
+            if (t >= 0) g_notesScroll = static_cast<int>(std::lround(t * (total - shownCount)));
         }
         bool over = false;
         if (button(at(96, 361), at(129, 392), &over)) g_phoneNotesOpen = false;
@@ -2735,9 +2753,8 @@ Action drawPhone(ImDrawList* d, int* index) {
             const float thumbY = top + (trackH - thumbH) * g_phoneOptsScroll / std::max(1, total - shownRows);
             d->AddRectFilled(at(214, top), at(218, bottom), IM_COL32(255, 255, 255, 60), 2 * S);
             pieceIn(d, art::kPhoneSlider, at(210, thumbY), at(222, thumbY + thumbH));
-            bool o = false;
-            if (button(at(206, top), at(228, thumbY), &o)) g_phoneOptsScroll -= shownRows;
-            if (button(at(206, thumbY + thumbH), at(228, bottom), &o)) g_phoneOptsScroll += shownRows;
+            const float t = sliderFollow(r, top, bottom, thumbH);
+            if (t >= 0) g_phoneOptsScroll = static_cast<int>(std::lround(t * (total - shownRows)));
         }
         bool over = false;
         if (button(at(96, 361), at(129, 392), &over)) {
@@ -2852,6 +2869,8 @@ Action drawPhone(ImDrawList* d, int* index) {
             const float thumbY = top + (room - thumbH) * g_mySimScroll / std::max(1.0f, total - room);
             d->AddRectFilled(at(214, top), at(218, bottom), IM_COL32(255, 255, 255, 60), 2 * S);
             pieceIn(d, art::kPhoneSlider, at(210, thumbY), at(222, thumbY + thumbH));
+            const float t = sliderFollow(r, top, bottom, thumbH);
+            if (t >= 0) g_mySimScroll = t * (total - room);
         }
         bool over = false;
         if (button(at(96, 361), at(129, 392), &over)) g_phoneSoundsOpen = false, g_mySimScroll = 0;
@@ -2983,7 +3002,8 @@ Action drawPhone(ImDrawList* d, int* index) {
             if (!open && button(at(x, y), at(x + 64, y + 64), &over)) {
                 if (node == -4) {
                     g_mySim = 0, g_mySimScroll = 0, g_mySimAsked = GetTickCount64();
-                    action = kMySimOpened;
+                    action = kMySimFresh;
+                    g_phoneDataUntil = GetTickCount64() + 1500;
                 } else if (node == -3) {
                     action = kBuildPressed;
                 } else if (node == -2) {
@@ -2991,6 +3011,7 @@ Action drawPhone(ImDrawList* d, int* index) {
                     g_calWeek = g_calScroll = 0;
                     g_calSel = -1;
                     action = kCalendarOpened;
+                    g_phoneDataUntil = GetTickCount64() + 1500;
                 } else if (node < 0) {
                     g_phoneSettingsOpen = true;  // Settings: its own screen of apps
                 } else {
@@ -3125,8 +3146,9 @@ Action drawPhone(ImDrawList* d, int* index) {
                     g_phoneApp = g_phoneRoot = -1;  // the game's panel hides once something is picked
                 }
             }
+            // Each entry on a light card (user 2026-10-24 00:22Z: the blue text was hard to read on the wallpaper).
+            d->AddRectFilled(at(left, y + 3), at(right - 3, y + rowH - 3), IM_COL32(255, 255, 255, 225), 6 * S);
             if (enabled && (rowOver || held)) pieceIn(d, held ? art::kPhoneRowDown : art::kPhoneRowOver, at(left, y + 12), at(right - 3, y + 46));
-            if (i + 1 < total) d->AddLine(at(left + 2, y + rowH - 0.5f), at(left + 194, y + rowH - 0.5f), IM_COL32(255, 255, 255, 120), S);
             const std::string& text = e.name;
             const float wrap = 180 * S, size = 30 * g_phoneText;
             ImVec2 ts = g_text->CalcTextSizeA(size, FLT_MAX, wrap, text.c_str());
@@ -3145,9 +3167,8 @@ Action drawPhone(ImDrawList* d, int* index) {
             const float thumbY = trackTop + (trackH - thumbH) * g_phoneScroll / std::max(1, total - rows);
             d->AddRectFilled(at(214, trackTop), at(218, trackTop + trackH), IM_COL32(255, 255, 255, 60), 2 * S);
             pieceIn(d, art::kPhoneSlider, at(210, thumbY), at(222, thumbY + thumbH));
-            bool o = false;
-            if (button(at(206, trackTop), at(228, thumbY), &o)) g_phoneScroll -= rows;
-            if (button(at(206, thumbY + thumbH), at(228, trackTop + trackH), &o)) g_phoneScroll += rows;
+            const float t = sliderFollow(r, trackTop, trackTop + trackH, thumbH);
+            if (t >= 0) g_phoneScroll = static_cast<int>(std::lround(t * (total - rows)));
         }
         if (button(at(96, 361), at(129, 392), &over)) {
             // Back: up a level, or home.
@@ -3229,7 +3250,11 @@ Action drawPhoneScreen(bool wait, float dt, int* index) {
     const bool changed = phoneScreenKey() != key;  // pressed this frame: this frame still shows the old screen
     const ULONGLONG now = GetTickCount64();
     // Pictures are waited for a moment only (one that never comes doesn't hold the screen).
-    bool ready = drawn && !wait && (phonePicturesIn() || (c.waiting && now - c.waiting > kPictureWait));
+    const bool dataWait = g_phoneDataUntil && now < g_phoneDataUntil;
+    bool ready = drawn && !wait && !dataWait && (phonePicturesIn() || (c.waiting && now - c.waiting > kPictureWait));
+    // Once a screen showed ready it stays shown: a picture or value arriving later fills in, never re-covers it.
+    if (drawn && !wait && !changed && key == c.readyKey) ready = true;
+    if (ready && !changed) c.readyKey = key;
     if (ready || changed) {
         c.waiting = changed ? now : 0;
         c.gaveUp = false;
