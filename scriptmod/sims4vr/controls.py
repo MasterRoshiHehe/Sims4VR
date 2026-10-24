@@ -340,6 +340,12 @@ def _tick(_handle):
             elif 6000000 <= what < 7000000:
                 from sims4vr import objmenu
                 objmenu.list_control(what - 6000000)
+            elif 8100000 <= what < 8200000:
+                from sims4vr import phonesim
+                phonesim.contact_pie(what - 8100000)
+            elif 8200000 <= what < 8300000:
+                from sims4vr import phonesim
+                phonesim.contact_play_as(what - 8200000)
             elif 7700000 <= what < 7700004:
                 # The build tablet's tray: bb.moveobjects on / off, hidden and live-edit objects (toggles).
                 _console(('bb.moveobjects on', 'bb.moveobjects off', 'bb.showhiddenobjects',
