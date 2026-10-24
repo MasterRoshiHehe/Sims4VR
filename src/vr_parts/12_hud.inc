@@ -1151,6 +1151,11 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
             grab::pushControl(77);  // controls.py: the phone's silence (ui.toggle_silence_phone)
             LOG("Phone: silence button");
             break;
+        case hud::kGallery:
+        case hud::kManageWorlds:
+            clientdlg::sendGameTray(action == hud::kGallery ? 1 : 2);
+            LOG("Phone: %s", action == hud::kGallery ? "Gallery" : "Manage Worlds");
+            break;
         case hud::kVrOptions:
             g_vrOptionsAsked = true;  // opened in updateControls (it needs the frame time)
             LOG("Phone: VR Options (debug menu)");

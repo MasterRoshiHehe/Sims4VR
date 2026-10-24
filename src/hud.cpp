@@ -2636,6 +2636,10 @@ Action drawPhone(ImDrawList* d, int* index) {
             if (node == -2) {
                 const float b = 21 * S;
                 pieceIn(d, art::kCalendarButton, {c.x - b, c.y - b}, {c.x + b, c.y + b}, tint);
+            } else if (node == -13 || node == -14) {
+                // Gallery (-13), Manage Worlds (-14): the GameTray buttons' icons (btnShare, btnNeighborhood).
+                const art::Piece& p = node == -13 ? art::kGalleryIcon : art::kManageWorldsIcon;
+                piece(d, p, c, 34 * S / std::max(p.w, p.h), tint);
             } else if (node == -3) {
                 // Build Mode (-3): the wrist's build button, the game's build icon on its disc.
                 piece(d, art::kQueueDisc[0], c, 50 * S / art::kQueueDisc[0].w, IM_COL32(205, 210, 215, (tint >> 24) & 0xff));
@@ -2983,15 +2987,18 @@ Action drawPhone(ImDrawList* d, int* index) {
             ImVec2 hs = g_title->CalcTextSizeA(34, FLT_MAX, 0, head);
             shadowText(d, g_title, 34, {at(115, 22).x - hs.x / 2, at(115, 22).y - hs.y / 2}, kWhite, head);
         }
-        static const int kApps[3] = {-10, -11, -12};
-        static const char* kNames[3] = {"Game Options", "Phone Options", "VR Options"};
-        for (int k = 0; k < 3; ++k) {
-            const float x = 13 + k * 68 + 4, y = 101 + 6;
+        // Gallery and Manage Worlds: the GameTray's top right buttons (user 2026-10-24 01:00Z), sending what they send.
+        static const int kApps[5] = {-10, -11, -12, -13, -14};
+        static const char* kNames[5] = {"Game Options", "Phone Options", "VR Options", "Gallery", "Manage Worlds"};
+        for (int k = 0; k < 5; ++k) {
+            const float x = 13 + (k % 3) * 68 + 4, y = 101 + 6 + (k / 3) * 92;
             const ImVec2 c = at(x + 32, y + 32);
             bool over = false;
             if (button(at(x, y), at(x + 64, y + 64), &over)) {
                 if (kApps[k] == -10) action = kPhoneOptions;
                 else if (kApps[k] == -11) g_phoneOptsGroup = L"Phone", g_phoneOptsScroll = 0;
+                else if (kApps[k] == -13) action = kGallery;
+                else if (kApps[k] == -14) action = kManageWorlds;
                 else action = kVrOptions;
             }
             if (over) piece(d, art::kPhoneAppOver, c, A);

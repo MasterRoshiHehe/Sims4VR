@@ -49,6 +49,9 @@ PIECES = [
     ('kFearBubble', 'liveui/art/SimHub/88.png'),  # the spiky bubble of a fear (confrontation want)
     # The build/buy button's icon (GameTray), up and over.
     ('kBuildIcon', 'buildui/art/GameTray/93__BuildBuyButton@controller_disabledOver__BuildBuyButton@disabled.png'),
+    # Manage Worlds and Gallery (GameTray btnNeighborhood, btnShare) for the phone's Settings apps.
+    ('kManageWorldsIcon', 'buildui/art/GameTray/114__BackToNeighborhoodButton@controller_disabledOver__BackToNeighborhoodButton@disabled.png'),
+    ('kGalleryIcon', 'buildui/art/GameTray/154__ShareButton@controller_disabledOver__ShareButton@disabled.png'),
     ('kBuildIconOver', 'buildui/art/GameTray/96__BuildBuyButton@controller_down__BuildBuyButton@flair_over.png'),
     # Popups (Dialog): the two-Sim chat (SimSpeechHeader / SimSpeechFooter):
     # the other Sim's portrait ring and blue speech bubble, your portrait ring

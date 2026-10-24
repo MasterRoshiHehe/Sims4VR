@@ -27,6 +27,9 @@ void press(int index);
 // Any thread: closes the game's own pie menu widget (on the UI thread), as its own pick does.
 // False when the game isn't hooked.
 bool closeGamePie();
+// The GameTray's top right buttons from the phone (game thread, next poll): 1 Gallery (ShowExchangeShare
+// {mode: "share"}, as ControlPanel), 2 Manage Worlds (ShowExitToManageWorldsDialog {context}, as OnNeighborhoodClick).
+bool sendGameTray(int which);
 // Any thread: a server popup (picker: a picker) answered on our card closes on the game's UI too (UI thread).
 bool closeGameDialog(bool picker);
 
