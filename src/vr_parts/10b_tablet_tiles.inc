@@ -320,7 +320,7 @@ static float tabletScreenAspect() {
 }
 
 // The whole UI on the tablet's screen, scaled by the mod (user 2026-10-24 13:41Z: the full UI, not the old palette):
-// cut into a 3 x 3 grid, each part keeps its anchor (left / middle / right, top / middle / bottom) on the tablet's
+// cut into parts, each keeps its anchor (left / middle / right, top / middle / bottom) on the tablet's
 // screen, so the full UI is laid out as the game lays it out on a screen of the tablet's shape, at [tablet]
 // menu_size ("Build menu size"): 1 = the UI's height fills the screen's height, 2 = twice as big. Parts that would
 // run into each other are cut between them (the middle third keeps 30 % of the screen). 0 = the whole UI as one picture (something solid in its
@@ -347,22 +347,37 @@ static int tabletLayout(int W, int H, float dst[][4], float src[][4], float& asp
             out[2] = {size - e, size, e + m};
         }
     };
-    Span xs[3], ys[3];
-    spans(Wf, SW, xs);
-    spans(Hf, SH, ys);
     int n = 0;
-    for (int j = 0; j < 3; ++j)
-        for (int i = 0; i < 3; ++i) {
-            dst[n][0] = xs[i].at0 / SW;
-            dst[n][1] = ys[j].at0 / SH;
-            dst[n][2] = (xs[i].at0 + xs[i].from1 - xs[i].from0) / SW;
-            dst[n][3] = (ys[j].at0 + ys[j].from1 - ys[j].from0) / SH;
-            src[n][0] = xs[i].from0;
-            src[n][1] = ys[j].from0;
-            src[n][2] = xs[i].from1;
-            src[n][3] = ys[j].from1;
-            ++n;
-        }
+    auto put = [&](float x0, float y0, float x1, float y1, float atX, float atY, float k) {
+        dst[n][0] = atX / SW;
+        dst[n][1] = atY / SH;
+        dst[n][2] = (atX + (x1 - x0) * k) / SW;
+        dst[n][3] = (atY + (y1 - y0) * k) / SH;
+        src[n][0] = x0;
+        src[n][1] = y0;
+        src[n][2] = x1;
+        src[n][3] = y1;
+        ++n;
+    };
+    Span xs[3];
+    spans(Wf, SW, xs);
+    if (SH >= Hf) {  // the whole UI's height fits: a 3 x 3 grid, the parts moved apart
+        Span ys[3];
+        spans(Hf, SH, ys);
+        for (int j = 0; j < 3; ++j)
+            for (int i = 0; i < 3; ++i)
+                put(xs[i].from0, ys[j].from0, xs[i].from1, ys[j].from1, xs[i].at0, ys[j].at0, 1);
+    } else {
+        // Taller than the screen (user 2026-10-24 14:24Z: the catalog, its tooltips and lists were cut): the empty
+        // middle goes. The top 40 % of the screen: the UI's top in three parts (lot name, tool bar, mode buttons and
+        // notifications), each at its anchor. The bottom 60 %: the UI's bottom across its whole width in one piece
+        // (the catalog's panel, items, tooltip and popped-up lists stay whole), made smaller when it is wider than
+        // the screen.
+        const float topH = std::min(Hf / 2, SH * 0.4f);
+        for (int i = 0; i < 3; ++i) put(xs[i].from0, 0, xs[i].from1, topH, xs[i].at0, 0, 1);
+        const float k = std::min(1.0f, SW / Wf), bottomH = std::min(Hf - topH, (SH - topH) / k);
+        put(0, Hf - bottomH, Wf, Hf, 0, SH - bottomH * k, k);
+    }
     static float loggedZoom = 0, loggedAspect = 0;
     static int logs = 0;
     if ((zoom != loggedZoom || aspect != loggedAspect) && logs++ < 60) {
