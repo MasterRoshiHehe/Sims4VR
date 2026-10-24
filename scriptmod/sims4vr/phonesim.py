@@ -40,6 +40,17 @@ To the DLL (native.phone_sim), records split by 0x1e, fields by 0x1f:
   "mood"  \x1f <mood index (hudinfo MOODS)> \x1f <name json>
   "hh"    \x1f <index> \x1f <first name> \x1f <full name> \x1f <age> \x1f <here 0/1> \x1f <active 0/1>
           \x1f <face picture> \x1f <bust picture>   (the Household app: the household tray's members)
+Contacts (the phone's main screen app, user 2026-10-24 01:08Z; the game's relationship panel and the
+social hover: what your Sim knows of each Sim, sim_knowledge.py, as sim_relationship._build_relationship_update_proto):
+  "ct"    \x1f <index> \x1f <name> \x1f <face picture> \x1f <friendship -100..100> \x1f <romance -100..100 or "">
+          \x1f <friendship bit name json> \x1f <romance bit name json> \x1f <here 0/1>
+  and for the contact picked (control 7300000 + n):
+  "cd"    \x1f <index> \x1f <bust picture> \x1f <unknown personality traits>
+  "cdt"   \x1f <group> \x1f <icon> \x1f <name json>        (known traits, likes/dislikes, turn-ons/offs)
+  "cdk"   \x1f <label> \x1f <text json>                     (known career, major, net worth, romantic interest)
+  "cds"   \x1f <icon> \x1f <name json> \x1f <description json> (sentiments, your Sim's toward them)
+  "cdb"   \x1f <icon> \x1f <name json>                      (other visible relationship bits: spouse, roommate...)
+Control 87 = Contacts is open (send with contacts).
 Control 7200000 + n = play as "hh" n (user 2026-10-24 00:39Z: eyes close, the game switches Sim, eyes open).
 Control 7000000 + n = change to "atrack" n. Control 85 = My Sim is open (send; the DLL asks again every 2 s while it is).
 """
@@ -48,6 +59,8 @@ from sims4vr import native
 _CATEGORY_TITLES = (675525327, 1883184146)  # KeysGP.SIM_INFO_SKILL_PANEL_CATEGORY_DEFAULT, _CHILD
 _sent = None
 _errors = 0
+_contacts = []  # the "ct" Sims sent last, by index (sim ids)
+_contact = None  # the sim id of the contact whose page is open
 _household = []  # the "hh" Sims sent last, by index (sim ids)
 _switch = None  # Play as under way: [target sim id, started (monotonic), switched]
 _tracks = (None, [], [])  # (sim id and age, categories, tracks) of the Change Aspiration list sent last
@@ -286,6 +299,150 @@ def _members(sim_info, records):
             int(member is sim_info), hudinfo._thumb('sims/f_{}_l_0'.format(member.id)), hudinfo._sim_bust(member.id)))
 
 
+def _text_for(factory, actor, target):
+    """A relationship bit's / trait's text with the game's tokens (actor, target), or fewer."""
+    if factory is None:
+        return ''
+    for args in ((actor, target), (actor,), ()):
+        try:
+            return _loc(factory(*args))
+        except Exception:
+            continue
+    return ''
+
+
+def _contact_list(sim_info, records):
+    import services
+    from sims4vr import hudinfo
+    from relationships.relationship_track import RelationshipTrack
+    tracker = sim_info.relationship_tracker
+    friendship, romance = RelationshipTrack.FRIENDSHIP_TRACK, RelationshipTrack.ROMANCE_TRACK
+    manager = services.sim_info_manager()
+    found = []
+    for target_id in list(tracker.target_sim_gen()):
+        target = manager.get(target_id)
+        if target is None or target is sim_info:
+            continue
+        try:
+            f = tracker.get_relationship_score(target_id, friendship)
+            r = tracker.get_relationship_score(target_id, romance) if romance is not None else 0
+        except Exception:
+            continue
+        found.append((max(abs(f), abs(r)) + (5 if target.household is sim_info.household else 0), target, f, r))
+    found.sort(key=lambda x: -x[0])
+    _contacts[:] = [t.id for _, t, _, _ in found[:60]]
+    for n, (_, target, f, r) in enumerate(found[:60]):
+        def bit_of(track):
+            try:
+                t = tracker.get_relationship_track(target.id, track)
+                bit = t.get_bit_for_client() if t is not None else None
+                return _text_for(getattr(bit, 'display_name', None), sim_info, target) if bit is not None else ''
+            except Exception:
+                return ''
+        has_romance = romance is not None and tracker.get_relationship_track(target.id, romance) is not None
+        records.append('ct\x1f{}\x1f{}\x1f{}\x1f{:.0f}\x1f{}\x1f{}\x1f{}\x1f{}'.format(
+            n, '{} {}'.format(target.first_name, target.last_name).strip(), hudinfo._thumb('sims/f_{}_m_0'.format(target.id)),
+            f, '{:.0f}'.format(r) if has_romance else '', bit_of(friendship), bit_of(romance) if has_romance else '',
+            int(target.is_instanced())))
+
+
+def _contact_page(sim_info, records):
+    import services
+    from sims4vr import hudinfo
+    if _contact not in _contacts:
+        return
+    target = services.sim_info_manager().get(_contact)
+    if target is None:
+        return
+    tracker = sim_info.relationship_tracker
+    knowledge = tracker.get_knowledge(target.id)
+    known = set(knowledge.known_traits) if knowledge is not None else set()
+    personality = list(target.trait_tracker.personality_traits)
+    unknown = sum(1 for t in personality if t not in known)
+    records.append('cd\x1f{}\x1f{}\x1f{}'.format(_contacts.index(_contact), hudinfo._sim_bust(target.id), unknown))
+    try:
+        from traits.attraction_preference import AttractionPreference
+    except Exception:
+        AttractionPreference = ()
+    from traits.trait_type import TraitType
+    ordered = [t for t in personality if t in known] + [t for t in known if t not in personality]
+    for trait in ordered:
+        if trait.is_personality_trait:
+            group = 'Traits'
+        elif AttractionPreference and isinstance(trait, type) and issubclass(trait, AttractionPreference):
+            group = 'Turn-ons' if trait.trait_type == TraitType.LIKE else 'Turn-offs'
+        elif trait.trait_type == TraitType.LIKE:
+            group = 'Likes'
+        elif trait.trait_type == TraitType.DISLIKE:
+            group = 'Dislikes'
+        else:
+            group = 'Also'
+        records.append('cdt\x1f{}\x1f{}\x1f{}'.format(group, hudinfo._icon(getattr(trait, 'icon', None)),
+                                                      _text_for(getattr(trait, 'display_name', None), target)))
+    if knowledge is not None:
+        try:
+            for career in knowledge.get_known_careers():
+                track = getattr(career, 'current_track_tuning', None)
+                name = _text(getattr(track, 'career_name', None), target) if track is not None else ''
+                if not name:
+                    name = _loc(getattr(career, 'display_name', None) and career.display_name(target)) if hasattr(career, 'display_name') else ''
+                records.append('cdk\x1fCareer\x1f{}'.format(name or 'No job'))
+        except Exception as e:
+            _log_error('a known career', e)
+        try:
+            if knowledge.knows_major and knowledge.get_known_major() is not None:
+                records.append('cdk\x1fMajor\x1f{}'.format(_text(knowledge.get_known_major().display_name, target)))
+        except Exception:
+            pass
+        try:
+            if knowledge.knows_net_worth:
+                records.append('cdk\x1fNet worth\x1f\u00a7{:,}'.format(int(knowledge.known_net_worth)))
+        except Exception:
+            pass
+        try:
+            if knowledge.knows_romantic_preference:
+                from sims.sim_info_types import Gender
+                genders = sorted(knowledge.known_romantic_genders)
+                text = ', '.join('Men' if g == Gender.MALE else 'Women' for g in genders) or 'Nobody'
+                records.append('cdk\x1fRomantic interest\x1f{}'.format(text))
+        except Exception:
+            pass
+    from relationships.relationship_enums import RelationshipTrackType
+    try:
+        for track in tracker.relationship_tracks_gen(target.id, track_type=RelationshipTrackType.SENTIMENT):
+            bit = track.get_bit_for_client()
+            if bit is None:
+                continue
+            records.append('cds\x1f{}\x1f{}\x1f{}'.format(hudinfo._icon(getattr(bit, 'icon', None)),
+                           _text_for(bit.display_name, sim_info, target), _text_for(getattr(bit, 'bit_description', None), sim_info, target)))
+    except Exception as e:
+        _log_error('sentiments', e)
+    try:
+        track_bits = set()
+        for track in tracker.relationship_tracks_gen(target.id):
+            try:
+                b = track.get_bit_for_client()
+                if b is not None:
+                    track_bits.add(b)
+            except Exception:
+                pass
+        for bit in tracker.get_all_bits(target.id):
+            if bit in track_bits or not getattr(bit, 'visible', False) or getattr(bit, 'invisible_filterable', False):
+                continue
+            name = _text_for(getattr(bit, 'display_name', None), sim_info, target)
+            if name:
+                records.append('cdb\x1f{}\x1f{}'.format(hudinfo._icon(getattr(bit, 'icon', None)), name))
+    except Exception as e:
+        _log_error('relationship bits', e)
+
+
+def select_contact(index):
+    """Contacts: the page of contact n (its details are sent with the list)."""
+    global _contact
+    _contact = _contacts[index] if 0 <= index < len(_contacts) else None
+    send(fresh=True, contacts=True)
+
+
 def play_as(index):
     """The Household app's Play as: the eyes shut, then the game's own switch (client.set_active_sim_info,
     as the skewer; onesim only refuses the next-Sim key and set_active_sim_by_id), then they open (tick)."""
@@ -325,7 +482,7 @@ def tick():
         send(fresh=True)
 
 
-def send(fresh=False):
+def send(fresh=False, contacts=False):
     global _sent
     if native._optional('phone_sim') is None:
         return
@@ -341,7 +498,7 @@ def send(fresh=False):
                 records.append('cat\x1f{}\x1f{}'.format(category, _key(title)))
             for s in skills:
                 records.append('skill\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{:.4f}\x1f{}\x1f{}'.format(*s))
-            for part in (_careers, _mood, _members):
+            for part in (_careers, _mood, _members) + ((_contact_list, _contact_page) if contacts else ()):
                 try:
                     part(sim_info, records)
                 except Exception as e:
