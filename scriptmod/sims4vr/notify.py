@@ -270,6 +270,11 @@ def _wrap():
             _record(self, dialog_msg)
         except Exception as e:
             _log_error('keeping a notification', e)
+        try:
+            from sims4vr import phonesound
+            phonesound.on_notification()
+        except Exception as e:
+            _log_error('the notification tone', e)
         return result
     hooks.hook('notify', UiDialogNotification, 'distribute_dialog', distribute_dialog)
 

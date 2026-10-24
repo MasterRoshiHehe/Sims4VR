@@ -308,6 +308,7 @@ int g_phoneApp = -1, g_phoneRoot = -1, g_phonePage = 0, g_phoneScroll = 0;
 // The phone's Settings app (user 2026-10-23 20:55Z): its screen of apps (Game Options, Phone Options,
 // VR Options), and Phone Options: the debug menu's phone pages on the phone (settings::pageRows).
 bool g_phoneSettingsOpen = false;
+bool g_phoneSoundsOpen = false;  // the Sounds screen (the header's top left button; phonesound.py)
 std::wstring g_phoneOptsGroup;  // the debug menu page Phone Options shows ("" closed)
 int g_phoneOptsScroll = 0;
 float g_phoneText = 1;          // the phone's text size (Frame.phoneText)
@@ -2535,8 +2536,9 @@ Action drawPhone(ImDrawList* d, int* index) {
     };
     if (g_phoneHomeAsked.exchange(false))
         g_phoneApp = g_phoneRoot = -1, g_phonePage = 0, g_phoneScroll = 0, g_phoneColorsOpen = false, g_phoneNotesOpen = false,
-        g_phoneCalOpen = false, g_phoneSettingsOpen = false, g_phoneOptsGroup.clear(), g_mySim = -1, g_mySimMoodlet = -1;
-    if (g_phoneApp >= 0) g_phoneNotesOpen = g_phoneCalOpen = g_phoneSettingsOpen = false, g_phoneOptsGroup.clear(), g_mySim = -1;
+        g_phoneCalOpen = false, g_phoneSettingsOpen = false, g_phoneOptsGroup.clear(), g_mySim = -1, g_mySimMoodlet = -1,
+        g_phoneSoundsOpen = false;
+    if (g_phoneApp >= 0) g_phoneNotesOpen = g_phoneCalOpen = g_phoneSettingsOpen = g_phoneSoundsOpen = false, g_phoneOptsGroup.clear(), g_mySim = -1;
     if (g_phoneApp >= 0 || p.colors.empty()) g_phoneColorsOpen = false;
 
     if (!p.disabled.empty() || (p.nodes.empty() && !p.disabledJson.empty())) {
@@ -2745,6 +2747,115 @@ Action drawPhone(ImDrawList* d, int* index) {
             g_phoneOptsScroll = 0;
         }
         piece(d, over ? art::kPhoneBackOver : art::kPhoneBack, at(96 + 16.5f, 361 + 15.5f), A);
+    } else if (g_phoneSoundsOpen) {
+        // Sounds (user 2026-10-23 23:55Z): the phone's mode (sound, vibrate, mute), the game's
+        // silence for calls, then the ringtones and the text and notification tones (the game's
+        // stings and bumpers, phonesound.py); a press picks one and plays it.
+        static const wchar_t* const kModes[3] = {L"Sound", L"Vibrate", L"Mute"};
+        static const wchar_t* const kRings[] = {L"None", L"Off to Work", L"Promotion", L"Skill Up", L"Collection", L"Karaoke Win",
+                                                L"First Kiss", L"Birthday", L"Reward", L"Eureka", L"Liftoff"};
+        static const wchar_t* const kTexts[] = {L"None", L"Positive", L"Neutral", L"Uh-oh", L"Bills Paid", L"Club", L"Accepted",
+                                                L"Moodlet", L"Advice"};
+        const std::vector<settings::PageRow> rows = settings::pageRows(L"Phone sounds", nullptr, nullptr);
+        auto rowFor = [&](const wchar_t* label) -> const settings::PageRow* {
+            for (const settings::PageRow& row : rows)
+                if (row.label == label) return &row;
+            return nullptr;
+        };
+        auto indexOf = [](const settings::PageRow* row, const wchar_t* const* names, int n) {
+            for (int i = 0; row && i < n; ++i)
+                if (row->value == names[i]) return i;
+            return 0;
+        };
+        auto setTo = [](const settings::PageRow* row, int from, int to) {
+            if (!row) return;
+            for (int k = 0; k < 20 && from != to; ++k) {
+                if (!settings::pageChange(row->row, to > from ? 1 : -1)) break;
+                from += to > from ? 1 : -1;
+            }
+        };
+        pieceIn(d, art::kPhoneTint, at(0, 0), at(230, 44));
+        {
+            const char* head = "Sounds";
+            ImVec2 hs = g_title->CalcTextSizeA(34, FLT_MAX, 0, head);
+            shadowText(d, g_title, 34, {at(115, 24).x - hs.x / 2, at(115, 24).y - hs.y / 2}, kWhite, head);
+        }
+        const float top = 48, bottom = 354, left = 6, right = 206;
+        const float ts = 22 * g_phoneText;
+        float y = top - g_mySimScroll;
+        d->PushClipRect(at(0, top), at(230, bottom), true);
+        // The mode: three segments.
+        const settings::PageRow* modeRow = rowFor(L"Phone");
+        const int mode = indexOf(modeRow, kModes, 3);
+        for (int i = 0; i < 3; ++i) {
+            const float x0 = left + i * (right - left) / 3, x1 = left + (i + 1) * (right - left) / 3 - 2;
+            const ImVec2 a = at(x0, y + 4), b = at(x1, y + 30);
+            bool over = false;
+            if (button(a, b, &over)) setTo(modeRow, mode, i);
+            d->AddRectFilled(a, b, i == mode ? IM_COL32(9, 73, 171, 255) : over ? IM_COL32(230, 238, 250, 240) : IM_COL32(255, 255, 255, 225),
+                             6 * S);
+            const std::string label = utf8(kModes[i]);
+            ImVec2 ls = g_text->CalcTextSizeA(ts, FLT_MAX, 0, label.c_str());
+            d->AddText(g_text, ts, {(a.x + b.x - ls.x) / 2, (a.y + b.y - ls.y) / 2}, i == mode ? kWhite : kBlue, label.c_str());
+        }
+        y += 36;
+        // The game's own silence (calls don't come through while it is on).
+        {
+            const ImVec2 a = at(left, y), b = at(right, y + 30);
+            bool over = false;
+            if (button(a, b, &over)) action = kPhoneSilence;
+            d->AddRectFilled(a, b, IM_COL32(255, 255, 255, 225), 6 * S);
+            if (over) d->AddRect(a, b, IM_COL32(9, 73, 171, 180), 6 * S, 0, 1.2f * S);
+            d->AddText(g_text, ts, {at(left + 6, 0).x, at(0, y + 15).y - ts / 2}, kBlue, "Silence calls (the game's)");
+            const ImVec2 sa = at(right - 40, y + 6), sb = at(right - 4, y + 24);
+            d->AddRectFilled(sa, sb, p.silenced ? IM_COL32(70, 170, 60, 255) : IM_COL32(150, 158, 170, 255), 9 * S);
+            d->AddCircleFilled({p.silenced ? sb.x - 9 * S : sa.x + 9 * S, (sa.y + sb.y) / 2}, 7 * S, kWhite);
+        }
+        y += 36;
+        auto list = [&](const char* title, const settings::PageRow* row, const wchar_t* const* names, int n, int kind) {
+            shadowText(d, g_title, 24 * g_phoneText, {at(left + 2, 0).x, at(0, y + 2).y}, kWhite, title);
+            y += 14 * g_phoneText + 6;
+            const int chosen = indexOf(row, names, n);
+            for (int i = 0; i < n; ++i) {
+                const float h = 26;
+                const ImVec2 a = at(left, y), b = at(right, y + h - 2);
+                bool over = false;
+                if (button(a, b, &over)) {
+                    setTo(row, chosen, i);
+                    if (i > 0) {
+                        action = kTonePreview;
+                        if (index) *index = kind * 100 + i;
+                    }
+                }
+                d->AddRectFilled(a, b, i == chosen ? IM_COL32(205, 235, 190, 240) : IM_COL32(255, 255, 255, 225), 6 * S);
+                if (over) d->AddRect(a, b, IM_COL32(9, 73, 171, 180), 6 * S, 0, 1.2f * S);
+                const std::string label = utf8(names[i]);
+                d->AddText(g_text, ts, {at(left + 22, 0).x, at(0, y + h / 2 - 1).y - ts / 2}, kBlue, label.c_str());
+                if (i == chosen) {
+                    const ImVec2 c = at(left + 11, y + h / 2 - 1);
+                    d->AddLine({c.x - 3 * S, c.y}, {c.x - 0.6f * S, c.y + 2.6f * S}, IM_COL32(40, 130, 30, 255), 1.8f * S);
+                    d->AddLine({c.x - 0.6f * S, c.y + 2.6f * S}, {c.x + 3.6f * S, c.y - 2.6f * S}, IM_COL32(40, 130, 30, 255), 1.8f * S);
+                }
+                y += h;
+            }
+            y += 6;
+        };
+        list("Ringtone", rowFor(L"Ringtone"), kRings, static_cast<int>(sizeof kRings / sizeof kRings[0]), 0);
+        list("Text and notification tone", rowFor(L"Text and notification tone"), kTexts,
+             static_cast<int>(sizeof kTexts / sizeof kTexts[0]), 1);
+        d->PopClipRect();
+        const float total = y + g_mySimScroll - top, room = bottom - top;
+        if (swipeY) g_mySimScroll = drag.sim - dy;
+        g_mySimScroll = std::max(0.0f, std::min(std::max(0.0f, total - room), g_mySimScroll));
+        if (total > room) {
+            const float thumbH = std::max(24.0f, room * room / total);
+            const float thumbY = top + (room - thumbH) * g_mySimScroll / std::max(1.0f, total - room);
+            d->AddRectFilled(at(214, top), at(218, bottom), IM_COL32(255, 255, 255, 60), 2 * S);
+            pieceIn(d, art::kPhoneSlider, at(210, thumbY), at(222, thumbY + thumbH));
+        }
+        bool over = false;
+        if (button(at(96, 361), at(129, 392), &over)) g_phoneSoundsOpen = false, g_mySimScroll = 0;
+        piece(d, over ? art::kPhoneBackOver : art::kPhoneBack, at(96 + 16.5f, 361 + 15.5f), A);
     } else if (g_phoneSettingsOpen) {
         // Settings: its apps (Game Options: the game's Escape menu, as the old Options app;
         // Phone Options: this phone's settings; VR Options: the VR debug menu), named under them.
@@ -2797,7 +2908,7 @@ Action drawPhone(ImDrawList* d, int* index) {
         const bool open = g_phoneColorsOpen;  // the selector takes the presses while it is up
         nine(d, art::kPhonePill, at(8, 8), at(63, 33), 37, 37, 37, 37, A);
         bool hover = false;
-        if (button(at(9, 9), at(31, 31), &hover) && !open) action = kPhoneSilence;
+        if (button(at(9, 9), at(31, 31), &hover) && !open) g_phoneSoundsOpen = true, g_mySimScroll = 0;  // the Sounds screen
         const art::Piece& silence = p.silenced ? (hover ? art::kPhoneSilencedOver : art::kPhoneSilenced)
                                                : (hover ? art::kPhoneSilenceOver : art::kPhoneSilence);
         piece(d, silence, at(20, 20), A);
@@ -3050,7 +3161,7 @@ Action drawPhone(ImDrawList* d, int* index) {
     // buttons and the battery, small over the other screens' titles.
     if (!g_phoneColorsOpen)
         drawPhoneClock(d, r, g_phoneApp < 0 && !g_phoneNotesOpen && g_phoneOptsGroup.empty() && !g_phoneSettingsOpen &&
-                                 g_mySim < 0 && !g_phoneCalOpen && p.disabled.empty());
+                                 g_mySim < 0 && !g_phoneCalOpen && !g_phoneSoundsOpen && p.disabled.empty());
     {
         std::lock_guard<std::mutex> lock(g_itemMutex);
         g_phoneIcons.swap(shown);
@@ -3071,7 +3182,7 @@ bool phonePicturesIn() {
 int phoneScreenKey() {
     const int opts = static_cast<int>(std::hash<std::wstring>()(g_phoneOptsGroup) & 0xffff);
     return (((g_phoneApp + 2) * 8 + (g_phoneNotesOpen ? 1 : 0) + (g_phoneCalOpen ? 2 : 0) + (g_phoneSettingsOpen ? 4 : 0)) *
-                65537 + opts) * 31 + g_phoneSerial + (g_mySim + 1) * 7919 + (g_aspChange ? 104729 : 0) + (g_mySimMoodlet + 1) * 1299709;
+                65537 + opts) * 31 + g_phoneSerial + (g_mySim + 1) * 7919 + (g_aspChange ? 104729 : 0) + (g_mySimMoodlet + 1) * 1299709 + (g_phoneSoundsOpen ? 15485863 : 0);
 }
 
 // The still and the cover's blend: premultiplied colours (the atlas's), drawn with ImGui's straight blend otherwise.

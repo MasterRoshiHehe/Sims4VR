@@ -128,6 +128,7 @@ const Page kFixedPages[] = {
     {L"Phone hand", L"Hand", L"Phone"},
     {L"Phone size", L"Size and screen", L"Phone"},
     {L"Phone model", L"Game's phone model", L"Phone"},
+    {L"Phone sounds", L"Sounds", L"Phone"},
     {L"Tablet", L"Tablet (build/buy)", L"Phone"},
     {L"Notebook", L"Notebook", L"Interface"},
     {L"Notebook position", L"Position", L"Notebook"},
@@ -281,6 +282,7 @@ std::vector<Row> makeRows() {
     const wchar_t* phoneHand = L"Phone hand";
     const wchar_t* phoneSize = L"Phone size";
     const wchar_t* phoneModel = L"Phone model";
+    const wchar_t* phoneSounds = L"Phone sounds";
     const wchar_t* tablet = L"Tablet";
     const wchar_t* notebook = L"Notebook";
     const wchar_t* notebookPosition = L"Notebook position";
@@ -686,13 +688,21 @@ std::vector<Row> makeRows() {
 
         number(phone, L"Hip: hand below your eyes", "phone", "hip_drop", &Config::phoneHipDrop, 0.1f, 0.9f, 0.02f, 100,
                L"%.0f cm"),
-        toggle(phone, L"Buzz when the game shows a popup", "phone", "popup_buzz", &Config::phonePopupBuzz),
         choice(phone, L"Text size on the phone", "phone", "text_size", &Config::phoneTextSize, {L"Small", L"Medium", L"Large"}),
         link(phone, L"Position", phonePosition),
         link(phone, L"Hand", phoneHand),
         link(phone, L"Size and screen", phoneSize),
         link(phone, L"Game's phone model", phoneModel),
         link(phone, L"Tablet (build/buy)", tablet),
+        link(phone, L"Sounds", phoneSounds),
+        // The phone's Sounds screen has these too (phonesound.py: the names match its tone lists).
+        choice(phoneSounds, L"Phone", "phone", "sound_mode", &Config::phoneSoundMode, {L"Sound", L"Vibrate", L"Mute"}),
+        choice(phoneSounds, L"Ringtone", "phone", "ringtone", &Config::phoneRingtone,
+               {L"None", L"Off to Work", L"Promotion", L"Skill Up", L"Collection", L"Karaoke Win", L"First Kiss", L"Birthday",
+                L"Reward", L"Eureka", L"Liftoff"}),
+        choice(phoneSounds, L"Text and notification tone", "phone", "text_tone", &Config::phoneTextTone,
+               {L"None", L"Positive", L"Neutral", L"Uh-oh", L"Bills Paid", L"Club", L"Accepted", L"Moodlet", L"Advice"}),
+        toggle(phoneSounds, L"Buzz when the game shows a popup", "phone", "popup_buzz", &Config::phonePopupBuzz),
         toggle(tablet, L"Tablet in first-person build/buy", "tablet", "tablet", &Config::tablet),
         number(tablet, L"Width", "tablet", "width", &Config::tabletWidth, 0.15f, 0.5f, 0.01f, 100, L"%.0f cm"),
         number(tablet, L"Height (0 = fits the layout)", "tablet", "height", &Config::tabletHeight, 0, 0.5f, 0.01f, 100,

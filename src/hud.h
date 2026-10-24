@@ -59,7 +59,7 @@ constexpr Rect kBookPaper{256, 7376, 128, 128};        // the boards' endpapers
 // `index` (phoneapp.py's node); kPhoneSilence: the phone's silence button;
 // kPhoneOptions: the Options app (the game menu); kPhoneColor: wallpaper colour `index`.
 enum Action { kNone = 0, kPausePressed = 1, kSpeed1, kSpeed2, kSpeed3, kFullUi, kBuildPressed, kCancel, kDismissWant, kAnswer,
-              kPick, kPickerClose, kPhonePick, kPhoneSilence, kPhoneOptions, kPhoneColor, kNotesOpened, kNotesClear, kNoteDelete, kNoteDismiss, kCalendarOpened, kMySimOpened, kAspirationPicked, kNoteAnswer,
+              kPick, kPickerClose, kPhonePick, kPhoneSilence, kPhoneOptions, kPhoneColor, kNotesOpened, kNotesClear, kNoteDelete, kNoteDismiss, kCalendarOpened, kMySimOpened, kAspirationPicked, kTonePreview, kNoteAnswer,
               kPiePick, kPieClose, kListPick, kListDone, kListClose, kVrOptions };
 // kVrOptions: the phone's Settings > VR Options (opens the VR debug menu).
 // kListPick: the list picker's row `index` (one pick); kListDone: Done with listPicked(); kListClose: its X.

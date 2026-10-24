@@ -1271,6 +1271,11 @@ def _wrap():
             _show(dialog)
         except Exception as e:
             _log('showing on the object failed: {!r}'.format(e))
+        try:
+            from sims4vr import phonesound
+            phonesound.on_popup(dialog)
+        except Exception as e:
+            _log('the phone tone failed: {!r}'.format(e))
         # The message the game builds for the client (its texts, buttons and
         # Sims), kept for the popup card drawn from it.
         global _last_msg

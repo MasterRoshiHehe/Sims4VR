@@ -290,6 +290,9 @@ struct Config {
     // Sim holds its phone, with the game menu on its screen (game not paused)
     bool phone = true;
     float phoneHipDrop = 0.40f;   // metres below your eyes your hand must be
+    int phoneSoundMode = 0;       // the phone: 0 sound (tones + buzz), 1 vibrate (buzz), 2 mute
+    int phoneRingtone = 1;        // phonesound.py RINGTONES (0 none)
+    int phoneTextTone = 1;        // phonesound.py TEXT_TONES (0 none)
     int phoneTextSize = 1;        // the phone's texts: 0 small (as before v0.13.380), 1 medium, 2 large
     bool phonePopupBuzz = true;   // the controllers buzz like a phone when the game shows a popup
     float phoneWidth = 0.102f;    // our phone's size, metres

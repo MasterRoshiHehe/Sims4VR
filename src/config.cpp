@@ -256,6 +256,9 @@ Config loadConfig(const std::wstring& ini) {
     c.phoneHipDrop = readFloat(ini, "phone", "hip_drop", c.phoneHipDrop);
     c.phonePopupBuzz = readBool(ini, "phone", "popup_buzz", c.phonePopupBuzz);
     c.phoneTextSize = readInt(ini, "phone", "text_size", c.phoneTextSize);
+    c.phoneSoundMode = readInt(ini, "phone", "sound_mode", c.phoneSoundMode);
+    c.phoneRingtone = readInt(ini, "phone", "ringtone", c.phoneRingtone);
+    c.phoneTextTone = readInt(ini, "phone", "text_tone", c.phoneTextTone);
     c.phoneWidth = readFloat(ini, "phone", "phone_width", c.phoneWidth);
     if (!(c.phoneWidth >= 0.03f && c.phoneWidth <= 0.5f)) c.phoneWidth = 0.102f;
     c.phoneHeight = readFloat(ini, "phone", "phone_height", c.phoneHeight);

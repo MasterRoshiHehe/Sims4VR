@@ -512,7 +512,7 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
             g_phoneMenuAt = now + 300;  // answered on the phone in Options: the menu comes back
         popupWas = popup;
         // First person only: the game camera (god view) keeps the game's own behaviour.
-        if (!popup || !g_config.phonePopupBuzz || !(mode() == Mode::Stereo && camera::bodyActive())) pulseAt = 0;
+        if (!popup || !g_config.phonePopupBuzz || g_config.phoneSoundMode == 2 || !(mode() == Mode::Stereo && camera::bodyActive())) pulseAt = 0;
         // A picker on its object is right in front of you: no ring.
         if (g_objMenuWanted && g_config.objectMenus && g_uiFrame) pulseAt = 0;
         if (pulseAt && now >= pulseAt) {
