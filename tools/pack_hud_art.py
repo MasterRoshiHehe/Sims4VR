@@ -101,6 +101,12 @@ PIECES = [
     ('kAppPhoneOptions', '../art/phone_icons/phone_options.png', 2),  # our phone apps (tools/make_phone_icons.py)
     ('kAppVrOptions', '../art/phone_icons/vr_options.png', 2),  # our phone apps (tools/make_phone_icons.py)
     ('kAppMySim', '../art/phone_icons/my_sim.png', 2),
+    ('kNeedHunger', '../art/phone_icons/need_hunger.png', 2),  # the Needs app (make_phone_icons.py)
+    ('kNeedHygiene', '../art/phone_icons/need_hygiene.png', 2),  # the Needs app (make_phone_icons.py)
+    ('kNeedBladder', '../art/phone_icons/need_bladder.png', 2),  # the Needs app (make_phone_icons.py)
+    ('kNeedEnergy', '../art/phone_icons/need_energy.png', 2),  # the Needs app (make_phone_icons.py)
+    ('kNeedFun', '../art/phone_icons/need_fun.png', 2),  # the Needs app (make_phone_icons.py)
+    ('kNeedSocial', '../art/phone_icons/need_social.png', 2),  # the Needs app (make_phone_icons.py)
     ('kAppAspirations', '../art/phone_icons/aspirations.png', 2),
     ('kAppCareer', '../art/phone_icons/career.png', 2),
     ('kAppSkills', '../art/phone_icons/skills.png', 2),

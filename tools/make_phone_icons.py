@@ -473,9 +473,89 @@ def wants():
     finish(img, inner, 'wants')
 
 
+# The Needs app's own need icons (user 2026-10-24 01:58Z: HD, not the game's small ones): one glossy object each,
+# no tile, in the game's need colours.
+def plain(name, img):
+    img.resize((128, 128), Image.LANCZOS).save(os.path.join(OUT, 'need_' + name + '.png'))
+
+
+def blank():
+    return Image.new('RGBA', (N, N), (0, 0, 0, 0))
+
+
+def need_hunger():  # a drumstick
+    img = blank()
+    meat = mask_of(lambda d: d.ellipse((90, 70, 360, 330), fill=255))
+    bone = mask_of(lambda d: (d.line((300, 280, 420, 400), fill=255, width=46),
+                              d.ellipse((380, 380, 450, 450), fill=255), d.ellipse((410, 340, 480, 410), fill=255)))
+    shadow(img, bone)
+    fill(img, bone, (255, 252, 240), (210, 200, 180), 90, outline=(120, 100, 80, 255), width=7)
+    shadow(img, meat)
+    fill(img, meat, (240, 160, 80), (170, 80, 30), 90, outline=(100, 45, 15, 255), width=8)
+    gloss(img, meat, (120, 90, 290, 200), 150)
+    plain('hunger', img)
+
+
+def need_hygiene():  # bubbles
+    img = blank()
+    for (cx, cy, r) in ((210, 280, 150), (390, 160, 85), (395, 380, 60)):
+        m = mask_of(lambda d, cx=cx, cy=cy, r=r: d.ellipse((cx - r, cy - r, cx + r, cy + r), fill=255))
+        shadow(img, m, alpha=60)
+        fill(img, m, (215, 245, 255), (90, 170, 230), 120, outline=(40, 100, 160, 255), width=7)
+        gloss(img, m, (cx - r * 0.7, cy - r * 0.85, cx + r * 0.2, cy - r * 0.05), 220)
+    plain('hygiene', img)
+
+
+def need_bladder():  # a drop
+    img = blank()
+    m = mask_of(lambda d: (d.ellipse((120, 200, 400, 480), fill=255), d.polygon([(260, 30), (128, 300), (392, 300)], fill=255)))
+    shadow(img, m)
+    fill(img, m, (255, 245, 150), (225, 175, 20), 90, outline=(130, 95, 0, 255), width=8)
+    gloss(img, m, (160, 220, 300, 380), 190)
+    plain('bladder', img)
+
+
+def need_energy():  # a lightning bolt
+    img = blank()
+    m = mask_of(lambda d: d.polygon([(300, 30), (110, 290), (240, 290), (190, 490), (410, 200), (275, 200), (350, 30)], fill=255))
+    shadow(img, m)
+    fill(img, m, (255, 250, 170), (240, 170, 20), 90, outline=(140, 90, 0, 255), width=8)
+    gloss(img, m, (150, 40, 360, 260), 170)
+    plain('energy', img)
+
+
+def need_fun():  # a star
+    img = blank()
+    pts = []
+    for k in range(10):
+        a = -math.pi / 2 + k * math.pi / 5
+        r = 230 if k % 2 == 0 else 100
+        pts.append((256 + r * math.cos(a), 270 + r * math.sin(a)))
+    m = mask_of(lambda d: d.polygon(pts, fill=255))
+    shadow(img, m)
+    fill(img, m, (255, 200, 240), (210, 70, 170), 90, outline=(120, 25, 95, 255), width=8)
+    gloss(img, m, (130, 60, 340, 250), 170)
+    plain('fun', img)
+
+
+def need_social():  # two speech bubbles
+    img = blank()
+    back = mask_of(lambda d: (d.rounded_rectangle((210, 60, 480, 260), radius=90, fill=255),
+                              d.polygon([(400, 240), (450, 320), (350, 250)], fill=255)))
+    shadow(img, back, alpha=60)
+    fill(img, back, (190, 230, 255), (80, 150, 220), 90, outline=(30, 80, 140, 255), width=7)
+    front = mask_of(lambda d: (d.rounded_rectangle((40, 170, 340, 400), radius=100, fill=255),
+                               d.polygon([(90, 380), (60, 470), (170, 390)], fill=255)))
+    shadow(img, front)
+    fill(img, front, (180, 255, 170), (60, 180, 60), 90, outline=(25, 100, 25, 255), width=8)
+    gloss(img, front, (80, 180, 290, 290), 170)
+    plain('social', img)
+
+
 if __name__ == '__main__':
     os.makedirs(OUT, exist_ok=True)
     for f in (settings, calendar, build, game_options, phone_options, vr_options, my_sim, aspirations, career, skills,
-              relationships, inventory, needs, social_groups, owned_businesses, household, weather, wants):
+              relationships, inventory, needs, social_groups, owned_businesses, household, weather, wants,
+              need_hunger, need_hygiene, need_bladder, need_energy, need_fun, need_social):
         f()
     print('phone icons in', OUT)

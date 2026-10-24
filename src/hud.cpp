@@ -2252,7 +2252,8 @@ void drawMySim(ImDrawList* d, const Rect& r, Button& button, std::vector<uint64_
     if (k == kSimHousehold && g_hhSim >= static_cast<int>(g_sim.household.size())) g_hhSim = -1;
     header(k == kSimAspirations && g_aspChange ? "Change Aspiration" : k == kSimCareer ? careerName(g_sim.age)
            : k == kSimHousehold && g_hhSim >= 0 ? g_sim.household[g_hhSim].first.c_str() : kMySimNames[k]);
-    const float top = 48, bottom = 354, left = 6, right = 206;
+    static bool g_scrolls0 = false;  // the list scrolled last frame: room for its slider, else rows to the edge
+    const float top = 48, bottom = 354, left = 6, right = g_scrolls0 ? 206.0f : 224.0f;
     float y = top - g_mySimScroll;
     d->PushClipRect(at(0, top), at(230, bottom), true);
     const float ts = 22 * g_phoneText;
@@ -2602,7 +2603,7 @@ void drawMySim(ImDrawList* d, const Rect& r, Button& button, std::vector<uint64_
     } else if (k == kSimInventory) {
         // The Sim's inventory (the game's inventory panel): a tile a stack, its picture, count and name; press one
         // for its pie menu at your hand (phonesim.inventory_pie).
-        const float cw = 64, ch = 78;
+        const float cw = (right - left - 8) / 3, ch = 78;
         const int n = static_cast<int>(g_sim.inventory.size());
         for (int i = 0; i < n; ++i) {
             const SimItem& it = g_sim.inventory[i];
@@ -2687,7 +2688,7 @@ void drawMySim(ImDrawList* d, const Rect& r, Button& button, std::vector<uint64_
     } else if (k == kSimHousehold) {
         // The household tray as a 2-wide grid of portraits (user 2026-10-23 21:35Z): the Sim you play ringed
         // in green, Sims not on the lot dimmed. Press one for its page.
-        const float cw = 97, ch = 118;
+        const float cw = (right - left - 6) / 2, ch = 118;
         const int n = static_cast<int>(g_sim.household.size());
         for (int i = 0; i < n; ++i) {
             const SimMember& m = g_sim.household[i];
@@ -2730,11 +2731,21 @@ void drawMySim(ImDrawList* d, const Rect& r, Button& button, std::vector<uint64_
             const Item& it = items[i];
             const ImVec2 ra = at(left, y + 2), rb = at(right, y + rowH - 2);
             d->AddRectFilled(ra, rb, IM_COL32(255, 255, 255, 225), 6 * S);
-            if (it.icon) {
+            const std::string& name = i < static_cast<int>(tips.size()) ? found(tips[i].json[0]) : std::string();
+            // Our own HD icons for the six base needs (user 2026-10-24 01:58Z); the game's for any other.
+            static const std::pair<const char*, const art::Piece*> kOwn[6] = {
+                {"Hunger", &art::kNeedHunger}, {"Hygiene", &art::kNeedHygiene}, {"Bladder", &art::kNeedBladder},
+                {"Energy", &art::kNeedEnergy}, {"Fun", &art::kNeedFun}, {"Social", &art::kNeedSocial}};
+            const art::Piece* own = nullptr;
+            for (const auto& o : kOwn)
+                if (name == o.first) own = o.second;
+            if (own) {
+                const ImVec2 c = at(left + 18, y + rowH / 2);
+                pieceIn(d, *own, {c.x - 16 * S, c.y - 16 * S}, {c.x + 16 * S, c.y + 16 * S});
+            } else if (it.icon) {
                 shown.push_back(it.icon);
                 icon(d, it.icon, at(left + 18, y + rowH / 2), 32 * S);
             }
-            const std::string& name = i < static_cast<int>(tips.size()) ? found(tips[i].json[0]) : std::string();
             d->AddText(g_text, ts, at(left + 38, y + 4), kBlue, name.c_str());
             const ImU32 back = (it.flags >> 24) ? fromArgb(it.flags) : IM_COL32(60, 66, 76, 255);
             bar(left + 38, right - 6, y + rowH - 16, 9, 0.07f + 0.93f * it.value, back, fromArgb(it.colour | 0xff000000u));
@@ -2750,6 +2761,7 @@ void drawMySim(ImDrawList* d, const Rect& r, Button& button, std::vector<uint64_
     const float total = y + g_mySimScroll - top, room = bottom - top;
     if (swipeY) g_mySimScroll = drag.sim - dy;
     g_mySimScroll = std::max(0.0f, std::min(std::max(0.0f, total - room), g_mySimScroll));
+    g_scrolls0 = total > room;
     if (total > room) {
         const float thumbH = std::max(24.0f, room * room / total);
         const float thumbY = top + (room - thumbH) * g_mySimScroll / std::max(1.0f, total - room);
@@ -2782,7 +2794,8 @@ void drawContacts(ImDrawList* d, const Rect& r, Button& button, std::vector<uint
         const float fit = std::min(1.0f, 200 * S / std::max(1.0f, hs.x));
         shadowText(d, g_title, 34 * fit, {at(115, 24).x - hs.x * fit / 2, at(115, 24).y - hs.y * fit / 2}, kWhite, head);
     }
-    const float top = 48, bottom = 354, left = 6, right = 206;
+    static bool g_scrolls1 = false;  // the list scrolled last frame: room for its slider, else rows to the edge
+    const float top = 48, bottom = 354, left = 6, right = g_scrolls1 ? 206.0f : 224.0f;
     float y = top - g_mySimScroll;
     d->PushClipRect(at(0, top), at(230, bottom), true);
     auto bar = [&](float x0, float x1, float by, float h, float value, ImU32 pos, ImU32 neg) {
@@ -2966,6 +2979,7 @@ void drawContacts(ImDrawList* d, const Rect& r, Button& button, std::vector<uint
     const float total = y + g_mySimScroll - top, room = bottom - top;
     if (swipeY) g_mySimScroll = drag.sim - dy;
     g_mySimScroll = std::max(0.0f, std::min(std::max(0.0f, total - room), g_mySimScroll));
+    g_scrolls1 = total > room;
     if (total > room) {
         const float thumbH = std::max(24.0f, room * room / total);
         const float thumbY = top + (room - thumbH) * g_mySimScroll / std::max(1.0f, total - room);
@@ -3105,7 +3119,8 @@ Action drawPhone(ImDrawList* d, int* index) {
                 d->AddText(g_text, 26, {a1.x + 12, (a1.y + b1.y - cs2.y) / 2}, kWhite, clear);
             }
         }
-        const float top = 48, bottom = 352, left = 6, right = 206;
+        static bool g_scrolls2 = false;  // the list scrolled last frame: room for its slider, else rows to the edge
+        const float top = 48, bottom = 352, left = 6, right = g_scrolls2 ? 206.0f : 224.0f;
         const float pic = 30, pad = 4, wrap = (right - left - pic - 3 * pad - 14) * S;
         const ImU32 kTitle = kWhite, kBody = kWhite;
         const int total = static_cast<int>(notes.size());
@@ -3183,6 +3198,7 @@ Action drawPhone(ImDrawList* d, int* index) {
             const ImVec2 c = at(115, 180);
             shadowText(d, g_text, 28, {c.x - ns.x / 2, c.y - ns.y / 2}, kWhite, none);
         }
+        g_scrolls2 = total > shownCount;
         if (total > shownCount) {
             // The slider: one notification a step; a press above or below the thumb scrolls.
             const float trackH = bottom - top, thumbH = std::max(24.0f, trackH * shownCount / total);
@@ -3207,7 +3223,8 @@ Action drawPhone(ImDrawList* d, int* index) {
             const float k = std::min(1.0f, 210 * S / std::max(1.0f, hs.x));
             shadowText(d, g_title, 34 * k, {at(115, 22).x - hs.x * k / 2, at(115, 22).y - hs.y * k / 2}, kWhite, head.c_str());
         }
-        const float top = 50, bottom = 352, left = 6, right = 206, rowH = 50;
+        static bool g_scrolls3 = false;  // the list scrolled last frame: room for its slider, else rows to the edge
+        const float top = 50, bottom = 352, left = 6, right = g_scrolls3 ? 206.0f : 224.0f, rowH = 50;
         const int shownRows = static_cast<int>((bottom - top) / rowH), total = static_cast<int>(rows.size());
         if (swipeY) g_phoneOptsScroll = drag.scroll - static_cast<int>(std::lround(dy / rowH));
         g_phoneOptsScroll = std::max(0, std::min(std::max(0, total - shownRows), g_phoneOptsScroll));
@@ -3265,6 +3282,7 @@ Action drawPhone(ImDrawList* d, int* index) {
                 if (over) d->AddRect(ra, rb, IM_COL32(9, 73, 171, 180), 6 * S, 0, 1.2f * S);
             }
         }
+        g_scrolls3 = total > shownRows;
         if (total > shownRows) {
             const float trackH = bottom - top, thumbH = std::max(24.0f, trackH * shownRows / total);
             const float thumbY = top + (trackH - thumbH) * g_phoneOptsScroll / std::max(1, total - shownRows);
@@ -3314,7 +3332,8 @@ Action drawPhone(ImDrawList* d, int* index) {
             ImVec2 hs = g_title->CalcTextSizeA(34, FLT_MAX, 0, head);
             shadowText(d, g_title, 34, {at(115, 24).x - hs.x / 2, at(115, 24).y - hs.y / 2}, kWhite, head);
         }
-        const float top = 48, bottom = 354, left = 6, right = 206;
+        static bool g_scrolls4 = false;  // the list scrolled last frame: room for its slider, else rows to the edge
+        const float top = 48, bottom = 354, left = 6, right = g_scrolls4 ? 206.0f : 224.0f;
         const float ts = 22 * g_phoneText;
         float y = top - g_mySimScroll;
         d->PushClipRect(at(0, top), at(230, bottom), true);
@@ -3381,6 +3400,7 @@ Action drawPhone(ImDrawList* d, int* index) {
         const float total = y + g_mySimScroll - top, room = bottom - top;
         if (swipeY) g_mySimScroll = drag.sim - dy;
         g_mySimScroll = std::max(0.0f, std::min(std::max(0.0f, total - room), g_mySimScroll));
+        g_scrolls4 = total > room;
         if (total > room) {
             const float thumbH = std::max(24.0f, room * room / total);
             const float thumbY = top + (room - thumbH) * g_mySimScroll / std::max(1.0f, total - room);
@@ -3462,14 +3482,14 @@ Action drawPhone(ImDrawList* d, int* index) {
             shadowText(d, g_title, 30 * g_phoneText, {at(115, 0).x - ns.x / 2, at(0, y).y}, kWhite, now1.c_str());
             y += 16 * g_phoneText + 6;
             static const char* const kDays[7] = {"Sun.", "Mon.", "Tue.", "Wed.", "Thu.", "Fri.", "Sat."};
-            const float small = 18 * g_phoneText, wrap = (206 - 6 - 56) * S;
+            const float small = 18 * g_phoneText, wrap = (224 - 6 - 56) * S;
             d->PushClipRect(at(0, 48), at(230, 354), true);
             for (const auto& day : w.forecast) {
                 const std::string& text = day.text;
                 const float th = g_text->CalcTextSizeA(small, FLT_MAX, wrap, text.c_str()).y / S;
                 const float h = std::max(52.0f, 22 + th + 6);
                 if (y > 354) break;
-                d->AddRectFilled(at(6, y), at(206, y + h), IM_COL32(255, 255, 255, 228), 6 * S);
+                d->AddRectFilled(at(6, y), at(224, y + h), IM_COL32(255, 255, 255, 228), 6 * S);
                 if (day.icon) {
                     shown.push_back(day.icon);
                     icon(d, day.icon, at(30, y + h / 2), 44 * S);
@@ -4788,6 +4808,7 @@ void setClock(int hour, int minute, int day, int speed) {
 }
 
 #include "hud_pie.inc"
+#include "hud_buildtray.inc"
 
 namespace {
 #include "notebook_ui.inc"
@@ -4903,6 +4924,7 @@ Action render(ID3D11Device* device, ID3D11DeviceContext* context, const Frame& f
     if (f.watch) take(drawWatch(f));
     if (f.pause) drawPause();
     if (f.build) take(drawBuild());
+    if (f.buildTray) take(drawBuildTray(f, index));
     g_hoverKind = g_hoverIndex = -1;
     if (f.needs) drawNeeds(items[kNeedItems], counts[kNeedItems]);
     if (f.moodlets) drawMoodlets(items[kMoodletItems], counts[kMoodletItems]);
