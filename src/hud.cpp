@@ -358,7 +358,10 @@ std::mutex g_simMutex;
 SimContent g_simIn;      // g_simMutex
 bool g_simNew = false;   // g_simMutex
 SimContent g_sim;        // present thread
-std::atomic<int> g_phoneTaps{0};  // presses on the phone's screen since the last phoneTaps()
+std::atomic<int> g_phoneTaps{0};
+int g_mySimPage = 0;  // My Sim's page of apps (9 a page, as the phone's home)
+bool g_phoneSwipeX = false, g_phoneSwipeEnd = false;  // this frame's sideways swipe on the phone, and its end
+float g_phoneDx = 0;                                    // how far it went (phone units)  // presses on the phone's screen since the last phoneTaps()
 int g_mySim = -1;        // present thread: -1 closed, 0 its apps, 1 + k sub-app k (kMySimApps)
 float g_mySimScroll = 0; // game pixels the list is scrolled
 ULONGLONG g_mySimAsked = 0;
@@ -2426,46 +2429,61 @@ void drawMySim(ImDrawList* d, const Rect& r, Button& button, std::vector<uint64_
         return;
     }
     if (g_mySim == 0) {
-        // My Sim as a page of the game's phone (user 2026-10-24 03:37Z, the game's phone screenshot): the
-        // wallpaper, the page's name where the home screen shows its name (mcCategoryName, the app pointed at
-        // instead while pointing), the game's 64-unit app cells three to a row with its pointed-at ring, and
-        // each app's icon from the game itself: the SimInfo tray's panel buttons, the wants cloud.
+        // My Sim as a page of the game's phone (user 2026-10-24 03:37Z, 12:17Z): the wallpaper, the page's name
+        // where the home screen shows its name (mcCategoryName, the app pointed at instead while pointing), our
+        // own app icons at the home screen's size in its cells, 9 a page, turned with the game's page buttons
+        // (PhonePageButton) or a sideways swipe, as the home screen.
         std::vector<int> apps;
         for (int k = 0; k < kMySimApps; ++k)
             if (k != kSimCareer || careerName(g_sim.age)) apps.push_back(k);
+        const int perPage = 9, pages = static_cast<int>((apps.size() + perPage - 1) / perPage);
+        g_mySimPage = std::max(0, std::min(pages - 1, g_mySimPage));
+        float slide = g_phoneSwipeX ? g_phoneDx : 0;
+        if ((g_mySimPage == 0 && slide > 0) || (g_mySimPage == pages - 1 && slide < 0)) slide *= 0.3f;
+        if (g_phoneSwipeEnd && g_phoneSwipeX) {
+            if (g_phoneDx < -55 && g_mySimPage + 1 < pages) ++g_mySimPage;
+            if (g_phoneDx > 55 && g_mySimPage > 0) --g_mySimPage;
+            slide = 0;
+        }
         bool peek = false;
         int hovered = -1;
-        for (size_t i = 0; i < apps.size(); ++i) {
-            const int k = apps[i];
-            const float x = 13 + (i % 3) * 68 + 4, y = 84 + (i / 3) * 68;
+        if (slide != 0) d->PushClipRect(at(0, 95), at(230, 320), true);
+        for (int pg = g_mySimPage - 1; pg <= g_mySimPage + 1; ++pg)
+        for (int i = 0; i < perPage; ++i) {
+            if (pg < 0 || pg >= pages || (pg != g_mySimPage && slide == 0)) break;
+            const int n = pg * perPage + i;
+            if (n >= static_cast<int>(apps.size())) break;
+            const int k = apps[n];
+            const float x = 13 + (i % 3) * 68 + 4 + slide + (pg - g_mySimPage) * 230, y = 101 + (i / 3) * 70 + 6;
             const ImVec2 c = at(x + 32, y + 32);
             bool over = false;
-            if (button(at(x, y), at(x + 64, y + 64), &over))
+            if (!g_phoneSwipeX && button(at(x, y), at(x + 64, y + 64), &over))
                 g_mySim = 1 + k, g_mySimScroll = 0, g_aspChange = false, g_aspPicked = -1, g_hhSim = -1;
             if (over) {
                 hovered = k;
                 piece(d, art::kPhoneAppOver, c, A);
                 if (k == kSimAspirations && g_sim.aspiration.valid) peek = true;
             }
-            const float h = 30 * S;
-            nine(d, art::kPhonePill, {c.x - h, c.y - h}, {c.x + h, c.y + h}, 37, 37, 37, 37, A * 0.8f);
-            const art::Piece* glyph = k == kSimAspirations ? &art::kTrayAspiration : k == kSimCareer ? &art::kTrayCareer
-                                    : k == kSimWants ? &art::kWantCloud : k == kSimSkills ? &art::kTraySkill
-                                    : k == kSimSimology ? &art::kTraySummary : k == kSimInventory ? &art::kTrayInventory
-                                    : k == kSimClubs ? &art::kTrayClub : k == kSimBusinesses ? &art::kTrayHousehold
-                                    : k == kSimHousehold ? &art::kTrayRelationship : nullptr;
-            if (glyph) {
-                piece(d, *glyph, c, 44 * S / std::max(glyph->w, glyph->h));
-            } else {
-                // Needs: the tray's motive button, its need bars (drawn by the game as live bars, not art).
-                static const ImU32 kBars[4] = {IM_COL32(120, 220, 70, 255), IM_COL32(120, 220, 70, 255), IM_COL32(240, 200, 60, 255),
-                                               IM_COL32(120, 220, 70, 255)};
-                static const float kFill[4] = {0.9f, 0.7f, 0.45f, 0.8f};
-                for (int n = 0; n < 4; ++n) {
-                    const float bx = c.x + (n - 1.5f) * 8 * S, top = c.y - 15 * S, bottom = c.y + 15 * S;
-                    d->AddRectFilled({bx - 2.6f * S, top}, {bx + 2.6f * S, bottom}, IM_COL32(40, 46, 52, 220), 2.6f * S);
-                    d->AddRectFilled({bx - 2.6f * S, bottom - (bottom - top) * kFill[n]}, {bx + 2.6f * S, bottom}, kBars[n], 2.6f * S);
+            if (k == kSimAspirations && g_sim.aspiration.valid) {
+                // The live tile: a ring round it filling with the current milestone's goals.
+                const float rad = 34 * S, p = g_sim.aspiration.done ? 1.0f : std::max(0.0f, std::min(1.0f, g_sim.aspiration.progress));
+                d->AddCircle(c, rad, IM_COL32(0, 0, 0, 90), 48, 4.5f * S);
+                if (p > 0) {
+                    d->PathArcTo(c, rad, -3.14159265f / 2, -3.14159265f / 2 + 2 * 3.14159265f * p, 48);
+                    d->PathStroke(IM_COL32(120, 230, 70, 255), 0, 3.2f * S);
                 }
+            }
+            pieceIn(d, *kIcons[k], {c.x - 32 * S, c.y - 32 * S}, {c.x + 32 * S, c.y + 32 * S});
+        }
+        if (slide != 0) d->PopClipRect();
+        if (pages > 1) {
+            // The game's page buttons, above the Back button.
+            const float start = (230 - pages * 28.0f) / 2;
+            for (int i = 0; i < pages; ++i) {
+                const float x = start + i * 28;
+                bool over = false;
+                if (button(at(x, 318), at(x + 28, 346), &over)) g_mySimPage = i;
+                piece(d, i == g_mySimPage ? art::kPhonePageOn : over ? art::kPhonePageOver : art::kPhonePage, at(x + 14, 332), A);
             }
         }
         {
@@ -3635,6 +3653,7 @@ Action drawPhone(ImDrawList* d, int* index) {
     const bool swiping = drag.on && drag.moved, swipeEnded = swiping && !io.MouseDown[0];
     const bool onSlider = drag.on && (drag.start.x - r.x) / S >= 203;  // a press on a list's slider moves its thumb (sliderFollow)
     const bool swipeX = swiping && drag.horizontal, swipeY = swiping && !drag.horizontal && !onSlider;
+    g_phoneSwipeX = swipeX, g_phoneSwipeEnd = swipeEnded, g_phoneDx = dx;
     auto button = [&](ImVec2 a, ImVec2 b, bool* hover, bool* held = nullptr) {
         ImGui::SetCursorScreenPos(a);
         ImGui::PushID(3000 + id++);
