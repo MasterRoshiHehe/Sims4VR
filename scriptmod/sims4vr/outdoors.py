@@ -50,6 +50,15 @@ _walls = {}  # level -> {(x, z) 2 m cell: [wall edges (ax, az, bx, bz) near it]}
 _open_rooms = {}  # (block, level) -> True when the room counts as outside
 
 
+def _weather():
+    """The current weather event, for the log (rain indoors, user 2026-10-24)."""
+    try:
+        event = services.weather_service()._current_event
+        return ' [weather {}]'.format(getattr(event, '__name__', None) or event)
+    except Exception:
+        return ''
+
+
 def _log(message):
     global _logs
     _logs += 1
@@ -271,7 +280,7 @@ def update(px, py, pz, surface):
             if now - _last_log > 10.0:
                 _last_log = now
                 _log('in room {} on level {}: open to the outdoors (railings, fences or open sides), counts as '
-                     'outside'.format(block, level))
+                     'outside{}'.format(block, level, _weather()))
             return
         heard, way = _through(zone, block, level, px, pz, fade, _number('open_door', 1.0, 0, 1),
                               _number('closed_door', 0.35, 0, 1))
@@ -280,7 +289,7 @@ def update(px, py, pz, surface):
             _last_log = now
             _log('in room {} on level {}: {:.2f} of the outdoors comes in{}'.format(
                 block, level, heard, ' through doorways {}'.format(', '.join('{:x}'.format(i) for i in way))
-                if way else ' (no way out within {:.1f} m)'.format(fade)))
+                if way else ' (no way out within {:.1f} m)'.format(fade)) + _weather())
     except Exception as e:
         _errors += 1
         if _errors <= 5:

@@ -105,21 +105,29 @@ bool hookedWallDistance(void* world, float* coords, char lowestLevel, float* out
     return true;
 }
 
-// Each GC's tuning, the first time first person uses it (8 at most).
+// Each GC's tuning, the first time first person uses it (96 at most).
 void logGc(uint8_t* gc, float width) {
-    static std::atomic<uintptr_t> seen[8] = {};
+    static std::atomic<uintptr_t> seen[96] = {};
     static std::atomic<int> count{0};
     uintptr_t self = reinterpret_cast<uintptr_t>(gc);
     int n = count.load(std::memory_order_relaxed);
-    for (int i = 0; i < n && i < 8; ++i)
+    for (int i = 0; i < n && i < 96; ++i)
         if (seen[i].load(std::memory_order_relaxed) == self) return;
-    if (n >= 8 || !count.compare_exchange_strong(n, n + 1)) return;
+    if (n >= 96 || !count.compare_exchange_strong(n, n + 1)) return;
     seen[n].store(self, std::memory_order_relaxed);
     void* curve = gc + kGcCurve;
     LOG("Ambience: inside/outside control %p, width %.2f m; its curve at 0, 0.25, 0.5, 0.75, 1: %.3f %.3f %.3f %.3f "
         "%.3f",
         static_cast<void*>(gc), width, g_curve(curve, 0), g_curve(curve, 0.25f), g_curve(curve, 0.5f),
         g_curve(curve, 0.75f), g_curve(curve, 1));
+    // The control's own words (some hold the sound's name hash, FNV-1 64, re/audio/configs.tsv).
+    const uint64_t* q = reinterpret_cast<const uint64_t*>(gc);
+    LOG("Ambience: control %p words: %016llx %016llx %016llx %016llx %016llx %016llx %016llx %016llx %016llx %016llx "
+        "%016llx %016llx",
+        static_cast<void*>(gc), (unsigned long long)q[1], (unsigned long long)q[2], (unsigned long long)q[3],
+        (unsigned long long)q[4], (unsigned long long)q[5], (unsigned long long)q[6], (unsigned long long)q[7],
+        (unsigned long long)q[8], (unsigned long long)q[9], (unsigned long long)q[10], (unsigned long long)q[11],
+        (unsigned long long)q[12]);
 }
 
 // First person: from the curve's deep-inside value to its deep-outside value,
