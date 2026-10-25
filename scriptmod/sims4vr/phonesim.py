@@ -481,6 +481,9 @@ def _contact_page(sim_info, records):
     personality = list(target.trait_tracker.personality_traits)
     unknown = sum(1 for t in personality if t not in known)
     records.append('cd\x1f{}\x1f{}\x1f{}'.format(_contacts.index(_contact), hudinfo._sim_bust(target.id), unknown))
+    import time
+    if _contact_note is not None and time.monotonic() < _contact_note[1]:
+        records.append('cdn\x1fThat isn\'t possible with {} right now.'.format(_contact_note[0]))
     try:
         from traits.attraction_preference import AttractionPreference
     except Exception:
@@ -660,10 +663,24 @@ def auto_pick_option(dialog):
         return None
     target, _auto_pick = _auto_pick[0], None
     for row in rows:
-        if getattr(row, 'sim_id', None) == target:
+        if getattr(row, 'sim_id', None) == target or getattr(row, 'tag', None) == target:
             return row.option_id
-    native._log('phonesim: the picker has no row for sim {}, shown as it is'.format(target))
-    return None
+    # The game doesn't offer this action with them (e.g. a phone chat with someone right here): no picker at
+    # all (user 2026-10-25 02:02Z: never the "choose a Sim" popup), a note on their page instead.
+    global _contact_note
+    _contact_note = [_contact_name(target), time.monotonic() + 5.0]
+    native._log('phonesim: the picker has no row for sim {} ({} rows), cancelled'.format(target, len(rows)))
+    send(fresh=True, contacts=True)
+    return 'cancel'
+
+
+_contact_note = None  # [name, until]: the last Contacts action the game doesn't offer with that Sim
+
+
+def _contact_name(sim_id):
+    import services
+    info = services.sim_info_manager().get(sim_id)
+    return info.first_name if info is not None else 'them'
 
 
 def _inventory_list(sim_info, records):

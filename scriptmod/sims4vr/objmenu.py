@@ -1254,6 +1254,16 @@ def _wrap():
         except Exception as e:
             pick = None
             _log('the Contacts pick failed: {!r}'.format(e))
+        if pick == 'cancel':
+            result = original_show(self, dialog, *args, **kwargs)
+            try:
+                from ui.ui_dialog import ButtonType
+                self.dialog_respond(dialog.dialog_id, ButtonType.DIALOG_RESPONSE_CANCEL)
+                _close_on_game_ui(dialog.dialog_id, 'picker')
+                _log('{}: the contact isn\'t offered: cancelled, no picker'.format(type(dialog).__name__))
+            except Exception as e:
+                _log('cancelling the Contacts picker failed: {!r}'.format(e))
+            return result
         if pick is not None:
             result = original_show(self, dialog, *args, **kwargs)
             try:

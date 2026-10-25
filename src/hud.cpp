@@ -300,6 +300,7 @@ struct ContactPage {  // the picked contact: what your Sim knows of them ("cd", 
     std::vector<Job> jobs;
     struct Act { int node = 0; std::string nameJson, disabledJson; };
     std::vector<Act> actions;  // the phone's Social app entries, run for this contact
+    std::string note;  // "cdn": the last of them the game doesn't offer with this Sim
 };
 struct SimItem {  // Inventory: one stack (phonesim.py "inv")
     uint64_t picture = 0;
@@ -3678,6 +3679,13 @@ void drawContacts(ImDrawList* d, const Rect& r, Button& button, std::vector<uint
             // The Social app's entries for this Sim (user 2026-10-24 01:17Z), two to a row; its picker is answered
             // with this Sim (phonesim.auto_pick_option).
             section("Social");
+            if (!c.note.empty()) {
+                // An action the game doesn't offer with them: no picker came up (phonesim.auto_pick_option).
+                const float ns = 20 * g_phoneText, wrap = (right - left - 4) * S;
+                ImVec2 nz = g_text->CalcTextSizeA(ns, FLT_MAX, wrap, c.note.c_str());
+                shadowText(d, g_text, ns, at(left + 2, y), IM_COL32(255, 210, 120, 255), c.note.c_str());
+                y += nz.y / S + 4;
+            }
             static ULONGLONG pressedAt = 0;
             static int pressedNode = -1;
             const float bw = (right - left - 6) / 2, bh = 28 * std::max(1.0f, g_phoneText / 1.2f);
@@ -5704,6 +5712,8 @@ void setPhoneSim(const char* data, size_t size) {
             c.contact.facts.push_back({f[1], f[2]});
         } else if (f[0] == "cds" && f.size() >= 4 && c.contact.sentiments.size() < 20) {
             c.contact.sentiments.push_back({std::strtoull(f[1].c_str(), nullptr, 10), f[2], f[3]});
+        } else if (f[0] == "cdn" && f.size() >= 2) {
+            c.contact.note = f[1];
         } else if (f[0] == "cda" && f.size() >= 4 && c.contact.actions.size() < 40) {
             c.contact.actions.push_back({std::atoi(f[1].c_str()), f[2], f[3]});
         } else if (f[0] == "cdg" && f.size() >= 3) {
