@@ -19,6 +19,7 @@
 #include "voice.h"
 #include "doorswing.h"
 #include "gamefix.h"
+#include "godhands.h"
 #include "ambience.h"
 #include "thumbs.h"
 #include "walkstop.h"
@@ -948,7 +949,7 @@ void seatView(float position[3], const Quat& heading, float up, float ahead, con
     Vec3 leanWorld = rotate(heading, {lean.x * s, lean.y * s, lean.z * s});
     const float leanOut[3] = {leanWorld.x, leanWorld.y, leanWorld.z};
     armik::setLean(leanOut);
-    Vec3 eyes = rotate(multiply(heading, g_headOrientation), {0, up, -ahead});
+    Vec3 eyes = rotate(multiply(heading, g_headOrientation), {g_config.bodyHeadX * s, up, -ahead});
     Vec3 want{g_bodyAnchor[0] + leanWorld.x + eyes.x, g_bodyAnchor[1] + leanWorld.y + eyes.y,
               g_bodyAnchor[2] + leanWorld.z + eyes.z};
     Vec3 r{want.x - head[0] - eyes.x, want.y - head[1] - eyes.y, want.z - head[2] - eyes.z};
@@ -1169,6 +1170,9 @@ void applyEye(uint8_t* dst) {
     {
         uint64_t voiceSim = firstPerson ? voice::sim() : 0;
         armik::setVoiceActor(voiceSim && g_lookup ? g_lookup(&voiceSim) : nullptr);
+        // God mode: the selected Sim's hands show at your controllers (godhands.cpp).
+        uint64_t selected = firstPerson ? 0 : voice::sim();
+        godhands::setActor(selected && g_lookup ? g_lookup(&selected) : nullptr);
     }
     if (!body || g_jointSpace != 1) eyes[0] = NAN;  // eyes are only read as world positions
     if (std::isfinite(eyes[0])) measureEyes(head, eyes);
@@ -1281,7 +1285,7 @@ void applyEye(uint8_t* dst) {
     if (second) {
         std::memcpy(position, g_pairBase.position, sizeof(g_pairBase.position));
         neckAhead = g_pairBase.ahead;
-        if (std::isfinite(neckAhead)) neck = rotate(q, {0, 0, -neckAhead});
+        if (std::isfinite(neckAhead)) neck = rotate(q, {g_config.bodyHeadX * s, 0, -neckAhead});
     } else if (useNext) {
         std::memcpy(position, next.position, sizeof(next.position));
         // The game's root motion put the body there as it posed it; if not, here.
@@ -1329,15 +1333,15 @@ void applyEye(uint8_t* dst) {
         // around, like a neck. With the Sim's own eyes measured the view sits
         // just behind them, inside its head, where its face never shows.
         bool measured = std::isfinite(g_eyeUp) && std::isfinite(g_eyeAhead);
-        float up = measured ? g_eyeUp : g_config.bodyHeight;
-        float ahead = measured ? g_eyeAhead - g_config.bodyEyeInset * s : g_config.bodyForward;
+        float up = (measured ? g_eyeUp : g_config.bodyHeight) + g_config.bodyHeadY * s;
+        float ahead = (measured ? g_eyeAhead - g_config.bodyEyeInset * s : g_config.bodyForward) + g_config.bodyHeadZ * s;
         if (follow) {
             seatView(position, heading, up, ahead, head, s);
         } else {
             position[0] = g_bodyAnchor[0];
             position[1] = g_bodyAnchor[1] + up;
             position[2] = g_bodyAnchor[2];
-            neck = rotate(q, {0, 0, -ahead});
+            neck = rotate(q, {g_config.bodyHeadX * s, 0, -ahead});
             neckAhead = ahead;
         }
     }
@@ -2139,6 +2143,43 @@ void probeSound(void* sound, const HeardSound& h, ULONGLONG now) {
         static_cast<unsigned long long>(now), text);
 }
 
+// Sound init hook (WickedWhims voices): who starts the sounds that end up
+// without the 3D bit, with which sound id. First three starts per id, with the
+// caller chain as game+rva, so the code that names the emitting actor shows.
+using SoundInitFn = void (*)(void* sound, uint64_t id);
+SoundInitFn g_originalSoundInit = nullptr;
+std::unordered_map<uint64_t, int> g_initSeen;
+int g_initLogs = 0;
+constexpr int kInitMaxLogs = 500;
+
+void hookedSoundInit(void* sound, uint64_t id) {
+    g_originalSoundInit(sound, id);
+    if (!g_panFirstPerson.load(std::memory_order_relaxed) || g_initLogs >= kInitMaxLogs) return;
+    uint32_t flags = 0;
+    std::memcpy(&flags, static_cast<const uint8_t*>(sound) + kSoundFlags, sizeof(flags));
+    if (flags & 1) return;
+    static std::mutex initMutex;
+    std::lock_guard<std::mutex> lock(initMutex);
+    if (g_initLogs >= kInitMaxLogs) return;
+    int& seen = g_initSeen[id];
+    if (seen >= 3) return;
+    ++seen;
+    ++g_initLogs;
+    void* frames[12];
+    const USHORT n = CaptureStackBackTrace(1, 12, frames, nullptr);
+    const uintptr_t game = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+    char chain[512];
+    size_t used = 0;
+    chain[0] = 0;
+    for (USHORT i = 0; i < n && used + 24 < sizeof(chain); ++i) {
+        const uintptr_t a = reinterpret_cast<uintptr_t>(frames[i]);
+        used += snprintf(chain + used, sizeof(chain) - used, "%s+0x%llx", i ? " < " : "game",
+                         static_cast<unsigned long long>(a - game));
+    }
+    LOG("Sound init: 2D sound %p id 0x%llx flags 0x%x, started from %s", sound, static_cast<unsigned long long>(id),
+        flags, chain);
+}
+
 void hookedDistanceUpdate(void* sound) {
     g_originalDistanceUpdate(sound);
     if (!g_panFirstPerson.load(std::memory_order_relaxed)) return;
@@ -2209,6 +2250,13 @@ void installLoudnessLog() {
                                      reinterpret_cast<void**>(&g_originalDistanceUpdate));
     if (status == MH_OK) status = MH_EnableHook(target);
     if (status != MH_OK) LOG("Sound loudness log hook failed: %s", MH_StatusToString(status));
+    uint8_t* init = addrs::fn("SoundInit");
+    if (init) {
+        status = MH_CreateHook(init, reinterpret_cast<void*>(&hookedSoundInit),
+                               reinterpret_cast<void**>(&g_originalSoundInit));
+        if (status == MH_OK) status = MH_EnableHook(init);
+        if (status != MH_OK) LOG("Sound init log hook failed: %s", MH_StatusToString(status));
+    }
 }
 
 // Which hands hold something: an object from Python's list whose actor sits
@@ -2538,6 +2586,12 @@ void setSeatFollow(bool on) { g_config.bodySeatFollow = on; }
 void setPanAnyDistance(bool on) {
     g_panAnyDistance.store(on);
     LOG("Sound placement: far sounds in first person %s", on ? "placed where they are" : "spread as the game does");
+}
+
+void setHeadOffset(float x, float y, float z) {
+    g_config.bodyHeadX = x;
+    g_config.bodyHeadY = y;
+    g_config.bodyHeadZ = z;
 }
 
 void configureView(float smoothing, float turnSmoothing, float eyeInset, float nearClip, bool nearAdaptive,
