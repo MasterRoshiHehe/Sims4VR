@@ -65,7 +65,7 @@ constexpr Rect kBookPaper{256, 7376, 128, 128};        // the boards' endpapers
 // `index` (phoneapp.py's node); kPhoneSilence: the phone's silence button;
 // kPhoneOptions: the Options app (the game menu); kPhoneColor: wallpaper colour `index`.
 enum Action { kNone = 0, kPausePressed = 1, kSpeed1, kSpeed2, kSpeed3, kFullUi, kBuildPressed, kCancel, kDismissWant, kAnswer,
-              kPick, kPickerClose, kPhonePick, kPhoneSilence, kPhoneOptions, kPhoneColor, kNotesOpened, kNotesClear, kNoteDelete, kNoteDismiss, kCalendarOpened, kMySimOpened, kMySimFresh, kAspirationPicked, kTonePreview, kPlayAs, kGallery, kManageWorlds, kGameMenuButton, kInventoryPie, kGodView, kContactsOpened, kContactPicked, kContactAction, kContactPie, kContactPlayAs, kContactCall, kNoteAnswer, kSimsForever, kInventorySell,
+              kPick, kPickerClose, kPhonePick, kPhoneSilence, kPhoneOptions, kPhoneColor, kNotesOpened, kNotesClear, kNoteDelete, kNoteDismiss, kCalendarOpened, kMySimOpened, kMySimFresh, kAspirationPicked, kTonePreview, kPlayAs, kGallery, kManageWorlds, kGameMenuButton, kInventoryPie, kGodView, kContactsOpened, kContactPicked, kContactAction, kContactPie, kContactPlayAs, kContactCall, kCheat, kNoteAnswer, kSimsForever, kInventorySell,
               kPiePick, kPieClose, kListPick, kListDone, kListClose, kVrOptions, kBuildTool };
 // kBuildTool: the build tablet's tray tool `index` (TrayTool).
 // kInventorySell: the inventory's multiselect, inventoryPicked() its rows; index 0 sell, 1 favorite, 2 unfavorite.

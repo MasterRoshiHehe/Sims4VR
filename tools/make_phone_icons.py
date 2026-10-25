@@ -541,6 +541,28 @@ def god_view():
     finish(img, inner, 'god_view')
 
 
+def cheats():
+    """Home > Cheats: a magic wand over sparkles on a purple tile (the debug menu's testing cheats)."""
+    img, inner = tile((215, 190, 255), (110, 60, 190), (60, 25, 120, 255))
+    wand = mask_of(lambda d: d.line((150, 400, 330, 220), fill=255, width=46))
+    tip = mask_of(lambda d: d.line((300, 250, 340, 210), fill=255, width=46))
+    shadow(img, wand)
+    fill(img, wand, (70, 70, 85), (20, 20, 30), 90, outline=(10, 10, 15, 255), width=5)
+    fill(img, tip, (255, 255, 255), (200, 205, 220), 90, shade=False)
+    def star(cx, cy, r):
+        pts = []
+        for k in range(8):
+            a = -math.pi / 2 + k * math.pi / 4
+            rr = r if k % 2 == 0 else r * 0.32
+            pts.append((cx + rr * math.cos(a), cy + rr * math.sin(a)))
+        return mask_of(lambda d: d.polygon(pts, fill=255))
+    for (cx, cy, r) in ((365, 170, 95), (240, 140, 45), (410, 300, 40), (320, 90, 28)):
+        m = star(cx, cy, r)
+        shadow(img, m, alpha=60)
+        fill(img, m, (255, 250, 190), (250, 190, 40), 90, outline=(160, 100, 0, 255), width=4)
+    finish(img, inner, 'cheats')
+
+
 def figure(cx, top, s):
     """A standing Sim seen from the front, arms at its sides (mask): the Sims 1 family icon's people."""
     def draw(d):
@@ -656,6 +678,6 @@ if __name__ == '__main__':
     os.makedirs(OUT, exist_ok=True)
     for f in (settings, calendar, build, game_options, phone_options, vr_options, my_sim, aspirations, career, skills,
               relationships, inventory, needs, social_groups, owned_businesses, household, weather, wants,
-              need_hunger, need_hygiene, need_bladder, need_energy, need_fun, need_social, god_view, sims_forever, simology, souls_journey):
+              need_hunger, need_hygiene, need_bladder, need_energy, need_fun, need_social, god_view, sims_forever, simology, souls_journey, cheats):
         f()
     print('phone icons in', OUT)

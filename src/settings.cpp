@@ -2188,6 +2188,8 @@ void open() {
     g_resetArmed = 0;
     if (mergeMenus() && g_reopenPage < 0 && !g_savedPage.empty())
         loadPage(g_savedPage);  // the page you left was one of its pages
+int testingCheats() { return g_cheats; }
+
     readJiggle();
     if (g_reopenPage >= 0) {
         openPage(g_reopenPage, g_reopenRow);

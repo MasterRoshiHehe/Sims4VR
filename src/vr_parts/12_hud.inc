@@ -1250,6 +1250,9 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
     }
 }
 
+        case hud::kCheat:
+            if (index > 0 && index < 20) grab::pushControl(index);  // controls.py: the debug menu's testing cheats
+            break;
 // The asleep watch's headset layer: the atlas copied into its swapchain.
 static bool hudSleepLayer(ID3D11Texture2D* atlas, XrCompositionLayerQuad& layer) {
     const PieMenu& m = g_hud[kHudSleep].m;

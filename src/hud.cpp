@@ -428,6 +428,7 @@ void saveAppOrder() { saveOrder(L"app_order", g_appOrder); }
 std::vector<std::string> g_mySimOrder;  // My Sim's apps by name (user 2026-10-25 00:17Z: movable as the home screen's)
 bool g_mySimOrderRead = false;
 bool g_weatherOpen = false;    // the home screen's Weather app
+bool g_cheatsOpen = false;     // the home screen's Cheats app (the debug menu's testing cheats)
 bool g_gameMenuPhone = false;  // Settings > Game Options: the game's Escape menu drawn on the phone
 int g_contacts = -1;        // Contacts: -1 closed, 0 the list, 1 a contact's page
 int g_contactFilter = 0;     // Contacts: the filter (All, Household, Family...)
@@ -4120,24 +4121,8 @@ Action drawPhone(ImDrawList* d, int* index) {
         // Our apps: our own icons in the game's phone app style (tools/make_phone_icons.py).
         const art::Piece* own = node == -1 ? &art::kAppSettings : node == -2 ? &art::kAppCalendar : node == -3 ? &art::kAppBuild
                               : node == -10 ? &art::kAppGameOptions : node == -11 ? &art::kAppPhoneOptions
-                              : node == -12 ? &art::kAppVrOptions : node == -4 ? &art::kAppMySim : node == -5 ? &art::kAppRelationships : node == -7 ? &art::kAppSimsForever : node == -15 ? &art::kAppGodView : nullptr;
-        if (node == -6) {
-            // Weather (user 2026-10-24 05:12Z: game art): the game's dark cell with the current weather's own large
-            // icon (WEATHER_TYPE_UI_INFO), the season's tooltip icon until the weather has been sent.
-            const float h = 30 * S;
-            nine(d, art::kPhonePill, {c.x - h, c.y - h}, {c.x + h, c.y + h}, 37, 37, 37, 37, A * 0.8f,
-                 IM_COL32(255, 255, 255, (tint >> 24) & 0xff));
-            const SimWeather& w = g_sim.weather;
-            if (w.sent && w.icon[0]) {
-                shown.push_back(w.icon[0]);
-                icon(d, w.icon[0], c, 50 * S);
-            } else {
-                const art::Piece* seasons[4] = {&art::kWxSeasonSummer, &art::kWxSeasonFall, &art::kWxSeasonWinter, &art::kWxSeasonSpring};
-                const art::Piece& p = *seasons[w.season >= 0 && w.season < 4 ? w.season : 3];
-                piece(d, p, c, 44 * S / std::max(p.w, p.h), tint);
-            }
-            return;
-        }
+                              : node == -12 ? &art::kAppVrOptions : node == -4 ? &art::kAppMySim : node == -5 ? &art::kAppRelationships : node == -7 ? &art::kAppSimsForever : node == -15 ? &art::kAppGodView
+                              : node == -6 ? &art::kAppWeather : node == -16 ? &art::kAppCheats : nullptr;
         if (own) {
             const float h = 32 * S;
             pieceIn(d, *own, {c.x - h, c.y - h}, {c.x + h, c.y + h}, tint);
@@ -4175,7 +4160,7 @@ Action drawPhone(ImDrawList* d, int* index) {
     if (g_phoneHomeAsked.exchange(false))
         g_phoneApp = g_phoneRoot = -1, g_phonePage = 0, g_phoneScroll = 0, g_phoneColorsOpen = false, g_phoneNotesOpen = false,
         g_phoneCalOpen = false, g_phoneSettingsOpen = false, g_phoneOptsGroup.clear(), g_mySim = -1, g_mySimMoodlet = -1,
-        g_phoneSoundsOpen = false, g_hhSim = -1, g_contacts = -1, g_gameMenuPhone = false, g_weatherOpen = false,
+        g_phoneSoundsOpen = false, g_hhSim = -1, g_contacts = -1, g_gameMenuPhone = false, g_weatherOpen = false, g_cheatsOpen = false,
         g_reorder = false, g_reorderPick.clear();
     if (g_phoneApp >= 0) g_phoneNotesOpen = g_phoneCalOpen = g_phoneSettingsOpen = g_phoneSoundsOpen = false, g_phoneOptsGroup.clear(), g_mySim = -1, g_contacts = -1;
     if (g_phoneApp >= 0 || p.colors.empty()) g_phoneColorsOpen = false;
@@ -4537,6 +4522,47 @@ Action drawPhone(ImDrawList* d, int* index) {
         bool over = false;
         if (button(at(96, 361), at(129, 392), &over)) g_phoneSettingsOpen = false;
         piece(d, over ? art::kPhoneBackOver : art::kPhoneBack, at(96 + 16.5f, 361 + 15.5f), A);
+    } else if (g_cheatsOpen) {
+        // Cheats (user 2026-10-25 11:04Z): the debug menu's Testing cheats page (settings.cpp), each button sending
+        // the same control: the two switches, then the one-press cheats (they turn testing cheats on first).
+        pieceIn(d, art::kPhoneTint, at(0, 0), at(230, 44));
+        {
+            const char* head = "Cheats";
+            ImVec2 hs = g_title->CalcTextSizeA(34, FLT_MAX, 0, head);
+            shadowText(d, g_title, 34, {at(115, 24).x - hs.x / 2, at(115, 24).y - hs.y / 2}, kWhite, head);
+        }
+        struct Cheat { const char* label; int on, off; };  // off < 0: a one-press cheat
+        static const Cheat kCheats[6] = {{"Testing cheats", 6, 9}, {"Cheat pie menus", 11, 12}, {"Fill needs", 5, -1},
+                                         {"Motherlode", 7, -1}, {"Move objects on", 8, -1}, {"CAS full edit mode", 10, -1}};
+        const int state = settings::testingCheats();
+        const ImU32 kBlue = IM_COL32(28, 72, 150, 255);
+        for (int n = 0; n < 6; ++n) {
+            const Cheat& c = kCheats[n];
+            const bool toggle = c.off >= 0, on = toggle && (state & (n == 0 ? 1 : 2)) != 0;
+            const float rowH = 46, top = 54 + n * (rowH + 4);
+            const ImVec2 ba = at(8, top), bb = at(222, top + rowH);
+            bool over = false, held = false;
+            if (button(ba, bb, &over, &held)) {
+                action = kCheat, *index = toggle && on ? c.off : c.on;
+                LOG("Phone: cheat %s", c.label);
+            }
+            const ImU32 fill = held ? IM_COL32(205, 222, 246, 245) : over ? IM_COL32(232, 241, 255, 245) : IM_COL32(255, 255, 255, 225);
+            d->AddRectFilled(ba, bb, fill, 8 * S);
+            if (over || held) d->AddRect(ba, bb, IM_COL32(66, 140, 214, 255), 8 * S, 0, 1.2f * S);
+            const float size = 26 * g_phoneText;
+            ImVec2 ls = g_title->CalcTextSizeA(size, FLT_MAX, 0, c.label);
+            const float fit = std::min(1.0f, 140 * S / std::max(1.0f, ls.x));
+            d->AddText(g_title, size * fit, {at(16, 0).x, (ba.y + bb.y - ls.y * fit) / 2}, kBlue, c.label);
+            if (toggle) {
+                // The switch: green and right when on.
+                const ImVec2 sa = at(176, top + 13), sb = at(214, top + 33);
+                d->AddRectFilled(sa, sb, on ? IM_COL32(88, 190, 70, 255) : IM_COL32(180, 186, 196, 255), 10 * S);
+                d->AddCircleFilled(at(on ? 204 : 186, top + 23), 8 * S, IM_COL32(255, 255, 255, 255), 24);
+            }
+        }
+        bool over = false;
+        if (button(at(96, 361), at(129, 392), &over)) g_cheatsOpen = false;
+        piece(d, over ? art::kPhoneBackOver : art::kPhoneBack, at(96 + 16.5f, 361 + 15.5f), A);
     } else if (g_weatherOpen) {
         drawWeather(d, r, button, shown, action, swipeY, dy, drag);
         bool over = false;
@@ -4629,6 +4655,7 @@ Action drawPhone(ImDrawList* d, int* index) {
     apps.push_back(-4);  // My Sim (phonesim.py)
         apps.push_back(-5);  // Contacts (phonesim.py)
         apps.push_back(-6);  // Weather (phonesim.py)
+        apps.push_back(-16);  // Cheats (the debug menu's testing cheats)
         {
             // The Weather app's icon is the current weather: ask phonesim for it now and then while home shows.
             static ULONGLONG weatherAsked = 0;
@@ -4696,7 +4723,9 @@ Action drawPhone(ImDrawList* d, int* index) {
                     g_reorderPick.clear();
                 }
             } else if (!open && !g_reorder && button(at(x, y), at(x + 64, y + 64), &over)) {
-                if (node == -7) {
+                if (node == -16) {
+                    g_cheatsOpen = true;
+                } else if (node == -7) {
                     action = kSimsForever;
                 } else if (node == -6) {
                     g_weatherOpen = true, g_mySimScroll = 0;
@@ -4741,7 +4770,7 @@ Action drawPhone(ImDrawList* d, int* index) {
         // mcCategoryName: the app pointed at.
         if (hovered != -100) {
             std::string name = hovered == -1 ? std::string("Settings") : hovered == -2 ? std::string("Calendar")
-                             : hovered == -3 ? std::string("Build Mode") : hovered == -4 ? std::string("My Sim") : hovered == -5 ? std::string("Contacts") : hovered == -6 ? std::string("Weather") : hovered == -7 ? std::string("Sims Forever")
+                             : hovered == -3 ? std::string("Build Mode") : hovered == -4 ? std::string("My Sim") : hovered == -5 ? std::string("Contacts") : hovered == -6 ? std::string("Weather") : hovered == -7 ? std::string("Sims Forever") : hovered == -16 ? std::string("Cheats")
                              : p.nodes[hovered].name;
             ImVec2 size = g_small->CalcTextSizeA(34 * g_phoneText, FLT_MAX, 0, name.c_str());
             float scale = g_phoneText * std::min(1.0f, 206 * S / std::max(1.0f, size.x));
@@ -4854,7 +4883,7 @@ bool phonePicturesIn() {
 int phoneScreenKey() {
     const int opts = static_cast<int>(std::hash<std::wstring>()(g_phoneOptsGroup) & 0xffff);
     return (((g_phoneApp + 2) * 8 + (g_phoneNotesOpen ? 1 : 0) + (g_phoneCalOpen ? 2 : 0) + (g_phoneSettingsOpen ? 4 : 0)) *
-                65537 + opts) * 31 + g_phoneSerial + (g_mySim + 1) * 7919 + (g_aspChange ? 104729 : 0) + (g_mySimMoodlet + 1) * 1299709 + (g_hhSim + 1) * 7907 + (g_contacts + 1) * 6151 + (g_gameMenuPhone ? 49157 : 0) + (g_weatherOpen ? 98317 : 0) + (g_contacts >= 1 ? g_contactSel * 104723 : 0) + (g_phoneSoundsOpen ? 15485863 : 0);
+                65537 + opts) * 31 + g_phoneSerial + (g_mySim + 1) * 7919 + (g_aspChange ? 104729 : 0) + (g_mySimMoodlet + 1) * 1299709 + (g_hhSim + 1) * 7907 + (g_contacts + 1) * 6151 + (g_gameMenuPhone ? 49157 : 0) + (g_weatherOpen ? 98317 : 0) + (g_cheatsOpen ? 196613 + settings::testingCheats() * 7 : 0) + (g_contacts >= 1 ? g_contactSel * 104723 : 0) + (g_phoneSoundsOpen ? 15485863 : 0);
 }
 
 // The still and the cover's blend: premultiplied colours (the atlas's), drawn with ImGui's straight blend otherwise.

@@ -25,6 +25,7 @@ bool liveValue(const char* section, const char* key, std::string& out);
 // The game's testing cheats as the script mod sees them (on: every pie menu is
 // the Shift+click cheat menu). Shown on the menu's switch. Any thread.
 void setTestingCheats(int state);  // 1: testing cheats on, 2: cheat pie menus on (v0.13.127)
+int testingCheats();               // the same bits, as last reported (the phone's Cheats app)
 
 // B / Y: up a page. False on the first page (B / Y close the menu there).
 bool back();
