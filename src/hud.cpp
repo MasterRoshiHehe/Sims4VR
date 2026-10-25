@@ -3469,11 +3469,12 @@ void drawContacts(ImDrawList* d, const Rect& r, Button& button, std::vector<uint
         const uint64_t pic = ready && c.bust ? c.bust : k.face;
         // The portrait: pressed, their pie menu in front of the phone (user 2026-10-24 17:59Z), when they're here.
         bool picOver = false;
-        if (inList(at(63, y + 4), at(167, y + 108), &picOver) && k.here) {
-            action = kContactPie;
+        if (inList(at(63, y + 4), at(167, y + 108), &picOver)) {
+            action = kContactPie;  // phonesim.contact_pie (a Sim not on the lot has none: it says so in the log)
             if (index) *index = g_contactSel;
+            LOG("Phone: %s's portrait pressed (%s)", k.name.c_str(), k.here ? "here" : "not on this lot");
         }
-        d->AddCircleFilled(at(115, y + 56), 52 * S, IM_COL32(255, 255, 255, picOver && k.here ? 110 : 60), 64);
+        d->AddCircleFilled(at(115, y + 56), 52 * S, IM_COL32(255, 255, 255, picOver ? 110 : 60), 64);
         if (pic) {
             shown.push_back(pic);
             icon(d, pic, at(115, y + 56), 104 * S);

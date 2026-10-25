@@ -276,7 +276,7 @@ def open_on(obj, pick_sim=False):
             native._log('pie: inventory pie menu needs one click on anything first (the game\'s menu has no click to answer yet)')
             return
         from server.pick_info import PickType
-        position = sim.position
+        position = obj.position if pick_sim else sim.position  # a Sim: clicked where it stands
         choices = _debug_choices if _choices is not None else interaction_commands.generate_choices
         items = choices(obj.id, PickType.PICK_SIM if pick_sim else PickType.PICK_OBJECT, position.x, position.y, position.z,
                         services.active_lot_id() or 0,
