@@ -517,7 +517,16 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
         nodim::setSource(g_config.noDimming);
     }
     // The phone's screen follows the hand holding it; the menu is measured once it has opened.
-    updatePhone(hands[g_phoneHand], g_phoneHand);
+    // A controller held still can lose tracking (the runtime sees no hand for seconds, log "Hand tracking: left
+    // controller lost"): the phone stays where that hand last was instead of vanishing (user 2026-10-25 01:00Z).
+    {
+        static armik::Hand last[2];
+        static bool have[2] = {false, false};
+        const int h = g_phoneHand;
+        if (hands[h].valid) last[h] = hands[h], have[h] = true;
+        if (!g_phoneOut) have[h] = false;
+        updatePhone(hands[h].valid || !have[h] ? hands[h] : last[h], h);
+    }
     // A game popup (first person): the controllers buzz like a phone, two short pulses, again
     // every 5 s while the phone is away (3 rings); with the phone out, only
     // the hand holding it buzzes, once, and its screen is measured again.

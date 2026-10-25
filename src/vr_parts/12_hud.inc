@@ -1015,7 +1015,7 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
     // The phone's sounds (user 2026-10-24 12:36Z): a select beeps (phone_on_ui), a new highlight taps
     // (phone_tapscreenicon_touch); picking Sound or Vibrate on the Sounds screen buzzes the holding hand too.
     if (hud::phoneTaps() > 0) grab::pushControl(7100200);
-    else if (hud::phoneHovers() > 0) grab::pushControl(7100201);
+    (void)hud::phoneHovers();  // the hover tap sound removed (user 2026-10-25 01:01Z: too annoying)
     if (const int mode = hud::phoneModeSet(); mode == 0 || mode == 1) buzz(g_phoneHand, 0.45f, mode == 0 ? 0.06f : 0.18f);
     switch (action) {
         case hud::kFullUi:

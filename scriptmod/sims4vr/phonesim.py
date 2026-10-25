@@ -499,7 +499,7 @@ def _contact_page(sim_info, records):
         else:
             group = 'Also'
         records.append('cdt\x1f{}\x1f{}\x1f{}'.format(group, hudinfo._icon(getattr(trait, 'icon', None)),
-                                                      _text_for(getattr(trait, 'display_name', None), target)))
+                                                      _text_for(getattr(trait, 'display_name', None), target, target)))
     _tooltip(sim_info, target, knowledge, records)
     if knowledge is not None:
         try:
