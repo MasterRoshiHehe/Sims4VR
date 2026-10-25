@@ -189,6 +189,23 @@ def send_dialog(answers):
         _log_error('popup answers as the pie', e)
 
 
+def send_options(options):
+    """Our own options (the phone's Call / Text: [(text json, what a pick does)]) as our pie where the DLL put the
+    click; no game pie behind it. A pick goes to select_own."""
+    global _own_items
+    try:
+        _own_items = [what for _, what in options]
+        records = ['pie\x1f0\x1f0']
+        for i, (text, _) in enumerate(options):
+            records.append('item\x1f{}\x1f0\x1f{}\x1f0\x1f0\x1f0\x1f{}\x1f\x1f'.format(i, len(options) - i, text))
+        native.pie_content('\x1e'.join(records).encode('utf-8'))
+        native.pie_menu(len(options))
+        native._log('pie: {} options of ours sent as the pie'.format(len(options)))
+    except Exception as e:
+        _own_items = []
+        _log_error('our options as the pie', e)
+
+
 def select_own(index):
     """An option picked on the own-drawn pie (the DLL, control 5000000 + index): what the PieMenu widget sends,
     interactions.select [id, server_reference_id] (PieMenuMain.OnOptionSelected)."""
@@ -196,6 +213,10 @@ def select_own(index):
         if not 0 <= index < len(_own_items):
             return
         option, reference = _own_items[index]
+        if option == 'contact':
+            from sims4vr import phonesim
+            phonesim.contact_action(reference)
+            return
         if option == 'dialog':
             from sims4vr import objmenu
             objmenu.answer_popup(reference)

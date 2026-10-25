@@ -301,6 +301,7 @@ struct ContactPage {  // the picked contact: what your Sim knows of them ("cd", 
     struct Act { int node = 0; std::string nameJson, disabledJson; };
     std::vector<Act> actions;  // the phone's Social app entries, run for this contact
     std::string note;  // "cdn": the last of them the game doesn't offer with this Sim
+    int calls = 0, texts = 0;  // "cdo": how many of them are calls / texts the game offers with this Sim
 };
 struct SimItem {  // Inventory: one stack (phonesim.py "inv")
     uint64_t picture = 0;
@@ -3512,6 +3513,28 @@ void drawContacts(ImDrawList* d, const Rect& r, Button& button, std::vector<uint
                        label.c_str());
             y += 36;
         }
+        if (ready && (c.calls > 0 || c.texts > 0)) {
+            // Call and Text (user 2026-10-25 02:07Z): each opens our pie in front of the phone with the phone's
+            // Social entries of that kind the game offers with this Sim (phonesim.contact_menu); none: no button.
+            const int kinds = (c.calls > 0) + (c.texts > 0);
+            const float bw = (right - left - 20 - 6 * (kinds - 1)) / kinds;
+            float bx = left + 10;
+            for (int kind = 0; kind < 2; ++kind) {
+                if ((kind ? c.texts : c.calls) <= 0) continue;
+                const ImVec2 ba = at(bx, y), bb = at(bx + bw, y + 30);
+                bool over = false;
+                if (inList(ba, bb, &over)) {
+                    action = kContactCall;
+                    if (index) *index = kind;
+                }
+                d->AddRectFilled(ba, bb, over ? IM_COL32(232, 241, 255, 245) : IM_COL32(255, 255, 255, 228), 8 * S);
+                const char* label = kind ? "Text" : "Call";
+                ImVec2 ls = g_title->CalcTextSizeA(24 * g_phoneText, FLT_MAX, 0, label);
+                d->AddText(g_title, 24 * g_phoneText, {(ba.x + bb.x - ls.x) / 2, (ba.y + bb.y - ls.y) / 2}, kBlue, label);
+                bx += bw + 6;
+            }
+            y += 36;
+        }
         auto card = [&](float h) {
             d->AddRectFilled(at(left, y), at(right, y + h), IM_COL32(255, 255, 255, 228), 6 * S);
         };
@@ -5712,6 +5735,9 @@ void setPhoneSim(const char* data, size_t size) {
             c.contact.facts.push_back({f[1], f[2]});
         } else if (f[0] == "cds" && f.size() >= 4 && c.contact.sentiments.size() < 20) {
             c.contact.sentiments.push_back({std::strtoull(f[1].c_str(), nullptr, 10), f[2], f[3]});
+        } else if (f[0] == "cdo" && f.size() >= 3) {
+            c.contact.calls = std::atoi(f[1].c_str());
+            c.contact.texts = std::atoi(f[2].c_str());
         } else if (f[0] == "cdn" && f.size() >= 2) {
             c.contact.note = f[1];
         } else if (f[0] == "cda" && f.size() >= 4 && c.contact.actions.size() < 40) {

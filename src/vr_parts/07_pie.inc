@@ -81,16 +81,18 @@ static bool pieHidden() { return g_pie.active && g_piePalm >= 0 && (!g_piePalmUp
 // A popup's answers as the pie (objmenu.py chat questions, dialogPie): asked for, then open.
 static std::atomic<bool> g_dialogPieRequest{false};
 static bool g_dialogPiePending = false, g_pieDialog = false;
+static bool g_oursPiePending = false, g_pieOurs = false;  // the phone's Call / Text options: no popup behind
 void dialogPie() { g_dialogPieRequest = true; }
 
 static void closePie(const char* why) {
     if (!g_pie.active) return;
-    if (g_pieDialog && std::strcmp(why, "picked on the pie") != 0) {
+    if (g_pieDialog && !g_pieOurs && std::strcmp(why, "picked on the pie") != 0) {
         grab::pushControl(6200000);  // objmenu: no answer picked, the popup card gets its buttons back
         static int logged = 0;
         if (logged++ < 20) LOG("Pie menu at hand: the popup's answers closed unpicked (%s): its buttons back on the card", why);
     }
     g_pieDialog = false;
+    g_pieOurs = false;
     g_piePalm = -1;
     g_piePalmUp = g_piePalmFist = false;
     g_pie.active = false;
@@ -174,7 +176,8 @@ static bool openPie(const XrVector3f& head) {
     g_pie.own = hud::pieState() == 1 || hud::pieState() == 2;
     g_pie.serial = hud::pieSerial();
     g_pieDialog = g_dialogPiePending;
-    g_dialogPiePending = false;
+    g_pieOurs = g_oursPiePending;
+    g_dialogPiePending = g_oursPiePending = false;
     if (!g_pie.own) {
         static int logged = 0;
         if (logged++ < 20) LOG("Pie menu at hand: no options from the game for our own pie (state %d): the game's pie cut out", hud::pieState());

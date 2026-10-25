@@ -183,6 +183,7 @@ _built_at = 0.0  # time.monotonic() the last menu was finished
 _live = False  # _choice_ids belong to a menu set on the client (a press can be picked now)
 _pending = None  # an entry pressed before that: its key (_keys), picked once the menu is set
 SOCIAL_CATEGORY = 105919  # phoneCategory_Social: its entries also on each Contacts page (phonesim.py)
+last_menu = None  # the ChoiceMenu the menu sent last was made from
 social = []  # (node, name, disabled text) of the entries under it in the menu sent last
 _keys = {}  # node -> its place in the tree (the names above it and its own), to find it in a fresh menu
 
@@ -260,6 +261,7 @@ def poll():
         return
     _job = None
     _built_at = time.monotonic()
+    globals()['last_menu'] = menu  # its entries' aops (phonesim._offers: whom each Social entry is for)
     from server_commands import interaction_commands as ic
     try:
         t0 = time.perf_counter()

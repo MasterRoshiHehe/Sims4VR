@@ -105,7 +105,7 @@ static bool g_phoneFrontOk = false;
 
 // A pie menu asked from the phone (a contact's portrait): drawn by us as any pie, in front of the phone. As
 // requestSelfPie: the click it answers is put there, the mouse waits for it, then the control asks the game.
-static void requestPhonePie(int control) {
+static void requestPhonePie(int control, bool ours) {
     const ULONGLONG now = GetTickCount64();
     if (g_pie.active || (g_selfPie.pending && now < g_selfPie.until) || !g_phoneFrontOk) return;
     g_lastWorldClick.valid = true;
@@ -121,6 +121,9 @@ static void requestPhonePie(int control) {
     g_selfPie.until = now + kSelfPieWait;
     g_selfPie.shownAt = 0;
     g_pieDismissHold = true;
+    // Our own options (Call / Text): no game pie behind them, so nothing to close with Escape (as a popup's).
+    g_dialogPiePending = ours;
+    g_oursPiePending = ours;
     grab::pushControl(control);
     LOG("Phone: pie menu asked for in front of the phone (control %d)", control);
 }

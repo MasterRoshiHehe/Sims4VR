@@ -183,6 +183,7 @@ static void holdSelfPieMouse(pointer::Controls& c, bool firstPerson) {
             LOG("Own pie menu: %s after %llu ms", g_selfPie.shownAt ? "shown" : "the game showed none",
                 static_cast<unsigned long long>((g_selfPie.shownAt ? g_selfPie.shownAt : now) - g_selfPie.asked));
         g_selfPie.pending = false;
+        if (!g_selfPie.shownAt) g_dialogPiePending = g_oursPiePending = false;  // none came: the next pie is the game's
         return;
     }
     c.hasTarget = true;

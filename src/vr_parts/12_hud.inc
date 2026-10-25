@@ -1,4 +1,4 @@
-static void requestPhonePie(int control);  // 14_phone.inc
+static void requestPhonePie(int control, bool ours = false);  // 14_phone.inc
 // Our own HUD (first person, [wrist]; user 2026-10-15 05:34Z: drawn with a
 // third-party UI library, not crops of the game's UI). hud.cpp draws it with
 // Dear ImGui from the game's values; here each part of it is placed: the watch
@@ -1269,5 +1269,8 @@ static bool hudSleepLayer(ID3D11Texture2D* atlas, XrCompositionLayerQuad& layer)
     layer.pose = m.pose;
     layer.size = {m.width, m.height};
     return true;
+        case hud::kContactCall:
+            if (index == 0 || index == 1) requestPhonePie(8300000 + index, true);  // phonesim.contact_menu: our options
+            break;
 }
 

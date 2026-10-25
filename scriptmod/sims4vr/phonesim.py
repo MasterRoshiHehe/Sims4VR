@@ -533,9 +533,9 @@ def _contact_page(sim_info, records):
         except Exception:
             pass
     try:
-        from sims4vr import phoneapp
-        for node, name, disabled in phoneapp.social:
-            records.append('cda\x1f{}\x1f{}\x1f{}'.format(node, name, disabled))
+        # Call and Text (user 2026-10-25 02:07Z): how many of the phone's Social entries the game offers with them.
+        offers = _offers(target)
+        records.append('cdo\x1f{}\x1f{}'.format(sum(1 for o in offers if o[2] == 0), sum(1 for o in offers if o[2] == 1)))
     except Exception as e:
         _log_error('social entries', e)
     from relationships.relationship_enums import RelationshipTrackType
@@ -635,6 +635,57 @@ def _tooltip(sim_info, target, knowledge, records):
 
 
 _auto_pick = None  # [sim id, until (monotonic)]: the next Sim picker of yours picks this Sim
+
+
+_offer_cache = {}  # sim id -> (until, [(node, name json, kind 0 call / 1 text)])
+
+
+def _offers(target):
+    """The phone's Social entries (phoneapp.social) whose Sim picker lists this Sim (the picker's own test,
+    _get_valid_sim_choices_gen), each a call or a text (its interaction's name). Kept 10 s."""
+    import time
+    from sims4vr import phoneapp
+    now = time.monotonic()
+    cached = _offer_cache.get(target.id)
+    if cached is not None and now < cached[0]:
+        return cached[1]
+    menu = phoneapp.last_menu
+    items = getattr(menu, 'menu_items', {}) if menu is not None else {}
+    out = []
+    for node, name, disabled in list(phoneapp.social):
+        if disabled:
+            continue
+        item = items.get(phoneapp._choice_ids.get(node))
+        aop = getattr(item, 'aop', None)
+        affordance = getattr(aop, 'affordance', None)
+        offered = True
+        gen = getattr(affordance, '_get_valid_sim_choices_gen', None)
+        if gen is not None:
+            try:
+                offered = any((getattr(c, 'sim_id', None) or getattr(getattr(c, 'sim_info', None), 'sim_id', None)) == target.id
+                              for c in gen(None, aop.target, item.context, **dict(aop.interaction_parameters)))
+            except Exception as e:
+                _log_error('a Social entry\'s Sims', e)
+        if offered:
+            label = (getattr(affordance, '__name__', '') or '').lower()
+            out.append((node, name, 1 if 'text' in label else 0))
+    _offer_cache[target.id] = (now + 10.0, out)
+    return out
+
+
+def contact_menu(kind):
+    """Call (0) or Text (1) on a contact's page (user 2026-10-25 02:07Z): the entries the game offers with them as
+    our pie in front of the phone (the DLL put its click there); a pick runs it for them (select_own)."""
+    import services
+    from sims4vr import pie
+    target = services.sim_info_manager().get(_contact) if _contact is not None else None
+    if target is None:
+        return
+    offers = [o for o in _offers(target) if o[2] == kind]
+    if not offers:
+        native._log('phonesim: nothing to {} {} with'.format('text' if kind else 'call', target.first_name))
+        return
+    pie.send_options([(name, ('contact', node)) for node, name, _ in offers])
 
 
 def contact_action(node):
