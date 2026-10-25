@@ -2550,19 +2550,32 @@ void drawMySim(ImDrawList* d, const Rect& r, Button& button, std::vector<uint64_
             }
         }
         {
-            const char* name = hovered < 0 ? "My Sim" : hovered == kSimCareer ? careerName(g_sim.age) : kMySimNames[hovered];
-            ImVec2 size = g_small->CalcTextSizeA(34 * g_phoneText, FLT_MAX, 0, name);
+            // The banner (user 2026-10-25 01:20Z): your Sim's mood colour at the top, fading into your phone
+            // background under the texts; your Sim's first name, its mood, then the household's funds.
+            const ImU32 top = moodTint(static_cast<uint32_t>(g_sim.mood), 235), clear = moodTint(static_cast<uint32_t>(g_sim.mood), 0);
+            d->AddRectFilled(at(0, 0), at(230, 62), top);
+            d->AddRectFilledMultiColor(at(0, 62), at(230, 104), top, top, clear, clear);
+            const size_t space = g_sim.name.find(' ');
+            const std::string first = g_sim.name.empty() ? std::string("My Sim") : space == std::string::npos ? g_sim.name : g_sim.name.substr(0, space);
+            ImVec2 size = g_small->CalcTextSizeA(34 * g_phoneText, FLT_MAX, 0, first.c_str());
             const float scale = g_phoneText * std::min(1.0f, 206 * S / std::max(1.0f, size.x));
             size.x /= g_phoneText, size.y /= g_phoneText;
-            const ImVec2 t = at(115, 56);
-            shadowText(d, g_small, 34 * scale, {t.x - size.x * scale / 2, t.y - size.y * scale / 2}, kWhite, name);
+            const ImVec2 t = at(115, 46);
+            shadowText(d, g_small, 34 * scale, {t.x - size.x * scale / 2, t.y - size.y * scale / 2}, kWhite, first.c_str());
+            const std::string& mood = found(g_sim.moodJson);
+            if (!mood.empty()) {
+                const float ms = 24 * g_phoneText;
+                ImVec2 mz = g_text->CalcTextSizeA(ms, FLT_MAX, 0, mood.c_str());
+                const ImVec2 m = at(115, 66);
+                shadowText(d, g_text, ms, {m.x - mz.x / 2, m.y - mz.y / 2}, kWhite, mood.c_str());
+            }
         }
         if (g_sim.funds >= 0) {
-            // The household's funds under the banner (user 2026-10-24 16:10Z), as the HUD's funds: "§12,345".
+            // The household's funds (user 2026-10-24 16:10Z), as the HUD's funds: "§12,345".
             const std::string funds = moneyText(g_sim.funds).substr(1);
             const float fs = 26 * g_phoneText;
             ImVec2 size = g_title->CalcTextSizeA(fs, FLT_MAX, 0, funds.c_str());
-            const ImVec2 t = at(115, 80);
+            const ImVec2 t = at(115, 86);
             shadowText(d, g_title, fs, {t.x - size.x / 2, t.y - size.y / 2}, IM_COL32(150, 230, 90, 255), funds.c_str());
         }
         // The peek card (user 2026-10-23 23:22Z): pointed at for a moment, the Aspirations tile shows
@@ -5009,8 +5022,7 @@ Action drawKeyboard(int* index) {
     ImDrawList* d = ImGui::GetBackgroundDrawList();
     const Rect r = kKeyboard;
     const float pad = 14, top = 64, keyH = 80, gap = 8, x0 = r.x + 4, x1 = r.x + r.w - 4;
-    noteBackground(d, 0, {x0, r.y + 4}, {x1, r.y + r.h - 4}, 1.0f);
-    Action action = kNone;
+    Action action = kNone;  // (no panel behind it: transparent, user 2026-10-25)
     auto emit = [&](int code) {
         action = kKey;
         if (index) *index = code;
