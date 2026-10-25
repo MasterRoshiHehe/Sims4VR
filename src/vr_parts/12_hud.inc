@@ -1,3 +1,4 @@
+static void requestPhonePie(int control);  // 14_phone.inc
 // Our own HUD (first person, [wrist]; user 2026-10-15 05:34Z: drawn with a
 // third-party UI library, not crops of the game's UI). hud.cpp draws it with
 // Dear ImGui from the game's values; here each part of it is placed: the watch
@@ -1155,7 +1156,7 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
             LOG("Phone: contact %d", index);
             break;
         case hud::kContactPie:
-            if (index >= 0 && index < 100000) grab::pushControl(8100000 + index);  // phonesim.contact_pie
+            if (index >= 0 && index < 100000) requestPhonePie(8100000 + index);  // phonesim.contact_pie, drawn by us
             LOG("Phone: contact %d's pie menu", index);
             break;
         case hud::kContactPlayAs:

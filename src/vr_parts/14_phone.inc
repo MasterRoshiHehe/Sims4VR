@@ -100,6 +100,30 @@ static void phoneClose(const char* why) {
 // body is our own picture (phoneBodyLayer); the menu sits inside its screen,
 // as large as fits without stretching.
 static XrPosef g_phoneBodyPose{};
+static XrVector3f g_phoneFront{};  // 10 cm out from the glass, toward you: where a pie asked from the phone shows
+static bool g_phoneFrontOk = false;
+
+// A pie menu asked from the phone (a contact's portrait): drawn by us as any pie, in front of the phone. As
+// requestSelfPie: the click it answers is put there, the mouse waits for it, then the control asks the game.
+static void requestPhonePie(int control) {
+    const ULONGLONG now = GetTickCount64();
+    if (g_pie.active || (g_selfPie.pending && now < g_selfPie.until) || !g_phoneFrontOk) return;
+    g_lastWorldClick.valid = true;
+    g_lastWorldClick.u = kSelfPieU;
+    g_lastWorldClick.v = kSelfPieV;
+    g_lastWorldClick.point = g_phoneFront;
+    g_lastWorldClick.tick = now;
+    const int hand = g_phoneHand ^ 1;  // the hand pressing the phone
+    g_clickHand.store(hand, std::memory_order_relaxed);
+    g_clickHandTick.store(now, std::memory_order_relaxed);
+    g_selfPie.pending = true;
+    g_selfPie.asked = now;
+    g_selfPie.until = now + kSelfPieWait;
+    g_selfPie.shownAt = 0;
+    g_pieDismissHold = true;
+    grab::pushControl(control);
+    LOG("Phone: pie menu asked for in front of the phone (control %d)", control);
+}
 
 // The phone where phone3d draws it: in the Sim's hand (armik's latest pose),
 // the same frame and offsets as phone3d::draw, in app space. The controller's
@@ -253,6 +277,8 @@ static void updatePhone(const armik::Hand& hand, int side) {
     }
     XrQuaternionf facing = fromAxes(x, y2, z2);
     g_phoneBodyPose = {facing, centre};
+    g_phoneFront = {centre.x + z2.x * 0.10f, centre.y + z2.y * 0.10f, centre.z + z2.z * 0.10f};
+    g_phoneFrontOk = true;
     // The game's phone prop (phone.py, for mirrors) sits inside this one: left out of the view from your eyes.
     if (g_config.phoneProp && !g_tablet && g_phoneHand == 1) {
         camera::View view;

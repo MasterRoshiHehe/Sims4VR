@@ -392,7 +392,7 @@ def _contact_list(sim_info, records):
             except Exception:
                 pass
             return ''
-        records.append('ct\x1f{}\x1f{}\x1f{}\x1f{:.0f}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}'.format(
+        records.append('ct\x1f{}\x1f{}\x1f{}\x1f{:.0f}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}'.format(
             n, '{} {}'.format(target.first_name, target.last_name).strip(), hudinfo._thumb('sims/f_{}_m_0'.format(target.id)),
             f, '{:.0f}'.format(r) if has_romance else '', bit_of(friendship), bit_of(romance) if has_romance else '',
             int(target.is_instanced()), family_bit(), tags_of(target, f, r)))
