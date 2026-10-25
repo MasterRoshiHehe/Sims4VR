@@ -393,33 +393,38 @@ std::string utf8(const std::wstring& w);  // below
 std::string appKey(const PhoneContent& p, int node) {
     return node < 0 ? "#" + std::to_string(node) : node < static_cast<int>(p.nodes.size()) ? p.nodes[node].name : std::string();
 }
-void readAppOrder() {
-    if (g_appOrderRead) return;
+// An app order kept in sims4vr_user.ini [phone] (app_order: the home screen's; mysim_order: My Sim's).
+void readOrder(const wchar_t* key, std::vector<std::string>& order, bool& read) {
+    if (read) return;
     const std::wstring ini = settings::userIni();
     if (ini.empty()) return;
-    g_appOrderRead = true;
+    read = true;
     char buf[8192] = {};
-    GetPrivateProfileStringW(L"phone", L"app_order", L"", reinterpret_cast<wchar_t*>(buf), sizeof buf / 2, ini.c_str());
+    GetPrivateProfileStringW(L"phone", key, L"", reinterpret_cast<wchar_t*>(buf), sizeof buf / 2, ini.c_str());
     std::string text = utf8(reinterpret_cast<const wchar_t*>(buf));
     size_t at = 0;
     while (at < text.size()) {
         size_t end = text.find('|', at);
         if (end == std::string::npos) end = text.size();
-        if (end > at) g_appOrder.push_back(text.substr(at, end - at));
+        if (end > at) order.push_back(text.substr(at, end - at));
         at = end + 1;
     }
 }
-void saveAppOrder() {
+void saveOrder(const wchar_t* key, const std::vector<std::string>& order) {
     const std::wstring ini = settings::userIni();
     if (ini.empty()) return;
     std::string text;
-    for (const std::string& k : g_appOrder) text += (text.empty() ? "" : "|") + k;
+    for (const std::string& k : order) text += (text.empty() ? "" : "|") + k;
     const int n = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, nullptr, 0);
     std::wstring w(static_cast<size_t>(std::max(1, n)), L'\0');
     MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, &w[0], n);
-    WritePrivateProfileStringW(L"phone", L"app_order", w.c_str(), ini.c_str());
-    LOG("Phone: app order saved (%zu apps)", g_appOrder.size());
+    WritePrivateProfileStringW(L"phone", key, w.c_str(), ini.c_str());
+    LOG("Phone: app order saved (%zu apps)", order.size());
 }
+void readAppOrder() { readOrder(L"app_order", g_appOrder, g_appOrderRead); }
+void saveAppOrder() { saveOrder(L"app_order", g_appOrder); }
+std::vector<std::string> g_mySimOrder;  // My Sim's apps by name (user 2026-10-25 00:17Z: movable as the home screen's)
+bool g_mySimOrderRead = false;
 bool g_weatherOpen = false;    // the home screen's Weather app
 bool g_gameMenuPhone = false;  // Settings > Game Options: the game's Escape menu drawn on the phone
 int g_contacts = -1;        // Contacts: -1 closed, 0 the list, 1 a contact's page
@@ -2452,7 +2457,20 @@ void drawMySim(ImDrawList* d, const Rect& r, Button& button, std::vector<uint64_
         // (PhonePageButton) or a sideways swipe, as the home screen.
         std::vector<int> apps;
         for (int k = 0; k < kMySimApps; ++k)
-            if ((k != kSimCareer || careerName(g_sim.age)) && (k != kSimSouls || g_sim.souls.sent)) apps.push_back(k);  // Life & Death only
+            if ((k != kSimCareer || careerName(g_sim.age)) && (k != kSimSouls || g_sim.souls.sent) &&  // Life & Death only
+                k != kSimHousehold)  // user 2026-10-25 00:17Z: the Household app removed (Contacts' Household filter)
+                apps.push_back(k);
+        // Your order (the header's rearrange button): the saved apps first in theirs, the rest after.
+        readOrder(L"mysim_order", g_mySimOrder, g_mySimOrderRead);
+        if (!g_mySimOrder.empty()) {
+            std::vector<int> ordered;
+            for (const std::string& name : g_mySimOrder)
+                for (int k : apps)
+                    if (name == kMySimNames[k] && std::find(ordered.begin(), ordered.end(), k) == ordered.end()) ordered.push_back(k);
+            for (int k : apps)
+                if (std::find(ordered.begin(), ordered.end(), k) == ordered.end()) ordered.push_back(k);
+            apps.swap(ordered);
+        }
         const int perPage = 9, pages = static_cast<int>((apps.size() + perPage - 1) / perPage);
         g_mySimPage = std::max(0, std::min(pages - 1, g_mySimPage));
         float slide = g_phoneSwipeX ? g_phoneDx : 0;
@@ -2474,8 +2492,36 @@ void drawMySim(ImDrawList* d, const Rect& r, Button& button, std::vector<uint64_
             const float x = 13 + (i % 3) * 68 + 4 + slide + (pg - g_mySimPage) * 230, y = 101 + (i / 3) * 70 + 6;
             const ImVec2 c = at(x + 32, y + 32);
             bool over = false;
-            if (!g_phoneSwipeX && button(at(x, y), at(x + 64, y + 64), &over))
+            if (g_reorder && !g_phoneSwipeX && button(at(x, y), at(x + 64, y + 64), &over)) {
+                // Rearranging, as the home screen: press one, then the place to put it.
+                const std::string key = kMySimNames[k];
+                if (g_reorderPick.empty()) {
+                    g_reorderPick = key;
+                } else if (g_reorderPick != key) {
+                    std::vector<std::string> keys;
+                    for (int a : apps) keys.push_back(kMySimNames[a]);
+                    auto from = std::find(keys.begin(), keys.end(), g_reorderPick);
+                    if (from != keys.end()) {
+                        const std::string moved = *from;
+                        const bool forward = (from - keys.begin()) < n;
+                        keys.erase(from);
+                        keys.insert(std::find(keys.begin(), keys.end(), key) + (forward ? 1 : 0), moved);
+                        for (const std::string& o : g_mySimOrder)
+                            if (std::find(keys.begin(), keys.end(), o) == keys.end()) keys.push_back(o);
+                        g_mySimOrder = keys;
+                        saveOrder(L"mysim_order", g_mySimOrder);
+                    }
+                    g_reorderPick.clear();
+                } else {
+                    g_reorderPick.clear();
+                }
+            } else if (!g_reorder && !g_phoneSwipeX && button(at(x, y), at(x + 64, y + 64), &over))
                 g_mySim = 1 + k, g_mySimScroll = 0, g_aspChange = false, g_aspPicked = -1, g_hhSim = -1;
+            if (g_reorder) {
+                const bool picked = g_reorderPick == kMySimNames[k];
+                d->AddRect(at(x - 1, y - 1), at(x + 65, y + 65), picked ? IM_COL32(120, 230, 70, 255) : IM_COL32(255, 255, 255, 120),
+                           12 * S, 0, (picked ? 2.5f : 1.2f) * S);
+            }
             if (over) {
                 hovered = k;
                 piece(d, art::kPhoneAppOver, c, A);
@@ -4490,7 +4536,7 @@ Action drawPhone(ImDrawList* d, int* index) {
         if (header) {
             d->ChannelsSplit(2);
             d->ChannelsSetCurrent(1);
-            phoneHeader(false);
+            phoneHeader(true);  // with rearrange: My Sim's apps (user 2026-10-25 00:17Z)
             phoneColorSelector();
             d->ChannelsSetCurrent(0);
         }
@@ -4502,7 +4548,7 @@ Action drawPhone(ImDrawList* d, int* index) {
             else if (g_mySimMoodlet >= 0) g_mySimMoodlet = -1;
             else if (g_hhSim >= 0) g_hhSim = -1;
             else g_mySim = g_mySim > 0 ? 0 : -1;
-            g_mySimScroll = 0, g_aspPicked = -1;
+            g_mySimScroll = 0, g_aspPicked = -1, g_reorder = false, g_reorderPick.clear();
         }
         piece(d, over ? art::kPhoneBackOver : art::kPhoneBack, at(96 + 16.5f, 361 + 15.5f), A);
     } else if (g_phoneCalOpen) {
@@ -4934,6 +4980,129 @@ Action drawNote(uint64_t id, int* index) {
     return pressed ? kNoteDismiss : kNone;
 }
 
+// The VR keyboard (typing into the game's text fields): the focused field's text on a preview line with the X, and
+// four rows of keys as the game's dialog buttons (QWERTY, a symbols page). A key is kKey with `index` = its
+// character or a KeyCode; Shift (once, or twice for caps) and the page are ours. kKeyboard.
+std::mutex g_keyboardMutex;
+std::string g_keyboardText;  // (g_keyboardMutex)
+int g_kbShift = 0;           // 0 off, 1 the next letter, 2 caps
+bool g_kbSymbols = false;
+
+bool keyButton(ImDrawList* d, int id, const char* label, ImVec2 a, ImVec2 b, bool lit) {
+    ImGui::SetCursorScreenPos(a);
+    ImGui::PushID(700 + id);
+    const bool pressed = ImGui::InvisibleButton("key", {b.x - a.x, b.y - a.y});
+    const bool hover = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
+    ImGui::PopID();
+    if (hover || lit)
+        nine(d, art::kDialogButtonOver, {a.x - 2, a.y - 3}, {b.x + 2, b.y + 6}, 48, 36, 48, 54, 0.8f, lit && !hover ? IM_COL32(200, 225, 255, 255) : kWhite);
+    else
+        nine(d, art::kDialogButton, a, b, 48, 36, 48, 42, 0.8f);
+    const float size = g_text->FontSize * (strlen(label) > 1 ? 0.7f : 0.92f);
+    ImVec2 ts = g_text->CalcTextSizeA(size, FLT_MAX, 0, label);
+    d->AddText(g_text, size, {(a.x + b.x - ts.x) / 2, a.y + (b.y - a.y - 10 - ts.y) / 2 + (held ? 3 : 0)}, uikit::kButtonBlue, label);
+    return pressed;
+}
+
+Action drawKeyboard(int* index) {
+    ImDrawList* d = ImGui::GetBackgroundDrawList();
+    const Rect r = kKeyboard;
+    const float pad = 14, top = 64, keyH = 80, gap = 8, x0 = r.x + 4, x1 = r.x + r.w - 4;
+    noteBackground(d, 0, {x0, r.y + 4}, {x1, r.y + r.h - 4}, 1.0f);
+    Action action = kNone;
+    auto emit = [&](int code) {
+        action = kKey;
+        if (index) *index = code;
+    };
+    // Preview line: the tail of the text that fits, and a caret.
+    std::string text;
+    {
+        std::lock_guard<std::mutex> lock(g_keyboardMutex);
+        text = g_keyboardText;
+    }
+    const float closeS = 48, boxR = x1 - pad - closeS - 10, boxL = x0 + pad, boxT = r.y + 4 + 8, boxB = boxT + top - 14;
+    d->AddRectFilled({boxL, boxT}, {boxR, boxB}, IM_COL32(255, 255, 255, 235), 10.0f);
+    d->AddRect({boxL, boxT}, {boxR, boxB}, IM_COL32(30, 70, 128, 160), 10.0f, 0, 2.0f);
+    {
+        const float size = 34, room = boxR - boxL - 24;
+        size_t from = 0;
+        while (from < text.size() && g_text->CalcTextSizeA(size, FLT_MAX, 0, text.c_str() + from).x > room) {
+            ++from;
+            while (from < text.size() && (static_cast<unsigned char>(text[from]) & 0xC0) == 0x80) ++from;  // not mid-character
+        }
+        const std::string shown = text.substr(from) + ((GetTickCount64() / 500) % 2 ? "|" : " ");
+        const ImVec4 clip{boxL, boxT, boxR, boxB};
+        d->AddText(g_text, size, {boxL + 12, boxT + (boxB - boxT - size) / 2 - 2}, uikit::kButtonBlue, shown.c_str(), nullptr, 0, &clip);
+    }
+    {
+        const ImVec2 c{x1 - pad - closeS / 2, boxT + (boxB - boxT) / 2};
+        ImGui::SetCursorScreenPos({c.x - closeS / 2, c.y - closeS / 2});
+        const bool closed = ImGui::InvisibleButton("keyboardX", {closeS, closeS});
+        const bool hover = ImGui::IsItemHovered();
+        piece(d, art::kCancel, c, (hover ? closeS * 1.08f : closeS) / art::kCancel.w);
+        if (closed) emit(kKeyClose);
+    }
+    // Rows of 10 cells.
+    static const char* kLetters[3] = {"qwertyuiop", "asdfghjkl", "zxcvbnm,."};
+    static const char* kSymbols[3] = {"1234567890", "-/:;()$&@", "?!'\"_#%*+="};
+    const char** rows = g_kbSymbols ? kSymbols : kLetters;
+    const float cell = (x1 - x0 - 2 * pad) / 10.0f;
+    float y = r.y + 4 + top + 4;
+    auto cellBox = [&](float col, float span, ImVec2& a, ImVec2& b) {
+        a = {x0 + pad + col * cell, y};
+        b = {x0 + pad + (col + span) * cell - gap, y + keyH};
+    };
+    int id = 0;
+    auto character = [&](char ch, float col) {
+        ImVec2 a, b;
+        cellBox(col, 1, a, b);
+        const bool upper = !g_kbSymbols && g_kbShift > 0 && ch >= 'a' && ch <= 'z';
+        const char shown = upper ? static_cast<char>(ch - 32) : ch;
+        const char label[2] = {shown, 0};
+        if (keyButton(d, id++, label, a, b, false)) {
+            emit(static_cast<unsigned char>(shown));
+            if (g_kbShift == 1) g_kbShift = 0;
+        }
+    };
+    // Row 1.
+    for (int i = 0; rows[0][i]; ++i) character(rows[0][i], static_cast<float>(i));
+    y += keyH + gap;
+    // Row 2: nine characters and Backspace.
+    for (int i = 0; rows[1][i]; ++i) character(rows[1][i], static_cast<float>(i));
+    {
+        ImVec2 a, b;
+        cellBox(9, 1, a, b);
+        if (keyButton(d, id++, "<-", a, b, false)) emit(kKeyBackspace);
+    }
+    y += keyH + gap;
+    // Row 3: Shift and nine characters; the symbols page has ten characters.
+    {
+        const int first = g_kbSymbols ? 0 : 1;
+        if (!g_kbSymbols) {
+            ImVec2 a, b;
+            cellBox(0, 1, a, b);
+            if (keyButton(d, id++, g_kbShift == 2 ? "CAPS" : "Shift", a, b, g_kbShift > 0)) g_kbShift = (g_kbShift + 1) % 3;
+        }
+        for (int i = 0; rows[2][i]; ++i) character(rows[2][i], static_cast<float>(first + i));
+    }
+    y += keyH + gap;
+    // Row 4: page, Space, arrows, Enter.
+    {
+        ImVec2 a, b;
+        cellBox(0, 1, a, b);
+        if (keyButton(d, id++, g_kbSymbols ? "ABC" : "123", a, b, false)) g_kbSymbols = !g_kbSymbols, g_kbShift = 0;
+        cellBox(1, 5, a, b);
+        if (keyButton(d, id++, "Space", a, b, false)) emit(' ');
+        cellBox(6, 1, a, b);
+        if (keyButton(d, id++, "<", a, b, false)) emit(kKeyLeft);
+        cellBox(7, 1, a, b);
+        if (keyButton(d, id++, ">", a, b, false)) emit(kKeyRight);
+        cellBox(8, 2, a, b);
+        if (keyButton(d, id++, "Enter", a, b, false)) emit(kKeyEnter);
+    }
+    return action;
+}
+
 // Balloons over Sims' heads, drawn as Balloon.as lays them out (ObjectBoundElements): the bubble background
 // for its type with the icon in it, the small overlay and the category badge. Each in its own slot of kBalloons;
 // the slot's top left is the bubble's top left (element -210,-230 around the Sim's anchor).
@@ -5320,6 +5489,16 @@ void setPhoneNotes(const char* data, size_t size) {
 }
 
 float noteHeight() { return g_noteHeight; }
+
+std::atomic<bool> g_keyboardManual{false};
+void toggleKeyboard() { g_keyboardManual = !g_keyboardManual.load(); }
+void setKeyboardManual(bool on) { g_keyboardManual = on; }
+bool keyboardManual() { return g_keyboardManual.load(); }
+
+void setKeyboardText(const char* utf8) {
+    std::lock_guard<std::mutex> lock(g_keyboardMutex);
+    g_keyboardText = utf8 ? utf8 : "";
+}
 
 void setPhoneCalendar(const char* data, size_t size) {
     CalendarContent c;
@@ -5897,6 +6076,7 @@ Action render(ID3D11Device* device, ID3D11DeviceContext* context, const Frame& f
     if (f.pie && g_pieMenu.valid) take(drawPie(index));
     if (f.note) take(drawNote(f.note, index));
     else g_noteHeight = 0;
+    if (f.keyboard) take(drawKeyboard(index));
     if (f.book) drawNotebook(f);
     ImGui::End();
     ImGui::Render();
