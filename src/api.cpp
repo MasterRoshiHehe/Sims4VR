@@ -182,7 +182,8 @@ S4VR_API int s4vr_init() {
         voice.openDegrees = g_config.voiceMouthOpen;
         s4vr::voice::install(voice);
     }
-    if (g_config.touch) s4vr::touch::install();
+    // The game's pick: the laser's end (always) and touch to click ([body] touch).
+    s4vr::touch::install();
     s4vr::camera::init(g_config);
     if (g_config.gamepad) s4vr::gamepad::install();
     // The game's menus on their own layer (a panel, your wrist, the pie at your hand).

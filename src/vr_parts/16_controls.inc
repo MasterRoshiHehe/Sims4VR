@@ -695,7 +695,7 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
     // trigger, nothing in that hand) and what its fingertip touches is
     // clicked once (touch.cpp says what it touches).
     int pointing = -1;
-    if (mode() == Mode::Stereo && camera::bodyActive()) {
+    if (g_config.touch && mode() == Mode::Stereo && camera::bodyActive()) {
         for (int i : {g_pointerHand, 1 - g_pointerHand}) {
             if (i != laserHand && !(g_phoneOut && i == g_phoneHand) && !(g_bookOut && i == g_bookHand) && hands[i].valid && hands[i].grip > 0.6f &&
                 !boolState(g_indexTouchAction, i) &&

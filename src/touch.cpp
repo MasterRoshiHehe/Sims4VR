@@ -138,7 +138,7 @@ bool install() {
         return false;
     }
     g_requestPick = reinterpret_cast<RequestPickFn>(request);
-    LOG("Touch: ready (point with your index finger and touch things to click them)");
+    LOG("Touch: ready (the laser ends on what the game picks along it; touch to click is a setting)");
     return true;
 }
 
