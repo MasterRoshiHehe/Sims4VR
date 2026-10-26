@@ -2172,6 +2172,30 @@ std::unordered_map<uint64_t, int> g_initSeen;
 int g_initLogs = 0;
 constexpr int kInitMaxLogs = 500;
 
+// Voices without the 3D property (WickedWhims animation voices, ids in the log):
+// the game plays a sound without the 3D bit flat, in the middle of the head,
+// wherever its Sim is. A sound with the voice bit (0x4) but not 3D gets the 3D bit
+// as it is made, so the game builds its fall-off and panner for it like for the
+// game's own voices (position comes with the sound start). First person only.
+using SoundFlagsFn = void (*)(void* sound, void* props);
+SoundFlagsFn g_originalSoundFlags = nullptr;
+std::atomic<uint64_t> g_voicesMade3D{0};
+
+void hookedSoundFlags(void* sound, void* props) {
+    g_originalSoundFlags(sound, props);
+    if (!props || !g_panFirstPerson.load(std::memory_order_relaxed) ||
+        !g_panAnyDistance.load(std::memory_order_relaxed))
+        return;
+    uint8_t* base = static_cast<uint8_t*>(sound);
+    uint32_t flags;
+    std::memcpy(&flags, base + kSoundFlags, sizeof(flags));
+    if ((flags & 5) != 4) return;
+    flags |= 1;
+    std::memcpy(base + kSoundFlags, &flags, sizeof(flags));
+    const uint64_t n = ++g_voicesMade3D;
+    if (n <= 20 || n % 100 == 0) LOG("Sound voices: %llu 2D voice sounds made 3D so far (flags now 0x%x)", (unsigned long long)n, flags);
+}
+
 void hookedSoundInit(void* sound, uint64_t id) {
     g_originalSoundInit(sound, id);
     if (!g_panFirstPerson.load(std::memory_order_relaxed) || g_initLogs >= kInitMaxLogs) return;
@@ -2270,6 +2294,13 @@ void installLoudnessLog() {
                                      reinterpret_cast<void**>(&g_originalDistanceUpdate));
     if (status == MH_OK) status = MH_EnableHook(target);
     if (status != MH_OK) LOG("Sound loudness log hook failed: %s", MH_StatusToString(status));
+    uint8_t* flagsFn = addrs::fn("SoundFlags");
+    if (flagsFn) {
+        status = MH_CreateHook(flagsFn, reinterpret_cast<void*>(&hookedSoundFlags),
+                               reinterpret_cast<void**>(&g_originalSoundFlags));
+        if (status == MH_OK) status = MH_EnableHook(flagsFn);
+        if (status != MH_OK) LOG("Sound voices hook failed: %s", MH_StatusToString(status));
+    }
     uint8_t* init = addrs::fn("SoundInit");
     if (init) {
         status = MH_CreateHook(init, reinterpret_cast<void*>(&hookedSoundInit),
