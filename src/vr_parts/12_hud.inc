@@ -274,28 +274,10 @@ static bool onArm(HudSheet& s, int side, const armik::Hand& controller, const ca
     camera::Quat handGrip;
     float handScale;
     if (!armik::handPose(side, handWrist, handGrip, handScale)) return false;
-    // Steady (user 2026-10-23: the idle swayed the wrist HUD): while the piece shows, its wrist and forearm keep
-    // where they lay in your hand's frame when it came up, so only your controller moves it, not the animation.
-    {
-        const int index = static_cast<int>(&s - g_hud);
-        static bool held[16] = {};
-        static XrVector3f wristLocal[16], elbowLocal[16];
-        const XrQuaternionf grip{handGrip.x, handGrip.y, handGrip.z, handGrip.w};
-        const XrQuaternionf inv{-grip.x, -grip.y, -grip.z, grip.w};
-        const XrVector3f hw{handWrist.x, handWrist.y, handWrist.z};
-        if (index >= 0 && index < 16 && g_config.bodySteadyShoulders) {
-            if (!s.m.active || !held[index]) {
-                wristLocal[index] = rotate3(inv, sub3({w[0], w[1], w[2]}, hw));
-                elbowLocal[index] = rotate3(inv, sub3({e[0], e[1], e[2]}, hw));
-                held[index] = s.m.active;
-            }
-            const XrVector3f wl = rotate3(grip, wristLocal[index]), el = rotate3(grip, elbowLocal[index]);
-            w[0] = hw.x + wl.x, w[1] = hw.y + wl.y, w[2] = hw.z + wl.z;
-            e[0] = hw.x + el.x, e[1] = hw.y + el.y, e[2] = hw.z + el.z;
-        } else if (index >= 0 && index < 16) {
-            held[index] = false;
-        }
-    }
+    // No hold in the hand's frame here (v0.13.376 kept wrist and elbow where they lay when the piece came up):
+    // the piece is drawn from the joints of each frame (placeArmPieces), so a held sheet drifted off the drawn
+    // one as the elbow moved, more the further from the wrist it sat, and pokes missed (user 2026-10-26).
+    // armik's steady_shoulders keeps the idle off the arms now (v0.13.490).
     XrVector3f wrist = worldToApp(view, w, false);
     XrVector3f axis = sub3(worldToApp(view, e, false), wrist);
     if (!(dot3(axis, axis) > 1e-4f)) return false;
@@ -919,11 +901,24 @@ static void updateHud(const armik::Hand hands[2], bool firstPerson, bool headOk,
     phone3d::setPieces(panels, count, count ? atlas : nullptr);
 }
 
+// Pieces on your forearm (`arm`: the watch, build button, queue; user 2026-10-26: hard to press from some
+// angles, more once moved): small and on a round arm, so a finger often comes in over an edge, or slides on
+// from the arm's side a little under the sheet's plane, and the old test (armed only in front, over the sheet)
+// never pressed. There a finger arms anywhere within kArmPokeBand round the sheet in front of it, or off its
+// edge down to kArmPokeEdge under it; it presses once it is over the sheet (kArmPokeMargin) with the fingertip
+// within kArmPokeTouch of the surface: the finger's pad touching, whichever way it came.
+static constexpr float kArmPokeMargin = 0.015f;  // metres off the sheet's edge that still press
+static constexpr float kArmPokeBand = 0.05f;     // metres round the sheet in which a finger in front arms
+static constexpr float kArmPokeEdge = 0.012f;    // metres under the plane a finger off the edge still arms at
+static constexpr float kArmPokeTouch = 0.004f;   // the fingertip this close in front of the surface presses
+
 // A finger on a HUD sheet: the pointer there, pressing once it has gone
 // through the surface from in front (and until it comes back out).
-static bool pokeHud(HudSheet& s, const armik::Hand hands[2], const bool use[2]) {
+static bool pokeHud(HudSheet& s, const armik::Hand hands[2], const bool use[2], bool arm = false) {
     PieMenu& m = s.m;
     if (!m.active) return false;
+    const float margin = arm ? kArmPokeMargin : 0.01f, band = arm ? kArmPokeBand : 0.01f;
+    const float touch = arm ? kArmPokeTouch : 0.0f;
     int best = -1;
     float bestZ = 1e9f, bx = 0, by = 0, bz = 0;
     for (int i = 0; i < 2; ++i) {
@@ -933,19 +928,24 @@ static bool pokeHud(HudSheet& s, const armik::Hand hands[2], const bool use[2]) 
         }
         float lx, ly, lz;
         sheetLocal(m, simFingertip(hands[i], i), lx, ly, lz);
-        if (!insideSheet(m, lx, ly, 0.01f) || lz > kPokeHover || lz < -kPokeThrough) {
+        if (!insideSheet(m, lx, ly, band) || lz > kPokeHover || lz < -kPokeThrough) {
             m.armed[i] = false;
             if (m.pressing == i) m.pressing = -1;
             continue;
         }
-        if (lz > 0.005f) m.armed[i] = true;
-        float rank = i == m.pressing ? -1e9f : std::fabs(lz);
+        const bool over = insideSheet(m, lx, ly, margin);
+        if (lz > touch + 0.005f || (arm && !over && lz > -kArmPokeEdge)) m.armed[i] = true;
+        if (!over) {  // arming round the edge: no pointer yet
+            if (m.pressing == i) m.pressing = -1;
+            continue;
+        }
+        float rank = i == m.pressing ? -1e9f : std::fabs(lz - touch);
         if (rank < bestZ) {
             bestZ = rank;
             best = i;
             bx = lx;
             by = ly;
-            bz = lz;
+            bz = lz - touch;
         }
     }
     if (best < 0) {
@@ -957,6 +957,16 @@ static bool pokeHud(HudSheet& s, const armik::Hand hands[2], const bool use[2]) 
         m.pressing = best;
         m.armed[best] = false;
         buzz(best, 0.2f, 0.015f);
+        static int logged = 0;
+        if (arm && logged++ < 40) {
+            // How the finger came in: degrees off straight into the sheet (from the hand's speed).
+            const XrVector3f& v = g_handVelocity[best];
+            const float speed = std::sqrt(dot3(v, v));
+            const float off = speed > 0.05f ? std::acos(std::clamp(-dot3(v, m.z) / speed, -1.0f, 1.0f)) * 57.2958f : -1;
+            LOG("Wrist poke: pressed a %.1f x %.1f cm piece %.1f cm right, %.1f cm up of its centre, finger %.0f deg "
+                "off straight in",
+                m.width * 100, m.height * 100, bx * 100, by * 100, off);
+        }
     }
     float a = std::max(0.0f, std::min(1.0f, bx / m.width + 0.5f)), b = std::max(0.0f, std::min(1.0f, 0.5f - by / m.height));
     g_hudInput.px = m.x0 + a * m.cw;
@@ -979,9 +989,9 @@ static bool pokeHuds(const armik::Hand hands[2]) {
     const bool other[2] = {g_bookHand != 0 && hands[0].grip > 0.5f, g_bookHand != 1 && hands[1].grip > 0.5f};
     return pokeHud(g_bookSheet[0], hands, other) || pokeHud(g_bookSheet[1], hands, other) || pokeHud(g_hud[kHudPopup], hands, both) || pokeHud(g_hud[kHudPicker], hands, both) ||
            pokeHud(g_hud[kHudKeyboard], hands, both) || pokeHud(g_hud[kHudNote], hands, both) ||
-           pokeHud(g_hud[kHudWatch], hands, right) ||
-           pokeHud(g_hud[kHudBuild], hands, right) ||
-           pokeHud(g_hud[kHudQueue], hands, right) || pokeHud(g_hud[kHudSleep], hands, both);
+           pokeHud(g_hud[kHudWatch], hands, right, true) ||
+           pokeHud(g_hud[kHudBuild], hands, right, true) ||
+           pokeHud(g_hud[kHudQueue], hands, right, true) || pokeHud(g_hud[kHudSleep], hands, both);
 }
 
 // The laser on the watch, the asleep watch, the build button, the queue or
