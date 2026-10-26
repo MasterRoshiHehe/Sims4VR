@@ -32,6 +32,13 @@ def _report(on, why):
         _reported = on
         native._log('buildbuy: {} build/buy mode ({})'.format('in' if on else 'out of', why))
         native.set_build_buy(on)
+        try:  # doors and stairs placed or moved in build/buy: list them again now
+            from sims4vr import doors, stairs
+            doors.close_all()
+            doors.forget()
+            stairs.forget()
+        except Exception as e:
+            native._log('buildbuy: forgetting doors failed: {!r}'.format(e))
         if on:
             try:
                 _send_wallpaper()
@@ -168,14 +175,4 @@ def _wrap():
                 try:
                     _report(on, name)
                 except Exception as e:
-                    native._log('buildbuy: report failed: {!r}'.format(e))
-        hooks.hook('buildbuy', Zone, name, wrapped)
-
-    wrap('on_build_buy_enter', True)
-    wrap('on_build_buy_exit', False)
-
-
-try:
-    _wrap()
-except Exception as e:
-    native._log('buildbuy: wrapping the zone failed: {!r}'.format(e))
+                    na

@@ -47,7 +47,12 @@ def _doorway_list():
             return _doorways
         _doors_sig = sig
         _doors_built = now
-        doorways = _build()
+        doorways, missing = _build()
+        if missing:
+            # A door without its portal sides yet (placed in build mode: the
+            # game makes them after leaving it, user 2026-10-26): look again
+            # at the next refresh, not only when the portals move.
+            _doors_sig = None
         if len(doorways) != len(_doorways):
             swinging = sum(1 for d in doorways if d[1])
             native._log('doors: {} doors and {} open passages on the lot'.format(swinging, len(doorways) - swinging))
@@ -58,17 +63,20 @@ def _doorway_list():
 @native.timed('listing doors', 0.004)
 def _build():
     doorways = []
+    missing = 0
     try:
         for obj in services.object_manager().values():
             if not isinstance(obj, Door):
                 continue
             sides = _sides(obj)
-            if sides is not None:
+            if sides is None:
+                missing += 1
+            else:
                 a, b = sides[0].position, sides[1].position
                 doorways.append((obj.id, not is_open_passage(obj), a.x, a.z, b.x, b.z, (a.y + b.y) / 2))
     except Exception as e:
         native._log('doors: listing doors failed: {!r}'.format(e))
-    return doorways
+    return doorways, missing
 
 
 def is_open_passage(door):
