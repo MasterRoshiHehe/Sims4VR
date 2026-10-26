@@ -175,4 +175,14 @@ def _wrap():
                 try:
                     _report(on, name)
                 except Exception as e:
-                    na
+                    native._log('buildbuy: report failed: {!r}'.format(e))
+        hooks.hook('buildbuy', Zone, name, wrapped)
+
+    wrap('on_build_buy_enter', True)
+    wrap('on_build_buy_exit', False)
+
+
+try:
+    _wrap()
+except Exception as e:
+    native._log('buildbuy: wrapping the zone failed: {!r}'.format(e))
