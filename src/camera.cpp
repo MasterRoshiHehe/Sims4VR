@@ -2124,6 +2124,7 @@ std::unordered_map<uintptr_t, int> g_probeClass;
 int g_probeLogs = 0;
 constexpr int kProbeMaxLogs = 4000;
 
+void dumpWords(void* sound, int cls);
 void probeSound(void* sound, const HeardSound& h, ULONGLONG now) {
     int cls = 0;
     if (!(h.flags & 1)) {
