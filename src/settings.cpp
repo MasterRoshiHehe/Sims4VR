@@ -575,6 +575,7 @@ std::vector<Row> makeRows() {
         flag(moving, L"Stairs and ladders carry you", "body", "carried_stairs", true),
         toggle(moving, L"Body drawn at your height (stairs)", "body", "keep_height", &Config::bodyKeepHeight, kWalk),
         toggle(moving, L"Slide smoothly along walls", "body", "smooth_slide", &Config::bodySmoothSlide, kWalk),
+        flag(moving, L"Map walls and furniture around you", "body", "collision_scene", true, kLive),  // collide.py
         toggle(moving, L"Start and stop walking animations", "body", "walk_clips", &Config::bodyWalkClips, kWalk),
         number(moving, L"Stop smoothness (0 = instant)", "body", "stop_time", &Config::bodyStopTime, 0, 1.5f, 0.1f, 1, L"%.1f s",
                kWalk),

@@ -14,7 +14,8 @@ An object stops your body only when the game's navmesh is cut there too
 counts for your head and hands.
 
 Phase 1: the scene is built and logged, and compared with walk.py's ray
-check; nothing moves you by it yet.
+check; nothing moves you by it yet. Switch: [body] collision_scene
+(debug menu: Controls > Moving), read every 2 s.
 """
 import math
 import time
@@ -34,8 +35,9 @@ from sims4vr import native
 RADIUS = 8.0  # metres around you that walls and objects are collected
 REBUILD_MOVE = 3.0  # metres from the last build centre before it is built again
 REBUILD_GAP = 1.0  # seconds at least between builds for objects moved near you
-SCAN = 300  # objects of the whole lot looked at per tick while building
-BATCH = 25  # nearby objects measured per tick while building
+SCAN = 150  # objects of the whole lot looked at per tick while building
+BATCH = 15  # nearby objects measured per tick while building
+SWITCH_EVERY = 2.0  # seconds between reads of the debug-menu switch ([body] collision_scene)
 MIN_HEIGHT = 0.05  # metres: lower things (rugs, seed packs) are walked over
 HIP = 0.9  # metres above the floor: objects starting lower can stop your body
 GAP_DEPTH = 0.3  # metres either side of a door's strip cut out of the wall
@@ -54,6 +56,7 @@ _watching = False
 _compared = 0.0
 _logs = 0
 _disagree = [0, 0]  # comparisons that disagreed, all comparisons (since the last log)
+_switch = [True, -1e9]  # [body] collision_scene, when last read
 
 
 def _log(message):
@@ -383,7 +386,16 @@ def _compare(x, z, mask):
 def update(sim, x, y, z, surface, free, mask):
     """walk.py's tick: keeps the scene built around you; compares while you walk freely."""
     global _state, _pending, _compared, _dirty, _built_at
-    if surface is None:
+    now = time.monotonic()
+    if now - _switch[1] > SWITCH_EVERY:
+        _switch[1] = now
+        on = native.setting_flag('body', 'collision_scene', True)
+        if on != _switch[0]:
+            _switch[0] = on
+            _log('switched {} (debug menu: Moving)'.format('on' if on else 'off'))
+            if not on:
+                forget()
+    if not _switch[0] or surface is None:
         return
     _watch(True)
     if _pending is not None:
@@ -396,7 +408,6 @@ def update(sim, x, y, z, surface, free, mask):
             _pending = None
             _log('build failed: {!r}'.format(e))
         return
-    now = time.monotonic()
     level = surface.secondary_id
     build_id = routing.planner_build_id()
     stale = (_state is None or _state[2] != level or _state[3] != build_id
