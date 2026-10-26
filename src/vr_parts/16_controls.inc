@@ -433,8 +433,19 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
         now - g_lastWorldClick.tick < 8000) {
         XrSpaceLocation head{XR_TYPE_SPACE_LOCATION};
         if (XR_SUCCEEDED(xrLocateSpace(g_viewSpace, g_appSpace, time, &head)) &&
-            (head.locationFlags & located) == located && openPie(head.pose.position))
-            choosePiePalm(hands);
+            (head.locationFlags & located) == located && openPie(head.pose.position)) {
+            if (g_piePhoneAskedAt && now - g_piePhoneAskedAt < 8000 && g_pie.own && g_phoneOut && !g_tablet &&
+                !g_sims1Phone.on) {
+                g_piePhone = true;
+                g_piePalm = -1;
+                placePieOnPhone();
+                static int logged = 0;
+                if (logged++ < 20) LOG("Pie menu at hand: on the phone (asked from its screen)");
+            } else {
+                choosePiePalm(hands);
+            }
+        }
+        g_piePhoneAskedAt = 0;
         g_lastWorldClick.valid = false;
     }
     updatePiePalm(time, hands);

@@ -74,6 +74,7 @@ static void phoneClose(const char* why) {
         return;
     }
     hideHud(g_phoneSheet);
+    if (g_piePhone) dismissPie("phone away");
     if (g_phoneOptions && gameMenuOpen() && !g_popupOpen) {
         // Close the menu first, so it doesn't pause the game for a moment.
         // (Not with a popup up: Escape would answer it for you.)
@@ -100,10 +101,35 @@ static void phoneClose(const char* why) {
 // body is our own picture (phoneBodyLayer); the menu sits inside its screen,
 // as large as fits without stretching.
 static XrPosef g_phoneBodyPose{};
-static XrVector3f g_phoneFront{};  // 10 cm out from the glass, toward you: where a pie asked from the phone shows
+static XrVector3f g_phoneFront{};  // 10 cm out from the glass, toward you: the click a pie asked from the phone answers
 static bool g_phoneFrontOk = false;
+static XrVector3f g_phoneAxes[3]{};  // the phone's x (right), y (up), z (out of the glass, toward you), app space
+static float g_phoneGlassOut = 0;    // metres from the phone's centre out to its glass
 
-// A pie menu asked from the phone (a contact's portrait): drawn by us as any pie, in front of the phone. As
+// The pie asked from the phone, on the phone: in the middle of its glass, kPiePhoneLift out, turned as the phone
+// is (the poke and laser sheet too, so they hit what you see). Every frame from updatePhone, and as it opens.
+static void placePieOnPhone() {
+    if (!g_piePhone || !g_pie.active) return;
+    if (!g_pie.own || !g_phoneFrontOk) {
+        g_piePhone = false;  // the game's cut after all, or no phone: it stays where it is
+        return;
+    }
+    const XrVector3f &c = g_phoneBodyPose.position, &x = g_phoneAxes[0], &y = g_phoneAxes[1], &z = g_phoneAxes[2];
+    const float out = g_phoneGlassOut + kPiePhoneLift;
+    g_pie.x = x;
+    g_pie.y = y;
+    g_pie.z = z;
+    g_pie.pose = {g_phoneBodyPose.orientation, {c.x + z.x * out, c.y + z.y * out, c.z + z.z * out}};
+    PieMenu& m = g_hud[kHudPie].m;
+    if (m.active) {
+        m.x = x;
+        m.y = y;
+        m.z = z;
+        m.pose = g_pie.pose;
+    }
+}
+
+// A pie menu asked from the phone (a contact's portrait): drawn by us as any pie, on the phone. As
 // requestSelfPie: the click it answers is put there, the mouse waits for it, then the control asks the game.
 static void requestPhonePie(int control, bool ours) {
     const ULONGLONG now = GetTickCount64();
@@ -124,8 +150,9 @@ static void requestPhonePie(int control, bool ours) {
     // Our own options (Call / Text): no game pie behind them, so nothing to close with Escape (as a popup's).
     g_dialogPiePending = ours;
     g_oursPiePending = ours;
+    g_piePhoneAskedAt = now;
     grab::pushControl(control);
-    LOG("Phone: pie menu asked for in front of the phone (control %d)", control);
+    LOG("Phone: pie menu asked for on the phone (control %d)", control);
 }
 
 // The phone where phone3d draws it: in the Sim's hand (armik's latest pose),
@@ -282,6 +309,11 @@ static void updatePhone(const armik::Hand& hand, int side) {
     g_phoneBodyPose = {facing, centre};
     g_phoneFront = {centre.x + z2.x * 0.10f, centre.y + z2.y * 0.10f, centre.z + z2.z * 0.10f};
     g_phoneFrontOk = true;
+    g_phoneAxes[0] = x;
+    g_phoneAxes[1] = y2;
+    g_phoneAxes[2] = z2;
+    g_phoneGlassOut = depth / 2;
+    placePieOnPhone();
     // The game's phone prop (phone.py, for mirrors) sits inside this one: left out of the view from your eyes.
     if (g_config.phoneProp && !g_tablet && g_phoneHand == 1) {
         camera::View view;

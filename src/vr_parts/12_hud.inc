@@ -655,7 +655,7 @@ static void updatePieHud() {
         return;
     }
     const float perStage = g_config.pieWidth / 1100.0f, scale = std::max(0.2f, hud::pieScale());
-    const float w = hud::kPie.w / scale * perStage * (g_piePalm >= 0 ? g_config.piePalmSize : 1.0f);
+    const float w = hud::kPie.w / scale * perStage * (g_piePalm >= 0 || g_piePhone ? g_config.piePalmSize : 1.0f);
     placeHud(s, g_pie.pose.position, g_pie.x, g_pie.y, w, {hud::kPie.x, hud::kPie.y, hud::kPie.w, hud::kPie.h});
     g_pie.width = s.m.width;
     g_pie.height = s.m.height;

@@ -76,6 +76,12 @@ static bool g_piePalmFist = false;
 static ULONGLONG g_piePalmFistAt = 0;
 static int g_piePalmNext = -1;  // dynamic: the palm the own pie asked for now goes to
 static ULONGLONG g_piePalmNextAt = 0;
+// The pie asked from the phone (a contact's portrait, Call / Text; user 2026-10-26): on the phone, over the middle
+// of its glass in the phone's own plane, moving with it as the palm's pie moves with the palm (14_phone.inc
+// placePieOnPhone). Asked for at g_piePhoneAskedAt; the pie opened within 8 s goes there.
+static bool g_piePhone = false;
+static ULONGLONG g_piePhoneAskedAt = 0;
+static constexpr float kPiePhoneLift = 0.03f;  // metres in front of the glass (over the holding hand's thumb)
 static bool pieHidden() { return g_pie.active && g_piePalm >= 0 && (!g_piePalmUp || g_piePalmFist); }
 
 // A popup's answers as the pie (objmenu.py chat questions, dialogPie): asked for, then open.
@@ -95,6 +101,7 @@ static void closePie(const char* why) {
     g_pieOurs = false;
     g_piePalm = -1;
     g_piePalmUp = g_piePalmFist = false;
+    g_piePhone = false;
     g_pie.active = false;
     g_pieShown.store(false, std::memory_order_relaxed);
     if (g_pie.own) hud::clearPie(g_pie.serial);

@@ -423,8 +423,8 @@ static bool shovePie(const armik::Hand hands[2]) {
         velocity[i] = {velocity[i].x + (v.x - velocity[i].x) * k, velocity[i].y + (v.y - velocity[i].y) * k,
                        velocity[i].z + (v.z - velocity[i].z) * k};
         if (!g_pie.active || GetTickCount64() - g_pie.opened < kShoveSettle || g_pie.pressing == i || i == g_piePalm ||
-            pieHidden())
-            continue;  // the palm holding the pie doesn't shove it (its fist closes it)
+            (g_piePhone && i == g_phoneHand) || pieHidden())
+            continue;  // the palm holding the pie doesn't shove it (its fist closes it), nor the hand holding the phone it is on
         // Only an empty hand slaps: no grip, trigger or button held (pointing
         // with the grip to press an option is not a slap).
         if (!emptyHand(i)) continue;
