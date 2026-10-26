@@ -42,6 +42,7 @@ cbuffer Params : register(b0) {
     uint reversed;    // 1: the depth clears to 0 (near is 1)
     uint samples, count, levels, pad;
     float4 boundsLow, boundsHigh;  // around all of the parts
+    float4 holeRect;   // eye picture pixels x0, y0, x1, y1 (exclusive) that can hold your body
     float4 partA[48];  // your body: segment start, radius (view space: x right, y up, z ahead)
     float4 partB[48];  // segment end
 };
@@ -92,6 +93,7 @@ float psMask(VsOut i) : SV_Target {
 // Your body and a pixel around it, so its edges keep their smoothing.
 // p: an eye picture pixel, looked up in the mask at the depth's size.
 float hole(int2 p) {
+    if (p.x < (int)holeRect.x || p.y < (int)holeRect.y || p.x >= (int)holeRect.z || p.y >= (int)holeRect.w) return 0;
     uint sw, sh, mw, mh;
     scene.GetDimensions(sw, sh);
     mask.GetDimensions(mw, mh);
@@ -152,6 +154,7 @@ struct Params {
     uint32_t reversed;
     uint32_t samples, count, levels, pad;
     float boundsLow[4], boundsHigh[4];
+    float holeRect[4];
     float partA[camera::kBodyParts][4];
     float partB[camera::kBodyParts][4];
 };
@@ -169,6 +172,7 @@ ID3D11PixelShader* g_psFill = nullptr;
 ID3D11Buffer* g_params = nullptr;
 ID3D11SamplerState* g_sampler = nullptr;
 ID3DDeviceContextState* g_state = nullptr;
+ID3D11RasterizerState* g_scissor = nullptr;  // our passes kept to your body's box on screen
 
 // Sized to the eye pictures.
 UINT g_width = 0, g_height = 0, g_maskWidth = 0, g_maskHeight = 0;
@@ -204,6 +208,8 @@ TargetView g_targets[kTargets] = {};
 uint64_t g_targetUse = 0;
 
 uint64_t g_splits = 0, g_noDepth = 0, g_otherSize = 0;
+double g_boxShare = 0;  // share of the eye picture inside your body's box, summed
+uint64_t g_boxCount = 0;
 ULONGLONG g_logAt = 0;
 int g_logs = 0;
 
@@ -278,6 +284,12 @@ bool init(ID3D11Device* device) {
     sd.AddressU = sd.AddressV = sd.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
     sd.MaxLOD = D3D11_FLOAT32_MAX;
     if (FAILED(device->CreateSamplerState(&sd, &g_sampler))) return false;
+    D3D11_RASTERIZER_DESC rd{};
+    rd.FillMode = D3D11_FILL_SOLID;
+    rd.CullMode = D3D11_CULL_NONE;
+    rd.DepthClipEnable = TRUE;
+    rd.ScissorEnable = TRUE;
+    if (FAILED(device->CreateRasterizerState(&rd, &g_scissor))) return false;
 
     // A separate pipeline state, swapped in for our passes and out again, so
     // the game's own bindings are restored exactly.
@@ -463,17 +475,52 @@ void logNow() {
     if (now - g_logAt < 30000 || g_logs >= 60) return;
     ++g_logs;
     LOG("Body layer: last 30 s, %llu eye pictures split, %llu without this frame's depth, %llu of another size; "
-        "graphics card %.2f ms per split on average, worst %.2f (%llu timed)",
+        "graphics card %.2f ms per split on average, worst %.2f (%llu timed); your body's box %.0f%% of the picture on average",
         static_cast<unsigned long long>(g_splits), static_cast<unsigned long long>(g_noDepth),
         static_cast<unsigned long long>(g_otherSize), g_gpuCount ? g_gpuSum / double(g_gpuCount) : 0.0, g_gpuWorst,
-        static_cast<unsigned long long>(g_gpuCount));
+        static_cast<unsigned long long>(g_gpuCount), g_boxCount ? 100.0 * g_boxShare / g_boxCount : 0.0);
     g_splits = g_noDepth = g_otherSize = 0;
+    g_boxShare = 0;
+    g_boxCount = 0;
     g_gpuSum = g_gpuWorst = 0;
     g_gpuCount = 0;
     g_logAt = now;
 }
 
 }  // namespace
+
+// The eye picture pixels your body's parts can cover: each part end as a box of its radius,
+// cut at the near limit (nothing nearer is in the depth), its view tangents to pixels.
+// Empty (x0 >= x1) when no part is in front of you.
+void bodyBox(const camera::BodyParts& parts, const float tangents[4], UINT width, UINT height, int box[4]) {
+    const float zMin = std::max(parts.nearZ * 0.9f, 0.01f);
+    float lowX = 1e9f, highX = -1e9f, lowY = 1e9f, highY = -1e9f;
+    auto extent = [](float c, float r, float zLo, float zHi, float& lo, float& hi) {
+        lo = std::min(lo, (c - r) / (c - r >= 0 ? zHi : zLo));
+        hi = std::max(hi, (c + r) / (c + r >= 0 ? zLo : zHi));
+    };
+    const int count = std::min(parts.count, camera::kBodyParts);
+    for (int i = 0; i < count; ++i)
+        for (const float* e : {parts.a[i], parts.b[i]}) {
+            const float r = parts.a[i][3], zHi = e[2] + r;
+            if (zHi < zMin || e[2] - r > kConsider) continue;
+            const float zLo = std::max(e[2] - r, zMin);
+            extent(e[0], r, zLo, zHi, lowX, highX);
+            extent(e[1], r, zLo, zHi, lowY, highY);
+        }
+    // Tangent to picture: x from left to right, y from up (top row) to down.
+    const float u0 = (lowX - tangents[0]) / (tangents[1] - tangents[0]), u1 = (highX - tangents[0]) / (tangents[1] - tangents[0]);
+    const float v0 = (highY - tangents[2]) / (tangents[3] - tangents[2]), v1 = (lowY - tangents[2]) / (tangents[3] - tangents[2]);
+    constexpr int kPad = 4;  // the mask's one-pixel ring, at up to 2x (FSR), and rounding
+    auto px = [](float t, UINT size, int pad) {
+        const float v = std::floor(std::max(-1.0f, std::min(2.0f, t)) * size) + pad;
+        return static_cast<int>(std::max(0.0f, std::min(static_cast<float>(size), v)));
+    };
+    box[0] = px(u0, width, -kPad);
+    box[1] = px(v0, height, -kPad);
+    box[2] = px(u1, width, kPad + 1);
+    box[3] = px(v1, height, kPad + 1);
+}
 
 bool split(ID3D11Texture2D* eye, ID3D11Texture2D* body, DXGI_FORMAT format, UINT width, UINT height,
            const camera::Fov& fov, const camera::BodyParts& parts) {
@@ -550,8 +597,28 @@ bool split(ID3D11Texture2D* eye, ID3D11Texture2D* body, DXGI_FORMAT format, UINT
             }
         }
 
+        int box[4];
+        bodyBox(parts, params.tangents, width, height, box);
+        const bool anyBody = box[0] < box[2] && box[1] < box[3];
+        if (!anyBody) box[0] = box[1] = box[2] = box[3] = 0;
+        for (int k = 0; k < 4; ++k) params.holeRect[k] = static_cast<float>(box[k]);
+        g_boxShare += double(box[2] - box[0]) * double(box[3] - box[1]) / (double(width) * double(height));
+        ++g_boxCount;
+        // The same box in mask (depth) pixels, rounded outwards.
+        const D3D11_RECT eyeBox{box[0], box[1], box[2], box[3]};
+        const D3D11_RECT maskBox{
+            static_cast<LONG>(std::floor(double(box[0]) * depthWidth / width)),
+            static_cast<LONG>(std::floor(double(box[1]) * depthHeight / height)),
+            static_cast<LONG>(std::ceil(double(box[2]) * depthWidth / width)),
+            static_cast<LONG>(std::ceil(double(box[3]) * depthHeight / height))};
+        const D3D11_RECT whole{0, 0, 1 << 14, 1 << 14};
+
         ID3DDeviceContextState* gameState = nullptr;
         context1->SwapDeviceContextState(g_state, &gameState);
+        context1->RSSetState(g_scissor);
+        const float transparent[4] = {0, 0, 0, 0};
+        context1->ClearRenderTargetView(g_maskTarget, transparent);
+        context1->ClearRenderTargetView(bodyTarget, transparent);
         context1->UpdateSubresource(g_params, 0, nullptr, &params, 0, 0);
         context1->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         context1->VSSetShader(g_vs, nullptr, 0);
@@ -569,7 +636,8 @@ bool split(ID3D11Texture2D* eye, ID3D11Texture2D* body, DXGI_FORMAT format, UINT
         context1->PSSetShaderResources(0, 4, maskViews);
         context1->PSSetShader(g_psMask[samples > 1 ? 1 : 0], nullptr, 0);
         viewport(depthWidth, depthHeight);
-        context1->Draw(3, 0);
+        context1->RSSetScissorRects(1, &maskBox);
+        if (anyBody) context1->Draw(3, 0);
 
         // 2. Your body to its layer.
         context1->PSSetShaderResources(0, 4, none);
@@ -578,15 +646,17 @@ bool split(ID3D11Texture2D* eye, ID3D11Texture2D* body, DXGI_FORMAT format, UINT
         context1->PSSetShaderResources(0, 2, pushViews);
         context1->PSSetShader(g_psBody, nullptr, 0);
         viewport(width, height);  // the mask pass left the depth's size (smaller with FSR)
-        context1->Draw(3, 0);
+        context1->RSSetScissorRects(1, &eyeBox);
+        if (anyBody) context1->Draw(3, 0);
 
         // 3. The world around it, averaged into ever coarser levels.
         context1->OMSetRenderTargets(1, &g_pushTarget[0], nullptr);
         context1->PSSetShader(g_psPush0, nullptr, 0);
+        context1->RSSetScissorRects(1, &whole);
         viewport(g_levelSize[0][0], g_levelSize[0][1]);
-        context1->Draw(3, 0);
+        if (anyBody) context1->Draw(3, 0);
         context1->PSSetShader(g_psPush, nullptr, 0);
-        for (int l = 1; l < g_levels; ++l) {
+        for (int l = 1; l < g_levels && anyBody; ++l) {
             context1->OMSetRenderTargets(1, &g_pushTarget[l], nullptr);
             context1->PSSetShaderResources(2, 1, &g_pushLevel[l - 1]);
             viewport(g_levelSize[l][0], g_levelSize[l][1]);
@@ -599,7 +669,8 @@ bool split(ID3D11Texture2D* eye, ID3D11Texture2D* body, DXGI_FORMAT format, UINT
         context1->PSSetShaderResources(2, 1, &g_pushAll);
         context1->PSSetShader(g_psFill, nullptr, 0);
         viewport(width, height);
-        context1->Draw(3, 0);
+        context1->RSSetScissorRects(1, &eyeBox);
+        if (anyBody) context1->Draw(3, 0);
 
         // Leave nothing of ours bound, then hand the game its state back.
         ID3D11RenderTargetView* noTarget = nullptr;
@@ -660,6 +731,7 @@ void release() {
     }
     safeRelease(g_state);
     safeRelease(g_sampler);
+    safeRelease(g_scissor);
     safeRelease(g_params);
     safeRelease(g_psFill);
     safeRelease(g_psPush);
