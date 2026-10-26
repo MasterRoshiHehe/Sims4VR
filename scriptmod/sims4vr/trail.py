@@ -339,7 +339,16 @@ def _should_hold(agent, path, interaction):
     straight = math.hypot(end.x - here.x, end.z - here.z)
     # Hand contact: even the short line-up is yours to walk (the game's own was
     # cut short on the client and left you a metre off, v0.13.218).
-    if max(length, straight) <= (_arrive_radius(True) if getattr(interaction, '_sims4vr_touch', None) else LINE_UP):
+    contact = bool(getattr(interaction, '_sims4vr_touch', None))
+    if max(length, straight) <= (_arrive_radius(True) if contact else LINE_UP):
+        return None
+    # Already on the spot by _hold_gen's own arrival test: the game's line-up
+    # plays. Without this, [body] trail_arrive over LINE_UP (user ini 1.3) held
+    # the line-up planned after arriving, arrived at once and derailed again,
+    # 8x a second: the Sim froze (user 2026-10-26, Pay Bills from 1.1 m).
+    you = _you(agent)
+    if math.hypot(you[0] - end.x, you[2] - end.z) <= _arrive_radius(contact) and \
+            abs(you[1] - end.y) <= ARRIVE_HEIGHT:
         return None
     return '{:.1f} m'.format(max(length, straight))
 
