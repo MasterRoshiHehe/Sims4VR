@@ -4124,7 +4124,7 @@ Action drawPhone(ImDrawList* d, int* index) {
         const art::Piece* own = node == -1 ? &art::kAppSettings : node == -2 ? &art::kAppCalendar : node == -3 ? &art::kAppBuild
                               : node == -10 ? &art::kAppGameOptions : node == -11 ? &art::kAppPhoneOptions
                               : node == -12 ? &art::kAppVrOptions : node == -4 ? &art::kAppMySim : node == -5 ? &art::kAppRelationships : node == -7 ? &art::kAppSimsForever : node == -15 ? &art::kAppGodView
-                              : node == -6 ? &art::kAppWeather : node == -16 ? &art::kAppCheats : nullptr;
+                              : node == -6 ? &art::kAppWeather : node == -16 ? &art::kAppCheats : node == -13 ? &art::kAppGallery : nullptr;
         if (own) {
             const float h = 32 * S;
             pieceIn(d, *own, {c.x - h, c.y - h}, {c.x + h, c.y + h}, tint);

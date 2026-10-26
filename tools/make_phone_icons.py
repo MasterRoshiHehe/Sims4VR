@@ -563,6 +563,26 @@ def cheats():
     finish(img, inner, 'cheats')
 
 
+def gallery():
+    """Settings > Gallery: two framed pictures fanned out, a landscape on the front one (the game's Gallery)."""
+    img, inner = tile((255, 215, 170), (235, 120, 70), (150, 60, 25, 255))
+    back = mask_of(lambda d: d.polygon([(110, 130), (360, 80), (400, 330), (150, 380)], fill=255))
+    shadow(img, back, alpha=70)
+    fill(img, back, (255, 255, 255), (220, 225, 235), 90, outline=(110, 70, 40, 255), width=6, shade=False)
+    frame = mask_of(lambda d: d.rounded_rectangle((120, 170, 410, 420), radius=14, fill=255))
+    shadow(img, frame)
+    fill(img, frame, (255, 255, 255), (225, 230, 238), 90, outline=(90, 55, 30, 255), width=7, shade=False)
+    sky = mask_of(lambda d: d.rectangle((146, 196, 384, 394), fill=255))
+    fill(img, sky, (150, 210, 255), (90, 160, 235), 90, shade=False)
+    sun = mask_of(lambda d: d.ellipse((310, 214, 364, 268), fill=255))
+    fill(img, sun, (255, 240, 130), (250, 190, 40), 90, shade=False)
+    hills = mask_of(lambda d: (d.polygon([(146, 394), (146, 330), (220, 260), (300, 394)], fill=255),
+                               d.polygon([(230, 394), (310, 300), (384, 360), (384, 394)], fill=255)))
+    fill(img, hills, (130, 210, 100), (50, 140, 60), 90, shade=False)
+    gloss(img, frame, (130, 180, 400, 280), 90)
+    finish(img, inner, 'gallery')
+
+
 def figure(cx, top, s):
     """A standing Sim seen from the front, arms at its sides (mask): the Sims 1 family icon's people."""
     def draw(d):
@@ -678,6 +698,6 @@ if __name__ == '__main__':
     os.makedirs(OUT, exist_ok=True)
     for f in (settings, calendar, build, game_options, phone_options, vr_options, my_sim, aspirations, career, skills,
               relationships, inventory, needs, social_groups, owned_businesses, household, weather, wants,
-              need_hunger, need_hygiene, need_bladder, need_energy, need_fun, need_social, god_view, sims_forever, simology, souls_journey, cheats):
+              need_hunger, need_hygiene, need_bladder, need_energy, need_fun, need_social, god_view, sims_forever, simology, souls_journey, cheats, gallery):
         f()
     print('phone icons in', OUT)

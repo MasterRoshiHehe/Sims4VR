@@ -157,6 +157,7 @@ PIECES = [
     ('kAppGodView', '../art/phone_icons/god_view.png', 2),  # Settings > God View
     ('kAppSimsForever', '../art/phone_icons/sims_forever.png', 2),  # Home > Sims Forever (only with Sims 1 set up)
     ('kAppCheats', '../art/phone_icons/cheats.png', 2),  # Home > Cheats (the debug menu's testing cheats)
+    ('kAppGallery', '../art/phone_icons/gallery.png', 2),  # Settings > Gallery
     ('kNeedHunger', '../art/phone_icons/need_hunger.png', 2),  # the Needs app (make_phone_icons.py)
     ('kNeedHygiene', '../art/phone_icons/need_hygiene.png', 2),  # the Needs app (make_phone_icons.py)
     ('kNeedBladder', '../art/phone_icons/need_bladder.png', 2),  # the Needs app (make_phone_icons.py)
