@@ -22,6 +22,10 @@ bool install();
 void setWanted(bool wanted);
 // Whether the popup content on show is a client dialog of ours.
 bool showing();
+// Any thread: whether to watch the Flash stage's focus (about 15 times a second, on the UI thread).
+void watchTextFocus(bool on);
+// Any thread: a text field you type in has the focus (while watched). Its text goes to hud::setKeyboardText.
+bool textFocused();
 // Any thread: answer the client dialog with its n-th button (run on the UI thread).
 void press(int index);
 // Any thread: closes the game's own pie menu widget (on the UI thread), as its own pick does.

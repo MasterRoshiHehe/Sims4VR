@@ -39,6 +39,7 @@
 #include "hud.h"
 #include "nodim.h"
 #include "eyealign.h"
+#include "gesture.h"
 #include "grab.h"
 #include "handshape.h"
 #include "touch.h"

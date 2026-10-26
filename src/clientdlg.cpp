@@ -61,6 +61,9 @@ struct ServiceCall {
 };
 std::mutex g_serviceMutex;
 std::vector<ServiceCall> g_services;
+std::atomic<bool> g_watchFocus{false}, g_textFocus{false};
+bool g_focusProbeFailed = false;  // UI thread only
+std::string g_focusText;          // UI thread only
 std::string g_shownId;   // UI thread only
 std::string g_skippedId;
 
@@ -188,9 +191,6 @@ bool uiMessage(const Held& comms, const char* message, const std::string& json) 
         arg.data = const_cast<char*>(json.c_str());
         parsed = callMember(parser.v, "parse", &arg, 1, &payload) && payload.ok();
     }
-    Value args[2];
-    args[0].type = kString;
-    args[0].data = const_cast<char*>(message);
     const char* how = parsed ? "JSON.parse" : "";
     if (!json.empty() && !parsed) {
         // The JSON class not found or its parse refused (Manage Worlds, user 2026-10-26 16:09Z): the movie's own
@@ -208,6 +208,9 @@ bool uiMessage(const Held& comms, const char* message, const std::string& json) 
             if (m && g_movieInvoke(m, "Object", &payload.v, nullptr, 0) && payload.ok()) parsed = true, how = "an empty Object";
         }
     }
+    Value args[2];
+    args[0].type = kString;
+    args[0].data = const_cast<char*>(message);
     if (parsed) args[1] = payload.v;
     else args[1].type = kNull;
     bool sent = callMember(comms.v, "SendUIMessage", args, 2, nullptr);
@@ -352,6 +355,40 @@ void answer(const Value& manager, const Value& data, int index) {
     LOG("Client dialog '%s': button %d (closed %d, action %d)", g_shownId.c_str(), index, closed, ran);
 }
 
+// The VR keyboard's auto-detect (user 2026-10-24): the Flash stage's focus is a text field you type in.
+// scaleform.clik.managers.InputDelegate.getInstance().stage.focus, as the game's own FocusHandler reads it; a
+// TextField with type "input", or a clik TextInput holding one (member textField). Its text goes to the keyboard's
+// preview line.
+void pollFocus() {
+    bool focused = false;
+    std::string current;
+    Held delegate, instance, stage, focus, field;
+    static int logged = 0;
+    if (definition("scaleform.clik.managers.InputDelegate", delegate) &&
+        callMember(delegate.v, "getInstance", nullptr, 0, &instance) && instance.ok() &&
+        member(instance.v, "stage", stage) && member(stage.v, "focus", focus)) {
+        const Value* target = &focus.v;
+        std::string type = memberText(*target, "type");
+        if (type != "input" && member(focus.v, "textField", field)) {
+            target = &field.v;
+            type = memberText(*target, "type");
+        }
+        focused = type == "input";
+        if (focused) current = memberText(*target, "text");
+        if (focused != g_textFocus.load() && logged++ < 60)
+            LOG("Keyboard: text focus %s (%s, type '%s')", focused ? "gained" : "lost", memberText(focus.v, "name").c_str(), type.c_str());
+    } else if (!g_focusProbeFailed) {
+        g_focusProbeFailed = true;
+        LOG("Keyboard: the stage's focus could not be read (InputDelegate %s, instance %s, stage %s)", delegate.ok() ? "ok" : "missing",
+            instance.ok() ? "ok" : "missing", stage.ok() ? "ok" : "missing");
+    }
+    g_textFocus = focused;
+    if (current != g_focusText) {
+        g_focusText = current;
+        hud::setKeyboardText(current.c_str());
+    }
+}
+
 void poll() {
     if (g_hidePie.exchange(false)) hideGamePie();
     if (int which = g_gameTray.exchange(-1); which >= 0) gameTray(which);
@@ -360,6 +397,8 @@ void poll() {
     int pressed = g_press.exchange(-1);
     static int tick = 0;
     if (pressed < 0 && (++tick % 4)) return;
+    if (g_watchFocus.load(std::memory_order_relaxed)) pollFocus();
+    else g_textFocus = false;
     if (!g_wanted.load(std::memory_order_relaxed)) {
         hide();
         return;
@@ -463,6 +502,10 @@ void setWanted(bool wanted) {
 }
 
 bool showing() { return g_showing.load(); }
+
+void watchTextFocus(bool on) { g_watchFocus = on; }
+
+bool textFocused() { return g_textFocus.load(); }
 
 void press(int index) { g_press = index; }
 

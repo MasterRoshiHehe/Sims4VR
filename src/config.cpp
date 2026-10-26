@@ -181,6 +181,10 @@ Config loadConfig(const std::wstring& ini) {
     c.popups3d = readInt(ini, "ui", "popups_3d", 1) != 0;
     c.popupDistance = readFloat(ini, "ui", "popup_distance", c.popupDistance);
     c.popupSize = readFloat(ini, "ui", "popup_size", c.popupSize);
+    c.keyboard = readInt(ini, "ui", "keyboard", 1) != 0;
+    c.keyboardSize = readFloat(ini, "ui", "keyboard_size", c.keyboardSize);
+    c.keyboardDistance = readFloat(ini, "ui", "keyboard_distance", c.keyboardDistance);
+    c.keyboardDrop = readFloat(ini, "ui", "keyboard_drop", c.keyboardDrop);
     c.wristPieces = readInt(ini, "wrist", "hud", 1) != 0;
     c.noDimming = readInt(ini, "wrist", "no_dimming", 1) != 0;
     c.wristUiHeight = readFloat(ini, "wrist", "ui_height", c.wristUiHeight);
@@ -234,6 +238,7 @@ Config loadConfig(const std::wstring& ini) {
     c.snapAngleBig = readFloat(ini, "controls", "snap_angle_big", c.snapAngleBig);
     c.recenterTurnsBody = readBool(ini, "controls", "recenter_turns_body", c.recenterTurnsBody);
     c.trailArrive = readFloat(ini, "body", "trail_arrive", c.trailArrive);
+    c.trailStopDist = readFloat(ini, "body", "trail_stop_dist", c.trailStopDist);
     c.trailArriveContact = readFloat(ini, "body", "trail_arrive_contact", c.trailArriveContact);
     c.turnSpeed = readFloat(ini, "controls", "turn_speed", c.turnSpeed);
     c.audioFollowsHead = readInt(ini, "audio", "follow_head", 1) != 0;
@@ -383,12 +388,16 @@ Config loadConfig(const std::wstring& ini) {
     c.bodyForward = readFloat(ini, "body", "forward", c.bodyForward);
     c.bodyHeight = readFloat(ini, "body", "height", c.bodyHeight);
     c.bodyEyeInset = readFloat(ini, "body", "eye_inset", c.bodyEyeInset);
+    c.bodyHeadX = readFloat(ini, "body", "head_x", c.bodyHeadX);
+    c.bodyHeadY = readFloat(ini, "body", "head_y", c.bodyHeadY);
+    c.bodyHeadZ = readFloat(ini, "body", "head_z", c.bodyHeadZ);
     c.bodySmoothing = readFloat(ini, "body", "smoothing", c.bodySmoothing);
     c.bodySeatFollow = readInt(ini, "body", "seat_follow", 1) != 0;
     c.bodySeatTorso = readInt(ini, "body", "seat_torso", 1) != 0;
     c.bodyNearClip = readFloat(ini, "body", "near_clip", c.bodyNearClip);
     c.bodyNearAdaptive = readInt(ini, "body", "near_adaptive", 1) != 0;
     c.bodyHideFace = readInt(ini, "body", "hide_face", 1) != 0;
+    c.bodyGodHands = readInt(ini, "body", "god_hands", 1) != 0;
     c.bodySteadyShoulders = readInt(ini, "body", "steady_shoulders", 1) != 0;
     c.bodyNearMax = readFloat(ini, "body", "near_max", c.bodyNearMax);
     c.steadyShadows = readInt(ini, "body", "steady_shadows", 1) != 0;

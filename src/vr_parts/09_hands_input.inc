@@ -195,6 +195,29 @@ static bool trackedHand(XrTime time, int i, armik::Hand& out) {
     // The thumb's root folds a little with the rest of it.
     float root = 0.25f * (out.curl[0][1] + out.curl[0][2]);
     out.curl[0][0] = root < 0 ? 0 : root > 0.5f ? 0.5f : root;
+
+    // Each bone's direction in the palm's frame, as armik's hand axes: along
+    // the fingers (-Z), toward the thumb (+X left, -X right), and their cross
+    // (out of the left palm, the right hand's back). Sim thumb 0..2 = your
+    // metacarpal, proximal, distal; finger 0..2 = proximal, intermediate, distal.
+    const XrQuaternionf palmInv = qconj(joints[XR_HAND_JOINT_PALM_EXT].pose.orientation);
+    auto boneDir = [&](int a, int b, float* d) {
+        const XrVector3f& pa = joints[a].pose.position;
+        const XrVector3f& pb = joints[b].pose.position;
+        XrVector3f v = rotate3(palmInv, {pb.x - pa.x, pb.y - pa.y, pb.z - pa.z});
+        float f = -v.z, t = s * v.x, u = -s * v.y, l = std::sqrt(f * f + t * t + u * u);
+        if (!(l > 1e-5f)) return false;
+        d[0] = f / l, d[1] = t / l, d[2] = u / l;
+        return true;
+    };
+    for (int f = 0; f < 5; ++f) {
+        int a = f == 0 ? XR_HAND_JOINT_THUMB_METACARPAL_EXT : XR_HAND_JOINT_INDEX_PROXIMAL_EXT + (f - 1) * 5;
+        for (int k = 0; k < 3; ++k)
+            if (!boneDir(a + k, a + k + 1, out.bone[f][k])) {
+                std::snprintf(g_handMiss[i], sizeof(g_handMiss[i]), "finger %d bone %d has no length", f, k);
+                return false;
+            }
+    }
     return true;
 }
 
@@ -248,6 +271,13 @@ static void updateHands(XrTime time, armik::Hand hands[2]) {
                     i ? "R" : "L", tracked[i].curl[0][0], tracked[i].curl[0][1], tracked[i].curl[0][2],
                     tracked[i].curl[1][0], tracked[i].curl[1][1], tracked[i].curl[1][2], tracked[i].curl[2][0],
                     tracked[i].curl[2][1], tracked[i].curl[2][2]);
+            if (curlLogs <= 2)
+                LOG("Hand tracking: %s bones (forward, thumb side, up) thumb %.2f %.2f %.2f / %.2f %.2f %.2f, index %.2f %.2f "
+                    "%.2f / %.2f %.2f %.2f",
+                    i ? "R" : "L", tracked[i].bone[0][0][0], tracked[i].bone[0][0][1], tracked[i].bone[0][0][2],
+                    tracked[i].bone[0][2][0], tracked[i].bone[0][2][1], tracked[i].bone[0][2][2],
+                    tracked[i].bone[1][0][0], tracked[i].bone[1][0][1], tracked[i].bone[1][0][2],
+                    tracked[i].bone[1][2][0], tracked[i].bone[1][2][1], tracked[i].bone[1][2][2]);
         }
         h.grip = floatState(g_gripAction, i);  // also while tracking is lost: a held object stays held
         if (!h.valid) continue;

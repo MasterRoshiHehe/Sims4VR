@@ -11,6 +11,7 @@
 #include "MinHook.h"
 #include "addrs.h"
 #include "gameaddr.h"
+#include "bodyshape.h"
 #include "handshape.h"
 #include "log.h"
 #include "othermods.h"
@@ -270,6 +271,7 @@ struct Finger {
     Vec3 axis[3];  // curl axis in each joint's own frame
     Vec3 spread;   // the palm's normal in the first joint's frame, turning it away from the hand
     Quat rel[3];   // each joint's bind-pose rotation in the hand's frame
+    Vec3 boneDir[3];  // the way each joint's bone points, in its own frame (toward the next joint, or the tip)
     int kind = kOther;
     int name = 0;  // kFingerNames
 };
@@ -437,6 +439,8 @@ void resolveArm(uint8_t* rig, int sideIndex, uint32_t count, Arm& arm) {
             if (!bindInFrame(skeleton, bind, arm.hand, finger.joints[k], pk, rel)) rel = {0, 0, 0, 1};
             finger.axis[k] = rotate(conj(rel), axis);
             finger.rel[k] = rel;
+            Vec3 next = k + 1 < finger.count ? vecOf(bind[finger.joints[k + 1]].p) : vecOf(bind[finger.joints[k]].p);
+            finger.boneDir[k] = length(next) > 1e-6f ? normalize(next) : Vec3{1, 0, 0};
             if (k == 0) finger.spread = rotate(conj(rel), spread);
         }
     }
@@ -524,6 +528,7 @@ struct Side {
     float point = 0;  // 1 while the hand points the laser (setPointing)
     float tracked = 0;      // 1 while hand tracking moves it (your real hand): the fingers take curl
     float curl[5][3] = {};  // the real hand's finger bends, smoothed (Hand::curl)
+    Vec3 bone[5][3] = {};   // the real hand's finger bone directions, smoothed (Hand::bone)
 };
 struct HoldPose {
     bool on;
@@ -829,6 +834,24 @@ Vec3 tipOf(const Chain& last, const Xf* locals, int lastJoint) {
     return add(last.p, rotate(last.q, {last.s.x * v.x, last.s.y * v.y, last.s.z * v.z}));
 }
 
+// Your real hand (hand tracking): each of the finger's bones turns, from the
+// knuckle out, the least it takes to point where yours does in the hand's
+// frame (spread, curl and the thumb's swing across the palm alike), blended
+// in by side.tracked. ov holds the finger's joints in order.
+void trackFinger(const Arm& arm, const Finger& finger, const Side& side, Override* ov) {
+    Quat parent = qmul(finger.rel[0], conj(finger.bind[0]));  // the first joint's parent, in the hand's frame
+    for (int k = 0; k < finger.count; ++k) {
+        const Vec3& d = side.bone[finger.name][k];
+        if (length(d) < 0.5f) return;
+        Vec3 target = add(add(mul(arm.forward, d.x), mul(arm.side, d.y)), mul(arm.up, d.z));
+        Quat base = qmul(parent, finger.bind[k]);
+        Quat turned = qmul(fromTo(rotate(base, finger.boneDir[k]), target), base);
+        Quat local = qnormalize(qmul(conj(parent), turned));
+        ov[k].q = slerp(ov[k].q, local, side.tracked);
+        parent = qmul(parent, ov[k].q);
+    }
+}
+
 // Fingers from the bind pose: index on the trigger, the other three on the
 // grip. The thumb, when down on a button, reaches for the index finger: its
 // tip when the index curls alone (the OK sign), its middle joint otherwise.
@@ -843,10 +866,9 @@ void poseFingers(uint8_t* skeleton, Xf* locals, const Arm& arm, const Side& side
             float angle = side.holdPose            ? side.holdCurl * kFist[k]
                           : finger.kind == kIndex ? side.index * (kOk[k] + (kFist[k] - kOk[k]) * side.grip)
                                                   : side.grip * kFist[k];
-            // Your real hand (hand tracking): each joint bends like yours.
-            if (side.tracked > 0 && !side.holdPose) angle += (side.curl[finger.name][k] - angle) * side.tracked;
             ov[n++] = {finger.joints[k], qmul(finger.bind[k], axisAngle(finger.axis[k], angle))};
         }
+        if (side.tracked > 0 && !side.holdPose) trackFinger(arm, finger, side, ov + n - finger.count);
     }
     if (arm.thumb >= 0) {
         const Finger& thumb = arm.fingers[arm.thumb];
@@ -857,11 +879,10 @@ void poseFingers(uint8_t* skeleton, Xf* locals, const Arm& arm, const Side& side
                 // Fixed: swung about the palm's normal at its root, then bent.
                 if (k == 0) q = qmul(q, axisAngle(thumb.spread, side.thumbSpread));
                 q = qmul(q, axisAngle(thumb.axis[k], side.thumbBend * kThumbBend[k]));
-            } else if (side.tracked > 0) {
-                q = qmul(q, axisAngle(thumb.axis[k], side.curl[0][k] * side.tracked));
             }
             ov[n++] = {thumb.joints[k], q};
         }
+        if (side.tracked > 0 && !side.holdPose && n - thumbAt == thumb.count) trackFinger(arm, thumb, side, ov + thumbAt);
         if (side.thumb > 0.01f && !side.holdPose && arm.index >= 0 && n - thumbAt == thumb.count) {
             const Finger& index = arm.fingers[arm.index];
             int mid = index.joints[index.count > 1 ? 1 : 0], last = index.joints[index.count - 1];
@@ -1123,6 +1144,34 @@ bool reachArm(void* pose, uint8_t* skeleton, Xf* locals, const Arm& arm, const A
     float l1 = length(sub(E, S)), l2 = length(sub(W, E));
     if (!(l1 > 1e-3f) || !(l2 > 1e-3f)) return false;
 
+    // Steady shoulders (user 2026-10-26: the idle still moved the arms): the reach remap below is measured from
+    // a slowly-averaged shoulder, not the swaying one, so the wrist's world place stays put while it is reachable.
+    Vec3 remapFrom = S;
+    bool remapped = false;
+    if (stretchSide >= 0 && stretchSide < 2 && g_steadyShoulders.load(std::memory_order_relaxed)) {
+        static Vec3 steadyS[2];
+        static bool steadyOk[2] = {false, false};
+        static ULONGLONG steadyTick[2] = {0, 0};
+        ULONGLONG now = GetTickCount64();
+        float dt = steadyOk[stretchSide] ? static_cast<float>(now - steadyTick[stretchSide]) * 0.001f : 0;
+        steadyTick[stretchSide] = now;
+        if (!steadyOk[stretchSide] || dt > 1.0f || length(sub(S, steadyS[stretchSide])) > 0.15f * (l1 + l2)) {
+            steadyS[stretchSide] = S;  // first sight, a pause, or a real posture change
+            steadyOk[stretchSide] = true;
+        } else {
+            steadyS[stretchSide] = add(steadyS[stretchSide], mul(sub(S, steadyS[stretchSide]), 1 - std::exp(-dt / 4.0f)));
+        }
+        remapFrom = steadyS[stretchSide];
+        Vec3 t0 = sub(target, remapFrom);
+        float d0 = length(t0);
+        if (d0 > 1e-4f) {
+            Vec3 dir0 = mul(t0, 1 / d0);
+            const Vec3 loc0{dot(dir0, Vec3{arm.outward, 0, 0}), dir0.y, dir0.z};
+            target = add(remapFrom, mul(dir0, stretchReach(stretchSide, d0 / (l1 + l2), loc0, 1.0f) * (l1 + l2)));
+            remapped = true;
+        }
+    }
+
     // Two bones: the elbow goes where the arm bends toward the pole.
     Vec3 toTarget = sub(target, S);
     float d = length(toTarget);
@@ -1132,7 +1181,7 @@ bool reachArm(void* pose, uint8_t* skeleton, Xf* locals, const Arm& arm, const A
     Vec3 up{0, 1, 0}, ahead{0, 0, 1}, out{arm.outward, 0, 0};
     torsoAxes(pose, skeleton, arm, other, up, ahead, out);
     const Vec3 local{dot(dir, out), dot(dir, up), dot(dir, ahead)};  // out from this shoulder, up, forward
-    if (stretchSide >= 0) d = stretchReach(stretchSide, d / (l1 + l2), local, 1.0f) * (l1 + l2);
+    if (stretchSide >= 0 && !remapped) d = stretchReach(stretchSide, d / (l1 + l2), local, 1.0f) * (l1 + l2);
     float dMin = std::fabs(l1 - l2) + 0.02f * (l1 + l2), dMax = (l1 + l2) * 0.999f;
     d = d < dMin ? dMin : d > dMax ? dMax : d;
     float cosA = (l1 * l1 + d * d - l2 * l2) / (2 * l1 * d);
@@ -1417,7 +1466,12 @@ void solve(uint8_t* actor, uint8_t* pose) {
             side.tracked += ((hand.tracked ? 1.0f : 0.0f) - side.tracked) * ease(10.0f, dt);
             if (hand.tracked)
                 for (int f = 0; f < 5; ++f)
-                    for (int k = 0; k < 3; ++k) side.curl[f][k] += (hand.curl[f][k] - side.curl[f][k]) * ease(30.0f, dt);
+                    for (int k = 0; k < 3; ++k) {
+                        side.curl[f][k] += (hand.curl[f][k] - side.curl[f][k]) * ease(30.0f, dt);
+                        Vec3 to{hand.bone[f][k][0], hand.bone[f][k][1], hand.bone[f][k][2]};
+                        Vec3& b = side.bone[f][k];
+                        b = length(b) < 0.5f ? to : normalize(add(b, mul(sub(to, b), ease(30.0f, dt))));
+                    }
         }
         float holding = g_holding[i].load(std::memory_order_relaxed) ? 1.0f : 0.0f;
         side.hold += (holding - side.hold) * ease(10.0f, dt);
@@ -2558,6 +2612,244 @@ void captureShape(uint8_t* pose) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// The whole body as capsules (bodyshape): for your own Sim and every other
+// Sim within kBodyRange of your eye, built from the joints of the finished
+// pose. Bones are the rig's parent-child edges, grouped by the nearest named
+// anchor joint; fingers are left to handshape, face bones (eyes, jaw, brows,
+// lips: leaf joints under the head) are left out, the skull is a sphere, and
+// hair is the chains of bones hanging off the head (a joint with children of
+// its own, or deeper than the head's direct children).
+
+constexpr float kBodyRange = 1.2f;  // metres from your eye (horizontal) for other Sims
+
+struct BodyMap {
+    void* rig = nullptr;
+    uint32_t count = 0;
+    bool ok = false;
+    int head = -1, pelvis = -1;
+    int16_t parent[kMaxJoints];
+    uint8_t region[kMaxJoints];  // bodyshape::Region, or 255: left out
+    uint8_t side[kMaxJoints];
+    float radius[kMaxJoints];    // adult metres
+};
+thread_local BodyMap t_maps[4];
+thread_local int t_mapNext = 0;
+
+const BodyMap* bodyMapFor(uint8_t* rig, uint32_t count) {
+    for (BodyMap& m : t_maps)
+        if (m.rig == rig && m.count == count) return &m;
+    BodyMap& m = t_maps[t_mapNext++ % 4];
+    m = BodyMap{};
+    m.rig = rig;
+    m.count = count;
+    uint8_t* skeleton = rig + kRigSkeleton;
+    auto j = [&](const char* name) { return findJoint(skeleton, count, name); };
+    m.head = j("b__Head__");
+    m.pelvis = j("b__Pelvis__");
+    if (m.head < 0 || m.pelvis < 0) return &m;
+    const int eyeJaw[3] = {j("b__L_Eye__"), j("b__R_Eye__"), j("b__Jaw__")};
+    const int hand[2] = {j("b__L_Hand__"), j("b__R_Hand__")};
+    struct Anchor {
+        int joint;
+        bodyshape::Region region;
+        int side;
+        float radius;
+    };
+    const Anchor anchors[] = {
+        {j("b__L_UpperArm__"), bodyshape::kUpperArm, 0, 0.05f}, {j("b__R_UpperArm__"), bodyshape::kUpperArm, 1, 0.05f},
+        {j("b__L_Forearm__"), bodyshape::kForearm, 0, 0.04f},   {j("b__R_Forearm__"), bodyshape::kForearm, 1, 0.04f},
+        {j("b__L_Thigh__"), bodyshape::kThigh, 0, 0.08f},       {j("b__R_Thigh__"), bodyshape::kThigh, 1, 0.08f},
+        {j("b__L_Calf__"), bodyshape::kCalf, 0, 0.055f},        {j("b__R_Calf__"), bodyshape::kCalf, 1, 0.055f},
+        {j("b__L_Foot__"), bodyshape::kFoot, 0, 0.04f},         {j("b__R_Foot__"), bodyshape::kFoot, 1, 0.04f},
+    };
+    const char* const torso[] = {"b__Pelvis__", "b__Spine0__", "b__Spine1__", "b__Spine2__", "b__Spine3__", "b__Neck__"};
+    bool isTorso[kMaxJoints] = {};
+    for (const char* n : torso) {
+        int t = j(n);
+        if (t >= 0) isTorso[t] = true;
+    }
+    for (const char* n : {"b__L_UpperArm__", "b__R_UpperArm__"}) {
+        int t = j(n);
+        int c = t >= 0 ? g_parent(skeleton, static_cast<uint32_t>(t)) : -1;  // the clavicle
+        if (c >= 0) isTorso[c] = true;
+    }
+    bool hasChild[kMaxJoints] = {};
+    for (uint32_t k = 0; k < count; ++k) {
+        m.parent[k] = static_cast<int16_t>(g_parent(skeleton, k));
+        if (m.parent[k] >= 0 && m.parent[k] < static_cast<int>(count)) hasChild[m.parent[k]] = true;
+    }
+    for (uint32_t k = 0; k < count; ++k) {
+        m.region[k] = 255;
+        m.side[k] = 2;
+        m.radius[k] = 0;
+        bool underHead = false, underHand = false, underFace = false;
+        const Anchor* nearest = nullptr;
+        bool exact = false;
+        int depthFromHead = 0;
+        int c = static_cast<int>(k);
+        for (int step = 0; step < 48 && c >= 0 && c < static_cast<int>(count); ++step, c = m.parent[c]) {
+            if (c == hand[0] || c == hand[1]) {
+                if (step > 0 || true) underHand = true;
+            }
+            if (c == eyeJaw[0] || c == eyeJaw[1] || c == eyeJaw[2]) underFace = true;
+            if (c == m.head) {
+                underHead = true;
+                depthFromHead = step;
+                break;
+            }
+            if (!nearest)
+                for (const Anchor& a : anchors)
+                    if (a.joint == c) {
+                        nearest = &a;
+                        exact = step == 0;
+                    }
+        }
+        if (underHand || underFace) continue;
+        if (static_cast<int>(k) == m.head) continue;  // the skull sphere stands for it
+        if (underHead) {
+            // Hair: chains off the head. A direct child with children of its own, or anything deeper than that.
+            if (depthFromHead >= 2 || hasChild[k]) {
+                m.region[k] = bodyshape::kHair;
+                m.radius[k] = 0.012f;
+            }
+        } else if (nearest) {
+            m.region[k] = nearest->region;
+            m.side[k] = static_cast<uint8_t>(nearest->side);
+            m.radius[k] = exact ? nearest->radius : 0.03f;
+        } else if (isTorso[k]) {
+            m.region[k] = bodyshape::kTorso;
+            m.radius[k] = k == static_cast<uint32_t>(m.pelvis) ? 0.13f : 0.12f;
+        } else {
+            m.region[k] = bodyshape::kOther;
+            m.radius[k] = 0.025f;
+        }
+    }
+    m.ok = true;
+    int regions[bodyshape::kRegions] = {};
+    for (uint32_t k = 0; k < count; ++k)
+        if (m.region[k] < bodyshape::kRegions) ++regions[m.region[k]];
+    LOG("Body shape: rig %p, %u joints: torso %d, hair %d, upper arm %d, forearm %d, thigh %d, calf %d, foot %d, other %d "
+        "bones (fingers: handshape; face bones left out)",
+        static_cast<void*>(rig), count, regions[bodyshape::kTorso], regions[bodyshape::kHair], regions[bodyshape::kUpperArm],
+        regions[bodyshape::kForearm], regions[bodyshape::kThigh], regions[bodyshape::kCalf], regions[bodyshape::kFoot],
+        regions[bodyshape::kOther]);
+    return &m;
+}
+
+void captureBody(uint8_t* actor, uint8_t* pose, bool isPlayer) {
+    Frame frame{};
+    ULONGLONG now = GetTickCount64();
+    if (!g_fkVerified.load(std::memory_order_relaxed) || !g_frame.read(frame) || !frame.actor ||
+        ageMs(now, frame.tick) > 300 || !(frame.scale > 0))
+        return;
+    Xf world;
+    std::memcpy(world.p, actor + kActorPosition, sizeof(world.p));
+    std::memcpy(world.q, actor + kActorRotation, sizeof(world.q));
+    std::memcpy(world.s, actor + kActorScale, sizeof(world.s));
+    if (isPlayer) {
+        float pinned[7];
+        if (player::pinnedAt(actor, pinned)) {
+            std::memcpy(world.p, pinned, 3 * sizeof(float));
+            std::memcpy(world.q, pinned + 3, 4 * sizeof(float));
+        }
+    }
+    if (!(world.s[0] > 1e-3f && world.s[1] > 1e-3f && world.s[2] > 1e-3f) || !finite(vecOf(world.p))) return;
+    if (!isPlayer) {
+        Vec3 d = sub(vecOf(world.p), vecOf(frame.eye));
+        if (d.x * d.x + d.z * d.z > kBodyRange * kBodyRange * frame.scale * frame.scale) return;
+    }
+    uint8_t* rig = *reinterpret_cast<uint8_t**>(pose + kPoseRig);
+    Xf* locals = *reinterpret_cast<Xf**>(pose + kPoseLocals);
+    uint32_t poseCount = *reinterpret_cast<uint16_t*>(pose + kPoseJointCount);
+    if (!rig || !locals) return;
+    uint8_t* skeleton = rig + kRigSkeleton;
+    uint32_t count = g_jointCount(skeleton);
+    if (count > poseCount) count = poseCount;
+    if (!count || count > kMaxJoints) return;
+    const BodyMap* map = bodyMapFor(rig, count);
+    if (!map || !map->ok) return;
+    SimRig r;
+    if (!rigFor(rig, count, r) || !r.sim) return;
+
+    const Quat actorQ = quatOf(world.q), back = conj(frame.heading);
+    const float inv = 1 / frame.scale;
+    auto toApp = [&](Vec3 m) {
+        Vec3 w = add(vecOf(world.p), rotate(actorQ, {m.x * world.s[0], m.y * world.s[1], m.z * world.s[2]}));
+        return mul(rotate(back, sub(w, vecOf(frame.anchor))), inv);
+    };
+    // Each joint's place in app space, made once when a bone needs it.
+    Vec3 at[kMaxJoints];
+    uint8_t have[kMaxJoints] = {};
+    auto place = [&](int k) {
+        if (!have[k]) {
+            at[k] = toApp(vecOf(modelOf(pose, k).p));
+            have[k] = 1;
+        }
+        return at[k];
+    };
+    Vec3 pelvisM = vecOf(modelOf(pose, map->pelvis).p), headM = vecOf(modelOf(pose, map->head).p);
+    float size = length(mul(sub(headM, pelvisM), 1.0f)) * world.s[1] / kAdultTorso;
+    size = size < 0.3f ? 0.3f : size > 2.0f ? 2.0f : size;
+    const float k = size * inv;  // an adult's metres to app-space metres (world scale included)
+
+    bodyshape::Shape out;
+    out.player = isPlayer;
+    out.actor = actor;
+    out.size = size;
+    out.tick = now;
+    auto push = [&](Vec3 a, Vec3 b, float radius, int region, int side, int joint) {
+        if (out.segmentCount >= bodyshape::kMaxSegments || !finite(a) || !finite(b)) return;
+        bodyshape::Segment& g = out.segment[out.segmentCount++];
+        g.a = a;
+        g.b = b;
+        g.radius = radius;
+        g.region = static_cast<uint8_t>(region);
+        g.side = static_cast<uint8_t>(side);
+        g.joint = static_cast<int16_t>(joint);
+    };
+    // The skull: a sphere above the head joint along the head's up.
+    Quat headQ = quatOf(modelOf(pose, map->head).q);
+    Vec3 headUp = r.headOk ? r.headUp : Vec3{0, 1, 0};
+    Vec3 skull = toApp(add(headM, mul(rotate(headQ, headUp), 0.09f * size)));
+    out.head = skull;
+    out.headRadius = 0.095f * k;
+    push(skull, skull, out.headRadius, bodyshape::kHead, 2, map->head);
+    // Bones, body first and hair last (the cap cuts hair first).
+    for (int pass = 0; pass < 2; ++pass) {
+        for (uint32_t j = 0; j < count; ++j) {
+            const bool hair = map->region[j] == bodyshape::kHair;
+            if (map->region[j] == 255 || hair != (pass == 1)) continue;
+            int pa = map->parent[j];
+            if (pa < 0 || pa >= static_cast<int>(count)) continue;
+            Vec3 a = place(pa), b = place(static_cast<int>(j));
+            if (length(sub(a, b)) < 0.012f * k) continue;  // too short to be a bone
+            push(a, b, map->radius[j] * k, map->region[j], map->side[j], static_cast<int>(j));
+        }
+    }
+    Vec3 lo = out.segment[0].a, hi = lo;
+    for (int i = 0; i < out.segmentCount; ++i)
+        for (Vec3 v : {out.segment[i].a, out.segment[i].b}) {
+            lo = {std::fmin(lo.x, v.x), std::fmin(lo.y, v.y), std::fmin(lo.z, v.z)};
+            hi = {std::fmax(hi.x, v.x), std::fmax(hi.y, v.y), std::fmax(hi.z, v.z)};
+        }
+    Vec3 c = mul(add(lo, hi), 0.5f);
+    float radius = 0;
+    for (int i = 0; i < out.segmentCount; ++i)
+        radius = std::fmax(radius, std::fmax(length(sub(out.segment[i].a, c)), length(sub(out.segment[i].b, c))) + out.segment[i].radius);
+    out.centre = {c.x, c.y, c.z};
+    out.boundRadius = radius;
+    out.up = normalize(rotate(back, rotate(actorQ, {0, 1, 0})));
+    out.forward = normalize(rotate(back, rotate(actorQ, {0, 0, 1})));
+    out.valid = out.segmentCount > 0;
+    if (!out.valid) return;
+    static std::atomic<int> logged{0};
+    if (logged.fetch_add(1, std::memory_order_relaxed) < 6)
+        LOG("Body shape: %s: %d capsules, size %.2f, skull radius %.1f cm, bounds %.2f m", isPlayer ? "your Sim" : "a Sim near you",
+            out.segmentCount, size, out.headRadius * 100, out.boundRadius);
+    bodyshape::publish(out);
+}
+
 void hookedPoseToJoints(void* actor, void* pose) {
     if (pose && actor && actor == g_voiceActor.load(std::memory_order_relaxed)) {
         float angle = g_mouth.load(std::memory_order_relaxed);
@@ -2581,9 +2873,15 @@ void hookedPoseToJoints(void* actor, void* pose) {
                 captureShape(static_cast<uint8_t*>(pose));
                 g_busy.store(false, std::memory_order_release);
             }
+            captureBody(static_cast<uint8_t*>(actor), static_cast<uint8_t*>(pose), true);
             return;
         } else if (g_touchBodies || g_holdHands || g_lookAt) {
             touchOther(static_cast<uint8_t*>(actor), static_cast<uint8_t*>(pose));
+        }
+        if (actor != player) {
+            g_original(actor, pose);
+            captureBody(static_cast<uint8_t*>(actor), static_cast<uint8_t*>(pose), false);
+            return;
         }
     }
     g_original(actor, pose);
@@ -2712,6 +3010,16 @@ void palms(Vec3 out[2], bool valid[2]) {
         out[i] = h.hand[i].position;
     }
 }
+
+bool controllers(Hand out[2]) {
+    Hands h{};
+    if (!g_enabled || !g_hands.read(h) || ageMs(GetTickCount64(), h.tick) >= 300) return false;
+    out[0] = h.hand[0];
+    out[1] = h.hand[1];
+    return true;
+}
+
+float handPitch() { return g_handPitch; }
 
 float gameCurl(int side) { return side >= 0 && side < 2 ? g_gameCurl[side].load(std::memory_order_relaxed) : 0; }
 

@@ -141,13 +141,26 @@ void turn(HWND game, float value, float speed, float dt) {
 }
 
 // Single key presses queued from other threads, sent one per frame (kWithShift: with Shift held around it).
-constexpr uint32_t kWithShift = 0x10000;
+constexpr uint32_t kWithShift = 0x10000, kUnicodeTap = 0x20000;  // kUnicodeTap: the low 16 bits are a UTF-16 unit (typeChar)
 std::mutex g_tapMutex;
 std::vector<uint32_t> g_taps;
 uint32_t g_tapDown = 0;
 
+void sendUnicode(wchar_t unit, bool down) {
+    INPUT in{};
+    in.type = INPUT_KEYBOARD;
+    in.ki.wScan = unit;
+    in.ki.dwFlags = KEYEVENTF_UNICODE | (down ? 0 : KEYEVENTF_KEYUP);
+    SendInput(1, &in, sizeof(in));
+}
+
 void sendTaps() {
     if (g_tapDown) {
+        if (g_tapDown & kUnicodeTap) {
+            sendUnicode(static_cast<wchar_t>(g_tapDown & 0xFFFF), false);
+            g_tapDown = 0;
+            return;
+        }
         sendKey(static_cast<WORD>(g_tapDown), false);
         if ((g_tapDown & kWithShift) && !g_keyDown[indexOf(kShift)]) sendKey(kShift, false);
         g_tapDown = 0;
@@ -157,6 +170,10 @@ void sendTaps() {
     if (g_taps.empty()) return;
     g_tapDown = g_taps.front();
     g_taps.erase(g_taps.begin());
+    if (g_tapDown & kUnicodeTap) {
+        sendUnicode(static_cast<wchar_t>(g_tapDown & 0xFFFF), true);
+        return;
+    }
     if ((g_tapDown & kWithShift) && !g_keyDown[indexOf(kShift)]) sendKey(kShift, true);
     sendKey(static_cast<WORD>(g_tapDown), true);
 }
@@ -274,6 +291,27 @@ void floorsDown(int count) {
 void tapKey(WORD scan, bool withShift) {
     std::lock_guard<std::mutex> lock(g_tapMutex);
     if (g_taps.size() < 16) g_taps.push_back(scan | (withShift ? kWithShift : 0));
+}
+
+void typeChar(wchar_t ch) {
+    // A character the keyboard layout makes with a plain or Shift key goes as that key, like a real keyboard
+    // (the game reads those); any other as a Unicode character (WM_CHAR).
+    const SHORT v = VkKeyScanW(ch);
+    if (v != -1 && (HIBYTE(v) & ~1) == 0) {
+        const UINT scan = MapVirtualKeyW(LOBYTE(v), MAPVK_VK_TO_VSC);
+        if (scan) {
+            std::lock_guard<std::mutex> lock(g_tapMutex);
+            if (g_taps.size() < 64) g_taps.push_back(scan | ((HIBYTE(v) & 1) ? kWithShift : 0));
+            return;
+        }
+    }
+    std::lock_guard<std::mutex> lock(g_tapMutex);
+    if (g_taps.size() < 64) g_taps.push_back(kUnicodeTap | static_cast<uint32_t>(ch));
+}
+
+void typeKey(WORD scan) {
+    std::lock_guard<std::mutex> lock(g_tapMutex);
+    if (g_taps.size() < 64) g_taps.push_back(scan);
 }
 
 void releaseAll() {

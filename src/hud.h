@@ -1,4 +1,5 @@
 #pragma once
+#include <string>
 #include <vector>
 
 #include <d3d11.h>
@@ -15,7 +16,7 @@
 // eyelids). Pointer input comes back in atlas pixels; buttons return actions.
 namespace s4vr::hud {
 
-constexpr int kWidth = 1024, kHeight = 7504;  // the atlas
+constexpr int kWidth = 1024, kHeight = 7952;  // the atlas
 struct Rect {
     float x, y, w, h;
 };
@@ -56,6 +57,8 @@ constexpr Rect kBookLeatherAll{0, 6688, 512, 688};     // the cover, as the fron
 constexpr Rect kBookLeatherPlain{150, 7108, 100, 100};  // plain leather of it: the boards' edges and back
 constexpr Rect kBookEdge{0, 7376, 128, 128};           // the pages' edges
 constexpr Rect kBookPaper{256, 7376, 128, 128};        // the boards' endpapers
+// The VR keyboard (typing into the game's text fields): a preview line, four rows of keys.
+constexpr Rect kKeyboard{0, 7504, 1024, 448};
 
 // What the buttons ask for. kCancel: the queue item `index` (render's out);
 // kDismissWant: the want `index` (the game's X on a want: a new one comes).
@@ -66,7 +69,15 @@ constexpr Rect kBookPaper{256, 7376, 128, 128};        // the boards' endpapers
 // kPhoneOptions: the Options app (the game menu); kPhoneColor: wallpaper colour `index`.
 enum Action { kNone = 0, kPausePressed = 1, kSpeed1, kSpeed2, kSpeed3, kFullUi, kBuildPressed, kCancel, kDismissWant, kAnswer,
               kPick, kPickerClose, kPhonePick, kPhoneSilence, kPhoneOptions, kPhoneColor, kNotesOpened, kNotesClear, kNoteDelete, kNoteDismiss, kCalendarOpened, kMySimOpened, kMySimFresh, kAspirationPicked, kTonePreview, kPlayAs, kGallery, kManageWorlds, kGameMenuButton, kInventoryPie, kGodView, kContactsOpened, kContactPicked, kContactAction, kContactPie, kContactPlayAs, kContactCall, kCheat, kNoteAnswer, kSimsForever, kInventorySell,
-              kPiePick, kPieClose, kListPick, kListDone, kListClose, kVrOptions, kBuildTool };
+              kPiePick, kPieClose, kListPick, kListDone, kListClose, kVrOptions, kBuildTool, kKey };
+// kKey: a key of the VR keyboard, `index` = the UTF-16 character (>= 32) or a KeyCode below.
+enum KeyCode { kKeyBackspace = 1, kKeyEnter, kKeyLeft, kKeyRight, kKeyClose };
+// Any thread: the text of the focused text field (UTF-8), shown on the keyboard's preview line.
+void setKeyboardText(const char* utf8);
+// Any thread: the keyboard opened or closed by hand (the settings' button, or its X); keyboardManual() says it is open that way.
+void toggleKeyboard();
+void setKeyboardManual(bool on);
+bool keyboardManual();
 // kBuildTool: the build tablet's tray tool `index` (TrayTool).
 // kInventorySell: the inventory's multiselect, inventoryPicked() its rows; index 0 sell, 1 favorite, 2 unfavorite.
 std::vector<int> inventoryPicked();
@@ -85,6 +96,8 @@ std::vector<int> listPicked();
 // Python (controls.py), whenever it changes: the game's clock. speed is
 // ClockSpeedMode (0 paused, 1..3, 4 loading, 5 super speed); day 0 = Sunday.
 void setClock(int hour, int minute, int day, int speed);
+// The game clock as text for a bug mark: "Sim time Mon 14:05, speed 1" ("not reported yet" before the first clock).
+std::string clockText();
 
 // Python (hudinfo.py): the played Sim's needs, moodlets, queue and wants, as
 // the game's own widgets get them. icon: image resource instance (0 none).
@@ -269,6 +282,7 @@ struct Frame {
     uint32_t trayLit = 0;    // its tools that are on, a bit per TrayTool
     bool bars = false;       // the skill bars over Sims' heads   // the balloons over Sims' heads (addBalloon)
     uint64_t note = 0;       // the notification drawn as a card in kNote (notify.py), 0: none
+    bool keyboard = false;   // the VR keyboard (kKeyboard)
     // The settings page open places this piece (user 2026-10-23): its area gets a see-through green box behind it,
     // and kPreview is filled (cards with no area of their own). w 0: none.
     Rect preview{0, 0, 0, 0};

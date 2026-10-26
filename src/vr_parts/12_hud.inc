@@ -9,8 +9,9 @@ static void requestPhonePie(int control, bool ours = false);  // 14_phone.inc
 // the eye images). Poke with your right index finger or point the laser.
 
 enum { kHudWatch, kHudPause, kHudSleep, kHudBuild, kHudNeeds, kHudMoodlets, kHudQueue, kHudWants, kHudPopup, kHudTip, kHudMoney,
-       kHudPicker, kHudNote, kHudPie, kHudCount };
+       kHudPicker, kHudNote, kHudKeyboard, kHudPie, kHudCount };
 struct HudSheet {
+    float opacity = 1;  // blended over the world (the keyboard fades)
     PieMenu m;  // x0, y0, cw, ch: its part of the atlas; uiW, uiH: the atlas
     bool onTop = false;
 };
@@ -376,7 +377,7 @@ static phone3d::Panel hudPanel(const HudSheet& s, const camera::View& view) {
     phone3d::Panel panel;
     panel.show = true;
     panel.clear = true;
-    panel.opacity = 1;
+    panel.opacity = s.opacity;
     panel.onTop = s.onTop;
     XrQuaternionf heading{view.heading.x, view.heading.y, view.heading.z, view.heading.w};
     const XrVector3f& at = m.pose.position;
@@ -568,6 +569,96 @@ static void updateNoteCard(const camera::View& view, bool firstPerson, bool head
     }
 }
 
+// The VR keyboard (hud kKeyboard): opens when a text field GAINS the focus (clientdlg's watch of the Flash stage;
+// a field that keeps it from the start doesn't open it) or by hand, and fades in and out (user 2026-10-25). In build
+// mode it lies on the build tablet's glass, in its middle (g_tabletGlass, set by placeTray); elsewhere it has the
+// pie's placement: its pose fixed in app space when it opens (head position and facing then, a little under your
+// eyes, tilted up toward them), never re-placed after you move. Closes when the field loses the focus (a moment's
+// grace), with its X, or by hand again.
+struct TabletGlass {
+    bool valid = false;
+    ULONGLONG at = 0;
+    XrVector3f centre{}, x{}, y{}, z{};
+    float w = 0, h = 0;
+};
+static TabletGlass g_tabletGlass;  // the build tablet's glass this frame (13b_build_tray.inc placeTray)
+static bool g_kbOpen = false, g_kbDismissed = false, g_kbWasFocus = false, g_kbWant = false;
+static ULONGLONG g_kbLostAt = 0, g_kbTick = 0;
+static float g_kbFade = 0;
+
+static void closeKeyboard(const char* why) {
+    if (!g_kbOpen) return;
+    g_kbOpen = false;
+    g_kbFade = 0;
+    hideHud(g_hud[kHudKeyboard]);
+    std::lock_guard<std::mutex> lock(g_armPlaceMutex);
+    g_appPlace[kHudKeyboard].on = false;
+    LOG("Keyboard: closed (%s)", why);
+}
+
+static void updateKeyboard(bool headOk, const XrPosef& head) {
+    HudSheet& s = g_hud[kHudKeyboard];
+    const bool enabled = g_config.keyboard;
+    clientdlg::watchTextFocus(enabled);
+    const bool focus = enabled && clientdlg::textFocused(), manual = hud::keyboardManual();
+    const bool gained = focus && !g_kbWasFocus;
+    g_kbWasFocus = focus;
+    if (g_kbDismissed && !focus) g_kbDismissed = false;  // closed with its X: back when the focus goes and returns
+    const ULONGLONG now = GetTickCount64();
+    const float dt = g_kbTick ? std::min(0.1f, (now - g_kbTick) / 1000.0f) : 0;
+    g_kbTick = now;
+    // Wanted: a field just took the focus, or it stays while the field has it; by hand always.
+    if (gained && !g_kbDismissed) g_kbWant = true;
+    if (!focus && !manual) {
+        if (g_kbWant && !g_kbLostAt) g_kbLostAt = now;
+        if (g_kbWant && now - g_kbLostAt > 400) g_kbWant = false;
+    } else {
+        g_kbLostAt = 0;
+    }
+    if (g_kbDismissed) g_kbWant = false;
+    const bool want = g_kbWant || manual;
+    if (!g_kbOpen) {
+        if (!want || !headOk) return;
+        XrVector3f f = rotate3(head.orientation, {0, 0, -1});
+        f.y = 0;
+        f = dot3(f, f) > 1e-4f ? normalize3(f) : XrVector3f{0, 0, -1};
+        const XrVector3f right = cross3(f, XrVector3f{0, 1, 0});
+        const float tilt = 0.5f;  // radians the top leans away from you
+        const XrVector3f z{-f.x * std::cos(tilt), std::sin(tilt), -f.z * std::cos(tilt)};
+        const XrVector3f y = cross3(z, right);
+        const float dist = std::max(0.25f, g_config.keyboardDistance);
+        const XrVector3f at{head.position.x + f.x * dist, head.position.y - g_config.keyboardDrop, head.position.z + f.z * dist};
+        std::lock_guard<std::mutex> lock(g_armPlaceMutex);
+        g_appPlace[kHudKeyboard] = {true, at, right, y};
+        g_kbOpen = true;
+        g_kbFade = 0;
+        LOG("Keyboard: opened (%s)", manual ? "by hand" : "a text box took the focus");
+    }
+    // Fade (0.18 s in, 0.25 s out), smoothed.
+    g_kbFade = want ? std::min(1.0f, g_kbFade + dt / 0.18f) : std::max(0.0f, g_kbFade - dt / 0.25f);
+    if (!want && g_kbFade <= 0) {
+        closeKeyboard("faded out");
+        return;
+    }
+    s.opacity = g_kbFade * g_kbFade * (3 - 2 * g_kbFade);
+    AppPlace place;
+    float width = std::max(0.2f, g_config.keyboardSize);
+    const TabletGlass& tg = g_tabletGlass;
+    if (g_tablet && tg.valid && now - tg.at < 300) {
+        // On the build tablet's glass, in the middle, a hair in front of it.
+        width = std::min(width, tg.w * 0.62f);
+        const XrVector3f at{tg.centre.x + tg.z.x * 0.002f, tg.centre.y + tg.z.y * 0.002f, tg.centre.z + tg.z.z * 0.002f};
+        place = {true, at, tg.x, tg.y};
+        std::lock_guard<std::mutex> lock(g_armPlaceMutex);
+        g_appPlace[kHudKeyboard] = place;
+    } else {
+        std::lock_guard<std::mutex> lock(g_armPlaceMutex);
+        place = g_appPlace[kHudKeyboard];
+    }
+    s.onTop = true;
+    placeHud(s, place.at, place.x, place.y, width, hud::kKeyboard);
+}
+
 // The pie drawn by us (hud kPie) in the pie's place at your hand (openPie): as many metres per game stage
 // pixel as the game's cut had (pie_width over ~1100 stage pixels), whatever scale kPie drew it at. The pie's
 // sheet takes its size, so shoving and clicking off it work as on the cut.
@@ -592,7 +683,7 @@ static void updatePieHud() {
 static void hideAllHud() {
     bool any = false;
     for (int i = 0; i < kHudCount; ++i) {
-        if (i == kHudPopup || i == kHudPicker || i == kHudNote || i == kHudTip || i == kHudPie) continue;  // the tip: updateTip
+        if (i == kHudPopup || i == kHudPicker || i == kHudNote || i == kHudKeyboard || i == kHudTip || i == kHudPie) continue;  // the tip: updateTip
         any = any || g_hud[i].m.active;
         hideHud(g_hud[i]);
     }
@@ -647,6 +738,7 @@ static void updateHud(const armik::Hand hands[2], bool firstPerson, bool headOk,
         viewOk = true;
     }
     updatePieHud();
+    updateKeyboard(headOk, head);
     if (viewOk)
         updateNoteCard(view, firstPerson, headOk, head);
     else
@@ -659,7 +751,7 @@ static void updateHud(const armik::Hand hands[2], bool firstPerson, bool headOk,
         phone3d::Panel panels[5];
         int count = 0;
         updateTip();
-        for (int i : {kHudPicker, kHudNote, kHudTip})  // the pie: pieInWorld; the popup: updatePopupCard's panel
+        for (int i : {kHudPicker, kHudNote, kHudKeyboard, kHudTip})  // the pie: pieInWorld; the popup: updatePopupCard's panel
             if (viewOk && atlas && g_hud[i].m.active) {
                 panels[count] = hudPanel(g_hud[i], view);
                 panels[count++].tag = i;
@@ -886,7 +978,7 @@ static bool pokeHuds(const armik::Hand hands[2]) {
     // The hand holding the book doesn't poke it; the other one only with its grip held (a plain sweep turns pages).
     const bool other[2] = {g_bookHand != 0 && hands[0].grip > 0.5f, g_bookHand != 1 && hands[1].grip > 0.5f};
     return pokeHud(g_bookSheet[0], hands, other) || pokeHud(g_bookSheet[1], hands, other) || pokeHud(g_hud[kHudPopup], hands, both) || pokeHud(g_hud[kHudPicker], hands, both) ||
-           pokeHud(g_hud[kHudNote], hands, both) ||
+           pokeHud(g_hud[kHudKeyboard], hands, both) || pokeHud(g_hud[kHudNote], hands, both) ||
            pokeHud(g_hud[kHudWatch], hands, right) ||
            pokeHud(g_hud[kHudBuild], hands, right) ||
            pokeHud(g_hud[kHudQueue], hands, right) || pokeHud(g_hud[kHudSleep], hands, both);
@@ -922,7 +1014,7 @@ static bool laserBook(const XrVector3f& o, const XrVector3f& d, bool trigger, Xr
 static bool laserHud(const XrVector3f& o, const XrVector3f& d, bool trigger, XrVector3f& hit) {
     if (laserBook(o, d, trigger, hit)) return true;
     if (laserPhone(o, d, trigger, hit)) return true;  // the phone's screen first (in your hand, in front of the rest)
-    for (int i : {kHudPopup, kHudPicker, kHudNote, kHudSleep, kHudWatch, kHudBuild, kHudQueue, kHudWants, kHudNeeds,
+    for (int i : {kHudKeyboard, kHudPopup, kHudPicker, kHudNote, kHudSleep, kHudWatch, kHudBuild, kHudQueue, kHudWants, kHudNeeds,
                   kHudMoodlets}) {
         const PieMenu& m = g_hud[i].m;
         float u, v;
@@ -970,6 +1062,7 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
     f.phoneWait = (g_phoneOptions && !g_optionsShown) ||
                   (!phone3d::wallpaperReady() && GetTickCount64() - g_phoneMenuSince < 1500);
     f.note = noteShown();
+    f.keyboard = g_hud[kHudKeyboard].m.active;
     f.pie = g_hud[kHudPie].m.active;
     f.book = g_bookOut;
     bookApplyPick();
@@ -1003,7 +1096,7 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
     }
     f.preview = previewArea();
     if (!f.watch && !f.pause && !f.build && !f.needs && !f.moodlets && !f.queue && !f.wants && !f.popup && !f.money &&
-        !f.picker && !f.phone && !f.buildTray && !f.note && !f.balloons && !f.bars && !f.pie && !f.book && !f.previewCard && !(f.preview.w > 0))
+        !f.picker && !f.phone && !f.buildTray && !f.note && !f.keyboard && !f.balloons && !f.bars && !f.pie && !f.book && !f.previewCard && !(f.preview.w > 0))
         return;
     ID3D11Device* device = nullptr;
     ID3D11DeviceContext* context = nullptr;
@@ -1019,6 +1112,23 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
     (void)hud::phoneHovers();  // the hover tap sound removed (user 2026-10-25 01:01Z: too annoying)
     if (const int mode = hud::phoneModeSet(); mode == 0 || mode == 1) buzz(g_phoneHand, 0.45f, mode == 0 ? 0.06f : 0.18f);
     switch (action) {
+        case hud::kKey:
+            if (index >= 32) {
+                pointer::typeChar(static_cast<wchar_t>(index));
+            } else if (index == hud::kKeyClose) {
+                g_kbDismissed = clientdlg::textFocused();
+                hud::setKeyboardManual(false);
+                closeKeyboard("its X");
+            } else {
+                static const WORD kScans[] = {0, 0x0E, 0x1C, 0xE04B, 0xE04D};  // Backspace, Enter, Left, Right
+                if (index > 0 && index < 5) pointer::typeKey(kScans[index]);
+            }
+            buzz(1, 0.1f, 0.01f);
+            {
+                static int typed = 0;
+                if (typed++ < 20) LOG("Keyboard: key %d", index);
+            }
+            break;
         case hud::kFullUi:
             g_fullUi = !g_fullUi;
             LOG("HUD: full UI on your wrist %s", g_fullUi ? "on" : "off");
@@ -1140,6 +1250,9 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
         case hud::kSimsForever:
             startSims1Phone();
             break;
+        case hud::kCheat:
+            if (index > 0 && index < 20) grab::pushControl(index);  // controls.py: the debug menu's testing cheats
+            break;
         case hud::kGodView:
             grab::pushControl(1);  // controls.py _switch_view: first person off, the game's camera on your Sim
             LOG("Phone: God View");
@@ -1158,6 +1271,9 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
         case hud::kContactPie:
             if (index >= 0 && index < 100000) requestPhonePie(8100000 + index);  // phonesim.contact_pie, drawn by us
             LOG("Phone: contact %d's pie menu", index);
+            break;
+        case hud::kContactCall:
+            if (index == 0 || index == 1) requestPhonePie(8300000 + index, true);  // phonesim.contact_menu: our options
             break;
         case hud::kContactPlayAs:
             if (index >= 0 && index < 100000) grab::pushControl(8200000 + index);  // phonesim.contact_play_as
@@ -1250,9 +1366,6 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
     }
 }
 
-        case hud::kCheat:
-            if (index > 0 && index < 20) grab::pushControl(index);  // controls.py: the debug menu's testing cheats
-            break;
 // The asleep watch's headset layer: the atlas copied into its swapchain.
 static bool hudSleepLayer(ID3D11Texture2D* atlas, XrCompositionLayerQuad& layer) {
     const PieMenu& m = g_hud[kHudSleep].m;
@@ -1272,8 +1385,5 @@ static bool hudSleepLayer(ID3D11Texture2D* atlas, XrCompositionLayerQuad& layer)
     layer.pose = m.pose;
     layer.size = {m.width, m.height};
     return true;
-        case hud::kContactCall:
-            if (index == 0 || index == 1) requestPhonePie(8300000 + index, true);  // phonesim.contact_menu: our options
-            break;
 }
 

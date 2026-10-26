@@ -66,6 +66,7 @@ static void placeTray(phone3d::Phone& p3, const XrVector3f& centre, const XrVect
         LOG("Build tray: on the tablet, %.1f x %.1f cm", w * menuW * 100, h * menuH * 100);
     }
     placeHud(g_traySheet, at, x, y, (x1 - x0) * menuW, area);
+    g_tabletGlass = {true, GetTickCount64(), {centre.x + z.x * 0.0005f, centre.y + z.y * 0.0005f, centre.z + z.z * 0.0005f}, x, y, z, menuW, menuH};
 }
 
 // Raise / lower / bigger / smaller work with bb.moveobjects on (the game's controller build mode only sends them

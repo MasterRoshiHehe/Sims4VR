@@ -35,6 +35,11 @@ struct Hand {
     // thumb, index, middle, ring, little) and it touches no Sim.
     bool tracked = false;
     float curl[5][3] = {};
+    // Each finger bone's direction (thumb, index, middle, ring, little; from
+    // the knuckle out) in the hand's frame: along the fingers, toward the
+    // thumb, out of the palm (left) or the back of the hand (right), as
+    // armik's forward, side and up. Unit length; the fingers point exactly so.
+    float bone[5][3][3] = {};
 };
 
 void install(bool enabled, float handPitchDegrees, bool headTracking);
@@ -101,6 +106,11 @@ void setLookTarget(bool on, const float point[3]);
 // Main thread: where the controllers' grips (your palms) are in OpenXR app
 // space; valid[i] false for an untracked hand.
 void palms(camera::Vec3 out[2], bool valid[2]);
+
+// Any thread: both controllers as the latest setHands saw them (under 300 ms old), and the hand_pitch
+// the hand is tilted by (radians). godhands.cpp puts the selected Sim's hands there in god mode.
+bool controllers(Hand out[2]);
+float handPitch();
 
 // Main thread: which hands hold something (a prop or carried object sits in
 // the palm). Those fingers keep the game's grip; the buttons drive the rest.

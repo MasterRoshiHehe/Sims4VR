@@ -14,6 +14,7 @@
 #include "framemap.h"
 #include "addrs.h"
 #include "gameaddr.h"
+#include "godhands.h"
 #include "log.h"
 #include "player.h"
 
@@ -434,8 +435,16 @@ bool inYourView() {
            GetTickCount64() - g_bodyTick.load(std::memory_order_relaxed) <= kStale;
 }
 
+// 0 or 1 while a mesh is drawn again as the selected Sim's left or right hand at your controller (god mode,
+// godhands.cpp); -1 otherwise.
+thread_local int t_handSide = -1;
+
 void hookedPalette(uint8_t* mesh, uint8_t* out, uint8_t* pose, void* inverseBinds, uint64_t rows) {
     g_palette(mesh, out, pose, inverseBinds, rows);
+    if (t_handSide >= 0) {
+        godhands::palette(t_handSide, mesh, out, pose);
+        return;
+    }
     if (t_model && t_eyePass == 1 && ourPose(pose))
         g_ourModel.store(t_model, std::memory_order_relaxed);
     if (!mesh || !out || !inYourView()) return;
@@ -473,6 +482,17 @@ void hookedMeshDraw(uint8_t* mesh, uint8_t* params) {
         }
     }
     g_meshDraw(mesh, params);
+    // God mode: the selected Sim's hands, one more draw each, from your eyes only (godhands.cpp).
+    if (t_eyePass == 1 && mesh && params) {
+        if (int sides = godhands::sidesFor(mesh, *reinterpret_cast<void**>(params + kDrawPose))) {
+            for (int side = 0; side < 2; ++side) {
+                if (!(sides >> side & 1)) continue;
+                t_handSide = side;
+                g_meshDraw(mesh, params);
+                t_handSide = -1;
+            }
+        }
+    }
 }
 
 // The game's phone prop: hidden from your eyes only (hidePropAt).
@@ -531,6 +551,9 @@ void hookedSceneDraw(void* model, uint32_t lod, uint8_t* view) {
     }
     void* outer = t_model;
     t_model = model;
+    // God mode: the selected Sim is drawn in full detail for your eyes, so its hands at your controllers are
+    // not the coarse far-away ones.
+    if (t_eyePass == 1 && model && godhands::isSelected(static_cast<const uint8_t*>(model))) lod = 0;
     g_sceneDraw(model, lod, view);
     t_model = outer;
     t_eyePass = previous;

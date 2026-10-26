@@ -31,6 +31,8 @@
 #include "simcache.h"
 #include "eyelids.h"
 #include "facehide.h"
+#include "godhands.h"
+#include "gesture.h"
 #include "voice.h"
 #include "d3d9_hook.h"
 #include "addrs.h"
@@ -167,6 +169,7 @@ S4VR_API int s4vr_init() {
     s4vr::armik::setSeatTorso(g_config.bodySeatTorso);
     s4vr::armik::setSteadyShoulders(g_config.bodySteadyShoulders);
     s4vr::facehide::install(g_config.bodyHideFace);
+    s4vr::godhands::setEnabled(g_config.bodyGodHands);
     s4vr::armik::configureTouch(g_config.touchBodies, g_config.holdHands, g_config.lookAtYou, g_config.grabBodies);
     s4vr::armik::configureGrab(g_config.grabCurl, g_config.grabDrag);
     s4vr::armik::loadGameGrip(g_moduleDir + L"\\sims4vr_grips.ini");
@@ -465,6 +468,18 @@ S4VR_API int s4vr_touch_event(int* kind, int* hand, int* region, unsigned long l
     *region = e.region;
     *actor = reinterpret_cast<unsigned long long>(e.actor);
     *value = e.value;
+    return 1;
+}
+// The oldest hand gesture (gesture.cpp): kind 1 wave, 2 come hither; out[0..8] = your eyes,
+// where you look and the hand's palm, in the world. Returns 0 if none.
+S4VR_API int s4vr_gesture_event(int* kind, int* hand, float* out) {
+    s4vr::gesture::Event e;
+    if (!s4vr::gesture::takeEvent(e)) return 0;
+    *kind = e.kind;
+    *hand = e.hand;
+    std::memcpy(out, e.head, 3 * sizeof(float));
+    std::memcpy(out + 3, e.forward, 3 * sizeof(float));
+    std::memcpy(out + 6, e.palm, 3 * sizeof(float));
     return 1;
 }
 // Head and hands in the world: out[0..8] head position, forward, up; then per

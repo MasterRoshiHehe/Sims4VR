@@ -130,6 +130,7 @@ struct Config {
     bool recenterTurnsBody = true;  // [controls] recenter_turns_body: recentring while walking freely turns your body
                                     // (and what hangs on it) to where you look; in an action the view goes to it
     float trailArrive = 0.8f;         // [body] trail_arrive: metres from the trail's end that start the action
+    float trailStopDist = 3.0f;       // [body] trail_stop_dist: metres from the Sim you walk to at which they stop and face you
     float trailArriveContact = 0.35f; // [body] trail_arrive_contact: the same for a social with hand contact
     float snapAngleBig = 90;  // [controls] snap_angle_big: degrees per snap with the stick all the way over (0: off)
     float turnSpeed = 900;  // right stick: mouse pixels per second at full deflection
@@ -180,6 +181,10 @@ struct Config {
     bool popups3d = true;          // first person: game popups as cards in the world ([ui] popups_3d)
     float popupDistance = 0.75f;   // metres in front of you
     float popupSize = 0.55f;       // card width per metre away (beside a Sim it scales with distance)
+    bool keyboard = true;          // [ui] keyboard: the VR keyboard opens by itself when a text field has the focus
+    float keyboardSize = 0.55f;    // [ui] keyboard_size: its width in metres
+    float keyboardDistance = 0.5f; // [ui] keyboard_distance: metres ahead of you when it opens
+    float keyboardDrop = 0.3f;     // [ui] keyboard_drop: metres under your eyes
     // Pieces of the game's UI on your arms and around you (first person, [wrist]).
     bool wristPieces = true;
     bool noDimming = true;  // [wrist] no_dimming: the game's blue modal dimming off everywhere (at the source)
@@ -223,6 +228,8 @@ struct Config {
     // inside its head, so your own face and hair never show (mirrors keep
     // them). forward/height are only used when a rig has no eye joints.
     float bodyEyeInset = 0.02f;
+    // Debug menu: your view moved from the default eye place, in the head frame (metres): right, up, ahead.
+    float bodyHeadX = 0, bodyHeadY = 0, bodyHeadZ = 0;
     float bodySmoothing = 0.3f;
     // Seated and other game animations: your view starts at the Sim's eyes when
     // it sits, its spine leans with your real head, and the view never leaves
@@ -234,6 +241,7 @@ struct Config {
     bool bodyNearAdaptive = true;    // the near limit follows what is close, less flicker (DX11)
     float bodyNearMax = 0.75f;       // metres, the highest it goes
     bool bodySteadyShoulders = true;  // [body] steady_shoulders: the idle doesn't move your shoulders (arms on controllers)
+    bool bodyGodHands = true;        // god mode: the selected Sim's hands (no arms) show at your controllers
     bool bodyHideFace = true;        // your own face, eyes and teeth folded out of your view (mirrors keep them)
     bool steadyShadows = true;       // first person: sun shadows that hold still (shadows.h)
     float shadowStep = 0.2f;         // degrees the sun moves before the shadows follow

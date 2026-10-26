@@ -36,6 +36,10 @@ void showAllFloors();
 void floorsDown(int count);
 // Taps a key (scan code, set 1) at the next update; withShift: Shift held around it (any thread).
 void tapKey(WORD scan, bool withShift = false);
+// Types one character into the focused text field (any thread; queued, one per frame).
+void typeChar(wchar_t ch);
+// Types a key (scan code, set 1; 0xE0xx extended) like typeChar (the keyboard's Backspace, Enter, arrows).
+void typeKey(WORD scan);
 // Let go of every key and button we hold.
 void releaseAll();
 

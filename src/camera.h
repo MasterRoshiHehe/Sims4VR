@@ -42,6 +42,8 @@ void init(const Config& config);
 // (lowest, follows what's close, highest), live.
 void configureView(float smoothing, float turnSmoothing, float eyeInset, float nearClip, bool nearAdaptive,
                    float nearMax);
+// Settings menu: [body] head_x/head_y/head_z (view offset in the head frame, metres), live.
+void setHeadOffset(float x, float y, float z);
 // Settings menu: [body] seat_follow, live.
 void setSeatFollow(bool on);
 // Settings menu: [audio] pan_any_distance, live: in first person every sound 1 m or more

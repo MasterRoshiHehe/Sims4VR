@@ -13,7 +13,10 @@
 #include <utility>
 #include <vector>
 
+#include "camera.h"
+#include "hud.h"
 #include "log.h"
+#include "vr.h"
 
 namespace s4vr::screenshot {
 
@@ -32,6 +35,7 @@ struct Job {
     Image images[kSlots];
     bool have[kSlots] = {};
     SYSTEMTIME when{};
+    std::string state;  // Sim time and mode when the mark was pressed
 };
 
 std::wstring g_dir;
@@ -42,6 +46,7 @@ std::atomic<int> g_writing{0};
 bool g_active = false;
 ULONGLONG g_started = 0;
 SYSTEMTIME g_when{};
+std::string g_state;
 ID3D11Texture2D* g_staging[kSlots] = {};
 D3D11_TEXTURE2D_DESC g_stagingDesc[kSlots] = {};
 bool g_copied[kSlots] = {};
@@ -196,8 +201,10 @@ void write(const Job& job) {
         menu = writeJpeg(factory, g_dir + L"\\" + name + L"_menu.jpg", bgr, m.width / 2, m.height / 2, menuError);
     }
     if (saved)
-        LOG("Screenshot: saved %ls\\%ls.jpg (%dx%d, %s)%s", g_dir.c_str(), name.c_str(), width, height,
-            eyes ? "left and right eye" : "the screen", menu ? ", the menu layer in _menu.jpg" : "");
+        LOG("Screenshot: saved %ls\\%ls.jpg (%dx%d, %s)%s | local %04u-%02u-%02u %02u:%02u:%02u | %s", g_dir.c_str(),
+            name.c_str(), width, height, eyes ? "left and right eye" : "the screen",
+            menu ? ", the menu layer in _menu.jpg" : "", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond,
+            job.state.c_str());
     else
         LOG("Screenshot: couldn't write %ls\\%ls.jpg (0x%08lx)", g_dir.c_str(), name.c_str(),
             static_cast<unsigned long>(error));
@@ -303,6 +310,7 @@ void pump(ID3D11DeviceContext* context) {
         g_active = true;
         g_started = now;
         GetLocalTime(&g_when);
+        g_state = hud::clockText() + "; " + (vr::mode() == Mode::Stereo ? (camera::bodyActive() ? "first person" : "stereo, no body") : "quad");
         g_job = std::make_unique<Job>();
         return;
     }
@@ -343,6 +351,7 @@ void pump(ID3D11DeviceContext* context) {
     if (!done) return;
     std::shared_ptr<Job> job(g_job.release());
     job->when = g_when;
+    job->state = g_state;
     for (int s = 0; s < kSlots; ++s) job->have[s] = g_read[s] && !(eyes && s == kFlatScreen);
     if (!(job->have[kLeftEye] && job->have[kRightEye]) && !job->have[kFlatScreen]) {
         finish();

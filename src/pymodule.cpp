@@ -90,6 +90,7 @@ void s4vr_set_grabbables(const unsigned long long* ids, const float* xyzr, int c
 int s4vr_hand_event(int* kind, int* hand, unsigned long long* id);
 int s4vr_touch_event(int* kind, int* hand, int* region, unsigned long long* actor, float* value);
 void s4vr_set_touch_restricted(const unsigned long long* ids, int count);
+int s4vr_gesture_event(int* kind, int* hand, float* out);
 void s4vr_grab_set(int hand, unsigned long long id);
 int s4vr_hands(float* out, unsigned long long* held);
 int s4vr_hand_joint(int hand, unsigned long long* sim, float* out);
@@ -615,6 +616,13 @@ PyObject* touchEvent(PyObject*, PyObject*) {
     if (!s4vr_touch_event(&kind, &hand, &region, &actor, &value)) return none();
     return py.Py_BuildValue("(iiiKd)", kind, hand, region, actor, static_cast<double>(value));
 }
+PyObject* gestureEvent(PyObject*, PyObject*) {
+    int kind = 0, hand = 0;
+    float v[9] = {};
+    if (!s4vr_gesture_event(&kind, &hand, v)) return none();
+    return py.Py_BuildValue("(ii(ddd)(ddd)(ddd))", kind, hand, double(v[0]), double(v[1]), double(v[2]), double(v[3]),
+                            double(v[4]), double(v[5]), double(v[6]), double(v[7]), double(v[8]));
+}
 PyObject* setTouchRestricted(PyObject*, PyObject* args) {
     unsigned long long ids[16] = {};
     if (!py.PyArg_ParseTuple(args, "|KKKKKKKKKKKKKKKK", &ids[0], &ids[1], &ids[2], &ids[3], &ids[4], &ids[5], &ids[6],
@@ -869,6 +877,7 @@ PyMethodDef methods[] = {
      "set_grabbables(id, x, y, z, reach, ...): up to 12 objects you can pick up near you"},
     {"hand_event", handEvent, METH_NOARGS, "(kind, hand, object_id) of the oldest grab (1) / let go (2), or None"},
     {"set_touch_restricted", setTouchRestricted, METH_VARARGS, "set_touch_restricted(*sim_ids): hand/arms/shoulders/back/hair only"},
+    {"gesture_event", gestureEvent, METH_NOARGS, "(kind, hand, head xyz, forward xyz, palm xyz) of the oldest hand gesture (1 wave, 2 come hither), or None"},
     {"touch_event", touchEvent, METH_NOARGS, "(kind, hand, region, actor, value) of the oldest Sim body touch, or None"},
     {"grab_set", grabSet, METH_VARARGS, "grab_set(hand, object_id): what that hand holds now (0: nothing)"},
     {"hand_joint", handJoint, METH_VARARGS,

@@ -20,8 +20,10 @@
 #include "benchmark.h"
 #include "camera.h"
 #include "facehide.h"
+#include "godhands.h"
 #include "walkstop.h"
 #include "grab.h"
+#include "hud.h"
 #include "log.h"
 #include "othermods.h"
 #include "player.h"
@@ -102,6 +104,7 @@ const Page kFixedPages[] = {
     {L"Turning", L"Turning", L"Controls"},
     {L"Hands", L"Hands and touch", L"Controls"},
     {L"View head", L"Head and body", L"Controls"},
+    {L"View place", L"Place your view", L"View head"},
     {L"Interface", L"Interface", L"Options"},
     {L"Menus pie", L"Pie menu", L"Interface"},
     {L"Menus pickers", L"Pickers on objects", L"Interface"},
@@ -129,10 +132,10 @@ const Page kFixedPages[] = {
     {L"Phone size", L"Size and screen", L"Phone"},
     {L"Phone model", L"Game's phone model", L"Phone"},
     {L"Phone sounds", L"Sounds", L"Phone"},
-    {L"Tablet", L"Tablet (build/buy)", L"Phone"},
     {L"Phone sf", L"Sims Forever", L"Phone"},
     {L"Phone sf left", L"Left hand", L"Phone sf"},
     {L"Phone sf right", L"Right hand", L"Phone sf"},
+    {L"Tablet", L"Tablet", L"Interface"},
     {L"Notebook", L"Notebook", L"Interface"},
     {L"Notebook position", L"Position", L"Notebook"},
     {L"Notebook hand", L"Hand", L"Notebook"},
@@ -346,6 +349,12 @@ std::vector<Row> makeRows() {
     stopAll.action = 13;
     stopAll.tip = L"Your Sim stops whatever it is doing at once, walks too; standing up or putting something down "
                   L"still plays. Still busy a few seconds later, the game resets it where it stands. First person only.";
+    Row keyboardButton;  // native: opens / closes the VR keyboard by hand (the auto-detect is not sure of every box)
+    keyboardButton.group = L"Menus popups";
+    keyboardButton.label = L"Open / close the keyboard";
+    keyboardButton.kind = Kind::Action;
+    keyboardButton.action = 204;
+    keyboardButton.tip = L"Opens the keyboard in front of you for a text box it did not open for, or closes it.";
     Row alignReset;
     alignReset.group = L"View align";
     alignReset.label = L"Reset the alignment";
@@ -380,6 +389,9 @@ std::vector<Row> makeRows() {
                0.1f, 100, L"%.0f cm"),  // trail.py
         number(L"Reach", L"Trail: the same for touching socials", "body", "trail_arrive_contact", &Config::trailArriveContact,
                0.1f, 1, 0.05f, 100, L"%.0f cm"),  // trail.py
+        flag(L"Reach", L"Trail: Sims you walk to stop and face you", "body", "trail_stop", true, kLive),  // trail.py
+        number(L"Reach", L"Trail: how near you are when they stop", "body", "trail_stop_dist", &Config::trailStopDist, 1, 10, 0.5f, 1,
+               L"%.1f m"),  // trail.py
         toggle(L"Turning", L"Recenter turns your body to your view (in actions: view to the body)", "controls",
                "recenter_turns_body", &Config::recenterTurnsBody),
         flag(L"Loading", L"Start with eyes closed and time paused until you can move", "body", "load_eyes_closed", true,
@@ -387,6 +399,7 @@ std::vector<Row> makeRows() {
         flag(L"Loading", L"Eyes closed while saving on exit", "body", "exit_eyes_closed", true, kLive),  // loadshut.py
         toggle(L"Hands", L"Pick things up", "hands", "grab", &Config::grab, kNextStart),
         toggle(L"Hands", L"Touch to click", "body", "touch", &Config::touch, kNextStart),
+        toggle(L"Hands", L"Selected Sim's hands in god mode", "body", "god_hands", &Config::bodyGodHands, kView),
         toggle(L"Menus pie", L"Pie menu at your hand", "ui", "pie_at_hand", &Config::pieAtHand),
         toggle(L"Menus popups", L"Popups in the world", "ui", "popups_3d", &Config::popups3d),
         toggle(L"HUD", L"HUD on (all of it)", "wrist", "hud", &Config::wristPieces),
@@ -423,6 +436,7 @@ std::vector<Row> makeRows() {
         link(L"Interface", L"Popups", L"Menus popups"),
         link(L"Interface", L"Speech bubbles and skill bars", L"Bubbles"),
         link(L"Interface", L"Phone", L"Phone"),
+        link(L"Interface", L"Tablet", L"Tablet"),
         link(L"Interface", L"Notebook", L"Notebook"),
         link(L"Interface", L"Panels and flat screen", L"Menus panels"),
         // Their pages come from their own menu exports once they are loaded (mergeMenus, v0.13.236/237).
@@ -518,6 +532,10 @@ std::vector<Row> makeRows() {
                L"%.2f", kView),
         number(L"View head", L"View behind the eyes", "body", "eye_inset", &Config::bodyEyeInset, 0, 0.1f, 0.005f, 100,
                L"%.1f cm", kView),
+        link(L"View head", L"Place your view (try out)", L"View place"),
+        number(L"View place", L"Right (+) / left (-)", "body", "head_x", &Config::bodyHeadX, -0.15f, 0.15f, 0.005f, 100, L"%.1f cm", kView),
+        number(L"View place", L"Up (+) / down (-)", "body", "head_y", &Config::bodyHeadY, -0.15f, 0.15f, 0.005f, 100, L"%.1f cm", kView),
+        number(L"View place", L"Ahead (+) / back (-)", "body", "head_z", &Config::bodyHeadZ, -0.15f, 0.15f, 0.005f, 100, L"%.1f cm", kView),
         toggle(L"View head", L"Your Sim's head follows your look", "body", "head_tracking", &Config::headTracking, kHands),
         toggle(L"View head", L"Seated: your Sim leans with you", "body", "seat_follow", &Config::bodySeatFollow, kView),
         toggle(L"View head", L"Seated: your head moves the upper body", "body", "seat_torso", &Config::bodySeatTorso, kView),
@@ -586,6 +604,7 @@ std::vector<Row> makeRows() {
         scriptNumber(sims, L"Talk starts within", "body", "talk_distance", 3, 1, 10, 0.5f,
                      L"%.1f m"),  // scripted.py, reach.py, trail.py: closer, a picked social just starts
         flag(sims, L"Their chats with you stay where you are", "body", "socials_in_place", true, kLive),  // scripted.py
+        flag(sims, L"Vibrate when a hand gesture is seen", "gestures", "haptics", false, kLive),  // gestures.py
 
         choice(L"Interface", L"Game menus in first person", "ui", "first_person", &Config::uiFirstPerson,
                {L"Hidden", L"Wrist HUD only", L"Game UI in front only", L"Both"}),
@@ -613,6 +632,9 @@ std::vector<Row> makeRows() {
                L"%.0f cm"),
         number(L"Menus popups", L"Popup size", "ui", "popup_size", &Config::popupSize, 0.3f, 1.2f, 0.05f, 100, L"%.0f cm a metre"),
         toggle(L"Menus popups", L"No blue dimming behind dialogs", "wrist", "no_dimming", &Config::noDimming),
+        toggle(L"Menus popups", L"Keyboard for text boxes", "ui", "keyboard", &Config::keyboard),
+        number(L"Menus popups", L"Keyboard size", "ui", "keyboard_size", &Config::keyboardSize, 0.3f, 1, 0.05f, 100, L"%.0f cm"),
+        keyboardButton,
         number(L"Menus panels", L"Menu panel distance", "ui", "distance", &Config::uiDistance, 0.5f, 3, 0.1f, 1, L"%.1f m"),
         number(L"Menus panels", L"Menu panel size", "ui", "width", &Config::uiWidth, 0.5f, 3, 0.1f, 1, L"%.1f m"),
         number(L"Menus panels", L"Menu panel height", "ui", "height", &Config::uiHeight, -1, 1, 0.05f, 1, L"%+.2f m"),
@@ -696,7 +718,6 @@ std::vector<Row> makeRows() {
         link(phone, L"Hand", phoneHand),
         link(phone, L"Size and screen", phoneSize),
         link(phone, L"Game's phone model", phoneModel),
-        link(phone, L"Tablet (build/buy)", tablet),
         link(phone, L"Sounds", phoneSounds),
         link(phone, L"Sims Forever (phone in front of you)", L"Phone sf"),
         link(L"Phone sf", L"Left hand", L"Phone sf left"),
@@ -1117,10 +1138,12 @@ void applyChange(Apply apply) {
         case kView:
             camera::configureView(c.bodySmoothing, c.bodyTurnSmoothing, c.bodyEyeInset, c.bodyNearClip,
                                   c.bodyNearAdaptive, c.bodyNearMax);
+            camera::setHeadOffset(c.bodyHeadX, c.bodyHeadY, c.bodyHeadZ);
             camera::setSeatFollow(c.bodySeatFollow);
             armik::setSeatTorso(c.bodySeatTorso);
             armik::setSteadyShoulders(c.bodySteadyShoulders);
             facehide::setEnabled(c.bodyHideFace);
+            godhands::setEnabled(c.bodyGodHands);
             break;
         case kWalk:
             player::configure(c.walkSpeed, c.runSpeed, c.bodyForward, c.bodyHeight, c.touchBodies && c.armIk);
@@ -1542,6 +1565,14 @@ bool change(size_t i, int dir) {
                     }
                     changed(k);
                 }
+                g_redraw = true;
+                g_doneAt = GetTickCount64();
+                g_doneRow = i;
+                LOG("Settings: %ls", r.label);
+                return true;
+            }
+            if (r.action == 204) {  // native: the VR keyboard by hand
+                hud::toggleKeyboard();
                 g_redraw = true;
                 g_doneAt = GetTickCount64();
                 g_doneRow = i;
@@ -2157,6 +2188,8 @@ bool liveValue(const char* section, const char* key, std::string& out) {
     return false;
 }
 
+int testingCheats() { return g_cheats; }
+
 void setTestingCheats(int state) {
     if (g_cheats.exchange(state) != state)
         LOG("Testing cheats are %s in the game, cheat pie menus %s", state & kCheatsOn ? "on" : "off",
@@ -2188,8 +2221,6 @@ void open() {
     g_resetArmed = 0;
     if (mergeMenus() && g_reopenPage < 0 && !g_savedPage.empty())
         loadPage(g_savedPage);  // the page you left was one of its pages
-int testingCheats() { return g_cheats; }
-
     readJiggle();
     if (g_reopenPage >= 0) {
         openPage(g_reopenPage, g_reopenRow);

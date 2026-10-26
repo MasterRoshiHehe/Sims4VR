@@ -6020,6 +6020,17 @@ void setClock(int hour, int minute, int day, int speed) {
     g_speed = speed;
 }
 
+std::string clockText() {
+    const int h = g_hour.load();
+    if (h < 0) return "Sim time not reported yet";
+    static const char* kDays[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+    const int d = g_day.load();
+    char buf[64];
+    std::snprintf(buf, sizeof buf, "Sim time %s %02d:%02d, speed %d", kDays[(d % 7 + 7) % 7], h, g_minute.load(),
+                  g_speed.load());
+    return buf;
+}
+
 #include "hud_pie.inc"
 #include "hud_buildtray.inc"
 
