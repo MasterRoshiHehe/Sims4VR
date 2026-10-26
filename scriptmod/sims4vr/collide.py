@@ -13,11 +13,12 @@ An object stops your body only when the game's navmesh is cut there too
 (you fit where a Sim fits); one starting above your hips (cabinets, shelves)
 counts for your head and hands.
 
-Phase 1: the scene is built and logged, and compared with walk.py's ray
-check; nothing moves you by it yet. Switch: [body] collision_scene
+Phase 2: the DLL pushes your body out of it every frame ([body] collision);
+it is still compared with walk.py's ray check in the log. Switch: [body] collision_scene
 (debug menu: Controls > Moving), read every 2 s.
 """
 import math
+import struct
 import time
 
 import build_buy
@@ -96,6 +97,23 @@ def _watch(on):
     _watching = on
 
 
+def _send():
+    """The scene to the DLL (collide.cpp; layout in collide.h): it pushes your body out of it every frame."""
+    fn = native._optional('collision_scene')  # absent in a DLL older than the script
+    if fn is None:
+        return
+    data = [float(len(walls))]
+    for w in walls:
+        data.extend(w)
+    shapes = [o for o in objects if 3 <= len(o[0]) < 256]
+    data.append(float(len(shapes)))
+    for pts, y0, y1, blocks, _ in shapes:
+        data.extend((float(len(pts)), y0, y1, 1.0 if blocks else 0.0))
+        for x, z in pts:
+            data.extend((x, z))
+    fn(struct.pack('<{}f'.format(len(data)), *data))
+
+
 def forget():
     global _state, _pending, walls, objects, _dirty
     _state = None
@@ -103,6 +121,10 @@ def forget():
     _dirty = 0.0
     walls = []
     objects = []
+    try:
+        _send()
+    except Exception:
+        pass
     try:
         _watch(False)
     except Exception:
@@ -323,6 +345,7 @@ def _build(sim, x, y, z, surface):
                 new_objects.append((pts, y0, y1, blocks, name))
     spent += time.perf_counter() - started
     walls, objects = new_walls, new_objects
+    _send()
     body = sum(1 for o in new_objects if o[3])
     high = sum(1 for o in new_objects if o[1] >= floor + HIP)
     _log('built at {:.2f} {:.2f} level {} (floor {:.2f}): {} wall sides, {} doorways cut, {} object shapes '

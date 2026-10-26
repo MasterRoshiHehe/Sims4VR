@@ -22,6 +22,7 @@
 #include "godhands.h"
 #include "ambience.h"
 #include "thumbs.h"
+#include "collide.h"
 #include "walkstop.h"
 #include "facehide.h"
 #include "framecost.h"
@@ -2614,6 +2615,7 @@ void init(const Config& config) {
     player::configure(config.walkSpeed, config.runSpeed, config.bodyForward, config.bodyHeight, config.touchBodies && config.armIk);
     player::setKeepHeight(config.bodyKeepHeight);
     player::setSmoothSlide(config.bodySmoothSlide);
+    collide::configure(config.bodyCollision, config.bodyRadius);
     player::setHeadRepel(config.headRepel, config.headRadius);
     player::setStopTime(config.bodyStopTime);
     walkstop::setClips(config.bodyWalkClips);

@@ -39,6 +39,7 @@
 #include "gameaddr.h"
 #include "d3d11_hook.h"
 #include "gamepad.h"
+#include "collide.h"
 #include "grab.h"
 #include "othermods.h"
 #include "hud.h"
@@ -440,6 +441,8 @@ S4VR_API int s4vr_pie_shown() { return s4vr::vr::pieShown() ? 1 : 0; }
 S4VR_API void s4vr_set_grabbables(const unsigned long long* ids, const float* xyzr, int count) {
     s4vr::grab::setGrabbables(reinterpret_cast<const uint64_t*>(ids), xyzr, count);
 }
+// First-person collision scene (collide.py -> collide.cpp): packed floats, see collide.h.
+S4VR_API void s4vr_collision_scene(const float* data, int count) { s4vr::collide::setScene(data, count); }
 // The oldest hand event: kind 1 grabbed, 2 let go. Returns 0 if none.
 S4VR_API int s4vr_hand_event(int* kind, int* hand, unsigned long long* id) {
     s4vr::grab::Event e;

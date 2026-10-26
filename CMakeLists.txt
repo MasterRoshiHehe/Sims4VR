@@ -48,6 +48,7 @@ add_library(sims4vr SHARED
     src/handshape.cpp
     src/camera.cpp
     src/player.cpp
+    src/collide.cpp
     src/camfind.cpp
     src/config.cpp
     src/crashlog.cpp

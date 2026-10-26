@@ -89,6 +89,8 @@ const TipText kTips[] = {
     {"body.carried_stairs", L"Stairs and ladders carry you up and down by themselves."},
     {"body.keep_height", L"Your body is drawn at your real height, also on stairs."},
     {"body.smooth_slide", L"Sliding along walls instead of stopping dead when you walk into them."},
+    {"body.collision", L"Your body stops at walls and furniture, also when you walk or lean in your room. Off: the older stick-only check. Needs the map row above on."},
+    {"body.body_radius", L"How far your body stays from walls and furniture. Smaller fits through tighter gaps; larger clips less."},
     {"body.collision_scene", L"Keeps a map of the walls and furniture around you for collisions. For now it only writes to the log; off saves a little time on the game's thread."},
     {"body.walk_clips", L"Plays the Sim's start and stop walking animations as you move."},
     {"body.stop_time", L"How long your Sim takes to come to a stop. 0 stops at once."},

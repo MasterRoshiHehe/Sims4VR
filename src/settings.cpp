@@ -21,6 +21,7 @@
 #include "camera.h"
 #include "facehide.h"
 #include "godhands.h"
+#include "collide.h"
 #include "walkstop.h"
 #include "grab.h"
 #include "hud.h"
@@ -576,6 +577,9 @@ std::vector<Row> makeRows() {
         toggle(moving, L"Body drawn at your height (stairs)", "body", "keep_height", &Config::bodyKeepHeight, kWalk),
         toggle(moving, L"Slide smoothly along walls", "body", "smooth_slide", &Config::bodySmoothSlide, kWalk),
         flag(moving, L"Map walls and furniture around you", "body", "collision_scene", true, kLive),  // collide.py
+        toggle(moving, L"Walls and furniture stop you", "body", "collision", &Config::bodyCollision, kWalk),
+        number(moving, L"Body keeps clear of walls by", "body", "body_radius", &Config::bodyRadius, 0.1f, 0.5f, 0.025f, 100,
+               L"%.1f cm", kWalk),
         toggle(moving, L"Start and stop walking animations", "body", "walk_clips", &Config::bodyWalkClips, kWalk),
         number(moving, L"Stop smoothness (0 = instant)", "body", "stop_time", &Config::bodyStopTime, 0, 1.5f, 0.1f, 1, L"%.1f s",
                kWalk),
@@ -1150,6 +1154,7 @@ void applyChange(Apply apply) {
             player::configure(c.walkSpeed, c.runSpeed, c.bodyForward, c.bodyHeight, c.touchBodies && c.armIk);
             player::setKeepHeight(c.bodyKeepHeight);
             player::setSmoothSlide(c.bodySmoothSlide);
+            collide::configure(c.bodyCollision, c.bodyRadius);
             player::setStopTime(c.bodyStopTime);
             walkstop::setClips(c.bodyWalkClips);
             break;

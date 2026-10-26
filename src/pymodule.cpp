@@ -87,6 +87,7 @@ int s4vr_pie_shown();
 void s4vr_set_testing_cheats(int on);
 void s4vr_set_script_mods(int bits);
 void s4vr_set_grabbables(const unsigned long long* ids, const float* xyzr, int count);
+void s4vr_collision_scene(const float* data, int count);
 int s4vr_hand_event(int* kind, int* hand, unsigned long long* id);
 int s4vr_touch_event(int* kind, int* hand, int* region, unsigned long long* actor, float* value);
 void s4vr_set_touch_restricted(const unsigned long long* ids, int count);
@@ -603,6 +604,14 @@ PyObject* setGrabbables(PyObject*, PyObject* args) {
     s4vr_set_grabbables(ids, &v[0][0], n);
     return none();
 }
+PyObject* collisionScene(PyObject*, PyObject* args) {
+    // Little-endian float32s (struct.pack), layout in collide.h.
+    const char* data = nullptr;
+    int length = 0;
+    if (!py.PyArg_ParseTuple(args, "y#", &data, &length)) return nullptr;
+    s4vr_collision_scene(reinterpret_cast<const float*>(data), length / 4);
+    return none();
+}
 PyObject* handEvent(PyObject*, PyObject*) {
     int kind = 0, hand = 0;
     unsigned long long id = 0;
@@ -875,6 +884,7 @@ PyMethodDef methods[] = {
     {"set_phone_prop", setPhoneProp, METH_VARARGS, "set_phone_prop(width, height, depth): the game phone model's size"},
     {"set_grabbables", setGrabbables, METH_VARARGS,
      "set_grabbables(id, x, y, z, reach, ...): up to 12 objects you can pick up near you"},
+    {"collision_scene", collisionScene, METH_VARARGS, "collision_scene(bytes): walls and furniture around you (collide.py)"},
     {"hand_event", handEvent, METH_NOARGS, "(kind, hand, object_id) of the oldest grab (1) / let go (2), or None"},
     {"set_touch_restricted", setTouchRestricted, METH_VARARGS, "set_touch_restricted(*sim_ids): hand/arms/shoulders/back/hair only"},
     {"gesture_event", gestureEvent, METH_NOARGS, "(kind, hand, head xyz, forward xyz, palm xyz) of the oldest hand gesture (1 wave, 2 come hither), or None"},

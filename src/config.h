@@ -270,6 +270,8 @@ struct Config {
     bool bodyWalkClips = true;  // first person: the game's own start and stop walk clips
     float bodyStopTime = 0.5f;  // first person: seconds walking eases to rest after you let go
     bool bodySmoothSlide = true;  // first person: slide along walls smoothly, not in 15 degree steps
+    bool bodyCollision = true;  // first person: walls and furniture (collide.py scene) stop your body
+    float bodyRadius = 0.3f;  // first person: metres your body keeps clear of walls and furniture
 
     // Hands (first person): close a hand near an object to pick it up, open it to put it down
     bool grab = true;

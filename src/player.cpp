@@ -9,6 +9,7 @@
 
 #include "MinHook.h"
 #include "armik.h"
+#include "collide.h"
 #include "crashlog.h"
 #include "addrs.h"
 #include "gameaddr.h"
@@ -57,6 +58,8 @@ bool g_simCollision = true;
 std::atomic<bool> g_headRepel{true};
 std::atomic<float> g_headRadius{0.08f};  // metres around your view
 int g_repelLogs = 0;
+int g_collideLogs = 0;
+ULONGLONG g_collideLogTick = 0;
 ULONGLONG g_repelLogTick = 0;
 std::atomic<bool> g_running{false};  // left stick tapped: run speed and the Sim's run walk
 bool g_free = false;
@@ -670,7 +673,11 @@ bool update(const Input& in, float viewYaw, float turn, Output& out) {
     if (g_speed < 0.01f) g_speed = 0, g_speedRate = 0;
     g_rest = g_slowing && g_stopW > 0 ? 2 * g_speed / g_stopW + g_speedRate / (g_stopW * g_stopW) : 0;
     float vx = g_dir[0] * g_speed, vz = g_dir[1] * g_speed;
-    if (maskFresh) {
+    // Walls and furniture from collide.py's scene (collide.cpp) replace the
+    // ray check, except at stairs (their own rails below).
+    float bodyRadius = 0;
+    const bool scene = collide::active(bodyRadius) && !(floorFresh && flight[4] > 0);
+    if (maskFresh && !scene) {
         if (g_smoothSlide.load(std::memory_order_relaxed))
             slideSmooth(vx, vz, mask, dt);
         else
@@ -733,6 +740,28 @@ bool update(const Input& in, float viewYaw, float turn, Output& out) {
     turnXZ(g_viewYaw, in.hmd[0] * s, in.hmd[2] * s, hx, hz);
     hx += g_base[0];
     hz += g_base[1];
+
+    // Walls and furniture: your body (bodyRadius round the point under your
+    // head) is pushed back out, whether the stick or your own feet took you
+    // in; along a wall that leaves the part of the step that goes along it.
+    if (scene) {
+        float x = hx, z = hz;
+        int what = 0;
+        float moved = collide::pushOut(x, z, bodyRadius * s, g_floorY, (bodyRadius + 0.25f) * s, what);
+        if (moved > 0) {
+            g_base[0] += x - hx;
+            g_base[1] += z - hz;
+            hx = x;
+            hz = z;
+            ULONGLONG tick = GetTickCount64();
+            if (moved > 0.02f * s && g_collideLogs < 60 && tick - g_collideLogTick > 1000) {
+                g_collideLogTick = tick;
+                ++g_collideLogs;
+                LOG("Player: kept out of %s: pushed back %.0f mm (%s)", what ? "furniture" : "a wall",
+                    moved * 1000 / s, std::sqrt(vx * vx + vz * vz) > 0.1f * s ? "walking" : "your own step or lean");
+            }
+        }
+    }
 
     // On a flight of stairs its sides hold you (the railings, the walls beside
     // it): you only leave it at the top or the bottom. Leaning out is pushed
