@@ -538,7 +538,9 @@ static void updateNoteCard(const camera::View& view, bool firstPerson, bool head
     g_noteCardAt = at, g_noteCardX = x, g_noteCardY = y;
     g_noteCardW = w, g_noteCardH = w * used / hud::kNote.w;
     if (!n.front) g_noteDrag.hand = -1, g_noteAnchored = false;
-    s.onTop = true;
+    // Over a Sim: depth-tested, so walls and furniture hide it like a speech bubble (user 2026-10-26: seen
+    // through walls); in front of you: over the world.
+    s.onTop = n.front;
     placeHud(s, at, x, y, w, {hud::kNote.x, hud::kNote.y, hud::kNote.w, used});
     // Over a Sim: its world position, lifted; in front of you: app space (render thread, placeArmPieces).
     std::lock_guard<std::mutex> lock(g_armPlaceMutex);
