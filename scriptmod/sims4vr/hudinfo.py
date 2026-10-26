@@ -70,7 +70,7 @@ def _icon(key):
         return 0
     instance = getattr(key, 'instance', 0) or 0
     if instance:
-        _icon_types[instance] = getattr(key, 'type', 0) or 0
+        _icon_types.setdefault(instance, getattr(key, 'type', 0) or 0)  # 0 once its own type had none
     return instance
 
 
@@ -476,6 +476,13 @@ def _icons():
             # before the pass was done, so no icon ever showed).
             if instance not in _waiting:
                 _waiting[instance] = now
+            continue
+        if status == 2 and _icon_types.get(instance, 0):
+            # Not under the type its key names (the weather's large icons, user 2026-10-26 03:24Z): ask for any
+            # picture with that instance (PNG, DST/DDS, RLE2) next time.
+            native._log('hudinfo: icon {:016x} not found as type {:08x}, looking for any picture'.format(
+                instance, _icon_types[instance]))
+            _icon_types[instance] = 0
             continue
         asked = _waiting.pop(instance, now)
         data = objmenu._unpack(compression, size, data) if status == 0 else b''

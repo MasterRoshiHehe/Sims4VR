@@ -2559,7 +2559,9 @@ void drawMySim(ImDrawList* d, const Rect& r, Button& button, std::vector<uint64_
             d->AddRectFilled(at(0, 0), at(230, 62), top);
             d->AddRectFilledMultiColor(at(0, 62), at(230, 104), top, top, clear, clear);
             const size_t space = g_sim.name.find(' ');
-            const std::string first = g_sim.name.empty() ? std::string("My Sim") : space == std::string::npos ? g_sim.name : g_sim.name.substr(0, space);
+            // Your first name; the app pointed at instead while pointing (user 2026-10-26 03:28Z, as mcCategoryName).
+            std::string first = g_sim.name.empty() ? std::string("My Sim") : space == std::string::npos ? g_sim.name : g_sim.name.substr(0, space);
+            if (hovered >= 0) first = hovered == kSimCareer && careerName(g_sim.age) ? careerName(g_sim.age) : kMySimNames[hovered];
             ImVec2 size = g_small->CalcTextSizeA(34 * g_phoneText, FLT_MAX, 0, first.c_str());
             const float scale = g_phoneText * std::min(1.0f, 206 * S / std::max(1.0f, size.x));
             size.x /= g_phoneText, size.y /= g_phoneText;
