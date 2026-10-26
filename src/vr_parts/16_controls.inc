@@ -333,6 +333,7 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
 
     int laserHand = -1;
     bool swallowClick = false;
+    static bool laserLatched[2] = {false, false};  // first person: grip + A/X turned the laser on, until grip let go
     static bool laserButton[2] = {false, false};  // A / X held down as the laser's button (until released)
     if (!(mode() == Mode::Stereo && camera::bodyActive())) {
         // Main menu, loading screens, god camera: the laser is always on.
@@ -345,20 +346,32 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
         }
         laserHand = g_pointerHand;
     } else {
-        // First person: the laser shows while a hand holds the grip and its
-        // A (right) or X (left) button; pulling that trigger clicks. Otherwise
-        // the triggers are just your index fingers.
+        // First person (live and build alike): grip, then A (right) or X
+        // (left) turns the laser on; it then stays on until that grip is let
+        // go, so the thumb is free for the stick (user 2026-10-26). Pulling
+        // that trigger clicks. Otherwise the triggers are just your index fingers.
+        for (int i = 0; i < 2; ++i) {
+            const float grip = floatState(g_gripAction, i);
+            const bool can = !grab::holding(i) && !(g_phoneOut && i == g_phoneHand) && !(g_bookOut && i == g_bookHand);
+            if (!can || grip < 0.4f) laserLatched[i] = false;
+            else if (grip > 0.6f && boolState(g_primaryAction, i) && !laserLatched[i]) {
+                laserLatched[i] = true;
+                LOG("Controls: %s laser on (stays on until the grip is let go)", i ? "right" : "left");
+            }
+        }
         for (int i : {g_pointerHand, 1 - g_pointerHand}) {
-            if (floatState(g_gripAction, i) > 0.6f && boolState(g_primaryAction, i) && !grab::holding(i) &&
-                !(g_phoneOut && i == g_phoneHand) && !(g_bookOut && i == g_bookHand)) {
+            if (laserLatched[i]) {
                 laserHand = i;
                 break;
             }
         }
         if (laserHand >= 0) laserButton[laserHand] = true;
     }
+    if (!(mode() == Mode::Stereo && camera::bodyActive())) laserLatched[0] = laserLatched[1] = false;
+    // A / X stays the laser's (no right-click) while held from turning it on,
+    // and while the laser is latched on that hand.
     for (int i = 0; i < 2; ++i)
-        if (!boolState(g_primaryAction, i)) laserButton[i] = false;
+        if (!boolState(g_primaryAction, i) && !laserLatched[i]) laserButton[i] = false;
     if (laserHand >= 0) g_pointerHand = laserHand;
 
     pointer::Controls c;
@@ -956,7 +969,7 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
                 onPanel = onPie = true;
                 onTabletBlank = true;
             }
-        } else if (!g_pie.active && (g_hud[kHudPopup].m.active || g_hud[kHudPicker].m.active) &&
+        } else if (!g_pie.active && (g_hud[kHudPopup].m.active || g_hud[kHudPicker].m.active || g_hud[kHudKeyboard].m.active) &&
                    laserHud(o, d, c.leftButton, panelHit)) {
             // Our popup or picker card in front of you (a Save / Exit question from the phone's Options too):
             // before the phone's game menu, which took the laser while the card was up.
@@ -1177,10 +1190,13 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
         static bool rawWas = false, worldPress = false;
         static ULONGLONG worldPressAt = 0;
         static float pressU = 0, pressV = 0;
+        // Build/buy: holds are the tools' own drags (roof handles, walls,
+        // moving an object), so the press stays down as long as the trigger
+        // (user 2026-10-26: roof arrows could not be held to resize).
         const bool raw = c.leftButton;
         if (!raw) {
             worldPress = false;
-        } else if (!rawWas && onWorld && !onPie && camera::bodyActive()) {
+        } else if (!rawWas && onWorld && !onPie && camera::bodyActive() && !g_buildBuy) {
             worldPress = true;
             worldPressAt = now;
             pressU = c.u;
