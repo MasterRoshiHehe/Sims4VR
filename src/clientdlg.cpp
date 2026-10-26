@@ -1,4 +1,5 @@
 #include "clientdlg.h"
+#include "pointer.h"
 
 #include <windows.h>
 #include <atomic>
@@ -253,7 +254,15 @@ void gameTray(int which) {
         case kEscLessons: uiMessage(comms, "ShowTutorial", "{\"source\":\"esc_menu\"}"); break;
         case kEscCredits: uiMessage(comms, "ShowGameCredits", ""); break;
         case kEscAchievements: uiMessage(comms, "ShowAchievements", ""); break;
-        case kEscManageWorlds: uiMessage(comms, "ShowExitToManageWorldsDialog", "{\"context\":1}"); break;
+        case kEscManageWorlds:
+            // Its handler reads payload.context (UIContainerMain.HandleShowExitToManageWorldsDialog), and an object
+            // with it can't be made here without the JSON class (user 2026-10-26 16:37Z: still nothing): then F5,
+            // the game's own Manage Worlds key in live mode (InputMap), which sends it with its context.
+            if (!uiMessage(comms, "ShowExitToManageWorldsDialog", "{\"context\":1}")) {
+                pointer::tapKey(0x3F);
+                LOG("Phone: Manage Worlds by its key (F5)");
+            }
+            break;
         case kEscMainMenu: uiMessage(comms, "ShowExitToMainMenuDialog", ""); break;
         case kEscQuit: uiMessage(comms, "ShowCloseGameDialog", ""); break;
         case kGallery: uiMessage(comms, "ShowExchangeShare", "{\"mode\":\"share\"}"); break;
