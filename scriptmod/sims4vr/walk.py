@@ -42,7 +42,7 @@ import terrain
 
 from interactions.utils.interaction_liabilities import ANIMATION_CONTEXT_LIABILITY
 
-from sims4vr import carried, doors, follow, halt, hint, native, outdoors, scripted, stairs, stride, trail
+from sims4vr import carried, collide, doors, follow, halt, hint, native, outdoors, scripted, stairs, stride, trail
 from sims4vr import hooks
 from sims4vr import livedrag  # noqa: F401  (no live-mode pick-up in first person)
 
@@ -130,6 +130,7 @@ def stop():
     doors.close_all()
     doors.forget()
     stairs.forget()
+    collide.forget()
     carried.forget()
     sim = services.get_active_sim()
     if sim is not None:
@@ -820,6 +821,13 @@ def _tick(_handle):
         mask = 0 if game else _cached_mask(sim, px, py, pz, on, pushing, moving)
         ramp = stairs.ramp(px, py, pz)
         native.set_player_state(not game, mask, _floor(sim, px, py, pz, ramp), _flight_sides(ramp))
+        try:
+            # The collision scene (collide.py, phase 1: built and compared with the ray check, not used yet).
+            c = _mask_cache
+            fresh = c is not None and math.hypot(c[0] - px, c[2] - pz) < 0.05
+            collide.update(sim, px, py, pz, _surface_of(sim), free and not game and on is None and fresh, mask)
+        except Exception as e:
+            native._log('walk: collision scene failed: {!r}'.format(e))
         if free and not game:
             _you_at = (px, pz)
             if not _climb(sim, pose, on):
