@@ -191,11 +191,28 @@ bool uiMessage(const Held& comms, const char* message, const std::string& json) 
     Value args[2];
     args[0].type = kString;
     args[0].data = const_cast<char*>(message);
+    const char* how = parsed ? "JSON.parse" : "";
+    if (!json.empty() && !parsed) {
+        // The JSON class not found or its parse refused (Manage Worlds, user 2026-10-26 16:09Z): the movie's own
+        // JSON.parse by path, else an empty Object (Object() called as a function), so the game's handler gets an
+        // object to read from instead of null.
+        void* m = movie();
+        Value arg;
+        arg.type = kString;
+        arg.data = const_cast<char*>(json.c_str());
+        release(payload.v);
+        if (m && g_movieInvoke(m, "JSON.parse", &payload.v, &arg, 1) && payload.ok()) {
+            parsed = true, how = "the movie's JSON.parse";
+        } else {
+            release(payload.v);
+            if (m && g_movieInvoke(m, "Object", &payload.v, nullptr, 0) && payload.ok()) parsed = true, how = "an empty Object";
+        }
+    }
     if (parsed) args[1] = payload.v;
     else args[1].type = kNull;
     bool sent = callMember(comms.v, "SendUIMessage", args, 2, nullptr);
-    LOG("Phone: %s %s (payload %s)", message, sent ? "sent" : "not sent (SendUIMessage failed)",
-        parsed ? json.c_str() : json.empty() ? "none" : "null, JSON.parse failed");
+    LOG("Phone: %s %s (payload %s%s%s)", message, sent ? "sent" : "not sent (SendUIMessage failed)",
+        parsed ? json.c_str() : json.empty() ? "none" : "null, JSON.parse failed", parsed ? " by " : "", how);
     return sent;
 }
 

@@ -46,7 +46,7 @@ std::wstring gameRoot() {
     return p;
 }
 
-// Client*Build*.package files under dir, a few folders deep.
+// Client*Build*.package (and UI.package) files under dir, a few folders deep.
 void findPackages(const std::wstring& dir, int depth, std::vector<std::wstring>& full, std::vector<std::wstring>& delta) {
     WIN32_FIND_DATAW fd;
     HANDLE h = FindFirstFileW((dir + L"\\*").c_str(), &fd);
@@ -63,6 +63,13 @@ void findPackages(const std::wstring& dir, int depth, std::vector<std::wstring>&
         }
         if (_wcsnicmp(name.c_str(), L"Client", 6) != 0) continue;
         size_t n = name.size();
+        if (_wcsicmp(name.c_str(), L"UI.package") == 0) {
+            // Data\Client\UI.package: the UI's own pictures, e.g. the weather tooltip's large weather icons
+            // (WEATHER_TYPE_UI_INFO icon_large, user 2026-10-26 16:10Z), in no Client*Build package.
+            full.push_back(path);
+            continue;
+        }
+        if (_wcsnicmp(name.c_str(), L"Client", 6) != 0) continue;
         if (n < 8 || _wcsicmp(name.c_str() + n - 8, L".package") != 0) continue;
         if (name.find(L"FullBuild") != std::wstring::npos)
             full.push_back(path);
