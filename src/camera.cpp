@@ -2139,8 +2139,27 @@ void probeSound(void* sound, const HeardSound& h, ULONGLONG now) {
     ++g_probeLogs;
     char text[300];
     describe(h, text, sizeof(text));
+    dumpWords(sound, cls);
     LOG("Sound probe: class %d (1 flat placed, 2 3D at head, 4 flat unplaced) sound %p at +%llu ms: %s", cls, sound,
         static_cast<unsigned long long>(now), text);
+}
+
+// Raw words of a 2D sound (owner id suspected at +0x20, message fields +0x18, +0x28, +0x2a8).
+int g_wordLogs = 0;
+void dumpWords(void* sound, int cls) {
+    if ((cls != 1 && cls != 4) || g_wordLogs >= 200) return;
+    ++g_wordLogs;
+    const uint8_t* b = static_cast<const uint8_t*>(sound);
+    uint64_t w[8] = {};
+    for (int i = 0; i < 6; ++i) std::memcpy(&w[i], b + 0x10 + i * 8, 8);
+    uint64_t id2a8 = 0;
+    std::memcpy(&id2a8, b + 0x2a8, 8);
+    float v[8];
+    std::memcpy(v, b + 0x30, sizeof(v));
+    LOG("Sound words: class %d sound %p +10..38: %llx %llx %llx %llx %llx %llx +2a8 %llx; +30..4c: %.2f %.2f %.2f %.2f | %.2f %.2f %.2f %.2f",
+        cls, sound, (unsigned long long)w[0], (unsigned long long)w[1], (unsigned long long)w[2],
+        (unsigned long long)w[3], (unsigned long long)w[4], (unsigned long long)w[5], (unsigned long long)id2a8,
+        v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7]);
 }
 
 // Sound init hook (WickedWhims voices): who starts the sounds that end up
