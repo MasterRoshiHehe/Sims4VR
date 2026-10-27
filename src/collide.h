@@ -58,4 +58,10 @@ void setHandGaps(float wall, float object);
 float stopHand(int side, const float target[3], const float* offsets, const float* radii, int count, float snap,
                const float* shoulder, float out[3]);
 
+// Any thread (the pose hook: touch sounds, armik.cpp): your hand, a ball of `radius` at
+// (x, y, z), touching a wall or an object of the scene (on or off [body] collision). The
+// deepest contact: its normal (out of the surface toward the hand: the top of a table is
+// straight up) and material (collide.py: 0 hard, 1 metal, 2 soft, 3 glass; 4 a wall).
+bool handContact(float x, float y, float z, float radius, float normal[3], int& material);
+
 }  // namespace s4vr::collide

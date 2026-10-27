@@ -103,6 +103,11 @@ def _joint_hash(name):
 
 def start():
     global _alarm, _grab_on, _eat_on
+    try:
+        from sims4vr import foley
+        foley.start()
+    except Exception as e:
+        _log('touch sounds failed to start: {!r}'.format(e))
     _grab_on = native.setting_flag('hands', 'grab', True)
     _eat_on = native.setting_flag('hands', 'eat', True)
     if _alarm is None and (_grab_on or _eat_on):
@@ -112,6 +117,11 @@ def start():
 
 def stop():
     global _alarm
+    try:
+        from sims4vr import foley
+        foley.stop()
+    except Exception as e:
+        _log('touch sounds failed to stop: {!r}'.format(e))
     if _alarm is not None:
         alarms.cancel_alarm(_alarm)
         _alarm = None
@@ -461,6 +471,11 @@ def _tick(_handle):
             bodygrab.tick(sim)
         except Exception as e:
             _error('body grab', e)
+        try:
+            from sims4vr import gestures
+            gestures.tick(sim)
+        except Exception as e:
+            _error('gestures', e)
         snap = native.hands()
         now = time.monotonic()
         if now - _last_list >= LIST_EVERY:

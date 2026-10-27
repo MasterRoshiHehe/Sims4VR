@@ -216,6 +216,75 @@ float pushOut(float& x, float& z, float radius, float objectRadius, float feetY,
     return m;
 }
 
+bool handContact(float x, float y, float z, float radius, float normal[3], int& material) {
+    // This thread's own copy of the scene (taken again when a new one came).
+    thread_local std::vector<Wall> walls;
+    thread_local std::vector<Shape> shapes;
+    thread_local std::vector<float> points;
+    thread_local uint32_t version = 0;
+    uint32_t v = g_version.load(std::memory_order_acquire);
+    if (v != version) {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        walls = g_walls;
+        shapes = g_shapes;
+        points = g_points;
+        version = g_version.load(std::memory_order_relaxed);
+    }
+    float best = 0;
+    for (const Wall& w : walls) {
+        if (y < w.y0 || y > w.y1) continue;
+        float cx, cz;
+        closest(x, z, w.ax, w.az, w.bx, w.bz, cx, cz);
+        float dx = x - cx, dz = z - cz, d = std::sqrt(dx * dx + dz * dz);
+        if (d >= radius || radius - d <= best) continue;
+        best = radius - d;
+        if (d > 1e-5f) {
+            normal[0] = dx / d, normal[1] = 0, normal[2] = dz / d;
+        } else {  // on the line: either side of it
+            float ex = w.bx - w.ax, ez = w.bz - w.az, l = std::sqrt(ex * ex + ez * ez);
+            normal[0] = l > 1e-6f ? -ez / l : 1, normal[1] = 0, normal[2] = l > 1e-6f ? ex / l : 0;
+        }
+        material = 4;
+    }
+    for (const Shape& s : shapes) {
+        if (y < s.y0 || y > s.y1 + radius || x < s.minX - radius || x > s.maxX + radius || z < s.minZ - radius ||
+            z > s.maxZ + radius)
+            continue;
+        // The nearest edge, and whether (x, z) is inside the footprint.
+        const float* p = &points[s.first * 2];
+        bool in = false;
+        float edge = 1e30f, ex = 0, ez = 0;
+        for (int i = 0, j = s.count - 1; i < s.count; j = i++) {
+            float xi = p[i * 2], zi = p[i * 2 + 1], xj = p[j * 2], zj = p[j * 2 + 1];
+            if ((zi > z) != (zj > z) && x < (xj - xi) * (z - zi) / (zj - zi) + xi) in = !in;
+            float cx, cz;
+            closest(x, z, xj, zj, xi, zi, cx, cz);
+            float d = (x - cx) * (x - cx) + (z - cz) * (z - cz);
+            if (d < edge) edge = d, ex = cx, ez = cz;
+        }
+        edge = std::sqrt(edge);
+        float depth, n[3] = {0, 0, 0};
+        if (in && y >= s.y1 - 0.1f) {  // on (or just above) its top
+            depth = s.y1 + radius - y;
+            n[1] = 1;
+        } else if (in) {  // in its side: out through the nearest edge
+            if (y > s.y1) continue;
+            depth = radius + edge;
+            if (edge > 1e-5f) n[0] = (ex - x) / edge, n[2] = (ez - z) / edge;
+        } else if (edge < radius && y <= s.y1) {  // just outside its side
+            depth = radius - edge;
+            if (edge > 1e-5f) n[0] = (x - ex) / edge, n[2] = (z - ez) / edge;
+        } else {
+            continue;
+        }
+        if (depth <= best) continue;
+        best = depth;
+        normal[0] = n[0], normal[1] = n[1], normal[2] = n[2];
+        material = static_cast<int>((s.flags >> 8) & 0xF);
+        if (material > 3) material = 0;
+    }
+    return best > 0;
+}
 
 // ---------------------------------------------------------------------------
 // Your Sim's hands against walls and furniture (phase 3).

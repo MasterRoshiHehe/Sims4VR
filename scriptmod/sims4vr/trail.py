@@ -423,6 +423,148 @@ def _arrive(sim):
         _error('putting the Sim where you are', e)
 
 
+STOP_DIST = 3.0  # m: [body] trail_stop_dist, the Sim you walk to stops and faces you
+STOP_LEAVE = 1.5  # m beyond that you walk away before they carry on
+_stopped = {}  # Sim id -> dict(sim, deferred): Sims held still for the player walking to them (trail_stop)
+
+
+def _stop_dist():
+    try:
+        return max(0.5, float(native.setting('body', 'trail_stop_dist', STOP_DIST)))
+    except (TypeError, ValueError):
+        return STOP_DIST
+
+
+def _defer_queued(other, you):
+    """Their queued schedule actions (autonomy / script, not with you, not involuntary) are noted
+    before they are cancelled, so release() can queue them again: put off, not lost."""
+    from interactions.context import InteractionSource
+    from interactions.priority import Priority
+    from sims4vr import follow
+    kept = []
+    for si in list(other.queue):
+        try:
+            context = si.context
+            if si.is_finishing or not getattr(si, 'is_super', True) or follow._with_you(si, you):
+                continue
+            if context.source not in (InteractionSource.AUTONOMY, InteractionSource.SCRIPT) or \
+                    context.priority == Priority.Critical or getattr(context, 'continuation_id', None) is not None:
+                continue
+            kept.append((si.affordance, si.target, context.source, context.priority))
+        except Exception:
+            pass
+    return kept
+
+
+def _stop_for(sim, other):
+    """trail_stop: you are within the distance of the Sim you walk to. Like Follow me's start (follow.py): what
+    they do ends (past must-run; chats with others and seat/bed are left), their autonomy waits and they
+    turn to face you through the game's social adjustment. The queued schedule actions are put off."""
+    from sims4vr import follow
+    deferred = _defer_queued(other, sim)
+    ended = follow._stop_what_they_do(other, sim, {})
+    follow._autonomy(other, True)
+    try:
+        from sims4vr import halt
+        halt._end_routes_on_client(other)  # a route they are walking stops on the client too
+    except Exception as e:
+        _error('ending their walk', e)
+    state = dict(sim=other, deferred=deferred, walk=None, sent=0.0)
+    _stopped[other.id] = state
+    result = _face(sim, other, state)
+    _log('{} stops and faces you ({}; {} put off, turning: {})'.format(
+        follow._name(other), ', '.join(ended) or 'nothing running', len(deferred),
+        'yes' if result else 'refused ({})'.format(getattr(result, 'reason', result))))
+
+
+FACE_TOLERANCE = math.radians(12)  # they turn until they face you this squarely (the game's Facing constraint half angle)
+FACE_AGAIN = math.radians(20)  # you walk around them: they turn again when this far off
+FACE_EVERY = 0.75  # s between two turns
+
+
+def _off_by(other, you):
+    """Angle in radians between where they face and where you are."""
+    p = other.position
+    dx, dz = you[0] - p.x, you[2] - p.z
+    if math.hypot(dx, dz) < 0.05:
+        return 0.0
+    fwd = other.transform.orientation.transform_vector(sims4.math.Vector3.Z_AXIS())
+    cos = (fwd.x * dx + fwd.z * dz) / (math.hypot(fwd.x, fwd.z) * math.hypot(dx, dz) or 1.0)
+    return math.acos(max(-1.0, min(1.0, cos)))
+
+
+def _face(sim, other, state):
+    """Turn them to face you where they stand: the game's social adjustment into a small circle around
+    themselves with a Facing constraint (follow._come), the one before it ended."""
+    from sims4vr import follow
+    x, y, z = _you(sim)
+    p = other.position
+    return follow._come(other, (p.x, p.y, p.z), 0.3, other.routing_surface, (x, y, z), state, time.monotonic(),
+                        half_angle=FACE_TOLERANCE)
+
+
+def _release(sim_id, why):
+    """They carry on: autonomy back, the actions put off are queued again."""
+    state = _stopped.pop(sim_id, None)
+    if state is None:
+        return
+    other = state['sim']
+    from sims4vr import follow
+    try:
+        follow._end_walk(state)
+        follow._autonomy(other, False)
+        from interactions.context import InteractionContext
+        pushed = 0
+        for affordance, target, source, priority in state['deferred']:
+            context = InteractionContext(other, source, priority)
+            if other.push_super_affordance(affordance, target, context):
+                pushed += 1
+        _log('{} carries on ({}; {} of {} put-off actions queued again)'.format(
+            follow._name(other), why, pushed, len(state['deferred'])))
+    except Exception as e:
+        _error('letting {} carry on'.format(sim_id), e)
+
+
+def _release_all(why):
+    for sim_id in list(_stopped):
+        _release(sim_id, why)
+
+
+def _approach(sim, other, you):
+    """Each tick of the hold: the Sim you walk to stops when you are near, carries on when you leave."""
+    if other is None or not native.setting_flag('body', 'trail_stop', True):
+        if _stopped:
+            _release_all('trail stop off')
+        return
+    at = _where(other)
+    if at is None:
+        return
+    d = math.hypot(you[0] - at[0], you[2] - at[1])
+    near = _stop_dist()
+    if other.id not in _stopped:
+        if d <= near:
+            try:
+                _stop_for(sim, other)
+            except Exception as e:
+                _error('stopping {}'.format(other), e)
+                _stopped[other.id] = dict(sim=other, deferred=[])  # not again every tick
+    elif d > near + STOP_LEAVE:
+        _release(other.id, 'you walked away')
+    else:
+        # They keep facing you while you walk to your spot (user 2026-10-24).
+        state = _stopped[other.id]
+        now = time.monotonic()
+        if state.get('walk') is not None or now - state.get('sent', 0.0) >= FACE_EVERY:
+            walk = state.get('walk')
+            busy = walk is not None and not walk.is_finishing
+            try:
+                if not busy and now - state.get('sent', 0.0) >= FACE_EVERY and _off_by(other, you) > FACE_AGAIN:
+                    _face(sim, other, state)
+            except Exception as e:
+                _error('turning {} again'.format(other), e)
+                state['sent'] = now
+
+
 def _recheck_distance():
     try:
         from interactions.utils.routing import FollowPath
@@ -473,6 +615,9 @@ def _hold_gen(timeline, sim, path, interaction, why, callback_fn=None):
     if not getattr(other, 'is_sim', False) or other is sim:
         other = None
     other_at = _where(other)
+    _log('stop check: {}, target {} ({}), stops within {:.1f} m'.format(
+        'on' if native.setting_flag('body', 'trail_stop', True) else 'OFF', other,
+        'a Sim' if other is not None else 'not another Sim: {!r}'.format(getattr(interaction, 'target', None)), _stop_dist()))
     try:
         while True:
             hold['seen'] = time.monotonic()
@@ -500,6 +645,7 @@ def _hold_gen(timeline, sim, path, interaction, why, callback_fn=None):
                 controller.derail(DerailReason.CONSTRAINTS_CHANGED, sim)
                 outcome = 'you arrived: carried on'
                 return False
+            _approach(sim, other, you)
             # C6: the Sim you walk to has moved: the game plans the way to them again.
             if other_at is not None and time.monotonic() - planned_at > REPLAN_EVERY:
                 now_at = _where(other)
@@ -543,6 +689,7 @@ def _hold_gen(timeline, sim, path, interaction, why, callback_fn=None):
                 outcome = 'stopped by the game'  # soft stopped: never wait in a loop that can't sleep
                 return False
     finally:
+        _release_all(outcome)
         if _holds.get(sim.id) is hold:
             del _holds[sim.id]
             _clear()  # the trail goes with the hold
@@ -683,7 +830,7 @@ def _walk_to_gen(timeline, token):
                     gx, gz = there[0] + (you[0] - there[0]) * k, there[1] + (you[2] - there[1]) * k
                 tp = target.position
                 facing = target.orientation
-                if w['front']:  # the footprints end facing them
+                if math.hypot(tp.x - gx, tp.z - gz) > 0.05:  # the footprints end facing them (not the way they face)
                     yaw = math.atan2(tp.x - gx, tp.z - gz)
                     facing = sims4.math.Quaternion(0.0, math.sin(yaw / 2), 0.0, math.cos(yaw / 2))
                 goal = routing.Location(sims4.math.Vector3(gx, tp.y, gz), facing, target.routing_surface)
@@ -713,6 +860,7 @@ def _walk_to_gen(timeline, token):
 
 
 def forget():
+    _stopped.clear()
     _holds.clear()
 
 

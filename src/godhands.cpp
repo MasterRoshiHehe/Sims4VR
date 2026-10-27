@@ -125,6 +125,12 @@ std::mutex g_rigMutex;
 std::shared_ptr<const Rig> g_rig;
 uint64_t g_rigVersion = 0;
 
+using ComponentFn = uint8_t* (*)(void* object, uint32_t mask);
+ComponentFn g_component = nullptr;
+const uint8_t* g_maskGlobal = nullptr;
+std::atomic<const uint8_t*> g_model{nullptr};
+std::atomic<int> g_lod{-1};
+
 std::atomic<bool> g_on{true};
 std::atomic<void*> g_actor{nullptr};
 std::atomic<ULONGLONG> g_actorTick{0};
@@ -328,23 +334,66 @@ void setEnabled(bool on) {
     if (g_on.exchange(on) != on) LOG("God hands %s", on ? "on" : "off");
 }
 
+namespace {
+void* nextCandidate = nullptr;  // the actor seen last, until it has held for a second
+}
+
 void setActor(void* actor) {
     if (!g_jointIndex) g_jointIndex = reinterpret_cast<JointIndexFn>(addrs::fn("JointIndex"));
     if (!actor || !g_jointIndex || !g_on.load(std::memory_order_relaxed)) {
         g_actor.store(nullptr, std::memory_order_release);
+        nextCandidate = nullptr;
         return;
     }
     auto* a = static_cast<uint8_t*>(actor);
     void* pose = *reinterpret_cast<void**>(a + kActorPoseBegin);
     if (!pose || pose == *reinterpret_cast<void**>(a + kActorPoseEnd)) {
         g_actor.store(nullptr, std::memory_order_release);
+        nextCandidate = nullptr;
         return;
     }
+    ULONGLONG now = GetTickCount64();
+    // A Sim just selected (or just switched to, from the phone or in first person) is left alone for a
+    // second: its actor may still be being built or torn down.
+    static ULONGLONG since = 0;
+    if (nextCandidate != actor) {
+        nextCandidate = actor;
+        since = now;
+        g_actor.store(nullptr, std::memory_order_release);
+        return;
+    }
+    if (now - since < 1000) return;
     if (g_actor.load(std::memory_order_relaxed) != actor) LOG("God hands: the selected Sim's actor is %p", actor);
     buildRig(actor);
     g_actor.store(actor, std::memory_order_release);
-    ULONGLONG now = GetTickCount64();
     g_actorTick.store(now, std::memory_order_relaxed);
+    // Its scene model: the scene-object component's +0x68 (the way doorswing.cpp reaches a door's).
+    {
+        if (!g_component) {
+            g_component = reinterpret_cast<ComponentFn>(addrs::fn("Component"));
+            g_maskGlobal = addrs::global("ComponentMaskGlobal");
+        }
+        const uint8_t* found = nullptr;
+        if (g_component && g_maskGlobal) {
+            uint32_t mask;
+            std::memcpy(&mask, g_maskGlobal, sizeof(mask));
+            uint8_t* component = g_component(actor, mask);
+            const uint8_t* scene = nullptr;
+            if (component) {
+                std::memcpy(&scene, component + 0x68, sizeof(scene));
+                if (scene && isSelected(scene)) found = scene;
+            }
+            static int probes = 0;
+            if (!found && probes++ < 5)
+                LOG("God hands: scene model lookup: mask %08x, component %p, its scene object %p", mask,
+                    static_cast<void*>(component), static_cast<const void*>(scene));
+        }
+        if (g_model.exchange(found) != found) {
+            LOG("God hands: the selected Sim's scene model is %p%s", static_cast<const void*>(found),
+                found ? "" : " (not found: its hands show only while the game draws it)");
+            g_lod.store(-1, std::memory_order_relaxed);
+        }
+    }
     ULONGLONG last = g_statTick.load(std::memory_order_relaxed);
     if (!last) {
         g_statTick.store(now, std::memory_order_relaxed);
@@ -354,6 +403,12 @@ void setActor(void* actor) {
             g_statMeshes.exchange(0), g_statPalettes.exchange(0), g_statFailed.exchange(0));
     }
 }
+
+const uint8_t* model() {
+    return GetTickCount64() - g_actorTick.load(std::memory_order_relaxed) > kStale ? nullptr : g_model.load();
+}
+int lodHint() { return g_lod.load(std::memory_order_relaxed); }
+void setLodHint(int lod) { g_lod.store(lod, std::memory_order_relaxed); }
 
 bool isSelected(const uint8_t* sceneModel) {
     void* actor = g_actor.load(std::memory_order_acquire);

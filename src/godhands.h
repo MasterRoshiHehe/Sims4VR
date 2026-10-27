@@ -20,6 +20,12 @@ void setEnabled(bool on);
 void setActor(void* actor);
 
 // Render threads (facehide hooks).
+// The selected Sim's scene model, found through its scene-object component (null: not found). Drawn by
+// facehide.cpp itself, so its hands show even when the game leaves the Sim out (another floor).
+const uint8_t* model();
+// The detail level that last gave hands (-1: not known) and a count of hand draws made, for facehide's try-out.
+int lodHint();
+void setLodHint(int lod);
 // Whether this scene model (a SceneModel the game draws) is the selected Sim's.
 bool isSelected(const uint8_t* sceneModel);
 // Which hands (bit 0 left, bit 1 right) this mesh draw (the mesh and its draw's pose pointer) needs an

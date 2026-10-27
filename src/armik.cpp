@@ -13,10 +13,12 @@
 #include "gameaddr.h"
 #include "bodyshape.h"
 #include "collide.h"
+#include "foleyaudio.h"
 #include "handshape.h"
 #include "log.h"
 #include "othermods.h"
 #include "player.h"
+#include "ragdoll.h"
 
 namespace s4vr::armik {
 
@@ -223,9 +225,22 @@ struct GrabPlace {
     ULONGLONG tick = 0;
 };
 SeqLock<GrabPlace> g_grabPlace[2];
+// A slap or punch (user 2026-10-26 21:30Z): the hit part is knocked along the
+// blow and springs back ([foley] knockback). Written by the player solve
+// (foleyTrack), played out on that Sim's pose (touchOther).
+struct Knock {
+    void* actor = nullptr;
+    int part = -1;          // kParts
+    Vec3 dir{0, 0, 0};      // world, the way the blow went
+    float angle = 0;        // radians at the peak
+    ULONGLONG at = 0;
+};
+SeqLock<Knock> g_knock[2];
 // Debug menu ([physical] grab_curl, grab_drag): how far the fingers close on a
 // held body (0 open .. 1 a fist) and how far you can drag the held place.
-std::atomic<float> g_grabCurl{0.45f}, g_grabDrag{0.15f};
+std::atomic<float> g_grabCurl{0.45f}, g_grabDrag{0.15f}, g_breastCurl{0.35f}, g_buttCurl{0.35f};
+// Last time a squeezing hand sat on a breast or butt that Integrated Body Physics holds by itself (no grab of ours).
+std::atomic<ULONGLONG> g_ibpHoldAt[2] = {0, 0};
 bool handHoldsBody(int side);  // this hand holds a Sim's body place (touch grab), pulled by us or not
 float grabCurlFor(int side);  // grab_curl, or Claude Jiggle's own for a held breast or butt
 // Milliseconds since `t`, never negative: another thread may have stored a
@@ -306,6 +321,8 @@ struct RigCache {
     Vec3 eyeForward[2];        // each eye's gaze in its joint's frame
     int spine[4] = {-1, -1, -1, -1};  // the joints that lean the head (seated), from the hips up: spine 0-2, neck
     int spineCount = 0;
+    int pelvis = -1, thigh[2] = {-1, -1}, calf[2] = {-1, -1}, foot[2] = {-1, -1};  // crouch
+    bool legsOk = false;
 };
 RigCache g_cache;
 
@@ -509,6 +526,21 @@ void resolveHead(uint8_t* rig, uint32_t count, RigCache& cache) {
             if (j < count && isAncestor(skeleton, static_cast<int>(j), cache.head))
                 cache.spine[cache.spineCount++] = static_cast<int>(j);
         }
+    }
+    {
+        cache.pelvis = static_cast<int>(g_jointIndex(skeleton, jointHash("b__Pelvis__")));
+        const char* const legNames[3][2] = {{"b__L_Thigh__", "b__R_Thigh__"}, {"b__L_Calf__", "b__R_Calf__"},
+                                            {"b__L_Foot__", "b__R_Foot__"}};
+        cache.legsOk = cache.pelvis >= 0 && cache.pelvis < static_cast<int>(count);
+        for (int i = 0; i < 2; ++i) {
+            cache.thigh[i] = static_cast<int>(g_jointIndex(skeleton, jointHash(legNames[0][i])));
+            cache.calf[i] = static_cast<int>(g_jointIndex(skeleton, jointHash(legNames[1][i])));
+            cache.foot[i] = static_cast<int>(g_jointIndex(skeleton, jointHash(legNames[2][i])));
+            for (int j : {cache.thigh[i], cache.calf[i], cache.foot[i]})
+                if (j < 0 || j >= static_cast<int>(count)) cache.legsOk = false;
+        }
+        LOG("Crouch: pelvis %d, legs %d/%d/%d %d/%d/%d%s", cache.pelvis, cache.thigh[0], cache.calf[0], cache.foot[0],
+            cache.thigh[1], cache.calf[1], cache.foot[1], cache.legsOk ? "" : ", NOT usable");
     }
     LOG("Lean: %d spine joints carry the head (%d %d %d %d)", cache.spineCount, cache.spine[0], cache.spine[1],
         cache.spine[2], cache.spine[3]);
@@ -963,6 +995,58 @@ void solveLean(void* pose, uint8_t* skeleton, Xf* locals, const Xf& actor, Vec3 
     }
 }
 
+// Crouch: the pelvis drops by `drop` (world units) and each leg bends at the
+// knee (two-bone IK, knee toward the model's +Z) so the feet stay where the
+// animation puts them; the feet keep their own turn.
+void solveCrouch(void* pose, uint8_t* skeleton, Xf* locals, const Xf& actor, float drop) {
+    const RigCache& c = g_cache;
+    Vec3 footP[2], hipP[2], kneeP[2];
+    Quat footQ[2];
+    for (int i = 0; i < 2; ++i) {
+        footP[i] = vecOf(modelOf(pose, c.foot[i]).p);
+        footQ[i] = quatOf(modelOf(pose, c.foot[i]).q);
+        hipP[i] = vecOf(modelOf(pose, c.thigh[i]).p);
+        kneeP[i] = vecOf(modelOf(pose, c.calf[i]).p);
+    }
+    int parent = g_parent(skeleton, static_cast<uint32_t>(c.pelvis));
+    if (parent < 0) return;
+    Quat parentQ = quatOf(modelOf(pose, parent).q);
+    Vec3 down = rotate(conj(parentQ), {0, -drop / (actor.s[1] > 1e-3f ? actor.s[1] : 1.0f), 0});
+    for (int k = 0; k < 3; ++k) locals[c.pelvis].p[k] += k == 0 ? down.x : k == 1 ? down.y : down.z;
+    for (int i = 0; i < 2; ++i) {
+        float a = length(sub(kneeP[i], hipP[i])), b = length(sub(footP[i], kneeP[i]));
+        Vec3 hip = vecOf(modelOf(pose, c.thigh[i]).p);
+        Vec3 to = sub(footP[i], hip);
+        float d = length(to);
+        if (a < 1e-3f || b < 1e-3f || d < 1e-3f) continue;
+        if (d > a + b - 1e-3f) d = a + b - 1e-3f;
+        Vec3 u = normalize(to);
+        float x = (a * a - b * b + d * d) / (2 * d);
+        float h = std::sqrt(std::max(a * a - x * x, 0.0f));
+        Vec3 pole = sub(Vec3{0, 0, 1}, mul(u, u.z));  // +Z without its part along the leg
+        if (length(pole) < 1e-3f) continue;
+        pole = normalize(pole);
+        Vec3 knee = add(add(hip, mul(u, x)), mul(pole, h));
+        Vec3 now = vecOf(modelOf(pose, c.calf[i]).p);
+        if (length(sub(now, hip)) < 1e-4f) continue;
+        Quat q1 = fromTo(normalize(sub(now, hip)), normalize(sub(knee, hip)));
+        turnJoint(pose, skeleton, locals, c.thigh[i], q1);
+        Vec3 kneeNow = vecOf(modelOf(pose, c.calf[i]).p), footNow = vecOf(modelOf(pose, c.foot[i]).p);
+        Vec3 target = add(hip, mul(u, d));  // the foot, within the leg's reach
+        if (length(sub(footNow, kneeNow)) < 1e-4f) continue;
+        turnJoint(pose, skeleton, locals, c.calf[i], fromTo(normalize(sub(footNow, kneeNow)), normalize(sub(target, kneeNow))));
+        Quat calfQ = quatOf(modelOf(pose, c.calf[i]).q);
+        writeLocal(locals, c.foot[i], qmul(conj(calfQ), footQ[i]), 1);
+    }
+    static int logs = 0;
+    if (logs < 20 && (g_solves % 600) == 1) {
+        ++logs;
+        LOG("Crouch: pelvis down %.0f cm, left knee at %.2f %.2f %.2f (foot %.2f %.2f %.2f)", drop * 100 / actor.s[1],
+            vecOf(modelOf(pose, c.calf[0]).p).x, vecOf(modelOf(pose, c.calf[0]).p).y, vecOf(modelOf(pose, c.calf[0]).p).z,
+            vecOf(modelOf(pose, c.foot[0]).p).x, vecOf(modelOf(pose, c.foot[0]).p).y, vecOf(modelOf(pose, c.foot[0]).p).z);
+    }
+}
+
 // The head looks where you look; the neck takes part of the turn.
 void solveHead(void* pose, uint8_t* skeleton, Xf* locals, const Frame& frame, const Xf& actor, float weight) {
     const RigCache& c = g_cache;
@@ -1156,13 +1240,17 @@ bool reachArm(void* pose, uint8_t* skeleton, Xf* locals, const Arm& arm, const A
         ULONGLONG now = GetTickCount64();
         float dt = steadyOk[stretchSide] ? static_cast<float>(now - steadyTick[stretchSide]) * 0.001f : 0;
         steadyTick[stretchSide] = now;
-        if (!steadyOk[stretchSide] || dt > 1.0f || length(sub(S, steadyS[stretchSide])) > 0.15f * (l1 + l2)) {
-            steadyS[stretchSide] = S;  // first sight, a pause, or a real posture change
+        // The crouch lowers the shoulders on purpose: averaged as if standing, then lowered by it again.
+        const float crouchUp = player::crouchDropWorld() / (actor.s[1] > 1e-3f ? actor.s[1] : 1.0f);
+        const Vec3 Sstand{S.x, S.y + crouchUp, S.z};
+        if (!steadyOk[stretchSide] || dt > 1.0f || length(sub(Sstand, steadyS[stretchSide])) > 0.15f * (l1 + l2)) {
+            steadyS[stretchSide] = Sstand;  // first sight, a pause, or a real posture change
             steadyOk[stretchSide] = true;
         } else {
-            steadyS[stretchSide] = add(steadyS[stretchSide], mul(sub(S, steadyS[stretchSide]), 1 - std::exp(-dt / 4.0f)));
+            steadyS[stretchSide] =
+                add(steadyS[stretchSide], mul(sub(Sstand, steadyS[stretchSide]), 1 - std::exp(-dt / 4.0f)));
         }
-        remapFrom = steadyS[stretchSide];
+        remapFrom = {steadyS[stretchSide].x, steadyS[stretchSide].y - crouchUp, steadyS[stretchSide].z};
         Vec3 t0 = sub(target, remapFrom);
         float d0 = length(t0);
         if (d0 > 1e-4f) {
@@ -1195,6 +1283,34 @@ bool reachArm(void* pose, uint8_t* skeleton, Xf* locals, const Arm& arm, const A
     bend = normalize(bend);
     Vec3 elbow = add(S, mul(add(mul(dir, cosA), mul(bend, sinA)), l1));
     Vec3 reach = add(S, mul(dir, d));
+    if (stretchSide >= 0 && stretchSide < 2) {
+        // Diagnostic (user 2026-10-26: idle still moves the hand): how far the solved wrist is from the wanted one,
+        // and how far the shoulder and target wander in the model, over 3 s windows.
+        static struct { float err = 0, sMin[3] = {1e9f, 1e9f, 1e9f}, sMax[3] = {-1e9f, -1e9f, -1e9f}; int n = 0; ULONGLONG t = 0; } w[2];
+        auto& a = w[stretchSide];
+        float e = length(sub(reach, target)) * actor.s[0];
+        a.err = e > a.err ? e : a.err;
+        const float sv[3] = {S.x, S.y, S.z};
+        for (int i = 0; i < 3; ++i) {
+            a.sMin[i] = sv[i] < a.sMin[i] ? sv[i] : a.sMin[i];
+            a.sMax[i] = sv[i] > a.sMax[i] ? sv[i] : a.sMax[i];
+        }
+        ++a.n;
+        ULONGLONG now = GetTickCount64();
+        if (!a.t) a.t = now;
+        if (now - a.t >= 3000) {
+            static int lines = 0;
+            if (lines++ < 80)
+                LOG("Arm IK: %c steadiness over 3 s (%d solves): wrist off its target at most %.1f cm (d %.2f of arm %.2f, remapped %d), "
+                    "shoulder wandered %.1f %.1f %.1f cm (model x y z), steady shoulder %s",
+                    stretchSide ? 'R' : 'L', a.n, a.err * 100, d, l1 + l2, remapped ? 1 : 0,
+                    (a.sMax[0] - a.sMin[0]) * 100, (a.sMax[1] - a.sMin[1]) * 100, (a.sMax[2] - a.sMin[2]) * 100,
+                    g_steadyShoulders.load() ? "on" : "off");
+            a = {};
+            for (int i = 0; i < 3; ++i) { a.sMin[i] = 1e9f; a.sMax[i] = -1e9f; }
+            a.t = now;
+        }
+    }
     if (stretchSide >= 0 && stretchSide < 2) {
         // The player's own hand: publish where its wrist goes, in the world.
         Vec3 scaled{reach.x * actor.s[0], reach.y * actor.s[1], reach.z * actor.s[2]};
@@ -1262,7 +1378,8 @@ bool reachArm(void* pose, uint8_t* skeleton, Xf* locals, const Arm& arm, const A
 void keepOutOfScene(int sideIndex, Vec3& palm, Vec3& wrist, const Quat& gripWorld, float scale, const Quat& heading,
                     const float eye[3]);
 // Your hand pushed back out of other Sims' bodies; returns how deep it went (world units).
-float keepOutOfBodies(int sideIndex, Vec3& palm, Vec3& wrist, const Quat& gripWorld, float scale);
+float keepOutOfBodies(int sideIndex, Vec3& palm, Vec3& wrist, const Quat& gripWorld, float scale,
+                      const Vec3& anchor, const Quat& heading);
 
 void solveArm(void* pose, uint8_t* skeleton, Xf* locals, const Arm& arm, int sideIndex, const Hand& hand,
               const Frame& frame, const Xf& actor, float weight) {
@@ -1324,7 +1441,8 @@ void solveArm(void* pose, uint8_t* skeleton, Xf* locals, const Arm& arm, int sid
     Vec3 pinShift = rotate(frame.heading, mul(sub(wristXr, add(hand.position, rotate(grip, toWrist))), frame.scale));
     Quat pinGrip = qmul(frame.heading, grip);
     // A tracked hand (your real one, looks only) touches no Sim.
-    float depth = hand.tracked ? 0.0f : keepOutOfBodies(sideIndex, palm, world, gripWorld, frame.scale);
+    float depth = hand.tracked ? 0.0f : keepOutOfBodies(sideIndex, palm, world, gripWorld, frame.scale,
+                                                                     vecOf(frame.anchor), frame.heading);
     keepOutOfScene(sideIndex, palm, world, gripWorld, frame.scale, frame.heading, frame.eye);
     GrabPlace stuck;
     const bool grabbing =
@@ -1366,7 +1484,8 @@ void solveArm(void* pose, uint8_t* skeleton, Xf* locals, const Arm& arm, int sid
     posed.index = side.index * (1 - side.point);  // a pointing finger stays straight
     // A breast or butt held under Integrated Body Physics isn't pulled by us (no grab place), but the
     // hand still holds it: its fingers close as far as that mod's breast_grab_curl / butt_grab_curl.
-    const bool holdingBody = !hand.tracked && handHoldsBody(sideIndex);
+    const bool holdingBody = !hand.tracked && (handHoldsBody(sideIndex) ||
+                                               ageMs(GetTickCount64(), g_ibpHoldAt[sideIndex].load(std::memory_order_relaxed)) < 150);
     if (grabbing || holdingBody) {
         // Holding a body: the fingers close as far as grab_curl, whatever the buttons.
         float c = grabCurlFor(sideIndex);
@@ -1510,6 +1629,8 @@ void solve(uint8_t* actor, uint8_t* pose) {
         lastLook = add(vecOf(frame.anchor), rotate(frame.heading, mul(xr, frame.scale)));
     }
     any = any || g_eyeWeight > 0;
+    const float crouchDrop = frameOk ? player::crouchDropWorld() : 0.0f;
+    any = any || crouchDrop > 0.002f;
     if (!any || !frameOk) return;
 
     uint8_t* rig = *reinterpret_cast<uint8_t**>(pose + kPoseRig);
@@ -1559,6 +1680,7 @@ void solve(uint8_t* actor, uint8_t* pose) {
     }
     if (!(world.s[0] > 1e-3f && world.s[1] > 1e-3f && world.s[2] > 1e-3f) || !finite(vecOf(world.p))) return;
     ++g_solves;
+    if (crouchDrop > 0.002f && g_cache.legsOk) solveCrouch(pose, skeleton, locals, world, crouchDrop);
     // Head first: the arms hang off the clavicles, not the neck, so order
     // does not matter for them, but it keeps the head out of their reads.
     g_headMoved = false;
@@ -1598,6 +1720,21 @@ void solve(uint8_t* actor, uint8_t* pose) {
         if (g_side[i].weight > 0 && g_cache.arm[i].ok && hands.hand[i].valid)
             solveArm(pose, skeleton, locals, g_cache.arm[i], i, hands.hand[i], frame, world, g_side[i].weight);
     }
+    if (crouchDrop > 0.002f && handsOk && hands.hand[0].valid) {
+        // Diagnostic (crouch): heights in the world, once a second, to see which part is not following the drop.
+        static ULONGLONG logTick = 0;
+        static int logs = 0;
+        if (logs < 60 && tick - logTick > 1000) {
+            logTick = tick;
+            ++logs;
+            auto worldY = [&](int j) { return world.p[1] + modelOf(pose, j).p[1] * world.s[1]; };
+            Vec3 wr = add(vecOf(frame.anchor), rotate(frame.heading, mul(hands.hand[0].position, frame.scale)));
+            LOG("Crouch: drop %.2f; world y: view eye %.2f, head joint %.2f, pelvis %.2f, left upper arm %.2f, left hand "
+                "%.2f (controller %.2f), actor %.2f",
+                crouchDrop, frame.eye[1], g_cache.headOk ? worldY(g_cache.head) : 0.0f, worldY(g_cache.pelvis),
+                worldY(g_cache.arm[0].upper), worldY(g_cache.arm[0].hand), wr.y, world.p[1]);
+        }
+    }
 }
 
 
@@ -1627,6 +1764,7 @@ struct SimRig {
     int lever[kParts];         // the end of what turns, which a push moves (-1 for the head: its eyes)
     int eyes[2] = {-1, -1};
     int head = -1, neck = -1, pelvis = -1;
+    int spineJoint[3] = {-1, -1, -1};  // b__Spine0__ .. b__Spine2__ (a ragdoll bends the spine across them)
     bool headOk = false, eyesOk = false;
     Vec3 headForward{0, 0, 1}, headUp{0, 1, 0};
     Vec3 eyeForward[2];  // each eye's gaze in its joint's frame
@@ -1651,6 +1789,11 @@ void resolveSim(uint8_t* rig, uint32_t count, SimRig& r) {
     r.pelvis = j("b__Pelvis__");
     r.head = j("b__Head__");
     r.neck = j("b__Neck__");
+    for (int k = 0; k < 3; ++k) {
+        char spineName[16];
+        std::snprintf(spineName, sizeof(spineName), "b__Spine%d__", k);
+        r.spineJoint[k] = j(spineName);
+    }
     r.eyes[0] = j("b__L_Eye__");
     r.eyes[1] = j("b__R_Eye__");
     int spine = j("b__Spine1__");
@@ -1706,6 +1849,14 @@ void resolveSim(uint8_t* rig, uint32_t count, SimRig& r) {
     }
     int found = 0;
     for (int k = 0; k < kParts; ++k) found += r.a[k] >= 0 && (r.b[k] >= 0 || k == kHeadPart);
+    {
+        int breast = j("b__CAS_L_Breast__");
+        LOG("Ragdoll: rig %p spine joints %d %d %d, left breast bone %d (under spine 0/1/2: %d/%d/%d)",
+            static_cast<void*>(rig), r.spineJoint[0], r.spineJoint[1], r.spineJoint[2], breast,
+            breast >= 0 && r.spineJoint[0] >= 0 && isAncestor(skeleton, r.spineJoint[0], breast),
+            breast >= 0 && r.spineJoint[1] >= 0 && isAncestor(skeleton, r.spineJoint[1], breast),
+            breast >= 0 && r.spineJoint[2] >= 0 && isAncestor(skeleton, r.spineJoint[2], breast));
+    }
     LOG("Touch: Sim rig %p: %d of %d body parts found (spine %d, neck %d, eyes %d %d)", static_cast<void*>(rig), found,
         kParts, spine, r.neck, r.eyes[0], r.eyes[1]);
 }
@@ -1754,6 +1905,25 @@ struct BodyState {
     Vec3 holdWrist[2];
     Quat holdControl[2];
     float look;
+    // Touched or grabbed (touch reactions, user 2026-10-26): it looks at the
+    // hand that did it until lookHandUntil, then at you until lookBackUntil.
+    int lookHand;
+    ULONGLONG lookHandUntil, lookBackUntil;
+    // Where it looks (model space), eased toward the hand or you so the head
+    // turns over smoothly (user 2026-10-26 20:40Z: it popped), and how much of
+    // the turn its head does (the eyes alone for a touch close to its face).
+    Vec3 lookAtM;
+    float headShare;
+    bool lookKnown;
+    // High five (user 2026-10-26 23:55Z): its raised arm, blended in and out.
+    float hiWeight;
+    int hiArm;
+    bool hiKnown;
+    Vec3 hiPalm, hiWrist;
+    Quat hiControl;
+    // Your palms last time, for how fast a hand meets its raised one.
+    Vec3 prevPalm[2];
+    bool prevOk[2];
     LARGE_INTEGER last;
     // Joints turned on top of the game's pose last time, and what was written.
     int turned[8];
@@ -1804,34 +1974,44 @@ struct BodyGrab {
 };
 std::atomic<void*> g_grabActor[2] = {nullptr, nullptr};
 std::atomic<int> g_grabRegion[2] = {0, 0};
+
+// A hand meeting a Sim's body without holding it (foleyTrack, the player
+// solve): which Sim and how fast into it, for touchOther to name the place
+// and send a touch event (kind 4) to the script's touch reactions.
+struct HandContact {
+    std::atomic<void*> actor{nullptr};
+    std::atomic<float> speed{0};
+    std::atomic<ULONGLONG> at{0};
+};
+HandContact g_handMet[2];
+std::atomic<bool> g_lookAtHand{true};  // [physical] look_at_hand
+std::atomic<float> g_lookSpeed{5.0f};   // [physical] look_speed: how fast a look moves to a new place
+std::atomic<float> g_lookEyesWithin{0.3f}, g_lookHeadFrom{0.8f};  // metres from its eyes: eyes only / whole head
+constexpr ULONGLONG kLookHandMs = 900, kLookBackMs = 3000;
+
+// High five offered by the script (gestures.py, the Sim wants to): that Sim
+// raises a hand toward your raised hand until `until`; your palm meeting it
+// fast enough is the high five (touch event kind 7, value m/s).
+struct HighFive {
+    std::atomic<void*> actor{nullptr};
+    std::atomic<int> side{0};
+    std::atomic<ULONGLONG> until{0};
+};
+HighFive g_hiFive;
+constexpr float kHiFiveReach = 0.15f;  // metres from its palm that count as meeting it
+constexpr float kHiFiveSpeed = 0.6f;   // m/s your hand at least moves to count as a slap
 std::atomic<ULONGLONG> g_grabAt[2] = {0, 0};
 BodyGrab g_grab[2];  // written by whoever won g_grabActor; read by the thread posing that Sim
 
 bool handHoldsBody(int side) { return g_grabActor[side].load(std::memory_order_relaxed) != nullptr; }
 
-// A held breast or butt with Integrated Body Physics loaded: its breast_grab_curl / butt_grab_curl (user 2026-10-17
-// 14:21Z); anything else, or without it, grab_curl.
+// Finger bend on a held place: breast / butt have their own settings in our debug menu (the pose is a VR feature,
+// whoever does the holding), anything else grab_curl.
 float grabCurlFor(int side) {
-    float c = g_grabCurl.load(std::memory_order_relaxed);
     int region = g_grabRegion[side].load(std::memory_order_relaxed);
-    if (region != kRegionChest && region != kRegionButt) return c;
-    using GetFn = othermods::GetFn;
-    static std::atomic<GetFn> get{nullptr};
-    GetFn fn = get.load(std::memory_order_relaxed);
-    if (!fn) {
-        othermods::SetFn set;
-        if (!othermods::api(othermods::kBodyPhysics, fn, set)) return c;
-        get.store(fn, std::memory_order_relaxed);
-    }
-    float v;
-    static std::atomic<int> logged{0};  // what the API gave, once per change (Touch/curl diagnostics)
-    const bool ok = fn(region == kRegionChest ? "breast_grab_curl" : "butt_grab_curl", &v) && std::isfinite(v);
-    const int key = (region << 8) | (ok ? 1 + static_cast<int>(v * 100) : 0);
-    if (logged.exchange(key) != key)
-        LOG("Touch: finger bend for a held %s: %s%.2f (grab_curl %.2f)", region == kRegionChest ? "breast" : "butt",
-            ok ? "Integrated Body Physics says " : "no value from Integrated Body Physics, using ", ok ? v : c, c);
-    if (!ok) return c;
-    return v < 0 ? 0 : v > 1 ? 1 : v;
+    if (region == kRegionChest) return g_breastCurl.load(std::memory_order_relaxed);
+    if (region == kRegionButt) return g_buttCurl.load(std::memory_order_relaxed);
+    return g_grabCurl.load(std::memory_order_relaxed);
 }
 std::atomic<void*> g_restricted[16] = {};
 
@@ -1870,6 +2050,68 @@ void pushTouch(int kind, int hand, void* actor, int region, float value) {
     ReleaseSRWLockExclusive(&g_touchQueue.lock);
 }
 
+// Touch sounds (foley.py, user 2026-10-26): how your hand met another Sim, for
+// the script mod to play the game's matching foley at your hand.
+struct FoleyQueue {
+    SRWLOCK lock = SRWLOCK_INIT;
+    FoleyEvent e[32];
+    int head = 0, count = 0;
+} g_foleyQueue;
+
+void pushFoley(int kind, int hand, void* actor, int part, float into, float along, const Vec3* at = nullptr) {
+    AcquireSRWLockExclusive(&g_foleyQueue.lock);
+    if (g_foleyQueue.count == 32) {  // full (nobody reads them): the oldest goes
+        g_foleyQueue.head = (g_foleyQueue.head + 1) % 32;
+        --g_foleyQueue.count;
+    }
+    FoleyEvent& e = g_foleyQueue.e[(g_foleyQueue.head + g_foleyQueue.count) % 32];
+    e.kind = kind;
+    e.hand = hand;
+    e.actor = actor;
+    e.part = part;
+    e.into = into;
+    e.along = along;
+    e.at[0] = at ? at->x : 0, e.at[1] = at ? at->y : 0, e.at[2] = at ? at->z : 0;
+    ++g_foleyQueue.count;
+    ReleaseSRWLockExclusive(&g_foleyQueue.lock);
+}
+
+// The foley part of a place on a body part: the part itself; the hand end of a
+// forearm is their hand (kFoleyHand), the bottom of the torso their hips and butt (kFoleyHips).
+constexpr int kFoleyHand = 10, kFoleyHips = 11;
+int foleyPart(int part, float t) {
+    if ((part == kForearmL || part == kForearmR) && t > 0.85f) return kFoleyHand;  // elbow (a) to hand (b)
+    if (part == kTorso && t < 0.28f) return kFoleyHips;                            // pelvis (a) to neck (b)
+    return part;
+}
+
+// Your own touch sounds (foleyaudio.cpp) for a touch, if there are some for it: panned to
+// where that hand is from your head. False: foley.py's game sounds take it.
+bool playOwnFoley(int side, const Vec3& palm, bool grab, int part, float into) {
+    Hands hands{};
+    bool fist = g_hands.read(hands) && hands.squeezing[side];
+    int kind = foleyaudio::kindFor(grab, fist, part == kFoleyHand, into);
+    if (kind < 0) return false;
+    // Where the touch is from your eyes, in the headset's frame (metres): the sound is placed there.
+    Frame frame{};
+    float at[3] = {0, 0, 0};
+    if (g_frame.read(frame) && frame.scale > 0) {
+        Vec3 local = rotate(conj(frame.hmd), rotate(conj(frame.heading), mul(sub(palm, vecOf(frame.eye)), 1 / frame.scale)));
+        at[0] = local.x, at[1] = local.y, at[2] = local.z;
+    }
+    if (!foleyaudio::play(kind, at, into / 3.0f)) return false;
+    static std::atomic<int> logs{0};
+    if (logs.fetch_add(1) < 20)
+        LOG("Touch sound: your own %s sound (%s hand, %.2f m/s, at %.2f %.2f %.2f m from your eyes)",
+            kind == foleyaudio::kGrab    ? "grab"
+            : kind == foleyaudio::kPunch ? "punch"
+            : kind == foleyaudio::kSlap  ? "slap"
+            : kind == foleyaudio::kPat   ? "pat"
+                                         : "touch",
+            side ? "right" : "left", into, at[0], at[1], at[2]);
+    return true;
+}
+
 void releaseGrab(int side, const char* why) {
     void* actor = g_grabActor[side].exchange(nullptr);
     if (!actor) return;
@@ -1885,6 +2127,13 @@ void resetState(BodyState& st) {
     for (Quat& q : st.give) q = {0, 0, 0, 1};
     st.holdWeight[0] = st.holdWeight[1] = 0;
     st.look = 0;
+    st.lookHand = 0;
+    st.lookHandUntil = st.lookBackUntil = 0;
+    st.lookKnown = false;
+    st.headShare = 1;
+    st.hiWeight = 0;
+    st.hiKnown = false;
+    st.prevOk[0] = st.prevOk[1] = false;
     st.last.QuadPart = 0;
     st.turnedCount = 0;
 }
@@ -2062,6 +2311,82 @@ int grabRegion(int k, float t, Vec3 off, float axisX, float size) {
     }
 }
 
+// A Sim that is a ragdoll (ragdoll.cpp, docs/RAGDOLL.md): the game's pose goes
+// in as the points of the main joints, the simulated body's points come out.
+// The pelvis turns and moves to where the body is (the torso is one piece),
+// then every limb bone points the way the simulation has it.
+bool poseRagdoll(void* actor, const Pose3& p, const SimRig& r, uint8_t* skeleton, Xf* locals, float size, float dt) {
+    const int joint[ragdoll::kPoints] = {r.pelvis, r.a[kThighL], r.a[kThighR], r.neck, r.head, r.arm[0].upper,
+                                         r.arm[1].upper, r.arm[0].fore, r.arm[1].fore, r.arm[0].hand, r.arm[1].hand,
+                                         r.a[kCalfL], r.a[kCalfR], r.b[kCalfL], r.b[kCalfR]};
+    for (int j : joint)
+        if (j < 0) {
+            ragdoll::cancel(actor);
+            return false;
+        }
+    float in[ragdoll::kSimPoints][3], out[ragdoll::kSimPoints][3];
+    for (int i = 0; i < ragdoll::kPoints; ++i) {
+        Vec3 w = p.joint(joint[i]);
+        in[i][0] = w.x, in[i][1] = w.y, in[i][2] = w.z;
+    }
+    Vec3 forward = rotate(quatOf(p.world.q), {0, 0, 1});
+    float fwd[3] = {forward.x, forward.y, forward.z};
+    if (!ragdoll::step(actor, in, fwd, p.world.p[1], size, dt, out)) return false;
+    Vec3 target[ragdoll::kSimPoints];
+    float inModel[ragdoll::kSimPoints][3], outModel[ragdoll::kSimPoints][3];
+    for (int i = 0; i < ragdoll::kSimPoints; ++i) {
+        Vec3 b = p.toModel({out[i][0], out[i][1], out[i][2]});
+        outModel[i][0] = b.x, outModel[i][1] = b.y, outModel[i][2] = b.z;
+        target[i] = b;
+        if (i < ragdoll::kPoints) {
+            Vec3 a = p.toModel({in[i][0], in[i][1], in[i][2]});
+            inModel[i][0] = a.x, inModel[i][1] = a.y, inModel[i][2] = a.z;
+        }
+    }
+    // The pelvis and the chest turn separately (the spine bends between them).
+    float pelvisIn[4], chestIn[4], pelvisOut[4], chestOut[4], unused[4];
+    ragdoll::frames(inModel, false, pelvisIn, chestIn);
+    ragdoll::frames(outModel, true, pelvisOut, unused);
+    ragdoll::frames(outModel, true, unused, chestOut);
+    Quat turnPelvis = qnormalize(qmul(quatOf(pelvisOut), conj(quatOf(pelvisIn))));
+    turnJoint(p.pose, skeleton, locals, r.pelvis, turnPelvis);
+    // The chest's turn on top of the pelvis': one share of it at each spine
+    // joint (all at one joint pinches the waist).
+    {
+        int bends[3], n = 0;
+        for (int k = 0; k < 3; ++k)
+            if (r.spineJoint[k] >= 0 && r.spineJoint[k] != r.pelvis) bends[n++] = r.spineJoint[k];
+        if (!n && r.turn[kTorso] >= 0) bends[n++] = r.turn[kTorso];
+        Quat chest = qnormalize(qmul(quatOf(chestOut), conj(qmul(turnPelvis, quatOf(chestIn)))));
+        Quat share = slerp({0, 0, 0, 1}, chest, 1.0f / (n ? n : 1));
+        for (int k = 0; k < n; ++k) turnJoint(p.pose, skeleton, locals, bends[k], share);
+    }
+    int parent = g_parent(skeleton, static_cast<uint32_t>(r.pelvis));
+    if (parent >= 0) {
+        Vec3 off = sub(target[ragdoll::kPelvis], vecOf(modelOf(p.pose, r.pelvis).p));
+        Vec3 d = rotate(conj(quatOf(modelOf(p.pose, parent).q)), off);
+        locals[r.pelvis].p[0] += d.x;
+        locals[r.pelvis].p[1] += d.y;
+        locals[r.pelvis].p[2] += d.z;
+    }
+    // Bone `turn` -> `to`, from `from`: points the way the simulation has it.
+    auto aim = [&](int turn, int from, int to, int pFrom, int pTo) {
+        Vec3 now = sub(vecOf(modelOf(p.pose, to).p), vecOf(modelOf(p.pose, from).p));
+        Vec3 want = sub(target[pTo], target[pFrom]);
+        if (length(now) < 1e-4f || length(want) < 1e-4f) return;
+        turnJoint(p.pose, skeleton, locals, turn, fromTo(now, want));
+    };
+    aim(r.neck, r.neck, r.head, ragdoll::kNeck, ragdoll::kHead);
+    for (int s = 0; s < 2; ++s) {
+        aim(r.arm[s].upper, r.arm[s].upper, r.arm[s].fore, ragdoll::kShoulderL + s, ragdoll::kElbowL + s);
+        aim(r.arm[s].fore, r.arm[s].fore, r.arm[s].hand, ragdoll::kElbowL + s, ragdoll::kHandL + s);
+        aim(r.a[kThighL + s], r.a[kThighL + s], r.a[kCalfL + s], ragdoll::kHipL + s, ragdoll::kKneeL + s);
+        aim(r.a[kCalfL + s], r.a[kCalfL + s], r.b[kCalfL + s], ragdoll::kKneeL + s, ragdoll::kFootL + s);
+    }
+    (void)size;
+    return true;
+}
+
 void touchOther(uint8_t* actor, uint8_t* pose) {
     Frame frame{};
     ULONGLONG now = GetTickCount64();
@@ -2134,6 +2459,44 @@ void touchOther(uint8_t* actor, uint8_t* pose) {
         use[i] = true;
     }
 
+    // The place on its body nearest `point`, within `within` of its surface:
+    // the region (kRegion*, or -1), its part, how far along it, and the offset
+    // from its axis (model space).
+    auto placeOn = [&](Vec3 point, float within, int& best, float& t, Vec3& offset) -> int {
+        best = -1;
+        float bestGap = within;
+        Vec3 bestAt{};
+        for (int k = 0; k < kParts; ++k) {
+            if (!(before.valid & (1u << k))) continue;
+            const Capsule& c = before.part[k];
+            Vec3 q = closestOnSegment(point, c.a, c.b);
+            float gap = length(sub(point, q)) - c.r;
+            if (gap < bestGap) {
+                bestGap = gap;
+                best = k;
+                // The place is on its surface, under your palm.
+                Vec3 outward = sub(point, q);
+                float ol = length(outward);
+                bestAt = ol > 1e-4f ? add(q, mul(outward, c.r / ol)) : point;
+            }
+        }
+        Vec3 a, b;
+        if (best < 0 || !partEnds(p, r, best, a, b)) return -1;
+        Vec3 m = p.toModel(bestAt), ab = sub(b, a);
+        float len2 = dot(ab, ab);
+        t = len2 > 1e-10f ? dot(sub(m, a), ab) / len2 : 0;
+        t = t < 0 ? 0 : t > 1 ? 1 : t;
+        offset = sub(m, add(a, mul(ab, t)));
+        return grabRegion(best, t, offset, a.x + ab.x * t, size);
+    };
+    // It looks at the hand that touched it, then back at you.
+    auto lookAtHand = [&](int side) {
+        if (!g_lookAtHand.load(std::memory_order_relaxed) || now < st.lookHandUntil) return;  // one hand at a time
+        st.lookHand = side;
+        st.lookHandUntil = now + kLookHandMs;
+        st.lookBackUntil = now + kLookHandMs + kLookBackMs;
+    };
+
     // Squeezing a part of its body (grip and trigger together) holds it.
     // Near one of its hands that's holding hands (below), which the grip alone
     // starts.
@@ -2151,30 +2514,10 @@ void touchOther(uint8_t* actor, uint8_t* pose) {
                 if (r.arm[jh].ok && length(sub(simPalm(p, r.arm[jh], size), palm[i])) < 0.13f * sc) nearHand = true;
             if (nearHand) continue;
             int best = -1;
-            float bestGap = kGrabSurface * sc;
-            Vec3 bestAt{};
-            for (int k = 0; k < kParts; ++k) {
-                if (!(before.valid & (1u << k))) continue;
-                const Capsule& c = before.part[k];
-                Vec3 q = closestOnSegment(palm[i], c.a, c.b);
-                float gap = length(sub(palm[i], q)) - c.r;
-                if (gap < bestGap) {
-                    bestGap = gap;
-                    best = k;
-                    // The place is on its surface, under your palm.
-                    Vec3 outward = sub(palm[i], q);
-                    float ol = length(outward);
-                    bestAt = ol > 1e-4f ? add(q, mul(outward, c.r / ol)) : palm[i];
-                }
-            }
-            Vec3 a, b;
-            if (best < 0 || !partEnds(p, r, best, a, b)) continue;
-            Vec3 m = p.toModel(bestAt), ab = sub(b, a);
-            float len2 = dot(ab, ab);
-            float t = len2 > 1e-10f ? dot(sub(m, a), ab) / len2 : 0;
-            t = t < 0 ? 0 : t > 1 ? 1 : t;
-            Vec3 offset = sub(m, add(a, mul(ab, t)));
-            int region = grabRegion(best, t, offset, a.x + ab.x * t, size);
+            float t = 0;
+            Vec3 offset{};
+            int region = placeOn(palm[i], kGrabSurface * sc, best, t, offset);
+            if (region < 0) continue;
             if (restricted(actor) && !allowedOnRestricted(region)) continue;  // nothing there to hold
             void* expected = nullptr;
             if (!g_grabActor[i].compare_exchange_strong(expected, actor)) continue;
@@ -2192,6 +2535,8 @@ void touchOther(uint8_t* actor, uint8_t* pose) {
             LOG("Touch: your %s hand holds a Sim's %s (%s, %.2f along, off %.2f %.2f %.2f)", i ? "right" : "left",
                 kGrabRegionNames[g.region], kPartNames[best], t, g.offset.x, g.offset.y, g.offset.z);
             pushTouch(1, i, actor, g.region, 0);
+            lookAtHand(i);
+            if (!playOwnFoley(i, palm[i], true, foleyPart(best, t), 0)) pushFoley(3, i, actor, foleyPart(best, t), 0, 0);
             holder = actor;
         }
         // Where the held place is now, and how far your hand pulls it.
@@ -2229,6 +2574,51 @@ void touchOther(uint8_t* actor, uint8_t* pose) {
             pull[i] = d;
             pulling[i] = true;
         }
+    }
+
+    // Another mod (Integrated Body Physics) takes a breast or butt as soon as a squeezing palm reaches it (no new-squeeze test,
+    // wider reach), so our own grab may not exist: the fingers still bend by its curl instead of closing to a fist.
+    for (int i = 0; i < 2 && handsOk && othermods::loaded(othermods::kBodyPhysics); ++i) {
+        if (!use[i] || !hands.squeezing[i] || g_grabActor[i].load(std::memory_order_relaxed)) continue;
+        int part = -1;
+        float t = 0;
+        Vec3 offset{};
+        int region = placeOn(palm[i], (kGrabSurface + 0.08f) * sc, part, t, offset);
+        if ((region != kRegionChest && region != kRegionButt) || (restricted(actor) && !allowedOnRestricted(region))) continue;
+        g_grabRegion[i] = region;
+        g_ibpHoldAt[i].store(now, std::memory_order_relaxed);
+    }
+
+    // Touching it without holding on (a hand that met it in the player solve):
+    // the place, for the touch reactions (kind 4, value: m/s into it).
+    for (int i = 0; i < 2 && handsOk; ++i) {
+        void* touched = actor;
+        if (!g_handMet[i].actor.compare_exchange_strong(touched, nullptr)) continue;
+        if (!use[i] || ageMs(now, g_handMet[i].at.load()) > 300) continue;
+        int part = -1;
+        float t = 0;
+        Vec3 offset{};
+        float within = (kHandRadius + 0.03f) * sc;
+        int region = placeOn(tip[i], within, part, t, offset);
+        int palmRegion = placeOn(palm[i], within, part, t, offset);
+        if (palmRegion >= 0) region = palmRegion;  // the palm before the fingertips
+        if (region < 0 || (restricted(actor) && !allowedOnRestricted(region))) continue;
+        float speed = g_handMet[i].speed.load();
+        static std::atomic<int> touchLogs{0};
+        if (touchLogs.fetch_add(1) < 40)
+            LOG("Touch: your %s hand touches a Sim's %s at %.2f m/s", i ? "right" : "left", kGrabRegionNames[region],
+                speed);
+        // Grip held, trigger free: a poke with the index finger (kind 6).
+        const bool poke = hands.hand[i].grip > 0.55f && hands.hand[i].trigger < 0.3f;
+        // How far off your look it was (degrees), for the script to tell a
+        // touch you meant from brushing past: value = degrees * 10 + speed.
+        Vec3 look = rotate(frame.heading, rotate(frame.hmd, {0, 0, -1}));
+        Vec3 toTouch = sub(palm[i], eye);
+        float tl = length(toTouch), ll = length(look);
+        float off = tl > 1e-4f && ll > 1e-4f ? std::acos(std::max(-1.0f, std::min(1.0f, dot(toTouch, look) / (tl * ll)))) *
+                                                  57.2958f : 0.0f;
+        pushTouch(poke ? 6 : 4, i, actor, region, std::floor(off) * 10 + std::min(speed, 9.99f));
+        lookAtHand(i);
     }
 
     // Pushes: each part gives toward where your hand pushes it.
@@ -2301,10 +2691,47 @@ void touchOther(uint8_t* actor, uint8_t* pose) {
         }
         st.give[k] = qnormalize(slerp(st.give[k], target, ease(pushed ? 14.0f : 5.0f, dt)));
     }
+    // Knockback: a slap or punch knocks the hit part along the blow, then it
+    // springs back past where it was and settles (0.9 s); some of it goes to the
+    // spine (all of it for a hit on the hips or legs, which don't turn).
+    Quat knock[kParts];
+    for (Quat& q : knock) q = {0, 0, 0, 1};
+    for (int i = 0; i < 2; ++i) {
+        Knock kn;
+        if (!g_knock[i].read(kn) || kn.actor != actor || kn.part < 0 || kn.part >= kParts) continue;
+        float t = static_cast<float>(ageMs(now, kn.at)) / 1000.0f;
+        if (t >= 0.9f) continue;
+        const float rise = 0.07f;
+        float env = t < rise ? std::sin(t / rise * 1.5708f)
+                             : std::exp(-(t - rise) / 0.22f) * std::cos((t - rise) * 6.0f);
+        int hitPart = kn.part;
+        if (r.turn[hitPart] < 0) hitPart = kTorso;  // hips, thighs, calves
+        float spine = hitPart == kTorso ? 0 : hitPart == kHeadPart ? 0.3f : 0.2f;
+        for (int k : {hitPart, static_cast<int>(kTorso)}) {
+            float angle = kn.angle * env * (k == hitPart ? 1.0f : spine);
+            if (std::fabs(angle) < 1e-3f || r.turn[k] < 0) continue;
+            Vec3 jp = p.joint(r.turn[k]), end;
+            if (r.lever[k] >= 0)
+                end = p.joint(r.lever[k]);
+            else if (r.eyes[0] >= 0 && r.eyes[1] >= 0)
+                end = mul(add(p.joint(r.eyes[0]), p.joint(r.eyes[1])), 0.5f);
+            else
+                end = p.joint(r.head);
+            Vec3 lever = sub(end, jp);
+            float len = length(lever);
+            if (len < 0.02f * sc) continue;
+            Vec3 across = sub(kn.dir, mul(lever, dot(kn.dir, lever) / (len * len)));
+            float acrossLen = length(across);
+            if (acrossLen < 0.2f) continue;  // a blow along the bone turns nothing
+            Vec3 moved = add(jp, add(mul(lever, std::cos(angle)), mul(across, len * std::sin(angle) / acrossLen)));
+            knock[k] = qnormalize(qmul(fromTo(sub(p.toModel(end), p.toModel(jp)), sub(p.toModel(moved), p.toModel(jp))),
+                                       knock[k]));
+        }
+    }
     // Spine first, then neck, then arms: each turn takes its children along.
     for (int k : {kTorso, kHeadPart, kUpperArmL, kUpperArmR, kForearmL, kForearmR}) {
-        if (fresh && r.turn[k] >= 0 && st.give[k].w < 0.99999f)
-            turnRecorded(st, pose, skeleton, locals, r.turn[k], st.give[k]);
+        Quat turn = qnormalize(qmul(knock[k], st.give[k]));
+        if (fresh && r.turn[k] >= 0 && turn.w < 0.99999f) turnRecorded(st, pose, skeleton, locals, r.turn[k], turn);
     }
 
     // Holding hands. Without fresh hand data this time, holds stay as they were.
@@ -2344,6 +2771,7 @@ void touchOther(uint8_t* actor, uint8_t* pose) {
             g_holdFacing[i] = facing;
             g_holdAt[i] = now;
             pushTouch(1, i, actor, kRegionHand, 0);
+            pushFoley(4, i, actor, kFoleyHand, 0, 0);
             LOG("Touch: your %s hand holds a Sim's %s hand (%s)", i ? "right" : "left", best ? "right" : "left",
                 facing ? "face to face" : "side by side");
             holder = actor;
@@ -2394,6 +2822,82 @@ void touchOther(uint8_t* actor, uint8_t* pose) {
         }
     }
 
+    // High five: the hand on the side nearer your raised hand goes up beside
+    // its head, toward you, palm to you, fingers up; your palm meeting it at
+    // speed is the high five.
+    {
+        const int side = g_hiFive.side.load(std::memory_order_relaxed) ? 1 : 0;
+        const bool want = g_hiFive.actor.load(std::memory_order_relaxed) == actor &&
+                          now < g_hiFive.until.load(std::memory_order_relaxed) && !g_gamePaused.load();
+        Vec3 aim = handsOk && use[side] ? palm[side] : eye;
+        if (want && st.hiWeight <= 0) {
+            float d0 = r.arm[0].ok ? length(sub(p.joint(r.arm[0].upper), aim)) : 1e9f;
+            float d1 = r.arm[1].ok ? length(sub(p.joint(r.arm[1].upper), aim)) : 1e9f;
+            st.hiArm = d1 < d0 ? 1 : 0;
+            st.hiKnown = false;
+        }
+        const int jh = st.hiArm == 1 ? 1 : 0;
+        const Arm& arm = r.arm[jh];
+        if (want && arm.ok) {
+            Vec3 shoulder = p.joint(arm.upper);
+            float reach = length(sub(p.joint(arm.fore), shoulder)) + length(sub(p.joint(arm.hand), p.joint(arm.fore)));
+            Vec3 flatTo = sub(aim, shoulder);
+            flatTo.y = 0;
+            float flatLen = length(flatTo);
+            if (flatLen < 1e-3f) {
+                flatTo = sub(eye, root);
+                flatTo.y = 0;
+                flatLen = length(flatTo);
+            }
+            Vec3 dir = flatLen > 1e-3f ? mul(flatTo, 1 / flatLen) : Vec3{0, 0, 1};
+            float up = aim.y - shoulder.y;
+            up = up < 0.15f * sc ? 0.15f * sc : up > 0.45f * sc ? 0.45f * sc : up;
+            float out = flatLen - 0.12f * sc;
+            out = out > 0.45f * reach ? 0.45f * reach : out < 0.1f * reach ? 0.1f * reach : out;
+            Vec3 target = add(shoulder, add(mul(dir, out), Vec3{0, up, 0}));
+            Vec3 fromShoulder = sub(target, shoulder);
+            float fl = length(fromShoulder);
+            if (fl > 0.85f * reach) target = add(shoulder, mul(fromShoulder, 0.85f * reach / fl));
+            if (!st.hiKnown) {
+                st.hiPalm = target;
+                st.hiKnown = true;
+            }
+            st.hiPalm = add(st.hiPalm, mul(sub(target, st.hiPalm), ease(10.0f, dt)));
+            const float sTheir = jh == 0 ? 1.0f : -1.0f;
+            Vec3 x = mul(dir, sTheir), z{0, -1, 0};
+            Vec3 y = normalize(cross(z, x));
+            st.hiControl = fromBasis(x, y, z);
+            st.hiWrist = add(st.hiPalm, rotate(st.hiControl, {-sTheir * 0.02f * sc, 0, 0.08f * sc}));
+        }
+        st.hiWeight += ((want && arm.ok ? 1.0f : 0.0f) - st.hiWeight) * ease(want ? 5.0f : 4.0f, dt);
+        if (!want && st.hiWeight < 0.01f) st.hiWeight = 0;
+        if (st.hiWeight > 0 && arm.ok && st.holdWeight[jh] <= 0 && st.hiKnown) {
+            if (reachArm(pose, skeleton, locals, arm, &r.arm[1 - jh], st.hiWrist, st.hiControl, p.world, st.hiWeight,
+                         false, "")) {
+                Side fingers;  // open hand
+                poseFingers(skeleton, locals, arm, fingers, st.hiWeight);
+            }
+        }
+        // Your palm meets it at speed: the high five.
+        for (int i = 0; i < 2 && want && st.hiWeight > 0.7f && handsOk; ++i) {
+            if (!use[i] || !st.prevOk[i] || !(dt > 0)) continue;
+            float speed = length(sub(palm[i], st.prevPalm[i])) / (dt * sc);
+            float dist = length(sub(palm[i], st.hiPalm)) / sc;
+            if (dist < kHiFiveReach && speed > kHiFiveSpeed) {
+                void* expected = actor;
+                if (g_hiFive.actor.compare_exchange_strong(expected, nullptr)) {
+                    LOG("Touch: high five with your %s hand (%.2f m/s, %.0f mm from its palm)", i ? "right" : "left",
+                        speed, dist * 1000);
+                    pushTouch(7, i, actor, kRegionHand, speed);
+                }
+            }
+        }
+        for (int i = 0; i < 2; ++i) {
+            st.prevOk[i] = handsOk && use[i];
+            if (st.prevOk[i]) st.prevPalm[i] = palm[i];
+        }
+    }
+
     // Lean in close in front of a Sim, or talk with one that looks your way,
     // and it looks you in the eyes. Aimed from its eyes, not its head joint:
     // that sits below and behind them, so the face pointed over your eyes, at
@@ -2403,24 +2907,50 @@ void touchOther(uint8_t* actor, uint8_t* pose) {
         Vec3 fromM = vecOf(hm.p);
         if (r.eyes[0] >= 0 && r.eyes[1] >= 0)
             fromM = mul(add(vecOf(modelOf(pose, r.eyes[0]).p), vecOf(modelOf(pose, r.eyes[1]).p)), 0.5f);
-        Vec3 toYou = sub(eye, p.toWorld(fromM));
+        // Touched: the hand that did it first, then you.
+        bool atHand = now < st.lookHandUntil && st.lookHand >= 0 && st.lookHand < 2 && use[st.lookHand];
+        bool lookBack = now < st.lookBackUntil;
+        Vec3 target = atHand ? palm[st.lookHand] : eye;
+        Vec3 fromW = p.toWorld(fromM);
+        Vec3 toYou = sub(target, fromW);
         float d = length(toYou);
         Vec3 face = rotate(quatOf(p.world.q), rotate(quatOf(hm.q), r.headForward));
         float facing = d > 1e-3f ? dot(face, mul(toYou, 1 / d)) : 0;
         constexpr float kLookTalk = 2.0f;  // metres: a Sim talking with you, already facing you
         bool want = g_lookAt && !g_gamePaused.load(std::memory_order_relaxed) && d > 1e-3f &&
                     ((d < 1.0f * sc && facing > 0.2f) || (d < kLookTalk * sc && facing > 0.6f));
-        st.look += ((want ? 1.0f : 0.0f) - st.look) * ease(3.0f, dt);
+        if (lookBack && !g_gamePaused.load(std::memory_order_relaxed) && d > 1e-3f && d < 3.0f * sc) want = true;
+        st.look += ((want ? 1.0f : 0.0f) - st.look) * ease(lookBack ? 6.0f : 3.0f, dt);
         if (!want && st.look < 0.01f) st.look = 0;
-        if (fresh && st.look > 0 && d > 1e-3f) {
-            Vec3 dirM = normalize(rotate(conj(quatOf(p.world.q)), toYou));
+        // Ease the place it looks at, and the head's share of the turn: a touch
+        // near its face is followed with the eyes, one further off with the head.
+        {
+            Vec3 wantM = p.toModel(target);
+            if (!st.lookKnown || st.look <= 0) {
+                st.lookAtM = wantM;
+                st.lookKnown = true;
+            } else {
+                st.lookAtM = add(st.lookAtM, mul(sub(wantM, st.lookAtM), ease(g_lookSpeed.load(), dt)));
+            }
+            float share = 1;
+            if (atHand) {
+                float eyesOnly = g_lookEyesWithin.load(), wholeHead = g_lookHeadFrom.load();
+                float dh = d / sc;
+                share = wholeHead > eyesOnly + 0.01f ? (dh - eyesOnly) / (wholeHead - eyesOnly) : (dh > eyesOnly ? 1.0f : 0.0f);
+                share = share < 0 ? 0 : share > 1 ? 1 : share;
+            }
+            st.headShare += (share - st.headShare) * ease(g_lookSpeed.load(), dt);
+        }
+        Vec3 aim = sub(p.toWorld(st.lookAtM), fromW);
+        if (fresh && st.look > 0 && length(aim) > 1e-3f) {
+            Vec3 dirM = normalize(rotate(conj(quatOf(p.world.q)), aim));
             Vec3 faceM = rotate(quatOf(hm.q), r.headForward);
             Quat delta = fromTo(faceM, dirM);
             if (delta.w < 0) delta = {-delta.x, -delta.y, -delta.z, -delta.w};
             float angle = 2 * std::acos(delta.w > 1 ? 1 : delta.w);
             const float kMax = 0.9f;
             if (angle > kMax) delta = slerp({0, 0, 0, 1}, delta, kMax / angle);
-            delta = slerp({0, 0, 0, 1}, delta, st.look);
+            delta = slerp({0, 0, 0, 1}, delta, st.look * st.headShare);
             if (r.neck >= 0 && r.neck != r.head) {
                 turnRecorded(st, pose, skeleton, locals, r.neck, slerp({0, 0, 0, 1}, delta, 0.4f));
                 Quat headNow = quatOf(modelOf(pose, r.head).q);
@@ -2430,10 +2960,11 @@ void touchOther(uint8_t* actor, uint8_t* pose) {
             } else {
                 turnRecorded(st, pose, skeleton, locals, r.head, delta);
             }
-            if (r.eyesOk) lookWithEyes(st, pose, skeleton, locals, r, p.toModel(eye), st.look);
+            if (r.eyesOk) lookWithEyes(st, pose, skeleton, locals, r, st.lookAtM, st.look);
         }
     }
 
+    if (ragdoll::active(actor)) poseRagdoll(actor, p, r, skeleton, locals, size, dt);
     BodyShape after{};
     after.actor = actor;
     after.tick = now;
@@ -2443,7 +2974,187 @@ void touchOther(uint8_t* actor, uint8_t* pose) {
     slot->busy.clear(std::memory_order_release);
 }
 
-float keepOutOfBodies(int sideIndex, Vec3& palm, Vec3& wrist, const Quat& gripWorld, float scale) {
+// Where a hand first met a body this time (keepOutOfBodies' first pass).
+struct FoleyContact {
+    void* actor = nullptr;
+    int part = -1;  // foleyPart
+    int raw = -1;   // kParts
+    Vec3 normal{0, 0, 0};  // out of the body, toward your hand
+};
+
+// A slap or a punch knocks the part it hit along the blow (touchOther plays it out).
+void knockBack(int side, const FoleyContact& hit, const Vec3& vel, float into) {
+    Hands hands{};
+    bool fist = g_hands.read(hands) && hands.squeezing[side];
+    int kind = foleyaudio::hitKind(fist, into);
+    if (kind < 0) return;
+    pushFoley(5, side, hit.actor, hit.part, into, kind == foleyaudio::kPunch ? 1.0f : 0.0f);  // knockout.py
+    // Ragdoll test (step 1, [ragdoll] test_on_hit): a slap or punch drops the Sim limp.
+    if (kind >= foleyaudio::kSlap && hit.actor != g_player.load(std::memory_order_relaxed) && ragdoll::testOnHit()) {
+        ragdoll::Params rp;
+        float k = ragdoll::blowStrength();
+        rp.velocity[0] = vel.x * k, rp.velocity[1] = vel.y * k, rp.velocity[2] = vel.z * k;
+        rp.limpSeconds = ragdoll::limpSeconds();
+        ragdoll::start(hit.actor, rp);
+    }
+    float strength = foleyaudio::knockback();
+    if (!(strength > 0) || hit.raw < 0) return;
+    float speed = length(vel);
+    Vec3 dir = speed > 0.3f ? mul(vel, 1 / speed) : mul(hit.normal, -1.0f);
+    float angle = strength * (into < 7 ? into : 7) * (kind == foleyaudio::kPunch ? 0.09f : 0.07f);
+    if (angle > 0.8f) angle = 0.8f;
+    g_knock[side].write(Knock{hit.actor, hit.raw, dir, angle, GetTickCount64()});
+    static std::atomic<int> logs{0};
+    if (logs.fetch_add(1) < 20)
+        LOG("Hit: your %s hand %s a Sim's %s at %.2f m/s: knocked %.0f degrees", side ? "right" : "left",
+            kind == foleyaudio::kPunch ? "punches" : "slaps", kPartNames[hit.raw], into, angle * 57.2958f);
+}
+
+// Touch sounds: your hand's speed and when it meets a body, how fast into it and
+// along it; sliding along it, a rub every so often. The speed is your hand's
+// own, from your body (the controller in the play space, turned to the world):
+// walking or turning with the stick moves no hand (user 2026-10-26 21:30Z:
+// walking past Sims slapped them). Player solve only (the pose hook), one hand
+// at a time.
+void foleyTrack(int side, const Vec3& palmWorld, float scale, const FoleyContact& hit, const Vec3& anchor,
+                const Quat& heading) {
+    const Vec3 palm = rotate(conj(heading), sub(palmWorld, anchor));  // from your play space, world units
+    struct Track {
+        Vec3 last{0, 0, 0}, vel{0, 0, 0}, lastAnchor{0, 0, 0};
+        float walk = 0;  // how fast the stick moves you, m/s
+        LARGE_INTEGER at{};
+        bool known = false, touching = false;
+        ULONGLONG lastIn = 0, lastSound = 0;
+        float travel = 0;
+    };
+    static Track tracks[2];
+    Track& tr = tracks[side];
+    if (!g_freq.QuadPart) QueryPerformanceFrequency(&g_freq);
+    LARGE_INTEGER t;
+    QueryPerformanceCounter(&t);
+    float dt = tr.known ? float(t.QuadPart - tr.at.QuadPart) / float(g_freq.QuadPart) : 0;
+    if (tr.known && dt < 0.002f) return;  // posed twice in one frame: nothing new
+    ULONGLONG now = GetTickCount64();
+    bool jumped = !tr.known || dt > 0.1f || !(scale > 0);
+    Vec3 v{0, 0, 0};
+    if (!jumped) {
+        v = mul(sub(palm, tr.last), 1.0f / (dt * scale));  // metres a second
+        if (length(v) > 12.0f) jumped = true;              // the play space was moved: no hand is that fast
+        float w = length(sub(anchor, tr.lastAnchor)) / (dt * scale);
+        tr.walk = w > 12.0f ? tr.walk : tr.walk + (w - tr.walk) * 0.2f;
+    }
+    tr.last = palm;
+    tr.lastAnchor = anchor;
+    tr.at = t;
+    tr.known = true;
+    // Half this frame's move and half the last one's: steadier, a frame late at most.
+    tr.vel = jumped ? Vec3{0, 0, 0} : mul(add(v, tr.vel), 0.5f);
+    const Vec3 vel = rotate(heading, tr.vel);  // the world's way
+    if (!hit.actor) {
+        if (tr.touching && ageMs(now, tr.lastIn) > 60) tr.touching = false;  // let go (not a flicker at the surface)
+        return;
+    }
+    tr.lastIn = now;
+    float into = -dot(vel, hit.normal);
+    // [foley] walk_hits off: while the stick moves you, no slap or punch.
+    if (tr.walk > 0.3f && !foleyaudio::walkHits()) into = foleyaudio::belowHits(into);
+    Vec3 alongV = add(vel, mul(hit.normal, into));
+    float along = length(alongV);
+    if (!tr.touching) {
+        tr.touching = true;
+        tr.travel = 0;
+        g_handMet[side].speed.store(jumped ? 0.0f : (into > 0 ? into : 0));
+        g_handMet[side].at.store(now);
+        g_handMet[side].actor.store(hit.actor);
+        if (jumped || ageMs(now, tr.lastSound) < 90) return;
+        tr.lastSound = now;
+        knockBack(side, hit, vel, into);
+        if (!playOwnFoley(side, palmWorld, false, hit.part, into > 0 ? into : 0))
+            pushFoley(1, side, hit.actor, hit.part, into > 0 ? into : 0, along);
+        static std::atomic<int> logs{0};
+        if (logs.fetch_add(1) < 20)
+            LOG("Touch sound: your %s hand meets a Sim's %s at %.2f m/s into it, %.2f along", side ? "right" : "left",
+                hit.part == kFoleyHand ? "hand" : hit.part == kFoleyHips ? "hips" : kPartNames[hit.part], into, along);
+        return;
+    }
+    // Sliding along it: a rub each 8 cm, not closer than a quarter second.
+    if (!jumped) tr.travel += along * dt;
+    if (tr.travel >= 0.08f && along > 0.15f && ageMs(now, tr.lastSound) >= 250) {
+        tr.travel = 0;
+        tr.lastSound = now;
+        pushFoley(2, side, hit.actor, hit.part, 0, along);
+    }
+}
+
+// Your hand hitting a table, a wall, a fridge (user 2026-10-27: "make a fist and angrily hit a
+// table"): collide.py's scene (walls and object footprints with their heights) tells the
+// surface; your hand's own speed into it (as foleyTrack) picks tap, slap or punch, the object
+// the material. Your own sounds (sounds\objects) first, else foley.py plays the game's on the
+// object. The hand goes on through (no push back). Player solve only, one hand at a time.
+void objectTrack(int side, const Vec3& palmWorld, float scale, const Vec3& anchor, const Quat& heading) {
+    struct Track {
+        Vec3 last{0, 0, 0}, vel{0, 0, 0};
+        LARGE_INTEGER at{};
+        bool known = false, touching = false;
+        ULONGLONG lastIn = 0, lastSound = 0;
+    };
+    static Track tracks[2];
+    Track& tr = tracks[side];
+    const Vec3 palm = rotate(conj(heading), sub(palmWorld, anchor));  // from your play space
+    if (!g_freq.QuadPart) QueryPerformanceFrequency(&g_freq);
+    LARGE_INTEGER t;
+    QueryPerformanceCounter(&t);
+    float dt = tr.known ? float(t.QuadPart - tr.at.QuadPart) / float(g_freq.QuadPart) : 0;
+    if (tr.known && dt < 0.002f) return;
+    bool jumped = !tr.known || dt > 0.1f || !(scale > 0);
+    Vec3 v{0, 0, 0};
+    if (!jumped) {
+        v = mul(sub(palm, tr.last), 1.0f / (dt * scale));
+        if (length(v) > 12.0f) jumped = true;
+    }
+    tr.last = palm;
+    tr.at = t;
+    tr.known = true;
+    tr.vel = jumped ? Vec3{0, 0, 0} : mul(add(v, tr.vel), 0.5f);
+    ULONGLONG now = GetTickCount64();
+    float normal[3];
+    int material = 0;
+    if (!collide::handContact(palmWorld.x, palmWorld.y, palmWorld.z, kHandRadius * scale, normal, material)) {
+        if (tr.touching && ageMs(now, tr.lastIn) > 80) tr.touching = false;
+        return;
+    }
+    tr.lastIn = now;
+    if (tr.touching) return;
+    tr.touching = true;
+    if (jumped || ageMs(now, tr.lastSound) < 120) return;
+    Vec3 vel = rotate(heading, tr.vel);
+    float into = -(vel.x * normal[0] + vel.y * normal[1] + vel.z * normal[2]);
+    Hands hands{};
+    bool fist = g_hands.read(hands) && hands.squeezing[side];
+    int hit = foleyaudio::objectHit(fist, into);
+    if (hit < 0) return;
+    tr.lastSound = now;
+    static const char* const kMaterialNames[] = {"hard", "metal", "soft", "glass", "wall"};
+    static const char* const kHitNames[] = {"tap", "slap", "punch"};
+    int kind = foleyaudio::objectKind(material, hit);
+    bool own = false;
+    Frame frame{};
+    if (kind >= 0 && g_frame.read(frame) && frame.scale > 0) {
+        Vec3 local = rotate(conj(frame.hmd), rotate(conj(frame.heading), mul(sub(palmWorld, vecOf(frame.eye)), 1 / frame.scale)));
+        float at[3] = {local.x, local.y, local.z};
+        own = foleyaudio::play(kind, at, into / 4.0f);
+    }
+    if (!own) pushFoley(6, side, nullptr, material * 4 + hit, into, 0, &palmWorld);
+    static std::atomic<int> logs{0};
+    if (logs.fetch_add(1) < 30)
+        LOG("Touch sound: your %s %s %ss a %s %s at %.2f m/s (%s)", side ? "right" : "left", fist ? "fist" : "hand",
+            kHitNames[hit], kMaterialNames[material], material == 4 ? "surface" : normal[1] > 0.5f ? "top" : "side",
+            into, own ? "your own sound" : "the game's sound");
+}
+
+float keepOutOfBodies(int sideIndex, Vec3& palm, Vec3& wrist, const Quat& gripWorld, float scale,
+                      const Vec3& anchor, const Quat& heading) {
+    objectTrack(sideIndex, palm, scale, anchor, heading);
     if (!g_touchBodies) return 0;
     void* self = g_player.load(std::memory_order_relaxed);
     void* held = g_holdActor[sideIndex].load(std::memory_order_relaxed);
@@ -2451,6 +3162,8 @@ float keepOutOfBodies(int sideIndex, Vec3& palm, Vec3& wrist, const Quat& gripWo
     ULONGLONG now = GetTickCount64();
     float radius = kHandRadius * scale, deepest = 0;
     Vec3 reach = rotate(gripWorld, {0, 0, -kFingerReach * scale});
+    const Vec3 handAt = palm;  // where the controller puts it, before any push
+    FoleyContact hit;
     BodyShape shapes[kMaxBodies];
     int n = 0;
     for (BodySlot& slot : g_bodies) {
@@ -2472,6 +3185,14 @@ float keepOutOfBodies(int sideIndex, Vec3& palm, Vec3& wrist, const Quat& gripWo
                     if (depth > best && d > 1e-5f) {
                         best = depth;
                         push = mul(out, depth / d);
+                        if (iter == 0) {
+                            Vec3 ab = sub(c.b, c.a);
+                            float len2 = dot(ab, ab);
+                            hit.actor = shapes[b].actor;
+                            hit.part = foleyPart(k, len2 > 1e-10f ? dot(sub(q, c.a), ab) / len2 : 0);
+                            hit.raw = k;
+                            hit.normal = mul(out, 1 / d);
+                        }
                     }
                 }
             }
@@ -2481,6 +3202,7 @@ float keepOutOfBodies(int sideIndex, Vec3& palm, Vec3& wrist, const Quat& gripWo
         wrist = add(wrist, push);
         if (iter == 0) deepest = best;
     }
+    foleyTrack(sideIndex, handAt, scale, hit, anchor, heading);
     return deepest;
 }
 
@@ -3247,11 +3969,41 @@ void setTouchRestricted(void* const* actors, int count) {
     for (int i = 0; i < 16; ++i) g_restricted[i].store(i < count ? actors[i] : nullptr, std::memory_order_relaxed);
 }
 
-void configureGrab(float curl, float drag) {
-    g_grabCurl = curl < 0 ? 0 : curl > 1 ? 1 : curl;
+void offerHighFive(void* actor, int side, float seconds) {
+    g_hiFive.side.store(side ? 1 : 0);
+    g_hiFive.until.store(GetTickCount64() + static_cast<ULONGLONG>((seconds > 0 ? seconds : 0) * 1000));
+    g_hiFive.actor.store(seconds > 0 ? actor : nullptr);
+    LOG("Touch: high five %s (%s hand, %.1f s)", actor && seconds > 0 ? "offered" : "withdrawn", side ? "right" : "left",
+        seconds);
+}
+
+void setLookAtHand(bool on, float speed, float eyesWithin, float headFrom) {
+    g_lookAtHand.store(on, std::memory_order_relaxed);
+    g_lookSpeed.store(speed < 0.5f ? 0.5f : speed > 30 ? 30 : speed);
+    g_lookEyesWithin.store(eyesWithin < 0 ? 0 : eyesWithin);
+    g_lookHeadFrom.store(headFrom < eyesWithin ? eyesWithin : headFrom);
+}
+
+void configureGrab(float curl, float drag, float breastCurl, float buttCurl) {
+    auto clamp01 = [](float v) { return v < 0 ? 0.0f : v > 1 ? 1.0f : v; };
+    g_grabCurl = clamp01(curl);
+    g_breastCurl = clamp01(breastCurl);
+    g_buttCurl = clamp01(buttCurl);
     g_grabDrag = drag < 0 ? 0 : drag > 0.6f ? 0.6f : drag;
-    LOG("Touch: holding a body closes the fingers %.0f%%, drags it up to %.2f m", g_grabCurl.load() * 100,
-        g_grabDrag.load());
+    LOG("Touch: holding a body closes the fingers %.0f%% (breast %.0f%%, butt %.0f%%), drags it up to %.2f m",
+        g_grabCurl.load() * 100, g_breastCurl.load() * 100, g_buttCurl.load() * 100, g_grabDrag.load());
+}
+
+bool takeFoleyEvent(FoleyEvent& e) {
+    AcquireSRWLockExclusive(&g_foleyQueue.lock);
+    bool any = g_foleyQueue.count > 0;
+    if (any) {
+        e = g_foleyQueue.e[g_foleyQueue.head];
+        g_foleyQueue.head = (g_foleyQueue.head + 1) % 32;
+        --g_foleyQueue.count;
+    }
+    ReleaseSRWLockExclusive(&g_foleyQueue.lock);
+    return any;
 }
 
 bool takeTouchEvent(TouchEvent& e) {

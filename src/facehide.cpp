@@ -471,7 +471,29 @@ void hookedPalette(uint8_t* mesh, uint8_t* out, uint8_t* pose, void* inverseBind
     }
 }
 
+// God mode (godhands.cpp): the selected Sim's scene model is drawn for its hands only, once per pass into the
+// scene's depth from your eyes, wherever the game draws it (even left out for another floor).
+thread_local bool t_handsOnly = false;
+thread_local bool t_needHands = false;
+thread_local bool t_passHands = false;  // this pass already drew the hands from outside the Sim's own draw
+thread_local uint32_t t_handDraws = 0;
+std::atomic<uint32_t> g_statInjected{0}, g_statHandDraws{0};
+
 void hookedMeshDraw(uint8_t* mesh, uint8_t* params) {
+    if (t_handsOnly) {
+        if (mesh && params) {
+            if (int sides = godhands::sidesFor(mesh, *reinterpret_cast<void**>(params + kDrawPose))) {
+                for (int side = 0; side < 2; ++side) {
+                    if (!(sides >> side & 1)) continue;
+                    t_handSide = side;
+                    g_meshDraw(mesh, params);
+                    t_handSide = -1;
+                    ++t_handDraws;
+                }
+            }
+        }
+        return;
+    }
     if (mesh && params && inYourView() && ourPose(*reinterpret_cast<void**>(params + kDrawPose))) {
         g_drawOurs.fetch_add(1, std::memory_order_relaxed);
         MeshKind kind;
@@ -482,8 +504,9 @@ void hookedMeshDraw(uint8_t* mesh, uint8_t* params) {
         }
     }
     g_meshDraw(mesh, params);
-    // God mode: the selected Sim's hands, one more draw each, from your eyes only (godhands.cpp).
-    if (t_eyePass == 1 && mesh && params) {
+    // Fallback while the Sim's own draw is the only way in (injection found nothing this pass).
+    // (t_eyePass -1: the batched path draws outside the Sim's own draw call; the scene's depth decides, as for the face.)
+    if (t_sceneContext && t_eyePass != 0 && !t_passHands && mesh && params) {
         if (int sides = godhands::sidesFor(mesh, *reinterpret_cast<void**>(params + kDrawPose))) {
             for (int side = 0; side < 2; ++side) {
                 if (!(sides >> side & 1)) continue;
@@ -549,11 +572,40 @@ void hookedSceneDraw(void* model, uint32_t lod, uint8_t* view) {
         }
         g_propOther.fetch_add(1, std::memory_order_relaxed);
     }
+    // God mode: the selected Sim's hands, once per pass from your eyes (see t_needHands).
+    if (t_eyePass == 1 && t_needHands && !t_handsOnly && view) {
+        t_needHands = false;
+        if (const uint8_t* mine = godhands::model()) {
+            t_handsOnly = true;
+            g_statInjected.fetch_add(1, std::memory_order_relaxed);
+            const uint32_t before = t_handDraws;
+            int hint = godhands::lodHint();
+            bool got = false;
+            if (hint >= 0) {
+                g_sceneDraw(const_cast<uint8_t*>(mine), static_cast<uint32_t>(hint), view);
+                got = t_handDraws > before;
+            }
+            for (uint32_t l = 0; l < 4 && !got; ++l) {
+                if (static_cast<int>(l) == hint) continue;
+                g_sceneDraw(const_cast<uint8_t*>(mine), l, view);
+                if (t_handDraws > before) {
+                    got = true;
+                    godhands::setLodHint(static_cast<int>(l));
+                }
+            }
+            if (!got) godhands::setLodHint(-1);
+            t_passHands = got;
+            g_statHandDraws.fetch_add(t_handDraws - before, std::memory_order_relaxed);
+            t_handsOnly = false;
+            static std::atomic<ULONGLONG> logAt{0};
+            ULONGLONG now = GetTickCount64(), last = logAt.load(std::memory_order_relaxed);
+            if (now - last >= 10000 && logAt.compare_exchange_strong(last, now) && last)
+                LOG("God hands: in the last 10 s, %u passes drew the selected Sim for its hands, %u hand draws (lod %d)",
+                    g_statInjected.exchange(0), g_statHandDraws.exchange(0), godhands::lodHint());
+        }
+    }
     void* outer = t_model;
     t_model = model;
-    // God mode: the selected Sim is drawn in full detail for your eyes, so its hands at your controllers are
-    // not the coarse far-away ones.
-    if (t_eyePass == 1 && model && godhands::isSelected(static_cast<const uint8_t*>(model))) lod = 0;
     g_sceneDraw(model, lod, view);
     t_model = outer;
     t_eyePass = previous;
@@ -815,8 +867,11 @@ void hookContexts(ID3D11Device* device) {
 }
 
 void targets(ID3D11DeviceContext* context, bool sceneDepth) {
-    if (sceneDepth)
+    if (sceneDepth) {
         t_sceneContext = context;
+        t_needHands = true;
+        t_passHands = false;
+    }
     else if (t_sceneContext == context)
         t_sceneContext = nullptr;
 }

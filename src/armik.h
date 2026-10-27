@@ -151,10 +151,29 @@ struct TouchEvent {
     float value = 0;
 };
 bool takeTouchEvent(TouchEvent& e);
+// Touch sounds (foley.py): kind 1 your hand met another Sim's body (into = metres a
+// second into it, along = along it), 2 a rub (sliding along it), 3 took hold of
+// it (grab), 4 took its hand. part: armik's body part (0 torso, 1 head, 2/3 upper
+// arms, 4/5 forearms, 6/7 thighs, 8/9 calves), 10 its hand, 11 its hips and butt.
+// kind 5 a slap or punch on a Sim (knockout.py: along 1 a punch); kind 6 your hand hit an
+// object or wall (part = material * 4 + hit: materials 0 hard, 1 metal, 2 soft, 3 glass, 4 wall;
+// hits 0 tap, 1 slap, 2 punch), at = where (world).
+struct FoleyEvent {
+    int kind = 0, hand = 0, part = 0;
+    void* actor = nullptr;
+    float into = 0, along = 0;
+    float at[3] = {0, 0, 0};
+};
+bool takeFoleyEvent(FoleyEvent& e);
 // How far the fingers close on a held body (0..1) and how far (metres, for an
 // adult) the held place can be dragged; Claude Jiggle's breasts and butt keep
 // their own settings.
-void configureGrab(float curl, float drag);
+void configureGrab(float curl, float drag, float breastCurl, float buttCurl);
+// A Sim you touch or grab looks at that hand, then at you ([physical] look_at_hand).
+void setLookAtHand(bool on, float speed, float eyesWithin, float headFrom);
+// That Sim raises a hand toward your raised `side` hand for `seconds` (0 withdraws);
+// your palm meeting it is touch event kind 7.
+void offerHighFive(void* actor, int side, float seconds);
 // Sims (client objects) whose body may only be held at the hand, arms,
 // shoulders, back and hair: children and younger, and teens with an adult
 // (or adults with a teen). The script mod sends them; up to 16.

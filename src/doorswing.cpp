@@ -37,8 +37,12 @@ ExitFn g_exit = nullptr;
 const uint8_t* g_maskGlobal = nullptr;
 int g_ready = 0;  // 0 not checked, 1 ready, -1 unsupported build
 std::mutex g_mutex;
-std::vector<std::pair<uint64_t, bool>> g_pending;
+std::vector<std::pair<uint64_t, int>> g_pending;
 int g_logged = 0;
+constexpr int kWatchMax = 8;
+uint64_t g_watchIds[kWatchMax] = {};
+int g_watchCount = 0;
+bool g_watchOpen[kWatchMax] = {};
 
 bool ready() {
     if (g_ready) return g_ready > 0;
@@ -81,31 +85,68 @@ void* portalOf(uint64_t id) {
 
 }  // namespace
 
-void request(uint64_t objectId, bool open) {
+void watch(const uint64_t* ids, int count) {
     std::lock_guard<std::mutex> lock(g_mutex);
-    if (g_pending.size() < 64) g_pending.emplace_back(objectId, open);
+    count = count < 0 ? 0 : (count > kWatchMax ? kWatchMax : count);
+    bool open[kWatchMax] = {};
+    for (int i = 0; i < count; ++i)  // keep what is known for a door still on the list
+        for (int j = 0; j < g_watchCount; ++j)
+            if (g_watchIds[j] == ids[i]) open[i] = g_watchOpen[j];
+    for (int i = 0; i < count; ++i) {
+        g_watchIds[i] = ids[i];
+        g_watchOpen[i] = open[i];
+    }
+    g_watchCount = count;
+}
+
+bool isOpen(uint64_t objectId) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    for (int i = 0; i < g_watchCount; ++i)
+        if (g_watchIds[i] == objectId) return g_watchOpen[i];
+    return false;
+}
+
+void request(uint64_t objectId, int mode) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (g_pending.size() < 64) g_pending.emplace_back(objectId, mode);
 }
 
 void pump() {
-    std::vector<std::pair<uint64_t, bool>> work;
+    std::vector<std::pair<uint64_t, int>> work;
+    uint64_t watched[kWatchMax];
+    int watchCount;
     {
         std::lock_guard<std::mutex> lock(g_mutex);
-        if (g_pending.empty()) return;
         work.swap(g_pending);
+        watchCount = g_watchCount;
+        std::memcpy(watched, g_watchIds, sizeof(watched));
     }
     if (!ready()) return;
-    for (const auto& [id, open] : work) {
+    if (watchCount > 0) {
+        bool open[kWatchMax] = {};
+        for (int i = 0; i < watchCount; ++i) {
+            void* portal = portalOf(watched[i]);
+            int32_t count = 0;
+            if (portal) std::memcpy(&count, static_cast<uint8_t*>(portal) + 0x38, sizeof(count));
+            open[i] = count > 0;
+        }
+        std::lock_guard<std::mutex> lock(g_mutex);
+        for (int i = 0; i < watchCount && i < g_watchCount; ++i)
+            if (g_watchIds[i] == watched[i]) g_watchOpen[i] = open[i];
+    }
+    for (const auto& [id, mode] : work) {
+        const bool open = mode != 0;
         void* portal = portalOf(id);
         if (portal) {
-            // Game routes always send "entering front"; the door picks its swing.
+            // The flag picks the swing (DoorOpenForward / DoorOpenBackward): the side we come from.
             if (open)
-                g_enter(portal, 1);
+                g_enter(portal, mode == 2 ? 0 : 1);
             else
                 g_exit(portal);
         }
         if (g_logged < 20) {
             ++g_logged;
-            LOG("Doors: %s %016llx%s", open ? "open" : "close", static_cast<unsigned long long>(id),
+            LOG("Doors: %s %016llx%s", open ? (mode == 2 ? "open (back)" : "open (front)") : "close", static_cast<unsigned long long>(id),
                 portal ? "" : " (no swinging door there)");
         }
     }

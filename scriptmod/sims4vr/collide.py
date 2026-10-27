@@ -31,7 +31,7 @@ import terrain
 from indexed_manager import CallbackTypes
 from objects.doors.door import Door
 
-from sims4vr import native
+from sims4vr import doors as doors_mod, native
 
 RADIUS = 8.0  # metres around you that walls and objects are collected
 REBUILD_MOVE = 3.0  # metres from the last build centre before it is built again
@@ -41,6 +41,8 @@ BATCH = 15  # nearby objects measured per tick while building
 SWITCH_EVERY = 2.0  # seconds between reads of the debug-menu switch ([body] collision_scene)
 MIN_HEIGHT = 0.05  # metres: lower things (rugs, seed packs) are walked over
 HIP = 0.9  # metres above the floor: objects starting lower can stop your body
+DOOR_THICK = 0.05  # metres: half the thickness of a closed door's solid panel
+DOOR_HEIGHT = 2.0  # metres
 GAP_DEPTH = 0.3  # metres either side of a door's strip cut out of the wall
 DEFAULT_STOREY = 3.0  # metres when the level above has no height
 COMPARE_EVERY = 1.0  # seconds between comparisons with the ray check
@@ -56,9 +58,21 @@ _shapes = {}  # definition id: [(corners, y0, y1)] of its model's visible shape 
 _placed = {}  # object id: (where it stands, its visible shape there): turned and moved once while it stays
 _body_skip = set()  # id() of the footprint polygons whose body part the visible shape took over
 _model_users = {}  # model instance: {tuning name: definition id} of the objects using it
-objects = []  # (polygon [(x, z), ...], y0, y1, blocks the navmesh, name)
+objects = []  # (polygon [(x, z), ...], y0, y1, blocks the navmesh, name, material, object id)
+
+# What your hand hitting an object sounds like (foley.py, foleyaudio.cpp; touch-sounds thread): a
+# guess from the object's tuning name. 0 hard (wood, stone, plastic), 1 metal, 2 soft, 3 glass.
+HARD, METAL, SOFT, GLASS = range(4)
+_MATERIAL_WORDS = (
+    (SOFT, ('sofa', 'couch', 'loveseat', 'bed', 'armchair', 'chair_living', 'chairliving', 'livingchair', 'beanbag',
+            'ottoman', 'pillow', 'cushion', 'mattress', 'hammock', 'futon', 'plush', 'teddy', 'pouf', 'blanket')),
+    (METAL, ('fridge', 'refrigerator', 'stove', 'oven', 'microwave', 'dishwasher', 'locker', 'trash', 'garbage',
+             'washer', 'dryer', 'grill', 'bbq', 'metal', 'mailbox', 'vending', 'freezer', 'radiator', 'safe_')),
+    (GLASS, ('glass', 'aquarium', 'fishtank', 'fish_tank', 'terrarium', 'mirror', 'window')),
+)
 _state = None  # (centre x, z, level, planner build id)
 _pending = None  # generator of a build in progress
+_door_panels = {}  # door id -> the solid shape of its closed panel
 _dirty = 0.0  # when an object near the scene was added, removed or moved (0: not since the last build)
 _built_at = 0.0
 _watching = False
@@ -143,6 +157,7 @@ def forget():
     _hand_skip.clear()
     _body_skip.clear()
     _placed.clear()
+    _door_panels.clear()
     try:
         _send()
     except Exception:
@@ -270,6 +285,14 @@ def _jambs(jambs, floor):
             if math.hypot(bx - ax, bz - az) < 0.6:  # a wall's thickness, not two walls
                 sides.append((ax, az, bx, bz, floor, min(top0, top1)))
     return sides
+
+
+def _material(obj):
+    name = (type(obj).__name__ + ' ' + str(obj)).lower()
+    for material, words in _MATERIAL_WORDS:
+        if any(w in name for w in words):
+            return material
+    return HARD
 
 
 def _y_range(obj, footprint):
@@ -526,6 +549,7 @@ def _build(sim, x, y, z, surface):
             near.append(obj)
     # 2. Walls, with doorways cut out.
     gaps = []
+    panels = {}
     for door in doors:
         try:
             if sim in door.get_disallowed_objects():
@@ -535,6 +559,11 @@ def _build(sim, x, y, z, surface):
         gap = _strip(door)
         if gap is not None:
             gaps.append(gap)
+            if not doors_mod.is_open_passage(door):
+                (cx, cz), (ux, uz), half, (nx, nz), _ = gap
+                pts = [(cx + ux * sx * half + nx * sn * DOOR_THICK, cz + uz * sx * half + nz * sn * DOOR_THICK)
+                       for sx, sn in ((-1, -1), (1, -1), (1, 1), (-1, 1))]
+                panels[door.id] = (pts, floor, floor + DOOR_HEIGHT, True, 'door', 0, door.id)
     new_walls = []
     tops = {}
     jambs = {}
@@ -588,6 +617,7 @@ def _build(sim, x, y, z, surface):
         if y1 - y0 < MIN_HEIGHT or y1 <= floor:
             continue
         name = str(obj)[:48]
+        material = _material(obj)
         shape = _shape_of(obj, y1)
         meshes = None if shape else _mesh_shapes(obj, y1)
         first = len(new_objects)
@@ -599,7 +629,7 @@ def _build(sim, x, y, z, surface):
             pts = [(v.x, v.z) for v in polygon]
             if len(pts) >= 3:
                 blocks = y0 < floor + HIP and _blocks_navmesh(surface, pts, floor)
-                new_objects.append((pts, y0, y1, blocks, name))
+                new_objects.append((pts, y0, y1, blocks, name, material, obj.id))
                 if shape:  # its visible shape stands in for the footprint, for hands and body
                     new_skip.add(id(pts))
                     new_body_skip.add(id(pts))
@@ -617,7 +647,9 @@ def _build(sim, x, y, z, surface):
         new_hands.extend(meshes or ())
     spent += time.perf_counter() - started
     walls, objects, hand_shapes, _hand_skip, _body_skip = new_walls, new_objects, new_hands, new_skip, new_body_skip
-    _send()
+    _door_panels.clear()
+    _door_panels.update(panels)
+    _apply_doors()
     body = sum(1 for o in new_objects if o[3])
     high = sum(1 for o in new_objects if o[1] >= floor + HIP)
     _log('built at {:.2f} {:.2f} level {} (floor {:.2f}): {} wall sides, {} doorways cut, {} object shapes '
@@ -643,7 +675,7 @@ def _ray_hit(x, z, angle):
     for ax, az, bx, bz, _, _ in walls:
         if _cross(x, z, ex, ez, ax, az, bx, bz):
             return 'wall'
-    for pts, _, _, blocks, name in objects:
+    for pts, _, _, blocks, name, _, _ in objects:
         if not blocks:
             continue
         n = len(pts)
@@ -678,6 +710,27 @@ def _compare(x, z, mask):
 
 
 @native.timed('collide tick', 0.004)
+def _apply_doors():
+    """Closed doors (manual_doors on) are solid panels in the gaps cut for them; open ones are
+    not. Re-sends the scene at once, no rebuild: the way through opens in the same tick."""
+    global objects
+    manual = doors_mod.manual()
+    kept = [o for o in objects if o[6] not in _door_panels]
+    if manual:
+        kept.extend(p for door_id, p in _door_panels.items() if not doors_mod.is_open(door_id))
+    objects = kept
+    _send()
+
+
+def mark_dirty():
+    """A door opened or closed: the panels follow at once."""
+    if _door_panels:
+        try:
+            _apply_doors()
+        except Exception as e:
+            _log('door panels: {!r}'.format(e))
+
+
 def update(sim, x, y, z, surface, free, mask):
     """walk.py's tick: keeps the scene built around you; compares while you walk freely."""
     global _state, _pending, _compared, _dirty, _built_at
