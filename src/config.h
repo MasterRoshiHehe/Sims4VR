@@ -220,6 +220,8 @@ struct Config {
     float wristPausePos[3] = {0, -0.30f, 0}, wristPauseTurn[3] = {}, wristPauseSize = 0.06f;
     bool wristSleepClock = true;   // the clock and speed buttons low in your view while your Sim sleeps
     float wristSleepPos[3] = {0, -0.22f, 0.6f}, wristSleepTurn[3] = {}, wristSleepSize = 0.16f;
+    bool wristLotIntro = true;     // the lot's name and traits in front of you while a load keeps your eyes shut (lotintro.py)
+    float wristLotPos[3] = {0, 0.02f, 1.2f}, wristLotTurn[3] = {}, wristLotSize = 1.1f;
 
     // Body mode (stereo at the active Sim's eyes)
     float bodyForward = 0.10f;   // metres from the head joint to the eyes, along where you look
@@ -255,6 +257,10 @@ struct Config {
     // Physical touch with other Sims in first person (needs arm_ik)
     bool touchBodies = true;     // their bodies stop your hands and give a little; you can't walk through them
     bool holdHands = true;       // close a hand around a Sim's hand to hold it
+    bool lookAtHand = true;      // a Sim you touch looks at your hand, then at you
+    float lookSpeed = 5.0f;      // how fast their look moves to a new place
+    float lookEyesWithin = 0.3f; // metres from their eyes: a touch this close is followed with the eyes only
+    float lookHeadFrom = 0.8f;   // metres from their eyes: from here the whole head turns
     bool lookAtYou = true;       // a Sim you lean in close to looks at you
     bool headRepel = true;       // your head is pushed back out of other Sims instead of passing through
     float headRadius = 0.08f;    // metres your view keeps clear of their bodies
@@ -262,13 +268,25 @@ struct Config {
     float grabCurl = 0.45f;      // how far the fingers close on a held body (0 open .. 1 fist)
     float grabDrag = 0.15f;      // metres the held place can be dragged (not Claude Jiggle's breasts/butt)
     bool touchHaptics = true;    // controllers vibrate when a hand touches a Sim
+    // Touch sounds (foley.py, [foley]): which of the game's foley plays for each touch; 0 none, the
+    // rest index foley.py's lists (the names must match settings.cpp's rows).
+    int foleyLightCloth = 1, foleyLightSkin = 1, foleyPatCloth = 1, foleyPatSkin = 1, foleySlapCloth = 1,
+        foleySlapSkin = 1, foleyRubCloth = 1, foleyRubSkin = 1, foleyGrabCloth = 1, foleyGrabSkin = 1, foleyHands = 1,
+        foleyHoldHands = 1;
+    // Your hand hitting objects (foley.py object_*): the game's sound when you have none of your own.
+    int foleyObjectTap = 1, foleyObjectSlap = 1, foleyObjectPunch = 1, foleyObjectMetal = 1, foleyObjectSoft = 1;
     bool touch = true;           // point with your index finger and touch things to click them
     float touchPast = 0.015f;    // metres past the Sim's fingertip that count as the finger's end
     float walkSpeed = 1.5f;      // metres per second, left stick fully pushed
     float runSpeed = 3.0f;       // the same while running (left stick tapped)
     bool bodyKeepHeight = true;  // first person: the game draws your body at your height, not on its level's floor
     bool bodyWalkClips = true;  // first person: the game's own start and stop walk clips
-    float bodyStopTime = 0.5f;  // first person: seconds walking eases to rest after you let go
+    bool crouch = true;           // first person: push the right stick down to crouch (free walking only)
+    float crouchDepth = 0.5f;     // metres the view sinks
+    float crouchSpeed = 0.5f;     // walking pace while crouched, share of normal
+    float crouchSeconds = 0.35f;  // seconds to go down or come up
+    float bodyStopTime = 0.15f;  // first person: seconds walking eases to rest after you let go
+    bool bodyStopGlide = false;  // first person: slowing down covers the walk's stop clip distance (~0.9 m)
     bool bodySmoothSlide = true;  // first person: slide along walls smoothly, not in 15 degree steps
     bool bodyCollision = true;  // first person: walls and furniture (collide.py scene) stop your body
     float bodyRadius = 0.3f;  // first person: metres your body keeps clear of walls and furniture
@@ -282,6 +300,10 @@ struct Config {
     // Audio (first person): every sound 1 m or more away is placed where it is; the game spreads
     // those with a small near radius toward the middle of your head (camera.cpp hookedPan)
     bool audioPanAnyDistance = true;
+    // Audio (first person): voices the game would play flat (WickedWhims) are made 3D; they are full
+    // volume within voice_near metres and fade out by voice_far (0 = the voice sound's own radii)
+    float audioVoiceNear = 1.5f;
+    float audioVoiceFar = 12.0f;
     // Audio (first person): the outdoor ambience fades in over this many metres either side
     // of the outside walls instead of switching at the doorway; 0 = the game's own switch
     float outdoorFade = 4.0f;

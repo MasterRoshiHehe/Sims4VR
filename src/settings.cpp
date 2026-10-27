@@ -61,7 +61,7 @@ struct Row {
     int page = 0;                     // the page the row is on (from its group); a Link's: the one it opens
     int linkPage = 0;
     const char* jiggle = nullptr;  // a setting of the separate Integrated Body Physics mod (its key), not saved here
-    bool sound = false;            // with jiggle: the key belongs to the separate Extended Sound Control mod instead
+    othermods::Mod mod = othermods::kBodyPhysics;  // with jiggle: the separate mod the key belongs to
     const wchar_t* tip = nullptr;  // what it does: shown in a box under the row while it's picked
     const char* when = nullptr;       // another mod's Link row: it opens only while this key of the mod is not 0
     const wchar_t* offTip = nullptr;  // with when: the tip while it can't be opened (greyed out)
@@ -86,9 +86,17 @@ const Page kFixedPages[] = {
     // Options: the five categories (user 2026-10-23: the menu got hard to navigate).
     {L"Options", L"Options", L""},
     {L"Game", L"Game settings", L"Options"},
+    {L"Passive objects", L"Objects around you", L"Game"},
     {L"Reach", L"Reach and walking to things", L"Game"},
     {L"Other Sims", L"Other Sims", L"Game"},
     {L"Other Sims touch", L"Touching and grabbing", L"Other Sims"},
+    {L"Other Sims gestures", L"Hand gestures", L"Other Sims"},
+    {L"Touch sounds", L"Touch sounds", L"Other Sims"},
+    {L"Touch sounds cloth", L"On clothes", L"Touch sounds"},
+    {L"Touch sounds skin", L"On bare skin", L"Touch sounds"},
+    {L"Touch sounds volume", L"Volume of your own sounds", L"Touch sounds"},
+    {L"Touch sounds hits", L"Slaps and punches", L"Touch sounds"},
+    {L"Touch sounds objects", L"Hitting objects", L"Touch sounds"},
     {L"Loading", L"Loading and saving", L"Game"},
     {L"Graphics", L"Graphics & Performance", L"Options"},
     {L"View picture", L"Picture", L"Graphics"},
@@ -120,6 +128,7 @@ const Page kFixedPages[] = {
     {L"HUD wants", L"Wants", L"HUD"},
     {L"HUD pause", L"Pause symbol", L"HUD"},
     {L"HUD sleep", L"Clock while asleep", L"HUD"},
+    {L"HUD lot intro", L"Lot name and traits on arrival", L"HUD"},
     {L"HUD note", L"Notification card", L"Interface"},
     {L"Bubbles", L"Speech bubbles and skill bars", L"Interface"},
     {L"Bubbles yours", L"Your bubble", L"Bubbles"},
@@ -276,6 +285,20 @@ Row choice(const wchar_t* group, const wchar_t* label, const char* section, cons
     return r;
 }
 
+// A touch sound (foley.py): picking one plays it at your right hand (controls.py 7650000 + kind * 100 + n).
+Row foley(const wchar_t* group, const wchar_t* label, const char* key, int Config::*m, int kind,
+          std::vector<const wchar_t*> names) {
+    Row r = choice(group, label, "foley", key, m, std::move(names));
+    r.action = 7650000 + kind * 100;
+    return r;
+}
+
+// A script number shown as a percentage (1 = 100%).
+Row percent(Row r) {
+    r.shown = 100;
+    return r;
+}
+
 #include "settings_tips.inc"
 
 std::vector<Row> makeRows() {
@@ -407,6 +430,7 @@ std::vector<Row> makeRows() {
         number(L"HUD", L"HUD size (all of it)", "wrist", "scale", &Config::wristScale, 0.3f, 3, 0.05f, 100, L"%.0f%%"),
         toggle(L"Phone", L"Phone at your hip", "phone", "phone", &Config::phone),
         flag(L"Phone", L"Notifications about one Sim over their head (off: phone only)", "phone", "notes_overhead", true, kLive),  // notify.py
+        flag(L"Phone", L"Game camera for photos and selfies (off: no photo session, testing)", "photo", "game_camera", true, kLive),  // photowatch.py
         toggle(L"Hands", L"Mic moves your Sim's mouth", "voice", "mic", &Config::voiceMic, kNextStart),
         link(front, L"Options", L"Options"),
         reset,
@@ -418,7 +442,24 @@ std::vector<Row> makeRows() {
         link(L"Game", L"Reach and walking to things", L"Reach"),
         link(L"Game", L"Other Sims", L"Other Sims"),
         link(L"Game", L"Loading and saving", L"Loading"),
+        link(L"Game", L"Objects around you", L"Passive objects"),
+        // passive.py / tvwatch.py: objects affect you without using them (thread "Build passive object effects system")
+        flag(L"Passive objects", L"Objects around you affect you", "passive", "on", true, kLive),
+        flag(L"Passive objects", L"Log what the game's objects do to you", "passive", "log", true, kLive),
+        flag(L"Passive objects", L"Music nearby gives fun", "passive", "music", true, kLive),
+        scriptNumber(L"Passive objects", L"Music reaches you within", "passive", "music_range", 6, 1, 20, 1, L"%.0f m"),
+        scriptNumber(L"Passive objects", L"Fun a game minute from music", "passive", "music_rate", 0.15f, 0, 1, 0.05f, L"%.2f"),
+        flag(L"Passive objects", L"Watch a TV by looking at it", "tv", "gaze", true, kLive),
+        scriptNumber(L"Passive objects", L"TV nearby reaches you within", "tv", "nearby", 4, 1, 20, 1, L"%.0f m"),
+        scriptNumber(L"Passive objects", L"Fun from a TV nearby (share of watching)", "tv", "passive_share", 0.3f, 0, 1, 0.05f, L"%.2f"),
         link(L"Other Sims", L"Touching and grabbing", L"Other Sims touch"),
+        link(L"Other Sims", L"Hand gestures", L"Other Sims gestures"),
+        link(L"Other Sims", L"Touch sounds", L"Touch sounds"),
+        link(L"Touch sounds", L"On clothes", L"Touch sounds cloth"),
+        link(L"Touch sounds", L"On bare skin", L"Touch sounds skin"),
+        link(L"Touch sounds", L"Volume of your own sounds", L"Touch sounds volume"),
+        link(L"Touch sounds", L"Slaps and punches", L"Touch sounds hits"),
+        link(L"Touch sounds", L"Hitting objects", L"Touch sounds objects"),
         link(L"Graphics", L"Picture", L"View picture"),
         link(L"Graphics", L"Mirrors and reflections", L"View mirrors"),
         link(L"Graphics", L"Near clipping", L"View near"),
@@ -444,6 +485,7 @@ std::vector<Row> makeRows() {
         link(L"Other mods", L"Integrated Body Physics", L"ibp:main"),
         link(L"Other mods", L"Extended Sound Control", L"esc:main"),
         link(L"Other mods", L"Claude Performance", L"Performance"),
+        link(L"Other mods", L"Claude Bustin Out", L"cbo:main"),
 
         cheats,
         cheatPies,
@@ -451,6 +493,8 @@ std::vector<Row> makeRows() {
         button(L"Motherlode (+50,000 simoleons)", 7),    // motherlode
         button(L"Move objects on", 8),                   // bb.moveobjects on
         button(L"CAS full edit mode", 10),               // cas.fulleditmode
+        button(L"Everyone here hates me", 14),           // controls.py: every Sim on the lot, friendship + romance lowest
+        button(L"Everyone here loves me", 15),           // controls.py: highest
 
         // The separate Claude Performance mod's console commands (user 2026-10-16 19:13Z, v0.13.184):
         // controls.py actions 70-76 run perf.* as if typed; that mod answers with a game notification.
@@ -549,6 +593,7 @@ std::vector<Row> makeRows() {
         number(L"View near", L"Near clipping at most", "body", "near_max", &Config::bodyNearMax, 0.1f, 2, 0.05f, 100, L"%.0f cm",
                kView),
         flag(L"View near", L"Rooms in doorways stay whole", "body", "rooms_whole", true, kLive),  // gamefix.cpp
+        flag(L"View near", L"Every room always drawn whole", "body", "rooms_all", true, kLive),  // gamefix.cpp
         number(L"View mirrors", L"Mirrors reach in rooms (0 = game's)", "stereo", "mirror_far_inside", &Config::mirrorInterior, 0, 15,
                1, 1, L"%.0f m", kNextStart),
         number(L"View mirrors", L"Mirrors and water reach outdoors (0 = game's)", "stereo", "mirror_far_outside",
@@ -582,8 +627,16 @@ std::vector<Row> makeRows() {
                L"%.1f cm", kWalk),
         toggle(moving, L"Hands stop at walls and furniture", "body", "hand_collision", &Config::handCollision, kWalk),
         toggle(moving, L"Start and stop walking animations", "body", "walk_clips", &Config::bodyWalkClips, kWalk),
-        number(moving, L"Stop smoothness (0 = instant)", "body", "stop_time", &Config::bodyStopTime, 0, 1.5f, 0.1f, 1, L"%.1f s",
+        number(moving, L"Stop smoothness (0 = instant)", "body", "stop_time", &Config::bodyStopTime, 0, 1.5f, 0.05f, 1,
+               L"%.2f s", kWalk),
+        toggle(moving, L"Crouch (push right stick down)", "body", "crouch", &Config::crouch, kWalk),
+        number(moving, L"Crouch depth", "body", "crouch_depth", &Config::crouchDepth, 0.1f, 0.9f, 0.05f, 100, L"%.0f cm",
                kWalk),
+        number(moving, L"Crouch walking speed", "body", "crouch_speed", &Config::crouchSpeed, 0.1f, 1, 0.05f, 100,
+               L"%.0f%%", kWalk),
+        number(moving, L"Crouch down/up time", "body", "crouch_seconds", &Config::crouchSeconds, 0.1f, 1.5f, 0.05f, 1,
+               L"%.2f s", kWalk),
+        toggle(moving, L"Glide out over the stop animation", "body", "stop_glide", &Config::bodyStopGlide, kWalk),
 
         flag(L"Reach", L"Only use what's within 1 m", "body", "reach_only", true, kLive),  // reach.py
         flag(L"Reach", L"Grey out what is too far", "body", "grey_far", true, kLive),  // reach.py
@@ -605,12 +658,102 @@ std::vector<Row> makeRows() {
         number(L"Other Sims touch", L"Grab: how far you drag them", "physical", "grab_drag", &Config::grabDrag, 0, 0.6f, 0.025f, 100,
                L"%.1f cm", kTouch),
         flag(L"Other Sims touch", L"They react to being grabbed", "physical", "grab_reactions", true, kLive),  // bodygrab.py
+        flag(L"Other Sims touch", L"They react to being touched", "physical", "touch_reactions", true, kLive),  // bodygrab.py
+        flag(L"Other Sims touch", L"Touches change your relationship", "physical", "touch_relationship", true, kLive),  // bodygrab.py
+        // reactions.py: what they do about your touches, and how they show what they feel about you
+        flag(L"Other Sims touch", L"A hit or unwelcome touch stops what they do", "physical", "touch_interrupts", true, kLive),
+        flag(L"Other Sims touch", L"They act on it (slap back, yell, hug, kiss...)", "physical", "touch_consequences", true, kLive),
+        scriptNumber(L"Other Sims touch", L"How often they act on it", "physical", "consequence_chance", 1, 0, 3, 0.25f, L"%.2fx"),
+        flag(L"Other Sims touch", L"Hits can start fights", "physical", "touch_fights", true, kLive),
+        flag(L"Other Sims touch", L"Sims who see it call you out", "physical", "touch_witnesses", true, kLive),
+        flag(L"Other Sims touch", L"They show how they feel about you", "physical", "show_feelings", true, kLive),
+        toggle(L"Other Sims touch", L"They look at the hand that touches them", "physical", "look_at_hand", &Config::lookAtHand, kTouch),
+        number(L"Other Sims touch", L"Look: how fast it moves", "physical", "look_speed", &Config::lookSpeed, 1, 20, 0.5f, 1, L"%.1f", kTouch),
+        number(L"Other Sims touch", L"Look: eyes only within", "physical", "look_eyes_within", &Config::lookEyesWithin, 0, 1, 0.05f, 100, L"%.0f cm", kTouch),
+        number(L"Other Sims touch", L"Look: whole head from", "physical", "look_head_from", &Config::lookHeadFrom, 0.1f, 2, 0.05f, 100, L"%.0f cm", kTouch),
         scriptNumber(sims, L"They follow you from (0 off)", "body", "follow_distance", 2.5f, 0, 10, 0.5f,
                      L"%.1f m"),  // hint.py: the Sims you talk with follow you
         scriptNumber(sims, L"Talk starts within", "body", "talk_distance", 3, 1, 10, 0.5f,
                      L"%.1f m"),  // scripted.py, reach.py, trail.py: closer, a picked social just starts
         flag(sims, L"Their chats with you stay where you are", "body", "socials_in_place", true, kLive),  // scripted.py
-        flag(sims, L"Vibrate when a hand gesture is seen", "gestures", "haptics", false, kLive),  // gestures.py
+        // gestures.py: hand gestures at other Sims (thread "Hand gesture interactions with Sims")
+        flag(L"Other Sims gestures", L"Wave: they wave back", "gestures", "wave", true, kLive),
+        flag(L"Other Sims gestures", L"Open-palm come hither: they walk to you", "gestures", "come_hither", true, kLive),
+        flag(L"Other Sims gestures", L"Crooked finger (grip + trigger twice): Follow me", "gestures", "follow_me", true, kLive),
+        flag(L"Other Sims gestures", L"Follow me: they react first (mood, relationship)", "gestures", "follow_reactions", true, kLive),
+        flag(L"Other Sims gestures", L"Follow me: Sims who dislike you refuse", "gestures", "follow_refuse", true, kLive),
+        flag(L"Other Sims gestures", L"Wave at a follower: they wave and stop following", "gestures", "wave_dismiss", true, kLive),
+        flag(L"Other Sims gestures", L"They nod as they come or start following", "gestures", "nod", true, kLive),
+        flag(L"Other Sims gestures", L"Vibrate when a hand gesture is seen", "gestures", "haptics", false, kLive),
+        // foley.py: the game's foley when your hands touch other Sims (thread "Add touch foley sounds for Sim contact");
+        // the names must match foley.py's lists.
+        flag(L"Touch sounds", L"Play touch sounds", "foley", "on", true, kLive),
+        scriptNumber(L"Touch sounds", L"A pat from (into them)", "foley", "pat_speed", 0.5f, 0.1f, 3, 0.1f, L"%.1f m/s"),
+        scriptNumber(L"Touch sounds", L"A slap from (into them)", "foley", "slap_speed", 2.2f, 0.5f, 6, 0.1f, L"%.1f m/s"),
+        // armik.cpp foleyTrack / knockBack, foleyaudio.cpp (user 2026-10-26 21:30Z)
+        scriptNumber(L"Touch sounds hits", L"A punch from (fist, into them)", "foley", "punch_speed", 1.8f, 0.5f, 6, 0.1f,
+                     L"%.1f m/s"),
+        flag(L"Touch sounds hits", L"Hits while you walk with the stick", "foley", "walk_hits", true, kLive),
+        percent(scriptNumber(L"Touch sounds hits", L"Knockback where you hit", "foley", "knockback", 1.0f, 0, 2, 0.05f,
+                             L"%.0f%%")),
+        // knockout.py (user 2026-10-26 22:03Z)
+        flag(L"Touch sounds hits", L"Knock Sims out", "knockout", "on", true, kLive),
+        scriptNumber(L"Touch sounds hits", L"Knocked out at (daze)", "knockout", "score", 40, 5, 200, 5, L"%.0f"),
+        scriptNumber(L"Touch sounds hits", L"One blow knocks out from (0 = never)", "knockout", "one_blow", 6.0f, 0, 12,
+                     0.5f, L"%.1f m/s"),
+        scriptNumber(L"Touch sounds hits", L"Daze halves every", "knockout", "recover", 8, 1, 60, 1, L"%.0f s"),
+        flag(L"Touch sounds hits", L"Knocked out unconscious (off: asleep)", "knockout", "unconscious", true, kLive),
+        scriptNumber(L"Touch sounds hits", L"Knocked out for", "knockout", "minutes", 20, 1, 180, 1, L"%.0f Sim min"),
+        scriptNumber(L"Touch sounds", L"Rub sounds from (0 = none)", "foley", "rub_speed", 0.3f, 0, 2, 0.05f,
+                     L"%.2f m/s"),
+        // foleyaudio.cpp: the user's own sounds (sounds/touch), before the game's
+        flag(L"Touch sounds volume", L"Your own sounds first (sounds folder)", "foley", "own_sounds", true, kLive),
+        percent(scriptNumber(L"Touch sounds volume", L"All your own sounds", "foley", "own_volume", 1.0f, 0, 2, 0.05f, L"%.0f%%")),
+        percent(scriptNumber(L"Touch sounds volume", L"Light touch", "foley", "volume_touch", 1.0f, 0, 2, 0.05f, L"%.0f%%")),
+        percent(scriptNumber(L"Touch sounds volume", L"Pat", "foley", "volume_pat", 1.0f, 0, 2, 0.05f, L"%.0f%%")),
+        percent(scriptNumber(L"Touch sounds volume", L"Slap", "foley", "volume_slap", 1.0f, 0, 2, 0.05f, L"%.0f%%")),
+        percent(scriptNumber(L"Touch sounds volume", L"Punch (fist)", "foley", "volume_punch", 1.0f, 0, 2, 0.05f, L"%.0f%%")),
+        percent(scriptNumber(L"Touch sounds volume", L"Grab (grip + trigger)", "foley", "volume_grab", 1.0f, 0, 2, 0.05f, L"%.0f%%")),
+        percent(scriptNumber(L"Touch sounds volume", L"Objects: tap", "foley", "volume_object_tap", 1.0f, 0, 2, 0.05f, L"%.0f%%")),
+        percent(scriptNumber(L"Touch sounds volume", L"Objects: slap", "foley", "volume_object_slap", 1.0f, 0, 2, 0.05f, L"%.0f%%")),
+        percent(scriptNumber(L"Touch sounds volume", L"Objects: punch", "foley", "volume_object_punch", 1.0f, 0, 2, 0.05f, L"%.0f%%")),
+        // Your hand hitting objects (armik.cpp objectTrack, collide.cpp handContact, foley.py; user 2026-10-27)
+        flag(L"Touch sounds objects", L"Sounds when you hit objects and walls", "foley", "objects", true, kLive),
+        scriptNumber(L"Touch sounds objects", L"A tap from (into it)", "foley", "object_tap_speed", 0.8f, 0.2f, 4, 0.1f, L"%.1f m/s"),
+        foley(L"Touch sounds objects", L"Tap (game sound)", "object_tap", &Config::foleyObjectTap, 12,
+              {L"None", L"Wall knocks", L"Finger tap", L"Head bonk", L"Clay thump"}),
+        foley(L"Touch sounds objects", L"Slap (game sound)", "object_slap", &Config::foleyObjectSlap, 13,
+              {L"None", L"Table slam", L"Game piece slam", L"Bang on keyboard"}),
+        foley(L"Touch sounds objects", L"Punch (game sound)", "object_punch", &Config::foleyObjectPunch, 14,
+              {L"None", L"Table slam", L"Fist pound", L"Head bonk", L"Bang fist on door"}),
+        foley(L"Touch sounds objects", L"Metal (game sound)", "object_metal", &Config::foleyObjectMetal, 15,
+              {L"None", L"Locker punch", L"Bang fist on door", L"Locker kick"}),
+        foley(L"Touch sounds objects", L"Soft (game sound)", "object_soft", &Config::foleyObjectSoft, 16,
+              {L"None", L"Cloth rustle", L"Back pat", L"Clay thump", L"Body grab"}),
+        foley(L"Touch sounds", L"Hands meet (pat or faster)", "hands", &Config::foleyHands, 10,
+              {L"None", L"High five", L"Hand clasp", L"Clasp (soft)"}),
+        foley(L"Touch sounds", L"Taking their hand", "hold_hands", &Config::foleyHoldHands, 11,
+              {L"None", L"Hand clasp", L"Clasp (soft)", L"Handshake"}),
+        foley(L"Touch sounds cloth", L"Light touch", "light_cloth", &Config::foleyLightCloth, 0,
+              {L"None", L"Cloth rustle", L"Cloth brush", L"Arm squeeze"}),
+        foley(L"Touch sounds cloth", L"Pat", "pat_cloth", &Config::foleyPatCloth, 2,
+              {L"None", L"Shoulder pat", L"Back pat", L"Arm punch", L"Cloth rustle"}),
+        foley(L"Touch sounds cloth", L"Slap", "slap_cloth", &Config::foleySlapCloth, 4,
+              {L"None", L"Leg slap", L"Knee slap", L"Arm punch"}),
+        foley(L"Touch sounds cloth", L"Rub", "rub_cloth", &Config::foleyRubCloth, 6,
+              {L"None", L"Cloth brush", L"Arm squeeze", L"Cloth rustle"}),
+        foley(L"Touch sounds cloth", L"Grab (grip + trigger)", "grab_cloth", &Config::foleyGrabCloth, 8,
+              {L"None", L"Cloth grab", L"Body grab", L"Hug squeeze"}),
+        foley(L"Touch sounds skin", L"Light touch", "light_skin", &Config::foleyLightSkin, 1,
+              {L"None", L"Soft touch", L"Knee touch", L"Cuddle touch", L"Hand pat"}),
+        foley(L"Touch sounds skin", L"Pat", "pat_skin", &Config::foleyPatSkin, 3,
+              {L"None", L"Hand pat", L"Thigh pat", L"Knee pat", L"Leg pat"}),
+        foley(L"Touch sounds skin", L"Slap", "slap_skin", &Config::foleySlapSkin, 5,
+              {L"None", L"Hand slap", L"Quick slap", L"Spin slap", L"Slap fight", L"Werewolf slap"}),
+        foley(L"Touch sounds skin", L"Rub", "rub_skin", &Config::foleyRubSkin, 7,
+              {L"None", L"Arm rub", L"Snuggle rub", L"Back rub"}),
+        foley(L"Touch sounds skin", L"Grab (grip + trigger)", "grab_skin", &Config::foleyGrabSkin, 9,
+              {L"None", L"Arm squeeze", L"Soft touch", L"Hand pat"}),
 
         choice(L"Interface", L"Game menus in first person", "ui", "first_person", &Config::uiFirstPerson,
                {L"Hidden", L"Wrist HUD only", L"Game UI in front only", L"Both"}),
@@ -663,6 +806,8 @@ std::vector<Row> makeRows() {
         toggle(L"HUD watch", L"Watch on your left wrist", "wrist", "watch", &Config::wristTime),
         toggle(L"HUD pause", L"Pause symbol while paused", "wrist", "pause", &Config::wristPause),
         toggle(L"HUD sleep", L"Clock in view while asleep", "wrist", "sleep_clock", &Config::wristSleepClock),
+        toggle(L"HUD lot intro", L"Show the lot name and traits while your eyes are shut for a load", "wrist", "lot_intro",
+               &Config::wristLotIntro),  // lotintro.py
         toggle(L"HUD needs", L"Needs inside your right forearm", "wrist", "needs", &Config::wristNeeds),
         toggle(L"HUD moodlets", L"Moodlets inside your right forearm", "wrist", "moodlets", &Config::wristMoodlets),
         toggle(L"HUD queue", L"Action queue on your left forearm", "wrist", "actions", &Config::wristQueue),
@@ -777,9 +922,9 @@ std::vector<Row> makeRows() {
         number(tablet, L"Hand in from the edge", "tablet", "hold", &Config::tabletHold, 0, 0.12f, 0.005f, 100,
                L"%.1f cm"),
         number(tablet, L"Build menu size", "tablet", "menu_size", &Config::tabletUiScale, 0.3f, 4.0f, 0.05f, 100,
-               L"%.0f %%"),
+               L"%.0f%%"),
         number(tablet, L"Tool tray size", "tablet", "tray_scale", &Config::tabletTrayScale, 0.3f, 1.45f, 0.05f, 100,
-               L"%.0f %%"),
+               L"%.0f%%"),
         angle(phonePosition, L"Tilt", "phone", "tilt", &Config::phoneTilt),
         angle(phonePosition, L"Turn", "phone", "yaw", &Config::phoneYaw),
         angle(phonePosition, L"Tip back / forward", "phone", "pitch", &Config::phonePitch),
@@ -877,6 +1022,10 @@ std::vector<Row> makeRows() {
         toggle(sound, L"Sound follows your head", "audio", "follow_head", &Config::audioFollowsHead, kNextStart),
         toggle(sound, L"Far sounds come from where they are", "audio", "pan_any_distance",
                &Config::audioPanAnyDistance, kAudio),
+        number(sound, L"Flat voices: full volume up to", "audio", "voice_near", &Config::audioVoiceNear, 0.5f, 10, 0.5f, 1,
+               L"%.1f m", kAudio),
+        number(sound, L"Flat voices: silent beyond (0 = their own)", "audio", "voice_far", &Config::audioVoiceFar, 0, 60, 1,
+               1, L"%.0f m", kAudio),
         flag(sound, L"Outdoor sound comes in through doorways", "audio", "doors_matter", true, kLive),  // outdoors.py
         flag(sound, L"Porches with railings count as outside", "audio", "railings_outside", true, kLive),  // outdoors.py
         scriptNumber(sound, L"A closed door lets through", "audio", "closed_door", 0.35f, 0, 1, 0.05f, L"%.2f"),
@@ -911,6 +1060,8 @@ std::vector<Row> makeRows() {
          &Config::wristPauseSize, 0.02f, 0.3f},
         {L"HUD sleep", L"Clock while asleep", "sleep", &Config::wristSleepPos, &Config::wristSleepTurn, nullptr,
          &Config::wristSleepSize, 0.05f, 0.6f},
+        {L"HUD lot intro", L"Lot name and traits on arrival", "lot_intro", &Config::wristLotPos, &Config::wristLotTurn,
+         nullptr, &Config::wristLotSize, 0.3f, 3.0f},
     };
     static std::string keys[sizeof(kHudRows) / sizeof(kHudRows[0])][4];
     for (size_t e = 0; e < sizeof(kHudRows) / sizeof(kHudRows[0]); ++e) {
@@ -1158,18 +1309,24 @@ void applyChange(Apply apply) {
             collide::configure(c.bodyCollision, c.bodyRadius);
             collide::configureHands(c.handCollision);
             player::setStopTime(c.bodyStopTime);
+            player::configureCrouch(c.crouch, c.crouchDepth, c.crouchSpeed, c.crouchSeconds);
+            player::setStopGlide(c.bodyStopGlide);
             walkstop::setClips(c.bodyWalkClips);
             break;
         case kHands: armik::configureHands(c.handPitch, c.headTracking); break;
         case kTouch:
             armik::configureTouch(c.touchBodies, c.holdHands, c.lookAtYou, c.grabBodies);
             armik::configureGrab(c.grabCurl, c.grabDrag);
+            armik::setLookAtHand(c.lookAtHand, c.lookSpeed, c.lookEyesWithin, c.lookHeadFrom);
             player::setHeadRepel(c.headRepel, c.headRadius);
             player::configure(c.walkSpeed, c.runSpeed, c.bodyForward, c.bodyHeight, c.touchBodies && c.armIk);
             break;
         case kRenderScale: g_renderScaleChanged = true; break;
         case kShadows: shadows::configure(c.steadyShadows, c.shadowStep, c.shadowSharp); break;
-        case kAudio: camera::setPanAnyDistance(c.audioPanAnyDistance); break;
+        case kAudio:
+            camera::setPanAnyDistance(c.audioPanAnyDistance);
+            camera::setVoiceRadii(c.audioVoiceNear, c.audioVoiceFar);
+            break;
         default: break;
     }
 }
@@ -1177,9 +1334,17 @@ void applyChange(Apply apply) {
 using JiggleGetFn = othermods::GetFn;
 using JiggleSetFn = othermods::SetFn;
 
-// Integrated Body Physics' (or, for a sound row, Extended Sound Control's) settings calls, while its DLL is loaded.
-bool jiggleApi(JiggleGetFn& get, JiggleSetFn& set, bool sound = false) {
-    return othermods::api(sound ? othermods::kSoundControl : othermods::kBodyPhysics, get, set);
+// A separate mod's settings calls (Integrated Body Physics unless the row names another), while its DLL is loaded.
+bool jiggleApi(JiggleGetFn& get, JiggleSetFn& set, othermods::Mod mod = othermods::kBodyPhysics) {
+    return othermods::api(mod, get, set);
+}
+
+const char* modName(othermods::Mod mod) {
+    switch (mod) {
+        case othermods::kSoundControl: return "Extended Sound Control";
+        case othermods::kBustinOut: return "Claude Bustin Out";
+        default: return "Integrated Body Physics";
+    }
 }
 
 // A link of another mod's menu with when=<key> opens only while the mod's
@@ -1190,18 +1355,19 @@ bool linkOpen(const Row& r) {
     JiggleGetFn get;
     JiggleSetFn set;
     float v = 0;
-    return jiggleApi(get, set, r.sound) && get(r.when, &v) && v != 0;
+    return jiggleApi(get, set, r.mod) && get(r.when, &v) && v != 0;
 }
 
 // Its rows show what the mod has now.
 void readJiggle() {
-    JiggleGetFn get[2];
-    JiggleSetFn set[2];
-    bool have[2] = {jiggleApi(get[0], set[0], false), jiggleApi(get[1], set[1], true)};
+    JiggleGetFn get[othermods::kModCount] = {};
+    JiggleSetFn set[othermods::kModCount] = {};
+    bool have[othermods::kModCount] = {};
+    for (int m = 0; m < othermods::kModCount; ++m) have[m] = jiggleApi(get[m], set[m], static_cast<othermods::Mod>(m));
     for (size_t i = 0; i < g_rows.size(); ++i) {
         const Row& r = g_rows[i];
         float v = 0;
-        if (!r.jiggle || !have[r.sound] || !get[r.sound](r.jiggle, &v)) continue;
+        if (!r.jiggle || !have[r.mod] || !get[r.mod](r.jiggle, &v)) continue;
         if (r.kind == Kind::Toggle)
             g_flags[i] = v != 0;
         else
@@ -1322,7 +1488,7 @@ bool mergeMenu(othermods::Mod mod, const wchar_t* prefix) {
                 r.when = key(when);
                 r.offTip = f[6].empty() ? nullptr : keep(f[6]);
             }
-            r.sound = mod == othermods::kSoundControl;
+            r.mod = mod;
             rows.push_back(r);
             continue;
         }
@@ -1350,7 +1516,7 @@ bool mergeMenu(othermods::Mod mod, const wchar_t* prefix) {
         } else {
             rows.push_back(jiggleConfirm(pageId(f[1]), keep(f[2]), key(f[3]), tip));
         }
-        rows.back().sound = mod == othermods::kSoundControl;
+        rows.back().mod = mod;
     }
     std::lock_guard<std::mutex> lock(g_valueMutex);  // liveValue reads the rows on the script mod's thread
     size_t added = 0;
@@ -1391,6 +1557,8 @@ bool mergeMenus() {
         any = merged[othermods::kBodyPhysics] = true;
     if (!merged[othermods::kSoundControl] && mergeMenu(othermods::kSoundControl, L"esc:"))
         any = merged[othermods::kSoundControl] = true;
+    if (!merged[othermods::kBustinOut] && mergeMenu(othermods::kBustinOut, L"cbo:"))
+        any = merged[othermods::kBustinOut] = true;
     return any;
 }
 
@@ -1399,11 +1567,10 @@ void changed(size_t i) {
         JiggleGetFn get;
         JiggleSetFn set;
         float v = g_rows[i].kind == Kind::Toggle ? (g_flags[i] ? 1.0f : 0.0f) : g_values[i];
-        if (jiggleApi(get, set, g_rows[i].sound))
+        if (jiggleApi(get, set, g_rows[i].mod))
             set(key, v);
         else
-            LOG("Settings: %s %s = %g, but that mod isn't loaded", g_rows[i].sound ? "Extended Sound Control" :
-                "Integrated Body Physics", key, v);
+            LOG("Settings: %s %s = %g, but that mod isn't loaded", modName(g_rows[i].mod), key, v);
         g_redraw = true;
         return;
     }
@@ -1498,6 +1665,7 @@ bool change(size_t i, int dir) {
             int next = dir ? std::clamp(c + dir, 0, n - 1) : (c + 1) % n;
             if (next == c) return false;
             c = next;
+            if (r.action && c > 0) grab::pushControl(r.action + c);  // a touch sound: heard as it is picked
             break;
         }
         case Kind::Reset: {
@@ -1538,7 +1706,7 @@ bool change(size_t i, int dir) {
                 } else {
                     JiggleGetFn get;
                     JiggleSetFn set;
-                    if (g_confirmYes && jiggleApi(get, set, r.sound)) {
+                    if (g_confirmYes && jiggleApi(get, set, r.mod)) {
                         set(r.jiggle, 1);
                         readJiggle();
                         g_doneAt = GetTickCount64();

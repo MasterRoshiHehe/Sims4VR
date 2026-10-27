@@ -12,6 +12,7 @@
 #include <mutex>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "MinHook.h"
 #include "crashlog.h"
@@ -277,6 +278,11 @@ ListenerPose g_listener;
 bool safeRead(uintptr_t address, void* out, size_t size) {
     SIZE_T read = 0;
     return ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<void*>(address), out, size, &read) && read == size;
+}
+
+bool safeWrite(uintptr_t address, const void* data, size_t size) {
+    SIZE_T written = 0;
+    return WriteProcessMemory(GetCurrentProcess(), reinterpret_cast<void*>(address), data, size, &written) && written == size;
 }
 
 // The manager's camera, if it still looks like a live camera object.
@@ -1148,6 +1154,9 @@ Quat viewBase(const Quat& level, bool animated, uint8_t* actor, bool freeMove, f
     return g_viewFrame;
 }
 
+std::atomic<int> g_photoProbe{0};  // photo probe: applyEye lines still to log (Python photowatch)
+std::atomic<int> g_photoCopyProbe{0};  // and camera copies into the render camera
+
 void applyEye(uint8_t* dst) {
     std::lock_guard<std::mutex> lock(g_poseMutex);
     if (!g_active) return;
@@ -1157,6 +1166,7 @@ void applyEye(uint8_t* dst) {
     std::memcpy(position, dst + kPositionOffset, sizeof(position));
     float yaw = std::atan2(back[0], back[2]);  // heading of the game camera's back axis
     if (!std::isfinite(yaw)) return;
+    const float gameYaw = yaw, gamePos[3] = {position[0], position[1], position[2]};
 
     float s = g_config.worldScale;
     const Vec3& eye = g_pending.position;
@@ -1431,6 +1441,15 @@ void applyEye(uint8_t* dst) {
         gamefix::keepTopFloor();
         checkHeld();
     }
+    static unsigned eyeTick = 0;
+    if (g_photoProbe.load(std::memory_order_relaxed) > 0 && ++eyeTick % 10 == 1 && g_photoProbe.fetch_sub(1) > 0) {
+        LOG("Photo probe: eye %d dst %p game camera yaw %.1f deg at %.2f %.2f %.2f; drawn yaw %.1f deg (base %.1f) at %.2f %.2f %.2f; "
+            "body %d free %d second %d next %d paired %d first person %d centred %d",
+            eyeIndex, dst, gameYaw * 57.2958f, gamePos[0], gamePos[1], gamePos[2], yaw * 57.2958f,
+            std::atan2(rotate(q, {0, 0, 1}).x, rotate(q, {0, 0, 1}).z) * 57.2958f, position[0] + offset.x,
+            position[1] + offset.y, position[2] + offset.z, body, freeMove, second, useNext, paired, firstPerson,
+            g_centred ? 1 : 0);
+    }
     writeAxis(dst, kRightOffset, rotate(q, {1, 0, 0}), 0);
     writeAxis(dst, kUpOffset, rotate(q, {0, 1, 0}), 0);
     writeAxis(dst, kBackOffset, rotate(q, {0, 0, 1}), 0);
@@ -1678,6 +1697,26 @@ void* hookedCopy(void* dst, const void* src) {
     if (CopyObserver observer = g_observer.load()) observer(dst, src, __builtin_return_address(0));
     if (dst != src && reinterpret_cast<uintptr_t>(dst) == g_writtenCamera.load(std::memory_order_relaxed))
         logDrawnProjection(dst, __builtin_return_address(0));
+    static unsigned copyTick = 0;
+    if (g_photoCopyProbe.load(std::memory_order_relaxed) > 0 && dst != src && renderCamera(dst) && ++copyTick % 10 == 1 &&
+        g_photoCopyProbe.fetch_sub(1) > 0) {
+        uintptr_t liveNow = 0;
+        safeRead(g_manager.load() + kManagerCameraOffset, &liveNow, sizeof(liveNow));
+        float m[16] = {}, centre[2] = {}, frustum[4] = {};
+        safeRead(reinterpret_cast<uintptr_t>(dst) + 0x70, m, sizeof(m));
+        safeRead(reinterpret_cast<uintptr_t>(dst) + kCentreOffset, centre, sizeof(centre));
+        safeRead(reinterpret_cast<uintptr_t>(dst) + kFrustumOffset, frustum, sizeof(frustum));
+        float srcCentre[2] = {}, srcFrustum[4] = {};
+        safeRead(reinterpret_cast<uintptr_t>(src) + kCentreOffset, srcCentre, sizeof(srcCentre));
+        safeRead(reinterpret_cast<uintptr_t>(src) + kFrustumOffset, srcFrustum, sizeof(srcFrustum));
+        LOG("Photo probe: copy into %p from %p (live %p%s) caller game+0x%llx; dst before: proj x %.3f y %.3f row2 %.3f %.3f "
+            "centre %.3f %.3f frustum %.3f %.3f fov %.3f aspect %.3f; src: centre %.3f %.3f frustum %.3f %.3f fov %.3f",
+            dst, src, reinterpret_cast<void*>(liveNow), reinterpret_cast<uintptr_t>(src) == liveNow ? " = src" : "",
+            static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(__builtin_return_address(0)) -
+                                            reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr))),
+            m[0], m[5], m[8], m[9], centre[0], centre[1], frustum[0], frustum[1], frustum[2], frustum[3], srcCentre[0],
+            srcCentre[1], srcFrustum[0], srcFrustum[1], srcFrustum[2]);
+    }
     void* result = g_originalCopy(dst, src);
     uintptr_t manager = g_manager.load();
     if (manager && dst != src) {
@@ -2181,6 +2220,9 @@ constexpr int kInitMaxLogs = 500;
 using SoundFlagsFn = void (*)(void* sound, void* props);
 SoundFlagsFn g_originalSoundFlags = nullptr;
 std::atomic<uint64_t> g_voicesMade3D{0};
+std::atomic<float> g_voiceNear{1.5f}, g_voiceFar{12.0f};
+std::mutex g_convertedMutex;
+std::unordered_set<uintptr_t> g_converted;
 
 void hookedSoundFlags(void* sound, void* props) {
     g_originalSoundFlags(sound, props);
@@ -2190,6 +2232,11 @@ void hookedSoundFlags(void* sound, void* props) {
     uint8_t* base = static_cast<uint8_t*>(sound);
     uint32_t flags;
     std::memcpy(&flags, base + kSoundFlags, sizeof(flags));
+    {
+        std::lock_guard<std::mutex> lock(g_convertedMutex);
+        g_converted.erase(reinterpret_cast<uintptr_t>(sound));
+        if ((flags & 5) == 4) g_converted.insert(reinterpret_cast<uintptr_t>(sound));
+    }
     if ((flags & 5) != 4) return;
     flags |= 1;
     std::memcpy(base + kSoundFlags, &flags, sizeof(flags));
@@ -2225,7 +2272,59 @@ void hookedSoundInit(void* sound, uint64_t id) {
         flags, chain);
 }
 
+// Fall-off of voices (converted and the game's own): near/far radius, level, distance.
+struct VoiceLog {
+    ULONGLONG at = 0;
+};
+std::unordered_map<uintptr_t, VoiceLog> g_voiceLog;
+int g_voiceLogs = 0;
+
+void logVoiceFalloff(void* sound, float away, ULONGLONG now) {
+    if (g_voiceLogs >= 300) return;
+    const uint8_t* base = static_cast<const uint8_t*>(sound);
+    uint32_t flags;
+    std::memcpy(&flags, base + kSoundFlags, sizeof(flags));
+    if (!(flags & 4)) return;
+    bool conv;
+    {
+        std::lock_guard<std::mutex> lock(g_convertedMutex);
+        conv = g_converted.count(reinterpret_cast<uintptr_t>(sound)) != 0;
+    }
+    if (g_voiceLog.size() > 4096) g_voiceLog.clear();
+    VoiceLog& v = g_voiceLog[reinterpret_cast<uintptr_t>(sound)];
+    if (now - v.at < 1500) return;
+    v.at = now;
+    uintptr_t st = 0;
+    std::memcpy(&st, base + kSoundDistance, sizeof(st));
+    float nearR = -1, farR = -1, level = -1;
+    uintptr_t curve = 0;
+    if (st) {
+        safeRead(st + 0x38, &nearR, 4);
+        safeRead(st + 0x3c, &farR, 4);
+        safeRead(st + 0x40, &level, 4);
+        safeRead(st + 0x48, &curve, 8);
+    }
+    ++g_voiceLogs;
+    LOG("Voice fall-off: %s sound %p flags 0x%x %.1f m away, near %.2f far %.2f level %.3f", conv ? "converted" : "game", sound,
+        flags, away, nearR, farR, level);
+}
+
 void hookedDistanceUpdate(void* sound) {
+    if (g_panFirstPerson.load(std::memory_order_relaxed) && g_voiceFar.load(std::memory_order_relaxed) > 0) {
+        bool conv;
+        {
+            std::lock_guard<std::mutex> lock(g_convertedMutex);
+            conv = g_converted.count(reinterpret_cast<uintptr_t>(sound)) != 0;
+        }
+        uintptr_t st = 0;
+        if (conv) std::memcpy(&st, static_cast<const uint8_t*>(sound) + kSoundDistance, sizeof(st));
+        if (st) {
+            // The fall-off reads these two radii every update (0x1a9f930): metres.
+            const float nearR = g_voiceNear.load(std::memory_order_relaxed), farR = g_voiceFar.load(std::memory_order_relaxed);
+            safeWrite(st + 0x38, &nearR, 4);
+            safeWrite(st + 0x3c, &farR, 4);
+        }
+    }
     g_originalDistanceUpdate(sound);
     if (!g_panFirstPerson.load(std::memory_order_relaxed)) return;
     LoudStats& s = g_loud;
@@ -2251,6 +2350,7 @@ void hookedDistanceUpdate(void* sound) {
     const float dx = h.at[0] - s.head[0], dy = h.at[1] - s.head[1], dz = h.at[2] - s.head[2];
     h.away = std::sqrt(dx * dx + dy * dy + dz * dz);
     probeSound(sound, h, now);
+    if (h.flags & 1) logVoiceFalloff(sound, h.away, now);
     if (g_loudLogs >= kLoudMaxLogs) return;
     ++s.updates;
     if (!(h.flags & 1)) {
@@ -2619,6 +2719,8 @@ void init(const Config& config) {
     collide::configureHands(config.handCollision);
     player::setHeadRepel(config.headRepel, config.headRadius);
     player::setStopTime(config.bodyStopTime);
+    player::configureCrouch(config.crouch, config.crouchDepth, config.crouchSpeed, config.crouchSeconds);
+    player::setStopGlide(config.bodyStopGlide);
     walkstop::setClips(config.bodyWalkClips);
     g_config = config;
     // The test host has no game camera; only look inside the game.
@@ -2629,6 +2731,7 @@ void init(const Config& config) {
     }
     findSkeletonApi();
     g_panAnyDistance.store(config.audioPanAnyDistance);
+    setVoiceRadii(config.audioVoiceNear, config.audioVoiceFar);
     if (config.audioFollowsHead && installListenerHook()) {
         installPanHook();
         installLoudnessLog();
@@ -2636,6 +2739,11 @@ void init(const Config& config) {
 }
 
 void setSeatFollow(bool on) { g_config.bodySeatFollow = on; }
+
+void setVoiceRadii(float nearMeters, float farMeters) {
+    g_voiceNear.store(nearMeters);
+    g_voiceFar.store(farMeters);
+}
 
 void setPanAnyDistance(bool on) {
     g_panAnyDistance.store(on);
@@ -2947,6 +3055,10 @@ void setWorldScale(float scale) {
 float worldScale() { return g_config.worldScale; }
 
 void setFloor(float worldY) { g_floorY = worldY; }
+void setPhotoProbe(int lines) {
+    g_photoProbe.store(lines);
+    g_photoCopyProbe.store(lines);
+}
 
 bool floorInXr(float& y) {
     float floor = g_floorY.load();

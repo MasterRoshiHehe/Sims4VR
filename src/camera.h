@@ -49,6 +49,8 @@ void setSeatFollow(bool on);
 // Settings menu: [audio] pan_any_distance, live: in first person every sound 1 m or more
 // away is placed where it is (the game spreads some toward the middle of your head).
 void setPanAnyDistance(bool on);
+// Settings menu: [audio] voice_near / voice_far, live (fall-off of voices made 3D).
+void setVoiceRadii(float nearMeters, float farMeters);
 // True once the live camera has been found.
 bool available();
 
@@ -165,6 +167,7 @@ void pitchBody(float radians);
 bool floorInXr(float& y);
 // The game's floor height in world units (the point its camera looks at).
 void setFloor(float worldY);
+void setPhotoProbe(int lines);  // log that many applyEye lines (photo session probe)
 // Projects a world point through the game's own (unmodified) camera, the one
 // it uses for mouse picking. x right, y up, -1..1 across the window.
 bool projectLive(const Vec3& world, float& x, float& y);
