@@ -10,6 +10,7 @@
 
 #include "MinHook.h"
 #include "log.h"
+#include "patchreport.h"
 #include "rtti.h"
 
 namespace s4vr::gamepad {
@@ -127,6 +128,7 @@ std::vector<uintptr_t> findInImage(HMODULE module, uintptr_t vtable) {
         if (!(section->Characteristics & IMAGE_SCN_MEM_WRITE)) continue;
         auto* p = reinterpret_cast<uintptr_t*>(base + section->VirtualAddress);
         size_t count = section->Misc.VirtualSize / 8;
+        if (!rtti::rangeReadable(reinterpret_cast<uintptr_t>(p), count * 8)) continue;  // protected exe: gaps
         for (size_t k = 0; k < count; ++k)
             if (p[k] == vtable) found.push_back(reinterpret_cast<uintptr_t>(p + k));
     }
@@ -135,11 +137,13 @@ std::vector<uintptr_t> findInImage(HMODULE module, uintptr_t vtable) {
 
 void attachToGame() {
     HMODULE game = GetModuleHandleW(nullptr);
-    uintptr_t vtable = rtti::findVTable(game, ".?AVInputMan@Input@EA@@");
+    uintptr_t vtable = rtti::lookup(game, ".?AVInputMan@Input@EA@@", "InputManVTable");
     if (!vtable) {
         LOG("Virtual gamepad: input manager class not found");
+        patchreport::note("rtti", "Virtual gamepad: input manager class not found; the game sees no gamepad from the mod");
         return;
     }
+    patchreport::vtableProbe("InputMan", vtable, 28);
     for (int attempt = 0; attempt < 30; ++attempt) {
         std::vector<uintptr_t> candidates = findInImage(game, vtable);
         for (uintptr_t heap : rtti::findInstances(vtable, 4)) candidates.push_back(heap);
@@ -152,6 +156,9 @@ void attachToGame() {
                 continue;
             LOG("Virtual gamepad: input manager %p, pad 0 state %d present %d", reinterpret_cast<void*>(man), state,
                 present);
+            patchreport::note("probe", "InputMan layout: object %p, initialized byte +0x640 = 1, pad 0 state +0x%zx = %d, present +0x%zx = %d "
+                              "(1.128: state 0 free / 4 XInput, present 0/1): %s", reinterpret_cast<void*>(man), kPad0State, state,
+                              kPad0Present, present, (state >= 0 && state <= 8 && present >= 0 && present <= 1) ? "plausible" : "NOT PLAUSIBLE");
             if (state == 4) return;  // a real XInput pad already holds slot 0; the hook rides on it
             if (state != 0) {
                 LOG("Virtual gamepad: pad slot 0 is in use by another device type; not touching it");

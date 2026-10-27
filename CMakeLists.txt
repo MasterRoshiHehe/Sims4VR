@@ -100,6 +100,7 @@ add_library(sims4vr SHARED
     src/renderscale.cpp
     src/gameaddr.cpp
     src/rtti.cpp
+    src/patchreport.cpp
     src/screenshot.cpp
     src/settings.cpp
     src/simsforever.cpp
@@ -154,7 +155,9 @@ else()
     # {XR_TYPE_...} initialisers and GetProcAddress casts are idiomatic here
     target_compile_options(sims4vr PRIVATE -Wall -Wextra -Wno-missing-field-initializers -Wno-cast-function-type)
     # The map file turns crash-report offsets in sims4vr.dll back into function names.
-    target_link_options(sims4vr PRIVATE -static -s -Wl,-Map=${CMAKE_BINARY_DIR}/sims4vr.map)
+    target_link_options(sims4vr PRIVATE -static -s -Wl,-Map=${CMAKE_BINARY_DIR}/sims4vr.map
+        # patchreport.cpp records every MinHook install for the patch report
+        -Wl,--wrap=MH_CreateHook -Wl,--wrap=MH_EnableHook)
     set_target_properties(sims4vr PROPERTIES PREFIX "")
 endif()
 

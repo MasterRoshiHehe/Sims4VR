@@ -14,6 +14,30 @@ uint8_t* fn(const char* name);
 // A global variable or vtable by table name; null if the game build is not the table's.
 uint8_t* global(const char* name);
 
+// Resolve the whole table now (otherwise at the first lookup). Call after gameaddr::setTryUnknown.
+void prepare();
+
+// Where a row is according to its signature or anchor, whether or not the mod may use it (the RTTI
+// fallbacks and the patch report); null if it was not found.
+uint8_t* resolved(const char* name);
+
+// One row for the patch report.
+struct RowInfo {
+    const char* name;
+    bool global;
+    uint32_t tableRva;
+    uint32_t foundRva;  // 0: not found
+    bool used;
+    const char* anchor;
+    const char* state;
+    const char* why;
+};
+size_t rowCount();
+RowInfo row(size_t index);
+
+// The table name of a function the mod resolved at this address (hook logging), or null.
+const char* nameAt(const void* address);
+
 // The exe stamp / game version the table was generated for.
 uint32_t tableStamp();
 const char* gameVersion();

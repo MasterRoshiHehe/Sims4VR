@@ -83,6 +83,7 @@ constexpr uint32_t kDx9Stamp = 0;
 
 int g_dx9 = -1;
 int g_known = -1;
+bool g_tryUnknown = false;
 
 uint8_t* base() { return reinterpret_cast<uint8_t*>(GetModuleHandleW(nullptr)); }
 
@@ -100,9 +101,10 @@ bool known() {
         if (g_known)
             LOG("Game build %s recognised", addrs::gameVersion());
         else
-            LOG("Game build not recognised (exe stamp %08x): hands, touch, menus layer, render scale and the game "
-                "fixes stay off until the mod is updated for it",
-                s);
+            LOG("Game build not recognised (exe stamp %08x, table is %08x): features at fixed addresses (mirror "
+                "capture, sim cache, texture probe) stay off; the rest runs only where its signatures are found "
+                "([patch] try_unknown_build, see sims4vr_patch_report.txt)",
+                s, addrs::tableStamp());
     }
     return g_known == 1;
 }
@@ -116,6 +118,12 @@ const Entry* find(uint32_t dx11) {
 }  // namespace
 
 bool recognised() { return known(); }
+
+bool usable() { return known() || (g_tryUnknown && !dx9()); }
+
+void setTryUnknown(bool on) { g_tryUnknown = on; }
+
+uint32_t exeStamp() { return stamp(); }
 
 bool dx9() {
     if (g_dx9 < 0) {

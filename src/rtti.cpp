@@ -2,6 +2,9 @@
 
 #include <cstring>
 
+#include "addrs.h"
+#include "patchreport.h"
+
 namespace s4vr::rtti {
 
 namespace {
@@ -52,11 +55,28 @@ bool readable(uintptr_t address, size_t size) {
     return address + size <= reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize;
 }
 
+bool rangeReadable(uintptr_t address, size_t size) {
+    MEMORY_BASIC_INFORMATION mbi;
+    while (size) {
+        if (!VirtualQuery(reinterpret_cast<void*>(address), &mbi, sizeof(mbi)) || mbi.State != MEM_COMMIT ||
+            (mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS)))
+            return false;
+        uintptr_t end = reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize;
+        if (end - address >= size) return true;
+        size -= end - address;
+        address = end;
+    }
+    return true;
+}
+
 uintptr_t findVTable(HMODULE module, const char* mangledName) {
     auto base = reinterpret_cast<uintptr_t>(module);
     Section data = findSection(module, ".data");
     Section rdata = findSection(module, ".rdata");
     if (!data.begin || !rdata.begin) return 0;
+    if (!rangeReadable(reinterpret_cast<uintptr_t>(data.begin), data.size) ||
+        !rangeReadable(reinterpret_cast<uintptr_t>(rdata.begin), rdata.size))
+        return 0;  // a protected exe may leave gaps; scanning through one would fault
 
     // TypeDescriptor = { vftable ptr, spare ptr, char name[] } lives in .data.
     size_t nameLength = std::strlen(mangledName) + 1;
@@ -80,6 +100,24 @@ uintptr_t findVTable(HMODULE module, const char* mangledName) {
         if (const uint8_t* slot = findValue(rdata, colVa)) return reinterpret_cast<uintptr_t>(slot) + 8;
     }
     return 0;
+}
+
+uintptr_t lookup(HMODULE module, const char* mangledName, const char* addrsName) {
+    const uintptr_t base = reinterpret_cast<uintptr_t>(module);
+    uintptr_t byName = findVTable(module, mangledName);
+    uintptr_t byTable = reinterpret_cast<uintptr_t>(addrs::resolved(addrsName));
+    if (byName && byTable)
+        patchreport::note("rtti", "%s: by RTTI name game+0x%llx; by %s %s", mangledName, static_cast<unsigned long long>(byName - base),
+                          addrsName, byName == byTable ? "the same" : "DIFFERENT");
+    else if (byName)
+        patchreport::note("rtti", "%s: by RTTI name game+0x%llx; %s not resolved", mangledName,
+                          static_cast<unsigned long long>(byName - base), addrsName);
+    else if (byTable)
+        patchreport::note("rtti", "%s: RTTI name NOT found; using %s game+0x%llx (through its constructor's signature)", mangledName,
+                          addrsName, static_cast<unsigned long long>(byTable - base));
+    else
+        patchreport::note("rtti", "%s: RTTI name NOT found and %s not resolved: the feature using it stays off", mangledName, addrsName);
+    return byName ? byName : byTable;
 }
 
 std::vector<uintptr_t> findInstances(uintptr_t vtable, size_t maxResults) {

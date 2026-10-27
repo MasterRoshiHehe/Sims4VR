@@ -323,6 +323,7 @@ struct Config {
     bool mirrorClip = true;   // first person lopsided eye: keep the game's clip at the mirror glass
     bool reflectionsOff = false;  // no mirror or water reflections at all
     bool ambientOcclusion = true;  // [stereo] ambient_occlusion: the game's SSAO; 0 = off for speed (GPU pack, perf item 4)
+    bool tryUnknownBuild = true;  // [patch] try_unknown_build: on a game build the address table is not for, use what its signatures find (api.cpp, patchreport.cpp)
     bool textureProbe = true;     // [perf] texture_probe: time the Sim texture compositing calls, log those over 20 ms (texprobe.cpp)
     bool simCacheBoost = false;   // [perf] sim_cache_boost: Sim body-shape caches x4 (simcache.cpp)
     int simCacheMb = 256;         // [perf] sim_cache_mb: SimCacheSizeLimit used when boosted and the game has none

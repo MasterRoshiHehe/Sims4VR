@@ -36,6 +36,7 @@
 #include "voice.h"
 #include "d3d9_hook.h"
 #include "addrs.h"
+#include "patchreport.h"
 #include "gameaddr.h"
 #include "d3d11_hook.h"
 #include "gamepad.h"
@@ -142,6 +143,7 @@ S4VR_API int s4vr_init() {
         auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(reinterpret_cast<const char*>(dos) + dos->e_lfanew);
         LOGT("session", "game exe stamp 0x%08x", static_cast<unsigned>(nt->FileHeader.TimeDateStamp));
     }
+    s4vr::patchreport::init(g_moduleDir);
     s4vr::crashlog::install(g_moduleDir);
     s4vr::screenshot::init(g_moduleDir);
     s4vr::foleyaudio::init(g_moduleDir);  // your own touch sounds (sounds/touch)
@@ -152,6 +154,14 @@ S4VR_API int s4vr_init() {
         LOGT("session", "ini: log tags=%s mute=%s | mode=%d autostart=%d arm_ik=%d play_in_body=%d",
              s4vr::readSetting(ini, "log", "tags", "all").c_str(), s4vr::readSetting(ini, "log", "mute", "").c_str(),
              static_cast<int>(g_config.mode), g_config.autostart, g_config.armIk ? 1 : 0, g_config.playInBody ? 1 : 0);
+    }
+    {
+        // A game build the address table is not for: try it (rows found by signature only), unless the last such
+        // run died early. Then resolve the table and write the first patch report.
+        const bool other = s4vr::gameaddr::exeStamp() != s4vr::addrs::tableStamp() && !s4vr::gameaddr::dx9();
+        s4vr::gameaddr::setTryUnknown(other && g_config.tryUnknownBuild && s4vr::patchreport::armUnknownBuild());
+        s4vr::addrs::prepare();
+        s4vr::patchreport::tableDone();
     }
     s4vr::framemap::init(g_config.frameMap);
     s4vr::gamefix::install(g_config.nearFade);
@@ -657,6 +667,7 @@ S4VR_API int s4vr_find_camera(const float* position, const float* target, char* 
 
 // Must run before process exit; the script mod registers it with atexit.
 S4VR_API void s4vr_shutdown() {
+    s4vr::patchreport::shutdown();
     if (!g_initialized) return;
     s4vr::vr::shutdown();
     s4vr::voice::shutdown();

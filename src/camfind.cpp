@@ -217,7 +217,9 @@ std::string run(const float position[3], const float target[3]) {
     std::vector<uintptr_t> vtables;
     std::map<uintptr_t, const char*> names;
     for (const char* cls : kClasses) {
-        uintptr_t vt = rtti::findVTable(game, cls);
+        const char* row = std::strstr(cls, "AVCamera@Cameras") ? "CameraVTable"
+                          : std::strstr(cls, "AVCameraControllerManager") ? "CameraManagerVTable" : nullptr;
+        uintptr_t vt = row ? rtti::lookup(game, cls, row) : rtti::findVTable(game, cls);
         LOG("  vtable %s = %p (rva 0x%llx)", cls, reinterpret_cast<void*>(vt),
             vt ? static_cast<unsigned long long>(vt - reinterpret_cast<uintptr_t>(game)) : 0ULL);
         if (vt) {

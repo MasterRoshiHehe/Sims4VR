@@ -48,6 +48,7 @@ const TipText kTips[] = {
     {"stereo.made_eye_submit_x", L"Tells the headset the built eye sits slightly left or right. Fine alignment."},
     {"stereo.made_eye_submit_yaw", L"Tells the headset the built eye is turned slightly left or right. Fine alignment."},
     {"stereo.made_eye_submit_pitch", L"Tells the headset the built eye is tilted slightly up or down. Fine alignment."},
+    {"patch.try_unknown_build", L"After a game patch: use every game address the mod can still find by its code, and leave features whose addresses are missing off. Off: nothing at all is used on a new build. A run that crashes within 2 minutes is followed by a safe run. What was found: sims4vr_patch_report.txt."},
     {"stereo.probe_double", L"Test: draws the scene twice and logs how long it takes. Slows the game; leave Off."},
     {"stereo.reuse_shadows", L"With both real eyes: the right eye reuses the left eye's shadows. Faster, looks the same."},
     {"stereo.skip_shadow_prep", L"The right eye skips preparing sun shadows again. Faster, looks the same."},

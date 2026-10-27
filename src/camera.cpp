@@ -33,6 +33,7 @@
 #include "log.h"
 #include "nearplane.h"
 #include "phone3d.h"
+#include "patchreport.h"
 #include "rtti.h"
 #include "singleview.h"
 #include "touch.h"
@@ -296,36 +297,41 @@ uintptr_t liveCamera(uintptr_t manager) {
     return camera;
 }
 
-uintptr_t findPattern(HMODULE module, const uint8_t* pattern, size_t size) {
+// Runs `match(p)` at every address of the executable sections' readable pages; the first that matches wins. A protected
+// exe can leave unreadable gaps, which must not be walked into.
+template <typename Match>
+uintptr_t scanExecutable(HMODULE module, size_t size, Match match) {
     auto* base = reinterpret_cast<uint8_t*>(module);
     auto* nt = reinterpret_cast<IMAGE_NT_HEADERS64*>(base + reinterpret_cast<IMAGE_DOS_HEADER*>(base)->e_lfanew);
     IMAGE_SECTION_HEADER* section = IMAGE_FIRST_SECTION(nt);
     for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++section) {
         if (!(section->Characteristics & IMAGE_SCN_MEM_EXECUTE)) continue;
-        uint8_t* begin = base + section->VirtualAddress;
-        uint8_t* end = begin + section->Misc.VirtualSize - size;
-        for (uint8_t* p = begin; p <= end; ++p) {
-            if (*p == pattern[0] && std::memcmp(p, pattern, size) == 0) return reinterpret_cast<uintptr_t>(p);
+        uint8_t* at = base + section->VirtualAddress;
+        uint8_t* const sectionEnd = at + section->Misc.VirtualSize;
+        MEMORY_BASIC_INFORMATION mbi;
+        while (at < sectionEnd && VirtualQuery(at, &mbi, sizeof(mbi))) {
+            uint8_t* regionEnd = static_cast<uint8_t*>(mbi.BaseAddress) + mbi.RegionSize;
+            if (regionEnd > sectionEnd) regionEnd = sectionEnd;
+            if (mbi.State == MEM_COMMIT && !(mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS))) {
+                for (uint8_t* p = at; p + size <= regionEnd; ++p)
+                    if (match(p)) return reinterpret_cast<uintptr_t>(p);
+            }
+            at = regionEnd;
         }
     }
     return 0;
 }
 
+uintptr_t findPattern(HMODULE module, const uint8_t* pattern, size_t size) {
+    return scanExecutable(module, size, [&](const uint8_t* p) { return *p == pattern[0] && std::memcmp(p, pattern, size) == 0; });
+}
+
 uintptr_t findMasked(HMODULE module, const uint16_t* pattern, size_t size) {
-    auto* base = reinterpret_cast<uint8_t*>(module);
-    auto* nt = reinterpret_cast<IMAGE_NT_HEADERS64*>(base + reinterpret_cast<IMAGE_DOS_HEADER*>(base)->e_lfanew);
-    IMAGE_SECTION_HEADER* section = IMAGE_FIRST_SECTION(nt);
-    for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++section) {
-        if (!(section->Characteristics & IMAGE_SCN_MEM_EXECUTE)) continue;
-        uint8_t* begin = base + section->VirtualAddress;
-        uint8_t* end = begin + section->Misc.VirtualSize - size;
-        for (uint8_t* p = begin; p <= end; ++p) {
-            size_t k = 0;
-            while (k < size && (pattern[k] > 0xff || p[k] == pattern[k])) ++k;
-            if (k == size) return reinterpret_cast<uintptr_t>(p);
-        }
-    }
-    return 0;
+    return scanExecutable(module, size, [&](const uint8_t* p) {
+        size_t k = 0;
+        while (k < size && (pattern[k] > 0xff || p[k] == pattern[k])) ++k;
+        return k == size;
+    });
 }
 
 // The game's joint name hash: FNV-1 over lower-case characters.
@@ -471,6 +477,19 @@ bool headPosition(float out[3], float* facing, uint8_t** actor, float* eyes) {
         g_bodySmoothed = false;
         LOG("Body %llu: object %p, head joint index %d", static_cast<unsigned long long>(id), object,
             static_cast<int>(g_headIndex));
+        static bool actorProbed = false;
+        if (!actorProbed) {
+            actorProbed = true;
+            const uintptr_t base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+            const auto slotRva = [&](size_t slot) { return static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(vcall<void*>(object, slot)) - base); };
+            char cls[200] = "?";
+            rtti::className(reinterpret_cast<uintptr_t>(object), cls, sizeof(cls));
+            patchreport::note("probe", "Sim actor: class %s; skeleton slot %zu = game+0x%llx, joint transform slot %zu = game+0x%llx; "
+                              "skeleton joint table at +0x48, head index %d, left hand %d (1.128: slots 4 and 9)",
+                              cls, kSkeletonSlot, slotRva(kSkeletonSlot), kJointTransformSlot, slotRva(kJointTransformSlot),
+                              static_cast<int>(g_headIndex), static_cast<int>(g_handIndex[0]));
+            patchreport::vtableProbe("Sim actor", rtti::vtableOf(reinterpret_cast<uintptr_t>(object)), 20);
+        }
     }
     if (g_headIndex == ~0u) return false;
     crashlog::note(crashlog::kJointRead);
@@ -523,24 +542,48 @@ bool headPosition(float out[3], float* facing, uint8_t** actor, float* eyes) {
     return true;
 }
 
+// Patch report: the camera and manager fields this file reads and writes, with a plausibility verdict, so a
+// game patch that moved one shows up as numbers to compare with the 1.128 layout (position +0x60, frustum
+// size +0x14, near/far +0x24/+0x28, lens centre +0x1f0, look-at flag +0x280, manager camera +0x10).
+void probeCameraLayout(uintptr_t manager, uintptr_t camera) {
+    auto f = [&](size_t at) {
+        float v = NAN;
+        safeRead(camera + at, &v, sizeof(v));
+        return v;
+    };
+    uint8_t lookAt = 0xff;
+    safeRead(camera + 0x280, &lookAt, 1);
+    const float nearClip = f(kNearOffset), farClip = f(kNearOffset + 4), w = f(kFrustumOffset), h = f(kFrustumOffset + 4);
+    const bool ok = std::isfinite(f(kPositionOffset)) && std::isfinite(f(kPositionOffset + 4)) && std::isfinite(f(kPositionOffset + 8)) &&
+                    nearClip > 0 && farClip > nearClip && w > 0 && h > 0 && lookAt <= 1;
+    patchreport::note("probe",
+                      "Camera layout: manager %p camera +0x10 -> %p; position %.2f %.2f %.2f, frustum size %.3f %.3f, near %.3f far %.1f, centre %.3f %.3f, look-at flag %d: %s",
+                      reinterpret_cast<void*>(manager), reinterpret_cast<void*>(camera), f(kPositionOffset), f(kPositionOffset + 4),
+                      f(kPositionOffset + 8), w, h, nearClip, farClip, f(kCentreOffset), f(kCentreOffset + 4), lookAt,
+                      ok ? "plausible" : "NOT PLAUSIBLE (a field moved?)");
+}
+
 // Several manager objects exist (menus, CAS, build); the live one points at a
 // Camera whose transform has w = 1.
 void searchManager() {
     if (g_searching.exchange(true)) return;
     std::thread([] {
         HMODULE game = GetModuleHandleW(nullptr);
-        uintptr_t managerVTable = rtti::findVTable(game, kManagerClass);
-        g_cameraVTable = rtti::findVTable(game, kCameraClass);
+        uintptr_t managerVTable = rtti::lookup(game, kManagerClass, "CameraManagerVTable");
+        g_cameraVTable = rtti::lookup(game, kCameraClass, "CameraVTable");
         if (!managerVTable || !g_cameraVTable) {
             LOG("Camera classes not found in this game version; stereo mode unavailable");
             return;  // g_searching stays set: no point retrying
         }
+        patchreport::vtableProbe("CameraControllerManager", managerVTable, 24);
+        patchreport::vtableProbe("Camera", g_cameraVTable, 2);
         for (int attempt = 0; !g_manager; ++attempt) {
             for (uintptr_t manager : rtti::findInstances(managerVTable, 32)) {
                 if (uintptr_t camera = liveCamera(manager)) {
                     g_manager = manager;
                     LOG("Game camera found: manager %p, camera %p", reinterpret_cast<void*>(manager),
                         reinterpret_cast<void*>(camera));
+                    probeCameraLayout(manager, camera);
                     break;
                 }
             }
@@ -2583,6 +2626,8 @@ bool installCopyHook() {
     uintptr_t hit = findPattern(game, kCopyPattern, sizeof(kCopyPattern));
     if (!hit || std::memcmp(reinterpret_cast<void*>(hit - kCopyPatternOffset), kCopyStart, sizeof(kCopyStart)) != 0) {
         LOG("Camera copy function not found (pattern %s)", hit ? "found, start mismatch" : "missing");
+        patchreport::note("rtti", "Camera copy function (stereo view): pattern %s; stereo view and everything driving the game camera stays off",
+                          hit ? "found but its start bytes differ" : "NOT FOUND");
         return false;
     }
     void* target = reinterpret_cast<void*>(hit - kCopyPatternOffset);
@@ -2598,6 +2643,7 @@ bool installCopyHook() {
         return false;
     }
     g_hooked = true;
+    patchreport::nameHook(target, "camera copy function");
     LOG("Hooked camera copy function at game+0x%llx",
         static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(target) - reinterpret_cast<uintptr_t>(game)));
     return true;
@@ -2707,6 +2753,7 @@ bool installListenerHook() {
     uintptr_t hit = findMasked(game, kListenerPattern, sizeof(kListenerPattern) / sizeof(kListenerPattern[0]));
     if (!hit) {
         LOG("Audio listener update not found; audio stays at the game camera");
+        patchreport::note("rtti", "Audio listener update: pattern NOT FOUND; sound stays at the game camera");
         return false;
     }
     // call rel32 -> getter "mov rax, [rip+rel32]; ret" -> the view global
@@ -2726,6 +2773,7 @@ bool installListenerHook() {
         LOG("Audio listener hook failed: %s", MH_StatusToString(status));
         return false;
     }
+    patchreport::nameHook(reinterpret_cast<void*>(hit), "audio listener update");
     LOG("Hooked audio listener update at game+0x%llx",
         static_cast<unsigned long long>(hit - reinterpret_cast<uintptr_t>(game)));
     return true;

@@ -605,6 +605,7 @@ std::vector<Row> makeRows() {
         toggle(L"View speed", L"Bigger Sim caches (next start)", "perf", "sim_cache_boost", &Config::simCacheBoost, kNextStart),
         number(L"View speed", L"Sim detail distance (next start)", "perf", "sim_lod_scale", &Config::simLodScale, 1, 3, 0.5f, 1, L"x%.1f", kNextStart),
         toggle(L"View speed", L"Hitch catcher (log stalls, next start)", "perf", "hitch_catcher", &Config::hitchCatcher, kNextStart),
+        toggle(L"View speed", L"Try an unrecognised game build (next start)", "patch", "try_unknown_build", &Config::tryUnknownBuild, kNextStart),
         number(L"View head", L"Head follow speed", "body", "smoothing", &Config::bodySmoothing, 0.05f, 1, 0.05f, 1, L"%.2f",
                kView),
         number(L"View head", L"Turn with your Sim", "body", "turn_smoothing", &Config::bodyTurnSmoothing, 0, 1, 0.05f, 1,

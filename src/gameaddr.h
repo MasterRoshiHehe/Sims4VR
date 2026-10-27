@@ -13,6 +13,16 @@ namespace s4vr::gameaddr {
 // The running exe is the build the address table (addrs.h) is for.
 bool recognised();
 
+// The table may be used: the exe is the table's build, or an unrecognised build is being tried
+// (setTryUnknown): then only rows found by signature count, nothing at a fixed rva.
+bool usable();
+
+// [patch] try_unknown_build, decided at startup (before the first address lookup).
+void setTryUnknown(bool on);
+
+// The running exe's PE link time stamp.
+uint32_t exeStamp();
+
 // Running in TS4_DX9_x64.exe.
 bool dx9();
 
