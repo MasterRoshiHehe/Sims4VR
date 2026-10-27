@@ -393,13 +393,10 @@ def _follow_on_steps(sim, pose, f):
                         getattr(level, 'secondary_id', '?'), y,
                         'none' if low is None else '{:.2f}'.format(low),
                         'none' if high is None else '{:.2f}'.format(high)))
-    new_level = key != stairs.surface_key(sim.routing_surface)
     _follow[0] = now
     _follow[1] = key
     orientation = sims4.math.Quaternion(0.0, math.sin(pose[3] / 2), 0.0, math.cos(pose[3] / 2))
     _move(sim, sims4.math.Vector3(x, y, z), orientation, level)
-    if new_level:
-        _location_now(sim)
 
 
 def _climb(sim, pose, on):
@@ -428,8 +425,6 @@ def _climb(sim, pose, on):
             _surface = new
             native._log('walk: now on level {} ({:.2f} high)'.format(getattr(new, 'secondary_id', '?'), y))
         _sync(sim, pose, False, force=True)
-        if changed:
-            _location_now(sim)
     return False
 
 
@@ -744,6 +739,12 @@ def _move(sim, translation, orientation, surface):
         p = sim.position
         native.dll_log('walk: simulation Sim teleported {:.2f} m'.format(math.hypot(translation.x - p.x, translation.z - p.z)))
     sim.move_to(translation=translation, orientation=orientation, routing_surface=surface)
+    # move_to sends the new place on the Sim's channel, behind its animations:
+    # another Sim's social with you (a kiss) held it there, so the client kept
+    # your Sim where that started, and when the game next took the Sim it
+    # jumped back there and ran to you through the walls (user 2026-10-27
+    # 00:20Z, log 01:18:20). Sent at once as well, every time.
+    _location_now(sim)
 
 
 _move_logs = [0]
@@ -760,7 +761,7 @@ def _location_now(sim):
     the game walked it to the computer chair through the rooms below and it
     popped up into the chair (user 2026-10-14 20:58Z; floor snap log -4.00).
     This sends the Sim's place again as the game's immediate ops do (not on
-    the Sim's channel), each time your level changes."""
+    the Sim's channel), each time the simulation's Sim is moved to you."""
     global _location_logs
     try:
         from distributor.ops import SetLocation
@@ -770,7 +771,7 @@ def _location_now(sim):
         Distributor.instance().add_op(sim, op)
         if _location_logs < 20:
             _location_logs += 1
-            native._log('walk: level {} sent to the game at once'.format(
+            native._log('walk: your place (level {}) sent to the game at once'.format(
                 getattr(sim.routing_surface, 'secondary_id', '?')))
     except Exception as e:
         global _errors
