@@ -38,6 +38,8 @@ static void destroySession() {
     g_mirror = nullptr;
     g_mirrorValid = false;
     destroySwapchain(g_quadSwapchain);
+    destroySwapchain(g_driveChains[0]);
+    destroySwapchain(g_driveChains[1]);
     destroySwapchain(g_eyeSwapchains[0]);
     destroySwapchain(g_eyeSwapchains[1]);
     destroySwapchain(g_leftSpare);

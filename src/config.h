@@ -129,6 +129,7 @@ struct Config {
     float snapAngle = 30;   // [controls] snap_angle: degrees per snap
     bool recenterTurnsBody = true;  // [controls] recenter_turns_body: recentring while walking freely turns your body
                                     // (and what hangs on it) to where you look; in an action the view goes to it
+    float doorPushSpeed = 0.9f;       // [body] door_push_speed: m/s a hand must move into a door to push it open
     float trailArrive = 0.8f;         // [body] trail_arrive: metres from the trail's end that start the action
     float trailStopDist = 3.0f;       // [body] trail_stop_dist: metres from the Sim you walk to at which they stop and face you
     float trailArriveContact = 0.35f; // [body] trail_arrive_contact: the same for a social with hand contact
@@ -221,7 +222,8 @@ struct Config {
     bool wristSleepClock = true;   // the clock and speed buttons low in your view while your Sim sleeps
     float wristSleepPos[3] = {0, -0.22f, 0.6f}, wristSleepTurn[3] = {}, wristSleepSize = 0.16f;
     bool wristLotIntro = true;     // the lot's name and traits in front of you while a load keeps your eyes shut (lotintro.py)
-    float wristLotPos[3] = {0, 0.02f, 1.2f}, wristLotTurn[3] = {}, wristLotSize = 1.1f;
+    float wristLotPos[3] = {0, 0.02f, 1.2f}, wristLotTurn[3] = {}, wristLotSize = 1.0f;
+    float wristLotCropW = 0.42f, wristLotCropH = 0.26f, wristLotCropY = 0.03f;  // the part of the UI shown: fractions of its width / height, centre's shift down (fraction of height)
 
     // Body mode (stereo at the active Sim's eyes)
     float bodyForward = 0.10f;   // metres from the head joint to the eyes, along where you look
@@ -261,11 +263,16 @@ struct Config {
     float lookSpeed = 5.0f;      // how fast their look moves to a new place
     float lookEyesWithin = 0.3f; // metres from their eyes: a touch this close is followed with the eyes only
     float lookHeadFrom = 0.8f;   // metres from their eyes: from here the whole head turns
+    float shooAngle = 45.0f;     // degrees the fingers swing up for the two-handed shoo
+    float shooFlicks = 2.0f;     // flicks of both hands the shoo needs
+    float highFiveHold = 2.5f;   // seconds your raised open hand is held still for a high five
     bool lookAtYou = true;       // a Sim you lean in close to looks at you
     bool headRepel = true;       // your head is pushed back out of other Sims instead of passing through
     float headRadius = 0.08f;    // metres your view keeps clear of their bodies
     bool grabBodies = true;      // squeeze grip and trigger on a Sim's body to hold it (they react, bodygrab.py)
     float grabCurl = 0.45f;      // how far the fingers close on a held body (0 open .. 1 fist)
+    float breastCurl = 0.35f;    // finger bend on a held breast (any mod doing the holding)
+    float buttCurl = 0.35f;      // finger bend on a held butt
     float grabDrag = 0.15f;      // metres the held place can be dragged (not Claude Jiggle's breasts/butt)
     bool touchHaptics = true;    // controllers vibrate when a hand touches a Sim
     // Touch sounds (foley.py, [foley]): which of the game's foley plays for each touch; 0 none, the
@@ -274,7 +281,8 @@ struct Config {
         foleySlapSkin = 1, foleyRubCloth = 1, foleyRubSkin = 1, foleyGrabCloth = 1, foleyGrabSkin = 1, foleyHands = 1,
         foleyHoldHands = 1;
     // Your hand hitting objects (foley.py object_*): the game's sound when you have none of your own.
-    int foleyObjectTap = 1, foleyObjectSlap = 1, foleyObjectPunch = 1, foleyObjectMetal = 1, foleyObjectSoft = 1;
+    int foleyObjectTap = 1, foleyObjectSlap = 1, foleyObjectPunch = 1, foleyObjectMetal = 1, foleyObjectSoft = 1,
+        foleyObjectMetalTap = 1;
     bool touch = true;           // point with your index finger and touch things to click them
     float touchPast = 0.015f;    // metres past the Sim's fingertip that count as the finger's end
     float walkSpeed = 1.5f;      // metres per second, left stick fully pushed

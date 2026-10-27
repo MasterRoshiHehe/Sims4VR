@@ -79,6 +79,8 @@ else
   [ $DRY = 1 ] && echo "dry run: no Python 3.7, .ts4script not packaged" || { echo "Python 3.7 required (set PY37)" >&2; exit 1; }
 fi
 cp config/sims4vr.ini "$PKG/sims4vr.ini"
+# The user's own touch sounds (foleyaudio.cpp), local only (sounds/ is not in git).
+[ -d sounds ] && cp -r sounds "$PKG/sounds"
 
 # 5. CHANGES.txt from the commits since the previous build, then tag.
 { echo "sims4vr v$VER  commit $COMMIT  thread: ${THREAD:-?}  $(date -u +%FT%TZ)"

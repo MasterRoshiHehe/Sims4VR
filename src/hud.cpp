@@ -4534,14 +4534,16 @@ Action drawPhone(ImDrawList* d, int* index) {
             shadowText(d, g_title, 34, {at(115, 24).x - hs.x / 2, at(115, 24).y - hs.y / 2}, kWhite, head);
         }
         struct Cheat { const char* label; int on, off; };  // off < 0: a one-press cheat
-        static const Cheat kCheats[6] = {{"Testing cheats", 6, 9}, {"Cheat pie menus", 11, 12}, {"Fill needs", 5, -1},
-                                         {"Motherlode", 7, -1}, {"Move objects on", 8, -1}, {"CAS full edit mode", 10, -1}};
+        // Everyone here hates / loves me (user 2026-10-26 21:30Z): every Sim on the lot, friendship and romance.
+        static const Cheat kCheats[8] = {{"Testing cheats", 6, 9}, {"Cheat pie menus", 11, 12}, {"Fill needs", 5, -1},
+                                         {"Motherlode", 7, -1}, {"Move objects on", 8, -1}, {"CAS full edit mode", 10, -1},
+                                         {"Everyone hates me", 14, -1}, {"Everyone loves me", 15, -1}};
         const int state = settings::testingCheats();
         const ImU32 kBlue = IM_COL32(28, 72, 150, 255);
-        for (int n = 0; n < 6; ++n) {
+        for (int n = 0; n < 8; ++n) {
             const Cheat& c = kCheats[n];
             const bool toggle = c.off >= 0, on = toggle && (state & (n == 0 ? 1 : 2)) != 0;
-            const float rowH = 46, top = 54 + n * (rowH + 4);
+            const float rowH = 34, top = 52 + n * (rowH + 4);
             const ImVec2 ba = at(8, top), bb = at(222, top + rowH);
             bool over = false, held = false;
             if (button(ba, bb, &over, &held)) {
@@ -4557,9 +4559,9 @@ Action drawPhone(ImDrawList* d, int* index) {
             d->AddText(g_title, size * fit, {at(16, 0).x, (ba.y + bb.y - ls.y * fit) / 2}, kBlue, c.label);
             if (toggle) {
                 // The switch: green and right when on.
-                const ImVec2 sa = at(176, top + 13), sb = at(214, top + 33);
+                const ImVec2 sa = at(176, top + rowH / 2 - 10), sb = at(214, top + rowH / 2 + 10);
                 d->AddRectFilled(sa, sb, on ? IM_COL32(88, 190, 70, 255) : IM_COL32(180, 186, 196, 255), 10 * S);
-                d->AddCircleFilled(at(on ? 204 : 186, top + 23), 8 * S, IM_COL32(255, 255, 255, 255), 24);
+                d->AddCircleFilled(at(on ? 204 : 186, top + rowH / 2), 8 * S, IM_COL32(255, 255, 255, 255), 24);
             }
         }
         bool over = false;
@@ -5268,6 +5270,8 @@ Action drawBuild() {
 }
 
 }  // namespace
+
+#include "hud_lotintro.inc"
 
 void addBalloon(uint64_t sim, uint64_t picture, uint64_t overlay, uint64_t category, int type, int priority, int durationMs) {
     const ULONGLONG now = GetTickCount64();

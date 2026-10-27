@@ -67,6 +67,7 @@ ULONGLONG g_collideLogTick = 0;
 ULONGLONG g_repelLogTick = 0;
 std::atomic<bool> g_running{false};  // left stick tapped: run speed and the Sim's run walk
 bool g_free = false;
+float g_crouchDrop = 0;  // game units the view is lowered by crouching
 uint8_t* g_actor = nullptr;
 bool g_actorOk = false;
 float g_base[2] = {};  // app space origin in the world, x and z
@@ -84,13 +85,21 @@ float g_poseMark[3] = {};
 bool g_poseMarkValid = false;
 int g_poseJumpLogs = 0;
 ULONGLONG g_eyeLogTick = 0;
-std::atomic<float> g_stopTime{0.5f};
+std::atomic<float> g_stopTime{0.15f};
+std::atomic<bool> g_crouchOn{true}, g_crouchWanted{false};
+std::atomic<float> g_crouchDepth{0.5f}, g_crouchSpeed{0.5f}, g_crouchSeconds{0.35f}, g_crouchAmount{0};
 // The game's own stop clip (v0.13.194, user 2026-10-17 01:37Z: "you need to
 // implement the start walking and stop walking animations"): with walk clips
 // on, slowing down covers the walkstyle's stop clip distance (read from the
 // client's walk controller, walkstop.cpp), so the feet that play the stop
 // land where you stop. 0 = unknown: [body] stop_time decides.
 std::atomic<float> g_clipStop{0};
+// v0.13.519 (user 2026-10-26 20:36Z: "my character still slides a little bit
+// and slowly comes to a stop ... very annoying for closer interactions"): the
+// stop clip's 0.87 m glide is off by default ([body] stop_glide); you stop
+// over [body] stop_time (0.15 s, about 6 cm from a walk) and the clip plays
+// where you stand.
+std::atomic<bool> g_stopGlide{false};
 bool g_slowing = false;
 bool g_stopForClip = false;
 float g_stopW = 0;
@@ -505,6 +514,11 @@ void setStopTime(float seconds) {
     if (g_stopTime.exchange(seconds) != seconds) LOG("Player: walking comes to rest over %.2f s after you let go", seconds);
 }
 
+void setStopGlide(bool on) {
+    if (g_stopGlide.exchange(on) != on)
+        LOG("Player: slowing down %s the walk's stop clip", on ? "glides over" : "ignores");
+}
+
 void setSmoothSlide(bool on) {
     if (g_smoothSlide.exchange(on) != on) LOG("Player: smooth wall sliding %s", on ? "on" : "off");
 }
@@ -516,10 +530,35 @@ void addShownTime(float seconds) {
 }
 bool running() { return g_running.load(std::memory_order_relaxed); }
 
+void configureCrouch(bool enabled, float depthMetres, float speedFactor, float seconds) {
+    g_crouchOn.store(enabled, std::memory_order_relaxed);
+    g_crouchDepth.store(std::clamp(depthMetres, 0.1f, 1.0f), std::memory_order_relaxed);
+    g_crouchSpeed.store(std::clamp(speedFactor, 0.1f, 1.0f), std::memory_order_relaxed);
+    g_crouchSeconds.store(std::clamp(seconds, 0.05f, 2.0f), std::memory_order_relaxed);
+    if (!enabled) g_crouchWanted.store(false, std::memory_order_relaxed);
+}
+bool toggleCrouch() {
+    if (g_crouchWanted.load(std::memory_order_relaxed)) {
+        g_crouchWanted.store(false, std::memory_order_relaxed);
+        LOG("Player: crouch off");
+        return true;
+    }
+    // Only in free walking: the game isn't moving the Sim and no animation has it.
+    if (!g_crouchOn.load(std::memory_order_relaxed) || !g_free) return false;
+    g_crouchWanted.store(true, std::memory_order_relaxed);
+    LOG("Player: crouch on");
+    return true;
+}
+bool crouching() { return g_crouchWanted.load(std::memory_order_relaxed); }
+float crouchAmount() { return g_crouchAmount.load(std::memory_order_relaxed); }
+float crouchDropWorld() { return g_free ? g_crouchDrop : 0.0f; }
+
 void reset() {
     unpin();
     g_free = false;
     g_running.store(false, std::memory_order_relaxed);
+    g_crouchWanted.store(false, std::memory_order_relaxed);
+    g_crouchAmount.store(0, std::memory_order_relaxed);
     g_actor = nullptr;
     std::lock_guard<std::mutex> lock(g_mutex);
     g_poseValid = false;
@@ -620,6 +659,8 @@ bool update(const Input& in, float viewYaw, float turn, Output& out) {
         // follows the Sim's head again.
         unpin();
         g_free = false;
+        g_crouchWanted.store(false, std::memory_order_relaxed);  // an animation or seat has you: stand
+        g_crouchAmount.store(0, std::memory_order_relaxed);
         LOG("Player: the game has the Sim; free movement off");
         std::lock_guard<std::mutex> lock(g_mutex);
         g_pose[4] = g_pose[5] = g_pose[6] = g_pose[7] = 0;
@@ -644,11 +685,18 @@ bool update(const Input& in, float viewYaw, float turn, Output& out) {
             g_dir[0] = sx / len;
             g_dir[1] = sz / len;
         }
-        target = (running() ? g_runSpeed : g_walkSpeed) * s * (strength > 0.8f ? 1.0f : strength / 0.8f);
+        const bool crouched = g_crouchWanted.load(std::memory_order_relaxed);
+        target = (running() && !crouched ? g_runSpeed : g_walkSpeed) * s * (strength > 0.8f ? 1.0f : strength / 0.8f);
+        if (crouched) target *= g_crouchSpeed.load(std::memory_order_relaxed);
     }
     float stopTime = g_stopTime.load(std::memory_order_relaxed);
-    float clipStop = g_clipStop.load(std::memory_order_relaxed);
-    if (target < g_speed && (stopTime > 0.05f || clipStop > 0.05f) && dt > 0) {
+    float clipStop = g_stopGlide.load(std::memory_order_relaxed) ? g_clipStop.load(std::memory_order_relaxed) : 0;
+    if (target < g_speed && stopTime < 0.05f && clipStop <= 0.05f) {
+        // Stop smoothness 0: at once.
+        g_speed = target;
+        g_speedRate = 0;
+        g_slowing = false;
+    } else if (target < g_speed && dt > 0) {
         if (!g_slowing) {
             // v(t) = v0 (1 + wt) e^-wt reaches 1% of v0 at wt = 6.6 and goes
             // 2 v0 / w in all.
@@ -904,7 +952,10 @@ bool update(const Input& in, float viewYaw, float turn, Output& out) {
     // Not at stairs: a walk the client still plays there keeps the body on
     // the floor you came from for a moment, and the view must not follow it.
     bool atStairs = floorFresh && flight[4] > 0;
-    if (!atStairs && std::isfinite(eye) && eye > 0.3f * s) {
+    // While crouched the posed head is lowered by armik on some frames and not on others (log: 1.67-2.22 m),
+    // so the standing eye height is held from when the crouch began.
+    const bool crouchHold = g_crouchWanted.load(std::memory_order_relaxed) || g_crouchAmount.load(std::memory_order_relaxed) > 0.001f;
+    if (!atStairs && !crouchHold && std::isfinite(eye) && eye > 0.3f * s) {
         // Slowly for the walk's bob, quickly for a real change of height
         // (v0.13.197, user 2026-10-17 02:32Z: standing up from a seat, the view
         // crept up into place: free movement starts while the Sim is still
@@ -941,8 +992,17 @@ bool update(const Input& in, float viewYaw, float turn, Output& out) {
         }
     }
 
+    // Crouch: the view sinks (and rises) over crouch_seconds, smoothstep.
+    {
+        float amount = g_crouchAmount.load(std::memory_order_relaxed);
+        const float goal = g_crouchWanted.load(std::memory_order_relaxed) ? 1.0f : 0.0f;
+        const float step = dt / g_crouchSeconds.load(std::memory_order_relaxed);
+        amount = goal > amount ? std::min(goal, amount + step) : std::max(goal, amount - step);
+        g_crouchAmount.store(amount, std::memory_order_relaxed);
+        g_crouchDrop = (amount * amount * (3 - 2 * amount)) * g_crouchDepth.load(std::memory_order_relaxed) * s;
+    }
     out.base[0] = g_base[0];
-    out.base[1] = g_floorY + g_eyeAboveFloor;
+    out.base[1] = g_floorY + g_eyeAboveFloor - g_crouchDrop;
     out.base[2] = g_base[1];
     out.viewYaw = g_viewYaw;
 

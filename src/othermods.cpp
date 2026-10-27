@@ -15,23 +15,28 @@ struct Names {
     const char* get;
     const char* set;
 };
-const Names kNames[2][2] = {
+const Names kNames[kModCount][2] = {
     {{L"integratedbodyphysics.dll", "ibp_get", "ibp_set"},
      {L"claudejiggle.dll", "claudejiggle_get", "claudejiggle_set"}},
     {{L"extendedsoundcontrol.dll", "esc_get", "esc_set"},
      {L"claudesound.dll", "claudesound_get", "claudesound_set"}},
+    {},  // Claude Performance: a script mod
+    {{L"claudebustinout.dll", "cbo_get", "cbo_set"}, {}},
 };
+// Each DLL mod's menu export (nullptr: none).
+const char* const kMenuNames[kModCount] = {"ibp_menu", "esc_menu", nullptr, "cbo_menu"};
 
 std::atomic<int> g_scriptMods{0};
 
 }  // namespace
 
 bool api(Mod mod, GetFn& get, SetFn& set) {
-    if (mod != kBodyPhysics && mod != kSoundControl) return false;
+    if (mod < 0 || mod >= kModCount || mod == kPerformance) return false;
     for (const Names& file : kNames[mod]) {
-        HMODULE m = GetModuleHandleW(file.file);
+        HMODULE m = file.file ? GetModuleHandleW(file.file) : nullptr;
         if (!m) continue;
         for (const Names& calls : kNames[mod]) {
+            if (!calls.get) continue;
             get = reinterpret_cast<GetFn>(GetProcAddress(m, calls.get));
             set = reinterpret_cast<SetFn>(GetProcAddress(m, calls.set));
             if (get && set) return true;
@@ -48,12 +53,11 @@ bool loaded(Mod mod) {
 }
 
 const wchar_t* menu(Mod mod) {
-    if (mod != kBodyPhysics && mod != kSoundControl) return nullptr;
+    if (mod < 0 || mod >= kModCount || !kMenuNames[mod]) return nullptr;
     using MenuFn = const wchar_t* (*)();
-    const char* const names[2] = {"ibp_menu", "esc_menu"};
     for (const Names& file : kNames[mod])
-        if (HMODULE m = GetModuleHandleW(file.file))
-            if (auto fn = reinterpret_cast<MenuFn>(GetProcAddress(m, names[mod]))) return fn();
+        if (HMODULE m = file.file ? GetModuleHandleW(file.file) : nullptr)
+            if (auto fn = reinterpret_cast<MenuFn>(GetProcAddress(m, kMenuNames[mod]))) return fn();
     return nullptr;
 }
 

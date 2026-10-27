@@ -9,7 +9,7 @@ static void requestPhonePie(int control, bool ours = false);  // 14_phone.inc
 // the eye images). Poke with your right index finger or point the laser.
 
 enum { kHudWatch, kHudPause, kHudSleep, kHudBuild, kHudNeeds, kHudMoodlets, kHudQueue, kHudWants, kHudPopup, kHudTip, kHudMoney,
-       kHudPicker, kHudNote, kHudKeyboard, kHudPie, kHudCount };
+       kHudPicker, kHudNote, kHudKeyboard, kHudPie, kHudLotIntro, kHudCount };
 struct HudSheet {
     float opacity = 1;  // blended over the world (the keyboard fades)
     PieMenu m;  // x0, y0, cw, ch: its part of the atlas; uiW, uiH: the atlas
@@ -27,6 +27,8 @@ static hud::Frame g_hudInput;  // this frame's pointer on the atlas (a poke or t
 static bool g_laserPhoneHold = false;     // the laser's trigger was pulled on the phone and is still held
 static float g_laserPhoneAt[2] = {0, 0};  // where on the atlas the laser last was on the phone
 static Swapchain g_hudSwapchain;  // the asleep watch's layer
+static Swapchain g_lotSwapchain;  // the lot intro's layer (a copy of the UI)
+static constexpr hud::Rect kLotArea{0, 0, 1024, 384};
 
 void setPaused(bool paused) {
     armik::setGamePaused(paused);
@@ -48,7 +50,7 @@ static int previewSheet() {
         int sheet;
     } kPages[] = {{L"HUD watch", kHudWatch}, {L"HUD needs", kHudNeeds}, {L"HUD moodlets", kHudMoodlets},
                   {L"HUD queue", kHudQueue}, {L"HUD build", kHudBuild},     {L"HUD wants", kHudWants},
-                  {L"HUD pause", kHudPause}};
+                  {L"HUD pause", kHudPause}, {L"HUD lot intro", kHudLotIntro}};
     for (const auto& k : kPages)
         if (!wcscmp(page, k.page)) return k.sheet;
     return -1;
@@ -863,12 +865,28 @@ static void updateHud(const armik::Hand hands[2], bool firstPerson, bool headOk,
         }
     }
 
+    // The lot's name and traits when you arrive (hud_lotintro.inc, user 2026-10-26): a crop of the vanilla UI's
+    // banner (the middle of the UI), in front of you where you look, kept in place like the pie, a headset layer so
+    // the closed eyelids don't dim it (hudLotIntroLayer). kLotArea: its shape (8 : 3).
+    {
+        HudSheet& lot = g_hud[kHudLotIntro];
+        lot.onTop = true;
+        static HeldPlace anchor;
+        if ((c.wristLotIntro && hud::lotIntroShowing()) || previewSheet() == kHudLotIntro) {
+            XrVector3f aEye, dir;
+            holdPlace(anchor, eye, flat, !lot.m.active, "Lot intro", aEye, dir);
+            aroundYou(lot, aEye, dir, aEye, c.wristLotPos, c.wristLotTurn, c.wristLotSize, kLotArea);
+        } else {
+            hideHud(lot);
+        }
+    }
+
     phone3d::Panel panels[kHudCount];
     int count = 0;
     ID3D11Texture2D* atlas = hud::texture();
     if (atlas)
         for (int i = 0; i < kHudCount; ++i)
-            if (i != kHudSleep && i != kHudPie && i != kHudPopup && g_hud[i].m.active) {  // the popup: updatePopupCard's panel  // the pie: pieInWorld (app space, hands in front)
+            if (i != kHudSleep && i != kHudLotIntro && i != kHudPie && i != kHudPopup && g_hud[i].m.active) {  // the popup: updatePopupCard's panel  // the pie: pieInWorld (app space, hands in front)
                 panels[count] = hudPanel(g_hud[i], view);
                 panels[count++].tag = i;
             }
@@ -1378,24 +1396,55 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
     }
 }
 
-// The asleep watch's headset layer: the atlas copied into its swapchain.
-static bool hudSleepLayer(ID3D11Texture2D* atlas, XrCompositionLayerQuad& layer) {
-    const PieMenu& m = g_hud[kHudSleep].m;
+// A HUD sheet's headset layer (over the closed eyelids): the atlas copied into its swapchain.
+static bool hudSheetLayer(int sheet, Swapchain& chain, ID3D11Texture2D* atlas, XrCompositionLayerQuad& layer) {
+    const PieMenu& m = g_hud[sheet].m;
     if (!m.active || !atlas) return false;
     D3D11_TEXTURE2D_DESC desc;
     atlas->GetDesc(&desc);
     bool recreated;
-    if (!ensureSwapchain(g_hudSwapchain, desc, recreated) || !copyIntoSwapchain(g_hudSwapchain, atlas, desc))
+    if (!ensureSwapchain(chain, desc, recreated) || !copyIntoSwapchain(chain, atlas, desc))
         return false;
     layer = {XR_TYPE_COMPOSITION_LAYER_QUAD};
     layer.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;  // premultiplied
     layer.space = g_appSpace;
     layer.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
-    layer.subImage = subImage(g_hudSwapchain);
+    layer.subImage = subImage(chain);
     layer.subImage.imageRect.offset = {m.x0, m.y0};
     layer.subImage.imageRect.extent = {m.cw, m.ch};
     layer.pose = m.pose;
     layer.size = {m.width, m.height};
+    return true;
+}
+
+// The asleep watch's headset layer.
+static bool hudSleepLayer(ID3D11Texture2D* atlas, XrCompositionLayerQuad& layer) {
+    return hudSheetLayer(kHudSleep, g_hudSwapchain, atlas, layer);
+}
+// The lot intro's headset layer (over the eyes held shut while a lot loads): the middle of the vanilla UI, where
+// its ScreenSlam banner shows ([wrist] lot_intro_crop_w/h/y).
+static bool hudLotIntroLayer(XrCompositionLayerQuad& layer) {
+    const PieMenu& m = g_hud[kHudLotIntro].m;
+    if (!m.active || !g_uiFrame) return false;
+    D3D11_TEXTURE2D_DESC desc;
+    g_uiFrame->GetDesc(&desc);
+    bool recreated;
+    if (!ensureSwapchain(g_lotSwapchain, desc, recreated) || !copyIntoSwapchain(g_lotSwapchain, g_uiFrame, desc))
+        return false;
+    const Config& c = g_config;
+    const int32_t w = std::max<int32_t>(16, std::min<int32_t>(desc.Width, static_cast<int32_t>(desc.Width * c.wristLotCropW))),
+                  h = std::max<int32_t>(16, std::min<int32_t>(desc.Height, static_cast<int32_t>(desc.Height * c.wristLotCropH)));
+    const int32_t cx = static_cast<int32_t>(desc.Width) / 2 - w / 2,
+                  cy = std::max<int32_t>(0, std::min<int32_t>(desc.Height - h, static_cast<int32_t>(desc.Height) / 2 - h / 2 +
+                                                                    static_cast<int32_t>(desc.Height * c.wristLotCropY)));
+    layer = {XR_TYPE_COMPOSITION_LAYER_QUAD};
+    layer.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;  // premultiplied, as Scaleform blends
+    layer.space = g_appSpace;
+    layer.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+    layer.subImage = subImage(g_lotSwapchain);
+    layer.subImage.imageRect = {{cx, cy}, {w, h}};
+    layer.pose = m.pose;
+    layer.size = {m.width, m.width * h / w};
     return true;
 }
 

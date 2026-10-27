@@ -192,7 +192,7 @@ def _source(name):
     return getattr(InteractionSource, name, None)
 
 
-def _come(sim, centre, radius, surface, face, state, now):
+def _come(sim, centre, radius, surface, face, state, now, half_angle=None):
     """The game's social adjustment (Sim.execute_adjustment_interaction, as
     SocialGroup and hint._turn use it): a walk into a circle, standing, facing
     `face`. Returns the game's result."""
@@ -203,7 +203,7 @@ def _come(sim, centre, radius, surface, face, state, now):
     from socials.group import SocialGroup
     _end_walk(state)
     spot = Circle(sims4.math.Vector3(*centre), radius, surface).intersect(
-        Facing(target_position=sims4.math.Vector3(*face), facing_range=sims4.math.PI / 3)).intersect(
+        Facing(target_position=sims4.math.Vector3(*face), facing_range=half_angle if half_angle is not None else sims4.math.PI / 3)).intersect(
         STAND_CONSTRAINT_OUTER_PENALTY)
     _end_hold(sim)
     global _sending

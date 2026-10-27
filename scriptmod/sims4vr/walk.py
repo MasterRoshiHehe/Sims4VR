@@ -54,6 +54,7 @@ ALL_RAYS = (1 << RAYS) - 1
 PASSAGE_REACH = 0.8  # metres from a doorway's centre line at which it opens up for you
 PASSAGE_RAIL = 0.3  # metres either side of the centre line you can walk through it
 PASSAGE_ALONG = math.radians(50)  # directions inside the doorway that count as along it
+WATER_DEEP = 0.2  # metres of water at a spot that keep you out of it (a pool, a pond), unless the game has you swimming
 FLOOR_STEP = 0.5  # metres between the floor samples for the slope
 SYNC_WHILE_MOVING = 1.0  # seconds between teleports while you walk
 SYNC_DISTANCE = 0.05  # metres the Sim must be off before it is teleported
@@ -200,6 +201,21 @@ def _cached_mask(sim, x, y, z, on, pushing, moving):
     return mask
 
 
+def _water_depth(x, z, level):
+    try:
+        return terrain.get_water_depth(x, z, level)
+    except Exception:
+        return 0.0
+
+
+def _too_deep(x, z, level, here):
+    """Water over a pool or pond is no floor: the game's navmesh and terrain height let you stand on it, so
+    the spot is closed when it holds more than WATER_DEEP of water and more than where you stand now
+    (you can always wade out)."""
+    depth = _water_depth(x, z, level)
+    return depth > WATER_DEEP and depth >= here
+
+
 @native.timed('walk wall check', 0.006)
 def _blocked_mask(sim, x, y, z, on):
     if on is not None:
@@ -208,10 +224,14 @@ def _blocked_mask(sim, x, y, z, on):
     origin = _location(x, y, z, surface)
     context = sim.routing_context
     mask = 0
+    swim_level = None if surface.type == routing.SurfaceType.SURFACETYPE_POOL else surface.secondary_id
+    here = _water_depth(x, z, swim_level) if swim_level is not None else 0.0
     for i in range(RAYS):
         a = i * 2 * math.pi / RAYS
         end = _location(x + math.sin(a) * PROBE_DISTANCE, y, z + math.cos(a) * PROBE_DISTANCE, surface)
-        if not routing.ray_test(origin, end, context):
+        if not routing.ray_test(origin, end, context) or (
+                swim_level is not None and _too_deep(x + math.sin(a) * PROBE_DISTANCE,
+                                                     z + math.cos(a) * PROBE_DISTANCE, swim_level, here)):
             mask |= 1 << i
     for flight in stairs.near(x, y, z, PROBE_DISTANCE + 1.0):
         mask = _stair_mask(mask, flight, x, y, z)
@@ -820,6 +840,13 @@ def _tick(_handle):
         on = stairs.flight_under(px, py, pz) if not game else None
         moving = bool(free and pose[4])
         mask = 0 if game else _cached_mask(sim, px, py, pz, on, pushing, moving)
+        if free and not game:
+            try:
+                from sims4vr import pair
+                if pair.locked(sim, pushing):
+                    mask = ALL_RAYS  # a hug or kiss with you: the stick doesn't walk you out of it
+            except Exception as e:
+                native._log('walk: pair lock failed: {!r}'.format(e))
         ramp = stairs.ramp(px, py, pz)
         native.set_player_state(not game, mask, _floor(sim, px, py, pz, ramp), _flight_sides(ramp))
         try:
@@ -835,6 +862,7 @@ def _tick(_handle):
                 # Coming to a stop: the Sim goes where you stopped at once.
                 _sync(sim, pose, pose[4], force=_was_moving and not moving)
             doors.swing(sim, px, py, pz)
+            doors.push(sim, px, py, pz)
             if pushing and on is None:
                 carried.try_start(sim, px, py, pz, stick, _surface_of(sim))
         else:

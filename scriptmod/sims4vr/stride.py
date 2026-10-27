@@ -127,6 +127,18 @@ def _clips():
     return _clips_cache[1]
 
 
+_stairs_cache = (0.0, True)
+
+
+def _stairs_walk():
+    """[body] stairs_walk: the walk cycle plays on flights too (read every 2 s)."""
+    global _stairs_cache
+    now = time.monotonic()
+    if now - _stairs_cache[0] > 2.0:
+        _stairs_cache = (now, native.setting_flag('body', 'stairs_walk', True))
+    return _stairs_cache[1]
+
+
 def _info(sim):
     """(state, path ahead, stop clip m, start clip m) of the client's walk, or None."""
     fn = native._optional('walk_info')
@@ -436,7 +448,7 @@ def update(sim, pose, surface=None, stick=0.0, on_stairs=False):
         pushing = stick >= PUSHED
         if pose is None or not pose[5] or _rate < 0.05:
             _stop(sim, 'free movement paused')
-        elif on_stairs:
+        elif on_stairs and not _stairs_walk():
             _stop(sim, 'on the stairs')
         elif _route is None:
             if pushing and speed >= MIN_SPEED:

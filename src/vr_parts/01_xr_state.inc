@@ -84,6 +84,7 @@ static ULONGLONG g_exitDeadline = 0, g_restartDelay = 0;
 static Swapchain g_quadSwapchain;
 static Swapchain g_eyeSwapchains[2];
 static Swapchain g_uiSwapchain;
+static Swapchain g_driveChains[2];  // Claude Bustin Out's drive, one per eye (17_render.inc driveLayer)
 
 // UI panel: the game's UI, split off the 3D view, on a quad in front of you.
 static ID3D11Texture2D* g_uiFrame = nullptr;  // this frame's UI, owned by uihook

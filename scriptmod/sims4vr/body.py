@@ -105,6 +105,11 @@ def _tv(what):
         getattr(tvwatch, what)()
     except Exception as e:
         native._log('tvwatch {} failed: {!r}'.format(what, e))
+    try:  # objects around you affect you (passive.py)
+        from sims4vr import passive
+        getattr(passive, what)()
+    except Exception as e:
+        native._log('passive {} failed: {!r}'.format(what, e))
     try:  # Sims Forever on a computer (simsforever.py), started and stopped with it
         from sims4vr import simsforever
         getattr(simsforever, what)()
@@ -177,6 +182,10 @@ def _follow(sim):
         native._log('body mode following Sim {}'.format(sim.id))
     _keep_still(sim)
     native.set_body_root(sim.position, sim.orientation)
+    try:
+        native.set_sim_level(getattr(sim.routing_surface, 'secondary_id', 0))
+    except Exception:
+        pass
 
 
 def tick():

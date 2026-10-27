@@ -42,5 +42,7 @@ int shownLevel();
 // floors back if the game dropped it (cheap check; re-applies at most twice
 // a second).
 void keepTopFloor();
+// The first-person Sim's level; below ground only that level is shown.
+void setSimLevel(int level);
 
 }  // namespace s4vr::gamefix

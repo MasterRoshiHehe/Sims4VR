@@ -27,6 +27,9 @@ void s4vr_shutdown();
 void s4vr_set_body(unsigned long long objectId);
 void s4vr_set_body_root(const float* position, const float* orientation);
 void s4vr_set_floor(float worldY);
+void s4vr_set_sim_level(int level);
+void s4vr_photo_probe(int lines);
+void s4vr_photo_session(int on);
 void s4vr_set_scale(float scale);
 int s4vr_walk_input(float* out);
 int s4vr_on_gameplay(int playing);
@@ -35,6 +38,8 @@ void s4vr_set_player_state(int freeAllowed, unsigned int blockedMask, const floa
 int s4vr_walk_pose(float* out);
 int s4vr_running();
 void s4vr_door(unsigned long long objectId, int open);
+void s4vr_door_watch(const unsigned long long* ids, int count);
+int s4vr_door_open(unsigned long long objectId);
 void s4vr_walk_stop(unsigned long long objectId, unsigned long long routeId);
 int s4vr_walk_info(unsigned long long objectId, float* out);
 int s4vr_walk_rest(float* out);
@@ -59,6 +64,7 @@ void s4vr_picker_content(const char* data, int size);
 void s4vr_pie_content(const char* data, int size);
 void s4vr_phone_content(const char* data, int size);
 void s4vr_notebook_content(const char* data, int size);
+void s4vr_lot_intro(const char* data, int size);
 void s4vr_phone_notes(const char* data, int size);
 void s4vr_phone_calendar(const char* data, int size);
 void s4vr_phone_sim(const char* data, int size);
@@ -91,8 +97,12 @@ void s4vr_set_grabbables(const unsigned long long* ids, const float* xyzr, int c
 void s4vr_collision_scene(const float* data, int count);
 int s4vr_hand_event(int* kind, int* hand, unsigned long long* id);
 int s4vr_touch_event(int* kind, int* hand, int* region, unsigned long long* actor, float* value);
+int s4vr_foley_event(int* kind, int* hand, int* part, unsigned long long* actor, float* into, float* along, float* at);
 void s4vr_set_touch_restricted(const unsigned long long* ids, int count);
+void s4vr_high_five(unsigned long long simId, int side, float seconds);
 int s4vr_gesture_event(int* kind, int* hand, float* out);
+void s4vr_ask_sight(unsigned long long simId, const float* xyz, int count);
+void s4vr_sight(int* out, unsigned long long* ids, float* dist);
 void s4vr_grab_set(int hand, unsigned long long id);
 int s4vr_hands(float* out, unsigned long long* held);
 int s4vr_hand_joint(int hand, unsigned long long* sim, float* out);
@@ -234,10 +244,31 @@ PyObject* setBodyRoot(PyObject*, PyObject* args) {
     return none();
 }
 
+PyObject* setSimLevel(PyObject*, PyObject* args) {
+    int level = 0;
+    if (!py.PyArg_ParseTuple(args, "i", &level)) return nullptr;
+    s4vr_set_sim_level(level);
+    return none();
+}
+
 PyObject* setFloor(PyObject*, PyObject* args) {
     float y = 0;
     if (!py.PyArg_ParseTuple(args, "f", &y)) return nullptr;
     s4vr_set_floor(y);
+    return none();
+}
+
+PyObject* photoProbe(PyObject*, PyObject* args) {
+    int lines = 0;
+    if (!py.PyArg_ParseTuple(args, "i", &lines)) return nullptr;
+    s4vr_photo_probe(lines);
+    return none();
+}
+
+PyObject* photoSession(PyObject*, PyObject* args) {
+    int on = 0;
+    if (!py.PyArg_ParseTuple(args, "i", &on)) return nullptr;
+    s4vr_photo_session(on);
     return none();
 }
 
@@ -287,6 +318,19 @@ PyObject* door(PyObject*, PyObject* args) {
     if (!py.PyArg_ParseTuple(args, "Ki", &id, &open)) return nullptr;
     s4vr_door(id, open);
     return none();
+}
+PyObject* doorWatch(PyObject*, PyObject* args) {
+    unsigned long long v[8] = {};
+    if (!py.PyArg_ParseTuple(args, "|KKKKKKKK", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5], &v[6], &v[7])) return nullptr;
+    int n = 0;
+    while (n < 8 && v[n]) ++n;
+    s4vr_door_watch(v, n);
+    return none();
+}
+PyObject* doorOpen(PyObject*, PyObject* args) {
+    unsigned long long id = 0;
+    if (!py.PyArg_ParseTuple(args, "K", &id)) return nullptr;
+    return py.PyLong_FromLong(s4vr_door_open(id));
 }
 PyObject* setHeld(PyObject*, PyObject* args) {
     // Up to 8 object ids; zeros are ignored.
@@ -426,6 +470,13 @@ PyObject* notebookContent(PyObject*, PyObject* args) {
     int length = 0;
     if (!py.PyArg_ParseTuple(args, "y#", &data, &length)) return nullptr;
     s4vr_notebook_content(data, length);
+    return none();
+}
+PyObject* lotIntro(PyObject*, PyObject* args) {
+    const char* data = nullptr;
+    int length = 0;
+    if (!py.PyArg_ParseTuple(args, "y#", &data, &length)) return nullptr;
+    s4vr_lot_intro(data, length);
     return none();
 }
 PyObject* phoneNotes(PyObject*, PyObject* args) {
@@ -637,12 +688,45 @@ PyObject* touchEvent(PyObject*, PyObject*) {
     if (!s4vr_touch_event(&kind, &hand, &region, &actor, &value)) return none();
     return py.Py_BuildValue("(iiiKd)", kind, hand, region, actor, static_cast<double>(value));
 }
+PyObject* foleyEvent(PyObject*, PyObject*) {
+    int kind = 0, hand = 0, part = 0;
+    unsigned long long actor = 0;
+    float into = 0, along = 0, at[3] = {};
+    if (!s4vr_foley_event(&kind, &hand, &part, &actor, &into, &along, at)) return none();
+    return py.Py_BuildValue("(iiiKdd(ddd))", kind, hand, part, actor, static_cast<double>(into), static_cast<double>(along),
+                            static_cast<double>(at[0]), static_cast<double>(at[1]), static_cast<double>(at[2]));
+}
+PyObject* askSight(PyObject*, PyObject* args) {
+    unsigned long long id = 0;
+    int n = 0;
+    float v[12] = {};
+    if (!py.PyArg_ParseTuple(args, "Ki|ffffffffffff", &id, &n, &v[0], &v[1], &v[2], &v[3], &v[4], &v[5], &v[6], &v[7],
+                             &v[8], &v[9], &v[10], &v[11]))
+        return nullptr;
+    s4vr_ask_sight(id, v, n < 0 ? 0 : n > 4 ? 4 : n);
+    return none();
+}
+PyObject* sight(PyObject*, PyObject*) {
+    int out[2] = {};
+    unsigned long long ids[2] = {};
+    float dist[2] = {};
+    s4vr_sight(out, ids, dist);
+    return py.Py_BuildValue("(KiiKdd)", ids[0], out[0], out[1], ids[1], double(dist[0]), double(dist[1]));
+}
 PyObject* gestureEvent(PyObject*, PyObject*) {
     int kind = 0, hand = 0;
     float v[9] = {};
     if (!s4vr_gesture_event(&kind, &hand, v)) return none();
     return py.Py_BuildValue("(ii(ddd)(ddd)(ddd))", kind, hand, double(v[0]), double(v[1]), double(v[2]), double(v[3]),
                             double(v[4]), double(v[5]), double(v[6]), double(v[7]), double(v[8]));
+}
+PyObject* highFive(PyObject*, PyObject* args) {
+    unsigned long long id = 0;
+    int side = 0;
+    float seconds = 0;
+    if (!py.PyArg_ParseTuple(args, "Kif", &id, &side, &seconds)) return nullptr;
+    s4vr_high_five(id, side, seconds);
+    return none();
 }
 PyObject* setTouchRestricted(PyObject*, PyObject* args) {
     unsigned long long ids[16] = {};
@@ -823,7 +907,10 @@ PyMethodDef methods[] = {
     {"set_mode", setMode, METH_VARARGS, "0 = quad, 1 = stereo"},
     {"set_body", setBody, METH_VARARGS, "set_body(object_id): view from this Sim's eyes; 0 = off"},
     {"set_body_root", setBodyRoot, METH_VARARGS, "set_body_root(px, py, pz, qx, qy, qz, qw)"},
+    {"set_sim_level", setSimLevel, METH_VARARGS, "set_sim_level(level): the Sim's level; below 0 only that level is drawn"},
     {"set_floor", setFloor, METH_VARARGS, "set_floor(y): floor height the camera looks at"},
+    {"photo_probe", photoProbe, METH_VARARGS, "photo_probe(n): log n applyEye lines"},
+    {"photo_session", photoSession, METH_VARARGS, "photo_session(1|0): the game's photo session runs"},
     {"on_gameplay", onGameplay, METH_VARARGS, "on_gameplay(1|0): entering or leaving a lot"},
     {"set_scale", setScale, METH_VARARGS, "set_scale(s): game units per metre of head movement"},
     {"walk_input", walkInput, METH_NOARGS, "Left stick in body mode: (x, z, strength) in the world, or None"},
@@ -833,6 +920,8 @@ PyMethodDef methods[] = {
     {"running", running, METH_NOARGS, "1 while running (left stick tapped in first person), 0 walking"},
     {"click_hand", clickHand, METH_NOARGS, "hand of the last click into the world in first person: 0 left, 1 right, -1 none"},
     {"pie_shown", pieShown, METH_NOARGS, "1 while the pie menu shows at your hand"},
+    {"door_watch", doorWatch, METH_VARARGS, "door_watch(id, ...): follow up to 8 doors' open state"},
+    {"door_open", doorOpen, METH_VARARGS, "door_open(id): 1 if Sims are passing through that watched door"},
     {"door", door, METH_VARARGS, "door(object_id, 1|0): swing a door open for the player, or let it close"},
     {"walk_stop", walkStop, METH_VARARGS, "walk_stop(object_id, route_id): end our client walk route"},
     {"dll_log", dllLog, METH_VARARGS, "dll_log(text): a line in sims4vr.log (with its time)"},
@@ -873,6 +962,7 @@ PyMethodDef methods[] = {
     {"phone_sim", phoneSim, METH_VARARGS, "phone_sim(bytes): the played Sim's skills for the phone's My Sim app (phonesim.py)"},
     {"phone_calendar", phoneCalendar, METH_VARARGS, "phone_calendar(bytes): the game's calendar for the phone (phonecal.py)"},
     {"note_over", noteOver, METH_VARARGS, "note_over(id, x, y, z, front): a notification card over a Sim's head; 0: none"},
+    {"lot_intro", lotIntro, METH_VARARGS, "lot_intro(bytes): the lot you arrived at, shown in front of you while the eyes are shut (lotintro.py; b'': stop)"},
     {"notebook_content", notebookContent, METH_VARARGS, "notebook_content(bytes): the game's notebook for the book in your hand (b'': gone)"},
     {"phone_content", phoneContent, METH_VARARGS, "phone_content(bytes): the game's phone menu for the phone in your hand (b'': gone)"},
     {"hud_missing_icons", hudMissingIcons, METH_NOARGS, "hud_missing_icons() -> packed u64 instances the HUD still needs"},
@@ -900,9 +990,13 @@ PyMethodDef methods[] = {
      "set_grabbables(id, x, y, z, reach, ...): up to 12 objects you can pick up near you"},
     {"collision_scene", collisionScene, METH_VARARGS, "collision_scene(bytes): walls and furniture around you (collide.py)"},
     {"hand_event", handEvent, METH_NOARGS, "(kind, hand, object_id) of the oldest grab (1) / let go (2), or None"},
+    {"high_five", highFive, METH_VARARGS, "high_five(sim_id, side, seconds): that Sim raises a hand to your raised one"},
     {"set_touch_restricted", setTouchRestricted, METH_VARARGS, "set_touch_restricted(*sim_ids): hand/arms/shoulders/back/hair only"},
-    {"gesture_event", gestureEvent, METH_NOARGS, "(kind, hand, head xyz, forward xyz, palm xyz) of the oldest hand gesture (1 wave, 2 come hither), or None"},
+    {"ask_sight", askSight, METH_VARARGS, "ask_sight(sim_id, count, x, y, z, ...): can you and that Sim see each other (up to 4 points)"},
+    {"sight", sight, METH_NOARGS, "(sim_id, state 0 waiting/1 seen/2 in the way/3 not in view, hit type, hit id, hit dist, target dist)"},
+    {"gesture_event", gestureEvent, METH_NOARGS, "(kind, hand, head xyz, forward xyz, palm xyz) of the oldest hand gesture (1 wave, 2 come hither, 3 follow me), or None"},
     {"touch_event", touchEvent, METH_NOARGS, "(kind, hand, region, actor, value) of the oldest Sim body touch, or None"},
+    {"foley_event", foleyEvent, METH_NOARGS, "(kind, hand, part, actor, into, along, (x, y, z)) of the oldest touch sound, or None"},
     {"grab_set", grabSet, METH_VARARGS, "grab_set(hand, object_id): what that hand holds now (0: nothing)"},
     {"hand_joint", handJoint, METH_VARARGS,
      "hand_joint(hand) -> (sim_id, (x,y,z), (qx,qy,qz,qw)) of the first-person Sim's hand, or None"},

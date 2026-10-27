@@ -15,3 +15,5 @@ src/linkdump.*
 tools/map_dx9.py
 tools/toolchain/
 build-release/
+# The user's own sound files (licensed packs): shipped in builds, never in the public repo
+sounds/

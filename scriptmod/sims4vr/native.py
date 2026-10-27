@@ -202,9 +202,24 @@ def set_body_root(position, orientation):
                            orientation.x, orientation.y, orientation.z, orientation.w)
 
 
+def set_sim_level(level):
+    if _mod is not None:
+        _mod.set_sim_level(level)
+
+
 def set_floor(y):
     if _mod is not None:
         _mod.set_floor(y)
+
+
+def photo_probe(lines):
+    if _mod is not None:
+        _mod.photo_probe(lines)
+
+
+def photo_session(on):
+    if _mod is not None:
+        _mod.photo_session(1 if on else 0)
 
 
 def on_gameplay(playing):
@@ -285,10 +300,24 @@ def set_player_state(free_allowed, blocked_mask, floor, flight=None):
                 _mod.set_player_state(free, blocked_mask, *floor[:5])
 
 
-def door(object_id, open_):
-    """Swing a door open for the player (count them in), or let it close."""
+def door_watch(ids):
+    """Follow up to 8 doors' open state (Sims passing through them)."""
+    if _mod is not None and hasattr(_mod, 'door_watch'):
+        _mod.door_watch(*ids[:8])
+
+
+def door_open(object_id):
+    """True if the game has Sims passing through this watched door (it is open)."""
+    if _mod is not None and hasattr(_mod, 'door_open'):
+        return bool(_mod.door_open(object_id))
+    return False
+
+
+def door(object_id, open_, front=True):
+    """Swing a door open for the player (count them in), or let it close.
+    front: you come from its front side (mode 1; 2 from the back)."""
     if _mod is not None:
-        _mod.door(object_id, 1 if open_ else 0)
+        _mod.door(object_id, (1 if front else 2) if open_ else 0)
 
 
 def set_held(ids):
@@ -327,6 +356,13 @@ def set_eyes_held(held):
     fn = _optional('set_eyes_held')  # absent in a DLL older than the script
     if fn is not None:
         fn(bool(held))
+
+
+def lot_intro(packed):
+    """The lot you arrived at, shown in front of you while the eyes are shut (lotintro.py); b'': stop."""
+    fn = _optional('lot_intro')  # absent in a DLL older than the script
+    if fn is not None:
+        fn(bytes(packed))
 
 
 def set_body_view(on):
@@ -756,6 +792,14 @@ def hand_event():
     return fn() if fn is not None else None
 
 
+def high_five(sim_id, side, seconds):
+    """That Sim raises a hand toward your raised `side` hand (0 left, 1 right)
+    for `seconds` (0 withdraws); your palm meeting it is touch event kind 7."""
+    fn = _optional('high_five')
+    if fn is not None:
+        fn(int(sim_id), int(side), float(seconds))
+
+
 def set_touch_restricted(ids):
     """Sims (up to 16) whose body may only be held at the hand, arms,
     shoulders, back and hair."""
@@ -769,6 +813,44 @@ def touch_event():
     body: kind 1 took hold, 2 let go (value seconds), 3 pulled hard (value
     metres); actor = its client object (compare object_ptr). None if none."""
     fn = _optional('touch_event')
+    return fn() if fn is not None else None
+
+
+def foley_event():
+    """(kind, hand, part, actor, into, along, (x, y, z)) of the oldest touch sound: kind 1 your hand met
+    another Sim's body (into, along: metres a second), 2 a rub along it, 3 took hold of it, 4
+    took its hand; part 0 torso, 1 head, 2/3 upper arms, 4/5 forearms, 6/7 thighs, 8/9 calves,
+    10 its hand, 11 its hips; 5 a slap or punch (knockout.py, along 1 a punch); 6 your hand hit an
+    object or wall at (x, y, z) (part = material * 4 + hit). None if none."""
+    fn = _optional('foley_event')
+    return fn() if fn is not None else None
+
+
+def ask_sight(sim_id, points):
+    """Can you and that Sim see each other: the game's pick from your eye
+    through each world point (x, y, z), head first, up to 4. Answer: sight()."""
+    fn = _optional('ask_sight')
+    if fn is None:
+        return False
+    flat = []
+    for p in list(points)[:4]:
+        flat.extend(float(v) for v in p)
+    fn(int(sim_id), len(flat) // 3, *flat)
+    return True
+
+
+def sight():
+    """(sim_id, state, hit_type, hit_id, hit_distance, target_distance) of the
+    last ask_sight: state 0 waiting, 1 seen, 2 something in the way, 3 none of
+    the points in your view. None without the DLL."""
+    fn = _optional('sight')
+    return fn() if fn is not None else None
+
+
+def gesture_event():
+    """(kind, hand, head, forward, palm) of the oldest hand gesture (kind 1
+    wave, 2 come hither, 3 follow me; hand 0 left; world points/direction as (x, y, z)). None if none."""
+    fn = _optional('gesture_event')
     return fn() if fn is not None else None
 
 

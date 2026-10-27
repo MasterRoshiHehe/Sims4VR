@@ -213,6 +213,10 @@ float pickerHeight();
 void setPhoneContent(const char* data, size_t size);
 // Python (notebook.py): the game's notebook for the book in your hand, records split by 0x1e (see notebook.py); empty: gone.
 void setNotebookContent(const char* data, size_t size);
+// Python (lotintro.py): the lot intro (a crop of the vanilla UI's arrival banner) starts for <seconds> (text); empty: stop.
+void setLotIntro(const char* data, size_t size);
+// Any thread: the lot intro is playing (in, shown, out).
+bool lotIntroShowing();
 // How many spreads the notebook has as drawn last (render thread's layout; 0 before the first draw).
 int notebookSpreads();
 // A spread the pointer asked for (a category cell, the page corners) since the last call; -1 none.

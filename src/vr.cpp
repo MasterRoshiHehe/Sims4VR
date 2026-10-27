@@ -75,6 +75,7 @@ namespace s4vr::vr {
 #include "vr_parts/12_hud.inc"
 #include "vr_parts/13_sims1_screen.inc"
 #include "vr_parts/13b_build_tray.inc"
+#include "vr_parts/13c_viewfinder.inc"
 #include "vr_parts/14_phone.inc"
 #include "vr_parts/14b_notebook.inc"
 #include "vr_parts/15_settings_menu.inc"

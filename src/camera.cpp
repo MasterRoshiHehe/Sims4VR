@@ -223,6 +223,7 @@ std::atomic<float> g_latestYaw{NAN};  // the heading the newest frame was render
 // one is drawn from that left eye's place and heading, and the body isn't
 // moved in between; Present shows only whole pairs (vr.cpp renderStereo).
 std::atomic<bool> g_pairedEyes{true};
+bool g_pairHave = false;  // g_pairBase has been set once (the phone lens' frame is drawn from it)
 struct PairBase {
     bool valid = false;
     bool freeMove = false;
@@ -567,15 +568,30 @@ Quat multiply(const Quat& a, const Quat& b) {
 
 // Joint positions are expected in world space. If the first one lands far
 // from where Python says the Sim is, treat them as relative to the Sim.
+// Just after a load (Claude Bustin Out's drive ending as the game placed the
+// Sim) the head joint and the Sim's place can be from either side of that
+// move, hundreds of metres apart: a head relative to the Sim is within a few
+// metres of the origin, so far from both no frame decides (you'd be put in
+// the void for the whole lot); after 120 such frames: world space.
 bool toWorld(float head[3]) {
     std::lock_guard<std::mutex> lock(g_rootMutex);
     if (g_jointSpace == 0) {
         if (!g_rootKnown) return true;  // nothing to compare with yet
         float dx = head[0] - g_rootPosition[0], dz = head[2] - g_rootPosition[2];
-        g_jointSpace = dx * dx + dz * dz < 4.0f ? 1 : 2;
-        LOG("Head joint is %s (head %.2f %.2f %.2f, Sim at %.2f %.2f %.2f)",
+        const bool nearSim = dx * dx + dz * dz < 4.0f;
+        const bool nearOrigin = head[0] * head[0] + head[1] * head[1] + head[2] * head[2] < 16.0f;
+        static int undecided = 0;
+        if (!nearSim && !nearOrigin && ++undecided < 120) {
+            if (undecided == 1)
+                LOG("Head joint %.2f %.2f %.2f is far from the Sim at %.2f %.2f %.2f and from the origin: waiting for both to settle",
+                    head[0], head[1], head[2], g_rootPosition[0], g_rootPosition[1], g_rootPosition[2]);
+            return false;
+        }
+        g_jointSpace = nearSim || !nearOrigin ? 1 : 2;
+        LOG("Head joint is %s (head %.2f %.2f %.2f, Sim at %.2f %.2f %.2f, %d frames waited)",
             g_jointSpace == 1 ? "in world space" : "relative to the Sim", head[0], head[1], head[2], g_rootPosition[0],
-            g_rootPosition[1], g_rootPosition[2]);
+            g_rootPosition[1], g_rootPosition[2], undecided);
+        undecided = 0;
     }
     if (g_jointSpace == 2) {
         if (!g_rootKnown) return false;
@@ -1191,18 +1207,21 @@ void applyEye(uint8_t* dst) {
     // The stick's turn waits for the next pair and the body stays where it is.
     const int eyeIndex = g_pending.eye;
     const bool paired = g_pairedEyes.load(std::memory_order_relaxed) && body;
-    const bool second = paired && eyeIndex == 1 && g_lastAppliedEye == 0 && g_pairBase.valid;
+    // The phone lens' picture (eye 2, a photo session): drawn from where the last pair was, in its place in the
+    // eyes' cycle, so the pair after it carries on as if it hadn't come between.
+    const bool photo = eyeIndex == 2 && g_pairHave && paired;
+    const bool second = photo || (paired && eyeIndex == 1 && g_lastAppliedEye == 0 && g_pairBase.valid);
     // A left eye straight after a right eye that worked out its place
     // (paired hands): drawn from there, nothing moves on.
     const NextBase next = g_nextBase;
-    g_nextBase.valid = false;
+    if (!photo) g_nextBase.valid = false;
     const bool useNext = paired && eyeIndex == 0 && g_lastAppliedEye == 1 && next.valid && next.actor == actor &&
                          actor && g_jointSpace == 1;
-    g_lastAppliedEye = eyeIndex;
+    if (!photo) g_lastAppliedEye = eyeIndex;
     if (second && ++g_pairs == 1) LOG("Paired eyes: the right eye drawn from where the left eye was (first person)");
     // Paired hands: the right eye of a free-moving pair moves the player on
     // for the next pair (taking the stick's turn), without moving the body yet.
-    const bool goAhead = second && g_pairedHands.load(std::memory_order_relaxed) && g_pairBase.freeMove && actor &&
+    const bool goAhead = second && !photo && g_pairedHands.load(std::memory_order_relaxed) && g_pairBase.freeMove && actor &&
                        g_jointSpace == 1;
     float turn = (second && !goAhead) || useNext ? 0.0f : g_turnRequest.exchange(0);
     const float oldLead = g_turnLead;
@@ -1405,6 +1424,7 @@ void applyEye(uint8_t* dst) {
     g_lastFree = freeMove || movedAhead;
     g_pairBase.valid = paired && !second && eyeIndex == 0;
     if (g_pairBase.valid) {
+        g_pairHave = true;
         g_pairBase.freeMove = freeMove;
         g_pairBase.yaw = yaw;
         g_pairBase.lead = yawLead;
@@ -1613,7 +1633,7 @@ void applyEye(uint8_t* dst) {
     // Free movement turns your body with the view (the stick turns both), so
     // it can go to the headset on its own layer; in the game's animations
     // (seated) the view turns over a body that stays.
-    if (body && actor && freeMove && g_bodyLayer.load(std::memory_order_relaxed)) {
+    if (body && actor && freeMove && !photo && g_bodyLayer.load(std::memory_order_relaxed)) {
         const Vec3 right = rotate(q, {1, 0, 0}), up = rotate(q, {0, 1, 0}), back = rotate(q, {0, 0, 1});
         bodyParts(actor, eyeWorld, right, up, {-back.x, -back.y, -back.z}, s, rendered.body);
         float clip[2];
@@ -3057,6 +3077,9 @@ void setWorldScale(float scale) {
 float worldScale() { return g_config.worldScale; }
 
 void setFloor(float worldY) { g_floorY = worldY; }
+std::atomic<bool> g_photoSession{false};
+void setPhotoSession(bool on) { g_photoSession.store(on); }
+bool photoSession() { return g_photoSession.load(); }
 void setPhotoProbe(int lines) {
     g_photoProbe.store(lines);
     g_photoCopyProbe.store(lines);

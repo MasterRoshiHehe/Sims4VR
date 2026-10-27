@@ -19,6 +19,11 @@ except Exception as e:
     native._log('no-auto-eat unavailable: {!r}'.format(e))
 
 try:
+    from sims4vr import pair  # noqa: F401
+except Exception as e:
+    native._log('paired animations unavailable: {!r}'.format(e))
+
+try:
     from sims4vr import onesim  # noqa: F401
 except Exception as e:
     native._log('one Sim in first person unavailable: {!r}'.format(e))
@@ -69,6 +74,11 @@ try:
 except Exception as e:  # the camera finder is optional; VR still works without it
     camwatch = None
     native._log('camwatch unavailable: {!r}'.format(e))
+
+try:
+    from sims4vr import photowatch  # noqa: F401  (probe: photo session start)
+except Exception as e:
+    native._log('photowatch unavailable: {!r}'.format(e))
 
 Live = sims4.commands.CommandType.Live
 

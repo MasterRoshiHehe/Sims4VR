@@ -310,7 +310,10 @@ def _you_walk(interaction, you, other, picked, social=True):
                         return spot
                 return constraint
             if getattr(who, 'id', None) == other.id:
-                spot = _here(other)
+                from sims4vr import facing, pair
+                if touch == 'jig' and pair.anchoring():
+                    return constraint  # pair.py fitted the jig to your body: their slot is right in front of you
+                spot = facing.here(other, facing.you_at(you))  # where they stand, facing you
             elif getattr(who, 'id', None) == you.id and _first_person(you):
                 if stay:
                     spot = _here(you)

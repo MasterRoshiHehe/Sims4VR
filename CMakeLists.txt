@@ -45,7 +45,10 @@ add_library(sims4vr SHARED
     src/addrs.cpp
     src/api.cpp
     src/armik.cpp
+    src/ragdoll.cpp
+    src/foleyaudio.cpp
     src/handshape.cpp
+    src/bodyshape.cpp
     src/camera.cpp
     src/player.cpp
     src/collide.cpp
@@ -65,6 +68,7 @@ add_library(sims4vr SHARED
     src/walkstop.cpp
     src/eyelids.cpp
     src/facehide.cpp
+    src/godhands.cpp
     src/framecost.cpp
     src/hitch.cpp
     src/simcache.cpp
@@ -75,6 +79,7 @@ add_library(sims4vr SHARED
     src/deptheye.cpp
     src/touch.cpp
     src/grab.cpp
+    src/gesture.cpp
     src/d3d9_hook.cpp
     src/d3d11_hook.cpp
     src/log.cpp

@@ -167,6 +167,8 @@ void pitchBody(float radians);
 bool floorInXr(float& y);
 // The game's floor height in world units (the point its camera looks at).
 void setFloor(float worldY);
+void setPhotoSession(bool on);  // the game's photo session runs (photowatch.py): the phone lens is drawn as a third frame
+bool photoSession();
 void setPhotoProbe(int lines);  // log that many applyEye lines (photo session probe)
 // Projects a world point through the game's own (unmodified) camera, the one
 // it uses for mouse picking. x right, y up, -1..1 across the window.

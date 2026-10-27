@@ -70,6 +70,106 @@ static bool voidLayer(ID3D11Device* device, XrTime time, XrCompositionLayerProje
     return true;
 }
 
+// Claude Bustin Out (a separate mod, claudebustinout.dll): while its drive to the
+// next lot runs, the headset shows you in the driver's seat instead of the flat
+// loading screen. That mod draws both eyes itself (cbo_vr_render); this side only
+// hands it this frame's views and two swapchain images, so nothing of it lives here.
+using BustinActiveFn = int (*)();
+using BustinRenderFn = int (*)(ID3D11Device*, ID3D11DeviceContext*, ID3D11Texture2D* const*, int, int, int, const float*);
+static BustinActiveFn g_bustinActive = nullptr;
+static BustinRenderFn g_bustinRender = nullptr;
+
+static bool bustinOutDriving() {
+    if (!g_bustinActive) {
+        static ULONGLONG nextLook = 0;  // its script loads it after us: looked for every 3 s
+        const ULONGLONG now = GetTickCount64();
+        if (now < nextLook) return false;
+        nextLook = now + 3000;
+        HMODULE mod = GetModuleHandleW(L"claudebustinout.dll");
+        if (!mod) return false;
+        auto active = reinterpret_cast<BustinActiveFn>(GetProcAddress(mod, "cbo_vr_active"));
+        auto render = reinterpret_cast<BustinRenderFn>(GetProcAddress(mod, "cbo_vr_render"));
+        if (!active || !render) {
+            nextLook = ~0ull;
+            LOG("Claude Bustin Out is loaded but too old for the headset (no cbo_vr_render)");
+            return false;
+        }
+        g_bustinRender = render;
+        g_bustinActive = active;
+        LOG("Claude Bustin Out found: its drive is shown in the headset");
+    }
+    return g_bustinActive() != 0;
+}
+
+static bool driveLayer(ID3D11Texture2D* backbuffer, XrTime time, XrCompositionLayerProjection& layer,
+                       XrCompositionLayerProjectionView (&views)[2]) {
+    XrViewLocateInfo locate{XR_TYPE_VIEW_LOCATE_INFO};
+    locate.viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+    locate.displayTime = time;
+    locate.space = g_appSpace;
+    XrViewState viewState{XR_TYPE_VIEW_STATE};
+    XrView located[2] = {{XR_TYPE_VIEW}, {XR_TYPE_VIEW}};
+    uint32_t count = 0;
+    if (!XR_SUCCEEDED(xrLocateViews(g_session, &locate, &viewState, 2, &count, located)) || count != 2 ||
+        !(viewState.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT))
+        return false;
+    // 0.8 of the headset's own size (it is simple scenery), at most 2048 tall.
+    uint32_t w = g_recommended[0][0] ? g_recommended[0][0] * 4 / 5 : 1832;
+    uint32_t h = g_recommended[0][1] ? g_recommended[0][1] * 4 / 5 : 1920;
+    if (h > 2048) {
+        w = w * 2048 / h;
+        h = 2048;
+    }
+    D3D11_TEXTURE2D_DESC like{};
+    like.Width = w;
+    like.Height = h;
+    like.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    bool recreated = false;
+    if (!ensureSwapchain(g_driveChains[0], like, recreated) || !ensureSwapchain(g_driveChains[1], like, recreated) ||
+        g_driveChains[0].format != g_driveChains[1].format)
+        return false;
+    uint32_t index[2] = {};
+    if (!acquireImage(g_driveChains[0], index[0])) return false;
+    XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+    if (!acquireImage(g_driveChains[1], index[1])) {
+        xrReleaseSwapchainImage(g_driveChains[0].handle, &release);
+        return false;
+    }
+    float eyes[22];
+    for (int eye = 0; eye < 2; ++eye) {
+        const XrPosef& p = located[eye].pose;
+        const XrFovf& f = located[eye].fov;
+        const float v[11] = {p.position.x,       p.position.y,        p.position.z,     p.orientation.x,
+                             p.orientation.y,    p.orientation.z,     p.orientation.w,  std::tan(f.angleLeft),
+                             std::tan(f.angleRight), std::tan(f.angleUp), std::tan(f.angleDown)};
+        std::memcpy(eyes + eye * 11, v, sizeof(v));
+    }
+    ID3D11Texture2D* const targets[2] = {g_driveChains[0].images[index[0]].texture,
+                                         g_driveChains[1].images[index[1]].texture};
+    ID3D11Device* device = nullptr;
+    ID3D11DeviceContext* context = nullptr;
+    backbuffer->GetDevice(&device);
+    device->GetImmediateContext(&context);
+    const bool drawn = g_bustinRender(device, context, targets, static_cast<int>(g_driveChains[0].format), static_cast<int>(w),
+                                      static_cast<int>(h), eyes) != 0;
+    context->Release();
+    device->Release();
+    const bool released = check(xrReleaseSwapchainImage(g_driveChains[0].handle, &release), "xrReleaseSwapchainImage") &
+                          check(xrReleaseSwapchainImage(g_driveChains[1].handle, &release), "xrReleaseSwapchainImage");
+    if (!drawn || !released) return false;
+    for (int eye = 0; eye < 2; ++eye) {
+        views[eye] = {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW};
+        views[eye].pose = located[eye].pose;
+        views[eye].fov = located[eye].fov;
+        views[eye].subImage = subImage(g_driveChains[eye]);
+    }
+    layer = {XR_TYPE_COMPOSITION_LAYER_PROJECTION};
+    layer.space = g_appSpace;
+    layer.viewCount = 2;
+    layer.views = views;
+    return true;
+}
+
 // Every layer is checked before it goes to the runtime: a NaN or absurd pose
 // or size can take the headset's compositor down with it.
 static bool saneFloat(float v, float limit) { return std::isfinite(v) && std::fabs(v) <= limit; }

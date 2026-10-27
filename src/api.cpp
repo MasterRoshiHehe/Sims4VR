@@ -52,6 +52,7 @@
 #include "modelbox.h"
 #include "meshshape.h"
 #include "modelparse.h"
+#include "foleyaudio.h"
 #include "nodim.h"
 #include "pointer.h"
 #include "vr.h"
@@ -143,6 +144,7 @@ S4VR_API int s4vr_init() {
     }
     s4vr::crashlog::install(g_moduleDir);
     s4vr::screenshot::init(g_moduleDir);
+    s4vr::foleyaudio::init(g_moduleDir);  // your own touch sounds (sounds/touch)
     g_config = s4vr::loadConfig(g_moduleDir + L"\\sims4vr.ini");
     {
         std::wstring ini = g_moduleDir + L"\\sims4vr.ini";
@@ -174,7 +176,10 @@ S4VR_API int s4vr_init() {
     s4vr::facehide::install(g_config.bodyHideFace);
     s4vr::godhands::setEnabled(g_config.bodyGodHands);
     s4vr::armik::configureTouch(g_config.touchBodies, g_config.holdHands, g_config.lookAtYou, g_config.grabBodies);
-    s4vr::armik::configureGrab(g_config.grabCurl, g_config.grabDrag);
+    s4vr::armik::setLookAtHand(g_config.lookAtHand, g_config.lookSpeed, g_config.lookEyesWithin, g_config.lookHeadFrom);
+    s4vr::gesture::setHighFiveHold(g_config.highFiveHold);
+    s4vr::gesture::setShoo(g_config.shooAngle, static_cast<int>(g_config.shooFlicks + 0.5f));
+    s4vr::armik::configureGrab(g_config.grabCurl, g_config.grabDrag, g_config.breastCurl, g_config.buttCurl);
     s4vr::armik::loadGameGrip(g_moduleDir + L"\\sims4vr_grips.ini");
     if (g_config.armIk) {
         s4vr::voice::Settings voice;
@@ -263,6 +268,7 @@ S4VR_API int s4vr_on_gameplay(int playing) {
     return playing && g_config.playInBody ? 2 : 1;
 }
 
+S4VR_API void s4vr_set_sim_level(int level) { s4vr::gamefix::setSimLevel(level); }
 S4VR_API void s4vr_set_scale(float scale) { s4vr::camera::setWorldScale(scale); }
 
 S4VR_API void s4vr_set_player_state(int freeAllowed, unsigned int blockedMask, const float* floor,
@@ -274,8 +280,11 @@ S4VR_API int s4vr_walk_pose(float* out) { return s4vr::player::pose(out) ? 1 : 0
 // 1 while running (a tap of the left stick in first person), 0 walking.
 S4VR_API int s4vr_running() { return s4vr::player::running() ? 1 : 0; }
 
-// Count the player into (open = 1) or out of (open = 0) a door, so it swings.
-S4VR_API void s4vr_door(unsigned long long objectId, int open) { s4vr::doorswing::request(objectId, open != 0); }
+// Count the player into (mode 1 from the front, 2 from the back) or out of (0) a door, so it swings.
+// The doors to follow (up to 8) and whether the game has one open (Sims passing through).
+S4VR_API void s4vr_door_watch(const unsigned long long* ids, int count) { s4vr::doorswing::watch(ids, count); }
+S4VR_API int s4vr_door_open(unsigned long long objectId) { return s4vr::doorswing::isOpen(objectId) ? 1 : 0; }
+S4VR_API void s4vr_door(unsigned long long objectId, int mode) { s4vr::doorswing::request(objectId, mode); }
 
 S4VR_API void s4vr_set_held(const unsigned long long* ids, int count) {
     s4vr::camera::setHeldCandidates(reinterpret_cast<const uint64_t*>(ids), count);
@@ -347,6 +356,11 @@ S4VR_API void s4vr_phone_content(const char* data, int size) {
 S4VR_API void s4vr_notebook_content(const char* data, int size) {
     s4vr::strings::start();
     s4vr::hud::setNotebookContent(data, size > 0 ? static_cast<size_t>(size) : 0);
+}
+// The lot you arrived at (hud::setLotIntro), shown while the eyes are shut for the load; empty: stop.
+S4VR_API void s4vr_lot_intro(const char* data, int size) {
+    s4vr::strings::start();
+    s4vr::hud::setLotIntro(data, size > 0 ? static_cast<size_t>(size) : 0);
 }
 S4VR_API void s4vr_phone_notes(const char* data, int size) {
     s4vr::strings::start();
@@ -483,6 +497,9 @@ S4VR_API void s4vr_grab_set(int hand, unsigned long long id) { s4vr::grab::setHe
 // 2 let go (value seconds), 3 pulled hard (value metres); actor = the Sim's
 // client object (compare s4vr_object_ptr). Returns 0 if none.
 // Sims whose body may only be held at the hand, arms, shoulders, back and hair (armik.cpp).
+S4VR_API void s4vr_high_five(unsigned long long simId, int side, float seconds) {
+    s4vr::armik::offerHighFive(s4vr::camera::objectPointer(simId), side, seconds);
+}
 S4VR_API void s4vr_set_touch_restricted(const unsigned long long* ids, int count) {
     void* actors[16] = {};
     int n = 0;
@@ -500,7 +517,24 @@ S4VR_API int s4vr_touch_event(int* kind, int* hand, int* region, unsigned long l
     *value = e.value;
     return 1;
 }
-// The oldest hand gesture (gesture.cpp): kind 1 wave, 2 come hither; out[0..8] = your eyes,
+// The oldest touch sound event (armik.cpp, foley.py): kind 1 your hand met a body
+// (into, along: metres a second), 2 a rub, 3 a grab, 4 took a hand; part 0-9
+// armik's body parts, 10 its hand, 11 its hips. Returns 0 if none.
+// kind 5 a slap or punch (knockout.py), 6 an object or wall (at: where, world; part material * 4 + hit).
+S4VR_API int s4vr_foley_event(int* kind, int* hand, int* part, unsigned long long* actor, float* into, float* along,
+                              float* at) {
+    s4vr::armik::FoleyEvent e;
+    if (!s4vr::armik::takeFoleyEvent(e)) return 0;
+    *kind = e.kind;
+    *hand = e.hand;
+    *part = e.part;
+    *actor = reinterpret_cast<unsigned long long>(e.actor);
+    *into = e.into;
+    *along = e.along;
+    for (int i = 0; i < 3; ++i) at[i] = e.at[i];
+    return 1;
+}
+// The oldest hand gesture (gesture.cpp): kind 1 wave, 2 come hither, 3 follow me; out[0..8] = your eyes,
 // where you look and the hand's palm, in the world. Returns 0 if none.
 S4VR_API int s4vr_gesture_event(int* kind, int* hand, float* out) {
     s4vr::gesture::Event e;
@@ -511,6 +545,22 @@ S4VR_API int s4vr_gesture_event(int* kind, int* hand, float* out) {
     std::memcpy(out + 3, e.forward, 3 * sizeof(float));
     std::memcpy(out + 6, e.palm, 3 * sizeof(float));
     return 1;
+}
+// Can you and that Sim see each other (touch.cpp askSight): points = x, y, z
+// world (up to 4: head first). The answer comes through s4vr_sight.
+S4VR_API void s4vr_ask_sight(unsigned long long simId, const float* xyz, int count) {
+    s4vr::touch::askSight(simId, xyz, count);
+}
+// out: state (0 waiting, 1 seen, 2 in the way, 3 not in view), hit pick type;
+// ids: Sim, hit object; dist: hit, target (world units from your eye).
+S4VR_API void s4vr_sight(int* out, unsigned long long* ids, float* dist) {
+    s4vr::touch::Sight s = s4vr::touch::sight();
+    out[0] = s.state;
+    out[1] = s.hitType;
+    ids[0] = s.simId;
+    ids[1] = s.hitId;
+    dist[0] = s.hitDistance;
+    dist[1] = s.targetDistance;
 }
 // Head and hands in the world: out[0..8] head position, forward, up; then per
 // hand (10 floats): valid, palm xyz, orientation xyzw, grip, trigger. held[2]:
@@ -578,6 +628,8 @@ S4VR_API int s4vr_walk_input(float* out) { return s4vr::vr::walkInput(out[0], ou
 
 // Height of the floor the game camera looks at, for the laser pointer.
 S4VR_API void s4vr_set_floor(float worldY) { s4vr::camera::setFloor(worldY); }
+S4VR_API void s4vr_photo_probe(int lines) { s4vr::camera::setPhotoProbe(lines); }
+S4VR_API void s4vr_photo_session(int on) { s4vr::camera::setPhotoSession(on != 0); }
 
 // Writes a NUL-terminated status line into buffer; returns its full length.
 S4VR_API int s4vr_status(char* buffer, int size) {

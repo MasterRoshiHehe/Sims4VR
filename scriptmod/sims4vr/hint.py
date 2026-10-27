@@ -78,7 +78,7 @@ stopped (halt.py).
 """
 import time
 
-from sims4vr import native
+from sims4vr import facing, native
 
 CHECK_EVERY = 0.5  # seconds
 LEVEL_APART = 2.0  # metres up or down: on another floor (they follow you up or down)
@@ -691,6 +691,7 @@ def update(sim, px, py, pz):
             if _errors <= 5:
                 _log('reading how the walks ended failed: {!r}'.format(e))
         _this_check.clear()
+        facing.update(sim, px, py, pz, now)
         groups = list(sim.get_groups_for_sim_gen())
         if not groups:
             _leaving.clear()
@@ -714,8 +715,8 @@ def update(sim, px, py, pz):
                     _errors += 1
                     if _errors <= 5:
                         _log('following you failed: {!r}'.format(e))
-                if native.setting_flag('body', 'turn_to_you', True) and id(group) not in _leaving:
-                    _turn(sim, group, others, px, py, pz, now)
+                if id(group) not in _leaving:
+                    facing.group(sim, group, others, px, py, pz, now)  # facing.py replaced _turn
         for table in (_leaving, _followed, _first_seen, _every):
             for key in list(table):
                 if key not in live:

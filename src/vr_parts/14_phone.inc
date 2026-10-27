@@ -218,8 +218,12 @@ static void updatePhone(const armik::Hand& hand, int side) {
         hideHud(g_phoneSheet);
         return;
     }
+    // A photo session with the phone out: its screen is the viewfinder, the picture from the phone's back (18_stereo.inc).
+    const bool photoView = app && camera::photoSession() && viewfinderReady();
     D3D11_TEXTURE2D_DESC ui{};
-    if (app) {
+    if (photoView) {
+        ui = g_viewfinderDesc;
+    } else if (app) {
         ui.Width = hud::kWidth;
         ui.Height = hud::kHeight;
     } else {
@@ -229,7 +233,11 @@ static void updatePhone(const armik::Hand& hand, int side) {
     int32_t crop[4];
     defaultPhoneCrop(W, H, crop);
     if (g_phoneFound) std::memcpy(crop, g_phoneCrop, sizeof(crop));
-    if (app) {
+    if (photoView) {
+        crop[0] = crop[1] = 0;  // the part that fits the glass is taken below
+        crop[2] = W;
+        crop[3] = H;
+    } else if (app) {
         crop[0] = static_cast<int32_t>(hud::kPhone.x);
         crop[1] = static_cast<int32_t>(hud::kPhone.y);
         crop[2] = static_cast<int32_t>(hud::kPhone.w);
@@ -331,6 +339,16 @@ static void updatePhone(const armik::Hand& hand, int side) {
     g_sims1Phone.glassW = screenW;
     g_sims1Phone.glassH = screenH;
     g_sims1Phone.glass = depth / 2 + 0.001f;
+    if (photoView) {  // the picture fills the glass: its middle part, as wide as the glass is to its height
+        const float glass = screenW / screenH;
+        if (static_cast<float>(W) / static_cast<float>(H) > glass) {
+            crop[2] = static_cast<int32_t>(H * glass);
+            crop[0] = (W - crop[2]) / 2;
+        } else {
+            crop[3] = static_cast<int32_t>(W / glass);
+            crop[1] = (H - crop[3]) / 2;
+        }
+    }
     float aspect = tiles ? g_tabletAspect : static_cast<float>(crop[2]) / static_cast<float>(crop[3]);
     float menuW = screenW, menuH = screenW / aspect;
     if (menuH > screenH) {
@@ -391,6 +409,17 @@ static void updatePhone(const armik::Hand& hand, int side) {
             g_phone.tileSrc[k][i] = tileSrc[k][i];
             p3.tileSrc[k][i] = tileSrc[k][i] / static_cast<float>(i % 2 ? H : W);
         }
+    }
+    if (photoView) {
+        hideTray();
+        p3.wallpaper = false;
+        p3.edges = false;
+        phone3d::setPhone(p3, g_viewfinder);
+        g_phone.active = false;
+        g_phone.armed[0] = g_phone.armed[1] = false;
+        g_phone.pressing = -1;
+        hideHud(g_phoneSheet);
+        return;
     }
     if (app && g_sims1Phone.on) {  // Sims 1 on it (13_sims1_screen.inc): the phone's own menu isn't pressed
         hideTray();

@@ -230,6 +230,12 @@ Config loadConfig(const std::wstring& ini) {
     three("lot_intro_pos", c.wristLotPos);
     three("lot_intro_turn", c.wristLotTurn);
     c.wristLotSize = readFloat(ini, "wrist", "lot_intro_size", c.wristLotSize);
+    c.wristLotCropW = readFloat(ini, "wrist", "lot_intro_crop_w", c.wristLotCropW);
+    c.wristLotCropH = readFloat(ini, "wrist", "lot_intro_crop_h", c.wristLotCropH);
+    c.wristLotCropY = readFloat(ini, "wrist", "lot_intro_crop_y", c.wristLotCropY);
+    if (!(c.wristLotCropW >= 0.1f && c.wristLotCropW <= 1)) c.wristLotCropW = 0.42f;
+    if (!(c.wristLotCropH >= 0.05f && c.wristLotCropH <= 1)) c.wristLotCropH = 0.26f;
+    if (!(c.wristLotCropY >= -0.5f && c.wristLotCropY <= 0.5f)) c.wristLotCropY = 0;
     if (!(c.pieCrop >= 0.2f && c.pieCrop <= 3.0f)) c.pieCrop = 0.75f;
     if (!(c.pieWidth >= 0.1f && c.pieWidth <= 1.5f)) c.pieWidth = 0.96f;
     if (c.pieMode < 0 || c.pieMode > 2) c.pieMode = 0;
@@ -241,6 +247,7 @@ Config loadConfig(const std::wstring& ini) {
     c.snapAngle = readFloat(ini, "controls", "snap_angle", c.snapAngle);
     c.snapAngleBig = readFloat(ini, "controls", "snap_angle_big", c.snapAngleBig);
     c.recenterTurnsBody = readBool(ini, "controls", "recenter_turns_body", c.recenterTurnsBody);
+    c.doorPushSpeed = readFloat(ini, "body", "door_push_speed", c.doorPushSpeed);
     c.trailArrive = readFloat(ini, "body", "trail_arrive", c.trailArrive);
     c.trailStopDist = readFloat(ini, "body", "trail_stop_dist", c.trailStopDist);
     c.trailArriveContact = readFloat(ini, "body", "trail_arrive_contact", c.trailArriveContact);
@@ -442,10 +449,15 @@ Config loadConfig(const std::wstring& ini) {
     c.lookSpeed = readFloat(ini, "physical", "look_speed", 5.0f);
     c.lookEyesWithin = readFloat(ini, "physical", "look_eyes_within", 0.3f);
     c.lookHeadFrom = readFloat(ini, "physical", "look_head_from", 0.8f);
+    c.shooAngle = readFloat(ini, "gestures", "shoo_angle", 45.0f);
+    c.shooFlicks = readFloat(ini, "gestures", "shoo_flicks", 2.0f);
+    c.highFiveHold = readFloat(ini, "gestures", "high_five_hold", 2.5f);
     c.headRepel = readInt(ini, "physical", "head", 1) != 0;
     c.headRadius = readFloat(ini, "physical", "head_radius", 0.08f);
     c.grabBodies = readInt(ini, "physical", "grab_bodies", 1) != 0;
     c.grabCurl = readFloat(ini, "physical", "grab_curl", c.grabCurl);
+    c.breastCurl = readFloat(ini, "physical", "breast_grab_curl", c.breastCurl);
+    c.buttCurl = readFloat(ini, "physical", "butt_grab_curl", c.buttCurl);
     c.grabDrag = readFloat(ini, "physical", "grab_drag", c.grabDrag);
     c.touchHaptics = readInt(ini, "physical", "haptics", 1) != 0;
     c.foleyLightCloth = readInt(ini, "foley", "light_cloth", c.foleyLightCloth);
@@ -465,6 +477,7 @@ Config loadConfig(const std::wstring& ini) {
     c.foleyObjectPunch = readInt(ini, "foley", "object_punch", c.foleyObjectPunch);
     c.foleyObjectMetal = readInt(ini, "foley", "object_metal", c.foleyObjectMetal);
     c.foleyObjectSoft = readInt(ini, "foley", "object_soft", c.foleyObjectSoft);
+    c.foleyObjectMetalTap = readInt(ini, "foley", "object_metal_tap", c.foleyObjectMetalTap);
     c.grab = readInt(ini, "hands", "grab", 1) != 0;
     c.bodyTurnSmoothing = readFloat(ini, "body", "turn_smoothing", c.bodyTurnSmoothing);
     if (!(c.bodyTurnSmoothing >= 0 && c.bodyTurnSmoothing <= 1.0f)) c.bodyTurnSmoothing = 0.1f;

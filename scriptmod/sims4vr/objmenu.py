@@ -789,8 +789,8 @@ def _send_popup_content(dialog):
             except Exception as e:
                 _log('popup pictures failed: {!r}'.format(e))
         # A Sim asking you something, with the palm or dynamic pie (user 2026-10-23, [ui] chat_pie): their question
-        # alone on the card beside them (no pictures, no buttons), your answers on the pie at your palm.
-        as_pie = (chat and not _chat_buttons and len(msg.choices) > 0 and native.setting_flag('ui', 'chat_pie', True) and
+        # alone on the card beside them (only near; far away it is the card in front with both portraits, user 2026-10-24) (no pictures, no buttons), your answers on the pie at your palm.
+        as_pie = (chat and _popup is not None and _popup[1] == POPUP_SIM and not _chat_buttons and len(msg.choices) > 0 and native.setting_flag('ui', 'chat_pie', True) and
                   native.setting_flag('ui', 'own_pie', True) and native.setting('ui', 'pie_mode', '0') in ('1', '2'))
         if as_pie:
             left = right = 0

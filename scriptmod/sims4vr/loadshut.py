@@ -4,6 +4,9 @@ begin() (autostereo.py, first person starts with the lot) holds the eyelids shut
 (native.set_eyes_held) and pauses the game clock; walk._tick calls update() and
 the first moment you can move (the game no longer has the Sim, or the stick is
 pushed) opens the eyes and sets the clock back. TIMEOUT opens them anyway.
+Lot intro (lotintro.py, [wrist] lot_intro): when you can move, the game's arrival banner (lot name, household, traits)
+plays in front of you for lotintro.SECONDS with the eyes still shut and time paused; they open when it ends, or at
+once when the stick is pushed.
 Save/exit: saving.py calls save_begin()/save_end() around saves started from the
 exit menus (empty slot name). Switches: [body] load_eyes_closed, exit_eyes_closed.
 """
@@ -17,6 +20,7 @@ _held = False
 _since = 0.0
 _speed = None  # clock speed before we paused
 _saving = False
+_intro_end = 0.0  # monotonic time the lot intro ends; 0 when it is not playing
 
 
 def _clock():
@@ -42,8 +46,19 @@ def begin():
     native._log('loadshut: eyes shut, time paused until you can move')
 
 
+def _keep_paused():
+    try:  # the game un-pauses when the load ends: keep it paused
+        from date_and_time import clock
+        game_clock = _clock()
+        if game_clock is not None and game_clock.clock_speed != clock.ClockSpeedMode.PAUSED:
+            game_clock.set_clock_speed(clock.ClockSpeedMode.PAUSED)
+    except Exception:
+        pass
+
+
 def update(game, pushing):
     """Every walk tick: release once you control your movement."""
+    global _intro_end
     if not _held:
         return
     why = None
@@ -53,6 +68,19 @@ def update(game, pushing):
         why = 'the stick is pushed'
     elif time.monotonic() - _since > TIMEOUT:
         why = 'timeout {} s'.format(int(TIMEOUT))
+    if _intro_end:  # the lot's banner plays over the shut eyes
+        if pushing or time.monotonic() >= _intro_end:
+            release('lot intro ' + ('skipped' if pushing else 'over'))
+        else:
+            _keep_paused()
+        return
+    if why == 'you can move':
+        from sims4vr import lotintro
+        seconds = lotintro.start()
+        if seconds:
+            _intro_end = time.monotonic() + seconds
+            native._log('loadshut: lot intro for {:.1f} s'.format(seconds))
+            return
     if why is None:
         try:  # the game un-pauses when the load ends: keep it paused
             from date_and_time import clock
@@ -66,10 +94,14 @@ def update(game, pushing):
 
 
 def release(why):
-    global _held, _speed
+    global _held, _speed, _intro_end
     if not _held:
         return
     _held = False
+    if _intro_end:
+        _intro_end = 0.0
+        from sims4vr import lotintro
+        lotintro.stop()
     native.set_eyes_held(_saving)
     try:
         from date_and_time import clock
@@ -87,9 +119,13 @@ def release(why):
 
 def reset():
     """Out of first person."""
-    global _held, _saving
+    global _held, _saving, _intro_end
     _held = False
     _saving = False
+    if _intro_end:
+        _intro_end = 0.0
+        from sims4vr import lotintro
+        lotintro.stop()
     native.set_eyes_held(False)
 
 

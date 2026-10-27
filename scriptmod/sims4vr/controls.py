@@ -159,6 +159,35 @@ def _fill_needs():
     native._log('controls: filled the needs of {} {}'.format(sim_info.first_name, sim_info.last_name))
 
 
+def _everyone_feels(love):
+    """Every Sim here (instanced, not you) hates or loves your Sim: friendship
+    and romance to the lowest or highest (user 2026-10-26 21:30Z, debug menu
+    Testing cheats and phone Cheats). Romance only where it can be: never with
+    children, a teen with an adult, or family (bodygrab's rules)."""
+    from relationships.relationship_track import RelationshipTrack
+    from sims4vr import bodygrab
+    you = services.get_active_sim()
+    if you is None:
+        native._log('controls: everyone {}: no Sim'.format('loves' if love else 'hates'))
+        return
+    service = services.relationship_service()
+    value = 100 if love else -100
+    count = romanced = 0
+    for sim in services.sim_info_manager().instanced_sims_gen():
+        if sim is you or not sim.sim_info.is_human:
+            continue
+        try:
+            service.set_relationship_score(you.sim_id, sim.sim_id, value, RelationshipTrack.FRIENDSHIP_TRACK)
+            if not bodygrab._too_young(you, sim) and not bodygrab._family(you, sim):
+                service.set_relationship_score(you.sim_id, sim.sim_id, value, RelationshipTrack.ROMANCE_TRACK)
+                romanced += 1
+            count += 1
+        except Exception as e:
+            native._log('controls: everyone feels: {} failed: {!r}'.format(sim.sim_info.first_name, e))
+    native._log('controls: {} Sims here now {} you (romance too for {})'.format(
+        count, 'love' if love else 'hate', romanced))
+
+
 # Sims4VR menu > Other mods > Claude Performance: actions 70-76 (that mod's own console commands;
 # it shows each answer as a game notification).
 _PERF_COMMANDS = ('perf.status', 'perf.freeze on', 'perf.freeze off', 'perf.log on', 'perf.log off',
@@ -261,6 +290,8 @@ def _tick(_handle):
         _build_buy()
         from sims4vr import phonesim
         phonesim.tick()
+        from sims4vr import phonesound
+        phonesound.tick()
         for _ in range(4):
             what = native.control_event()
             if what == 1:
@@ -290,8 +321,6 @@ def _tick(_handle):
             elif 40 <= what <= 43:
                 from sims4vr import hudinfo
                 hudinfo.dismiss_want(what - 40)
-        from sims4vr import phonesound
-        phonesound.tick()
             elif 50 <= what <= 59:
                 from sims4vr import objmenu
                 objmenu.answer_popup(what - 50)
@@ -355,6 +384,9 @@ def _tick(_handle):
                 # The build tablet's tray: bb.moveobjects on / off, hidden and live-edit objects (toggles).
                 _console(('bb.moveobjects on', 'bb.moveobjects off', 'bb.showhiddenobjects',
                           'bb.showliveeditobjects')[what - 7700000], client_side=True)
+            elif 7650000 <= what < 7652000:
+                from sims4vr import foley
+                foley.preview(what - 7650000)
             elif 7600000 <= what < 7600002:
                 from sims4vr import notebook
                 notebook.flip_sound(what - 7600000)
@@ -391,6 +423,8 @@ def _tick(_handle):
             elif what >= 1000:
                 from sims4vr import objmenu
                 objmenu.answer_picker(what - 1000)
+            elif what in (14, 15):
+                _everyone_feels(what == 15)
             elif what in (5, 7, 8, 10):
                 _testing_cheats(True)  # the testing buttons turn testing cheats on too
                 if what == 5:

@@ -71,13 +71,29 @@ bool headRepelOn(float& radiusMetres);
 void setSmoothSlide(bool on);
 
 // First person: seconds walking takes to come to rest after you let go of the
-// stick ([body] stop_time), easing in and out; 0 = the old quick stop.
+// stick ([body] stop_time), easing in and out; 0 = at once.
 void setStopTime(float seconds);
+// [body] stop_glide: slowing down covers the walk's stop clip distance
+// (setClipStop) instead of [body] stop_time.
+void setStopGlide(bool on);
 
 // Any thread: running (a tap of the left stick switches it). Free movement
 // goes at the run speed and Python gives the walk the Sim's run walkstyle.
 // Off again when first person ends.
 void setRunning(bool on);
+
+// First person crouch ([body] crouch, right stick pushed down): the view sinks
+// by depthMetres over seconds, walking slows to speedFactor of its pace.
+void configureCrouch(bool enabled, float depthMetres, float speedFactor, float seconds);
+// Any thread: flip crouching. Only while you walk freely (not in an animation,
+// action, scene or seat); standing up always works. False if refused.
+bool toggleCrouch();
+// Any thread: crouching (wanted, even if still sinking) and how far down you
+// are, 0 standing to 1 fully crouched.
+bool crouching();
+float crouchAmount();
+// Any thread: how far the view is lowered right now, game units (armik drops the pelvis by it).
+float crouchDropWorld();
 // Present thread, every headset frame in first person ([stereo]
 // walk_display_clock): the time the headset shows that frame for (its
 // refreshes since the frame before). The next update moves you by the time

@@ -808,6 +808,13 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
             camera::turnBody(g_stickRate * dt);
             benchmark::turned(g_stickRate * dt);
         }
+        // Right stick pushed down (and not to the side, which snaps/turns) = crouch toggle, once per push.
+        static bool crouchArmed = true;
+        if (right.y > -0.3f) crouchArmed = true;
+        if (crouchArmed && right.y < -0.8f && a < 0.5f && camera::bodyActive()) {
+            crouchArmed = false;
+            if (player::toggleCrouch()) buzz(1, player::crouching() ? 0.4f : 0.25f, 0.05f);
+        }
         // Up/down tilts the view, only while it lies with your Sim's body
         // (WickedWhims animations and the like); the camera drops it otherwise.
         float b = std::fabs(right.y);

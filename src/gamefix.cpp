@@ -72,6 +72,8 @@ struct RoomHistory {
     void* rooms = nullptr;
     std::vector<ULONGLONG> seen;
     std::vector<camera::Vec3> seenFrom;
+    int32_t roomHere = -2;
+    ULONGLONG graceUntil = 0;  // after your room changes, every room is drawn whole for a while
 };
 RoomHistory g_history[4];
 int g_historyNext = 0;
@@ -82,6 +84,7 @@ uint64_t g_held = 0, g_widened = 0;
 std::atomic<float> g_eyeX{0}, g_eyeY{0}, g_eyeZ{0};
 std::atomic<bool> g_eyeKnown{false};
 std::atomic<bool> g_roomsWhole{true};
+std::atomic<bool> g_roomsAll{true};  // [body] rooms_all: every room whole, always (2026-10-26: objects vanished after a door)
 ULONGLONG g_nextSwitchRead = 0;
 
 void holdRooms(uint8_t* rooms) {
@@ -109,9 +112,21 @@ void holdRooms(uint8_t* rooms) {
     bool eyeKnown = whole && g_eyeKnown.load(std::memory_order_relaxed);
     camera::Vec3 eye{g_eyeX.load(std::memory_order_relaxed), g_eyeY.load(std::memory_order_relaxed),
                      g_eyeZ.load(std::memory_order_relaxed)};
+    int32_t roomHere = *reinterpret_cast<int32_t*>(block + kKindRoomHere);
+    if (roomHere != h->roomHere) {
+        h->roomHere = roomHere;
+        h->graceUntil = now + 3000;
+    }
+    bool everything = whole && (g_roomsAll.load(std::memory_order_relaxed) || now < h->graceUntil);
     bool held = false, widened = false;
     for (size_t i = 0; i < count; ++i) {
         uint8_t* entry = begin + i * 0x28;
+        if (everything && entry[0] == 0) {
+            entry[0] = 1;
+            h->seen[i] = now;
+            widened = true;
+            continue;
+        }
         bool throughDoorway = *reinterpret_cast<uint64_t*>(entry + 0x10) != *reinterpret_cast<uint64_t*>(entry + 8);
         if (entry[0] != 0 || throughDoorway) {
             h->seen[i] = now;
@@ -281,6 +296,7 @@ ClearOverrideFn g_clearOverride = nullptr;
 uint8_t* g_wallsUpOp = nullptr;
 std::atomic<ULONGLONG> g_holdWallsUntil{0};  // first person: keepTopFloor keeps pushing this ahead
 std::atomic<uint64_t> g_refusedClears{0};
+std::atomic<int> g_simLevel{0};  // the first-person Sim's level (routing surface secondary id), from the script
 
 void hookedClearOverride(void* lot, int slot, uint8_t reapply) {
     if (slot == 3 && GetTickCount64() < g_holdWallsUntil.load(std::memory_order_relaxed)) {
@@ -320,16 +336,30 @@ int shownLevel() {
     return lot ? static_cast<int8_t>(lot[0x14c]) : kNoLevel;
 }
 
+void setSimLevel(int level) { g_simLevel.store(level, std::memory_order_relaxed); }
+
 void keepTopFloor() {
     g_holdWallsUntil.store(GetTickCount64() + 1000, std::memory_order_relaxed);
     if (!g_setOverride || !g_topLevel) return;
     uint8_t* lot = activeLot();
     if (!lot) return;
     uint8_t top = static_cast<uint8_t>(g_topLevel(lot, 0));
+    // Below ground (a basement) the game shows only that level, walls up, as
+    // in its own basement view: with every floor shown the basement's walls
+    // were not drawn (user 2026-10-27, marks 17:32).
+    int simLevel = g_simLevel.load(std::memory_order_relaxed);
+    bool below = simLevel < 0 && simLevel >= -2;
+    // The lowest level the lot has (the zone's +0x128, a signed byte: -1 with a
+    // basement). The override's bottom was 0, which left a basement's walls
+    // and floor out of the shown range: invisible basement walls.
+    uint8_t* zoneInfo = *reinterpret_cast<uint8_t**>(lot + 0xb8);
+    uint8_t bottom = zoneInfo ? zoneInfo[0x128] : 0;
+    if (below) top = bottom = static_cast<uint8_t>(static_cast<int8_t>(simLevel));
     constexpr int kSlot = 3;
     uint8_t* slot = lot + 0xec + kSlot * 0x14;
-    bool ours = slot[0] && slot[2] == top && *reinterpret_cast<uint32_t*>(slot + 4) == 2;
-    bool shown = static_cast<uint8_t>(lot[0x14c]) == top && *reinterpret_cast<uint32_t*>(lot + 0x150) == 2;
+    bool ours = slot[0] && slot[2] == top && slot[3] == bottom && *reinterpret_cast<uint32_t*>(slot + 4) == 2;
+    bool shown = static_cast<uint8_t>(lot[0x14c]) == top && static_cast<uint8_t>(lot[0x14d]) == bottom &&
+                 *reinterpret_cast<uint32_t*>(lot + 0x150) == 2;
     if (ours && shown) return;
     ULONGLONG now = GetTickCount64();
     if (now < g_nextTopFloor) return;  // re-applying rebuilds the walls; never every frame
@@ -350,14 +380,16 @@ void keepTopFloor() {
     }
     int wasLevel = static_cast<int8_t>(lot[0x14c]);
     uint32_t wasWalls = *reinterpret_cast<uint32_t*>(lot + 0x150);
-    g_setOverride(lot, top, 0, 2, 0, kSlot, 0, 0);  // what the OverrideWallsUp op does
-    bool won = static_cast<uint8_t>(lot[0x14c]) == top && *reinterpret_cast<uint32_t*>(lot + 0x150) == 2;
+    g_setOverride(lot, top, bottom, 2, 0, kSlot, 0, 0);  // what the OverrideWallsUp op does
+    bool won = static_cast<uint8_t>(lot[0x14c]) == top && static_cast<uint8_t>(lot[0x14d]) == bottom &&
+               *reinterpret_cast<uint32_t*>(lot + 0x150) == 2;
     if (!won) g_nextTopFloor = now + 5000;  // a higher-priority override holds it; try again later
     ++g_topFloorFixes;
     if (g_topFloorFixes <= 5 || g_topFloorFixes % 100 == 0)
-        LOG("Top floor #%llu: the game dropped walls-up / all floors (showing level %d, walls %u); %s (top level %d)",
+        LOG("Top floor #%llu: the game dropped walls-up / all floors (showing level %d, walls %u); %s (levels %d to %d)",
             static_cast<unsigned long long>(g_topFloorFixes), wasLevel, wasWalls,
-            won ? "restored" : "another override still wins", static_cast<int>(top));
+            won ? "restored" : "another override still wins", static_cast<int>(static_cast<int8_t>(bottom)),
+            static_cast<int>(top));
 }
 
 void setFirstPerson(bool on) {
@@ -378,6 +410,10 @@ void setFirstPerson(bool on) {
             g_nextSwitchRead = now + 500;
             std::string value;
             bool whole = !settings::liveValue("body", "rooms_whole", value) || value.empty() || value[0] != '0';
+            std::string all;
+            bool allOn = !settings::liveValue("body", "rooms_all", all) || all.empty() || all[0] != '0';
+            if (g_roomsAll.exchange(allOn, std::memory_order_relaxed) != allOn)
+                LOG("Room culling: every room %s", allOn ? "drawn whole" : "left to the doorway rules");
             if (g_roomsWhole.exchange(whole, std::memory_order_relaxed) != whole)
                 LOG("Room culling: rooms you look into %s", whole ? "drawn whole" : "culled like the game does");
         }

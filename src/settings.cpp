@@ -23,6 +23,7 @@
 #include "godhands.h"
 #include "collide.h"
 #include "walkstop.h"
+#include "gesture.h"
 #include "grab.h"
 #include "hud.h"
 #include "log.h"
@@ -88,15 +89,27 @@ const Page kFixedPages[] = {
     {L"Game", L"Game settings", L"Options"},
     {L"Passive objects", L"Objects around you", L"Game"},
     {L"Reach", L"Reach and walking to things", L"Game"},
+    {L"Trail", L"Footprint trail", L"Reach"},
     {L"Other Sims", L"Other Sims", L"Game"},
+    {L"Other Sims talk", L"Talking and following", L"Other Sims"},
+    {L"Other Sims hugs", L"Hugs and kisses", L"Other Sims"},
     {L"Other Sims touch", L"Touching and grabbing", L"Other Sims"},
-    {L"Other Sims gestures", L"Hand gestures", L"Other Sims"},
-    {L"Touch sounds", L"Touch sounds", L"Other Sims"},
+    {L"Other Sims hits", L"Hits and fights", L"Other Sims"},
+    {L"Knockout", L"Knock out", L"Other Sims hits"},
+    {L"Other Sims grab", L"Grabbing", L"Other Sims touch"},
+    {L"Other Sims reactions", L"How they react", L"Other Sims touch"},
+    {L"Other Sims look at hand", L"They look at your hand", L"Other Sims touch"},
+    {L"Other Sims hit strength", L"How hard a touch counts", L"Other Sims hits"},
+    {L"Other Sims gestures", L"Hand gestures", L"Controls"},
+    {L"Gesture follow", L"Follow me", L"Other Sims gestures"},
+    {L"Gesture shoo", L"Shoo", L"Other Sims gestures"},
+    {L"Other Sims high five", L"High five and taps", L"Other Sims gestures"},
+    {L"Touch sounds", L"Touch and hit sounds", L"Sound"},
     {L"Touch sounds cloth", L"On clothes", L"Touch sounds"},
     {L"Touch sounds skin", L"On bare skin", L"Touch sounds"},
     {L"Touch sounds volume", L"Volume of your own sounds", L"Touch sounds"},
-    {L"Touch sounds hits", L"Slaps and punches", L"Touch sounds"},
     {L"Touch sounds objects", L"Hitting objects", L"Touch sounds"},
+    {L"Ragdoll", L"Ragdoll falls", L"Other Sims hits"},
     {L"Loading", L"Loading and saving", L"Game"},
     {L"Graphics", L"Graphics & Performance", L"Options"},
     {L"View picture", L"Picture", L"Graphics"},
@@ -110,11 +123,15 @@ const Page kFixedPages[] = {
     {L"Sound", L"Sound", L"Options"},
     {L"Controls", L"Controls", L"Options"},
     {L"Moving", L"Moving", L"Controls"},
+    {L"Collision", L"Walls and furniture", L"Controls"},
+    {L"Crouch", L"Crouch", L"Moving"},
     {L"Turning", L"Turning", L"Controls"},
     {L"Hands", L"Hands and touch", L"Controls"},
+    {L"Doors", L"Doors", L"Hands"},
     {L"View head", L"Head and body", L"Controls"},
     {L"View place", L"Place your view", L"View head"},
     {L"Interface", L"Interface", L"Options"},
+    {L"Handhelds", L"Phone, tablet and notebook", L"Interface"},
     {L"Menus pie", L"Pie menu", L"Interface"},
     {L"Menus pickers", L"Pickers on objects", L"Interface"},
     {L"Menus popups", L"Popups", L"Interface"},
@@ -136,7 +153,7 @@ const Page kFixedPages[] = {
     {L"Bubbles pops", L"Your stat and relationship pops", L"Bubbles"},
     {L"Bubbles scandal", L"Your scandal mark", L"Bubbles"},
     {L"Bubbles others", L"Other Sims' bubbles", L"Bubbles"},
-    {L"Phone", L"Phone", L"Interface"},
+    {L"Phone", L"Phone", L"Handhelds"},
     {L"Phone position", L"Position", L"Phone"},
     {L"Phone hand", L"Hand", L"Phone"},
     {L"Phone size", L"Size and screen", L"Phone"},
@@ -145,8 +162,8 @@ const Page kFixedPages[] = {
     {L"Phone sf", L"Sims Forever", L"Phone"},
     {L"Phone sf left", L"Left hand", L"Phone sf"},
     {L"Phone sf right", L"Right hand", L"Phone sf"},
-    {L"Tablet", L"Tablet", L"Interface"},
-    {L"Notebook", L"Notebook", L"Interface"},
+    {L"Tablet", L"Tablet", L"Handhelds"},
+    {L"Notebook", L"Notebook", L"Handhelds"},
     {L"Notebook position", L"Position", L"Notebook"},
     {L"Notebook hand", L"Hand", L"Notebook"},
     {L"Notebook size", L"Size and turning pages", L"Notebook"},
@@ -408,13 +425,13 @@ std::vector<Row> makeRows() {
         number(L"Turning", L"Snap turn angle (small push)", "controls", "snap_angle", &Config::snapAngle, 15, 90, 15, 1, L"%.0f°"),
         number(L"Turning", L"Snap turn angle (stick all the way, 0 = same)", "controls", "snap_angle_big", &Config::snapAngleBig, 0,
                180, 15, 1, L"%.0f°"),
-        flag(L"Reach", L"Walk there yourself (footprint trail)", "body", "trail", true, kLive),  // trail.py
-        number(L"Reach", L"Trail: how near its end starts the action", "body", "trail_arrive", &Config::trailArrive, 0.3f, 2,
+        flag(L"Trail", L"Walk there yourself (footprint trail)", "body", "trail", true, kLive),  // trail.py
+        number(L"Trail", L"Trail: how near its end starts the action", "body", "trail_arrive", &Config::trailArrive, 0.3f, 2,
                0.1f, 100, L"%.0f cm"),  // trail.py
-        number(L"Reach", L"Trail: the same for touching socials", "body", "trail_arrive_contact", &Config::trailArriveContact,
+        number(L"Trail", L"Trail: the same for touching socials", "body", "trail_arrive_contact", &Config::trailArriveContact,
                0.1f, 1, 0.05f, 100, L"%.0f cm"),  // trail.py
-        flag(L"Reach", L"Trail: Sims you walk to stop and face you", "body", "trail_stop", true, kLive),  // trail.py
-        number(L"Reach", L"Trail: how near you are when they stop", "body", "trail_stop_dist", &Config::trailStopDist, 1, 10, 0.5f, 1,
+        flag(L"Trail", L"Trail: Sims you walk to stop and face you", "body", "trail_stop", true, kLive),  // trail.py
+        number(L"Trail", L"Trail: how near you are when they stop", "body", "trail_stop_dist", &Config::trailStopDist, 1, 10, 0.5f, 1,
                L"%.1f m"),  // trail.py
         toggle(L"Turning", L"Recenter turns your body to your view (in actions: view to the body)", "controls",
                "recenter_turns_body", &Config::recenterTurnsBody),
@@ -431,7 +448,7 @@ std::vector<Row> makeRows() {
         toggle(L"Phone", L"Phone at your hip", "phone", "phone", &Config::phone),
         flag(L"Phone", L"Notifications about one Sim over their head (off: phone only)", "phone", "notes_overhead", true, kLive),  // notify.py
         flag(L"Phone", L"Game camera for photos and selfies (off: no photo session, testing)", "photo", "game_camera", true, kLive),  // photowatch.py
-        toggle(L"Hands", L"Mic moves your Sim's mouth", "voice", "mic", &Config::voiceMic, kNextStart),
+        toggle(L"View head", L"Mic moves your Sim's mouth", "voice", "mic", &Config::voiceMic, kNextStart),
         link(front, L"Options", L"Options"),
         reset,
         link(L"Options", L"Game settings", L"Game"),
@@ -443,6 +460,31 @@ std::vector<Row> makeRows() {
         link(L"Game", L"Other Sims", L"Other Sims"),
         link(L"Game", L"Loading and saving", L"Loading"),
         link(L"Game", L"Objects around you", L"Passive objects"),
+        link(L"Other Sims", L"Talking and following", L"Other Sims talk"),
+        link(L"Other Sims", L"Hugs and kisses", L"Other Sims hugs"),
+        link(L"Other Sims", L"Touching and grabbing", L"Other Sims touch"),
+        link(L"Other Sims", L"Hits and fights", L"Other Sims hits"),
+        link(L"Other Sims hits", L"How hard a touch counts", L"Other Sims hit strength"),
+        link(L"Other Sims hits", L"Knock out", L"Knockout"),
+        link(L"Other Sims hits", L"Ragdoll falls", L"Ragdoll"),
+        link(L"Reach", L"Footprint trail", L"Trail"),
+        link(L"Hands", L"Doors", L"Doors"),
+        link(L"Moving", L"Crouch", L"Crouch"),
+        link(L"Other Sims gestures", L"Follow me", L"Gesture follow"),
+        link(L"Other Sims gestures", L"Shoo", L"Gesture shoo"),
+        link(L"Other Sims gestures", L"High five and taps", L"Other Sims high five"),
+        link(L"Sound", L"Touch and hit sounds", L"Touch sounds"),
+        link(L"Interface", L"Wrist HUD", L"HUD"),
+        link(L"Interface", L"Notification card", L"HUD note"),
+        link(L"Interface", L"Pie menu", L"Menus pie"),
+        link(L"Interface", L"Pickers on objects", L"Menus pickers"),
+        link(L"Interface", L"Popups", L"Menus popups"),
+        link(L"Interface", L"Speech bubbles and skill bars", L"Bubbles"),
+        link(L"Interface", L"Panels and flat screen", L"Menus panels"),
+        link(L"Interface", L"Phone, tablet and notebook", L"Handhelds"),
+        link(L"Handhelds", L"Phone", L"Phone"),
+        link(L"Handhelds", L"Tablet", L"Tablet"),
+        link(L"Handhelds", L"Notebook", L"Notebook"),
         // passive.py / tvwatch.py: objects affect you without using them (thread "Build passive object effects system")
         flag(L"Passive objects", L"Objects around you affect you", "passive", "on", true, kLive),
         flag(L"Passive objects", L"Log what the game's objects do to you", "passive", "log", true, kLive),
@@ -452,13 +494,12 @@ std::vector<Row> makeRows() {
         flag(L"Passive objects", L"Watch a TV by looking at it", "tv", "gaze", true, kLive),
         scriptNumber(L"Passive objects", L"TV nearby reaches you within", "tv", "nearby", 4, 1, 20, 1, L"%.0f m"),
         scriptNumber(L"Passive objects", L"Fun from a TV nearby (share of watching)", "tv", "passive_share", 0.3f, 0, 1, 0.05f, L"%.2f"),
-        link(L"Other Sims", L"Touching and grabbing", L"Other Sims touch"),
-        link(L"Other Sims", L"Hand gestures", L"Other Sims gestures"),
-        link(L"Other Sims", L"Touch sounds", L"Touch sounds"),
+        link(L"Other Sims touch", L"How they react", L"Other Sims reactions"),
+        link(L"Other Sims touch", L"Grabbing", L"Other Sims grab"),
+        link(L"Other Sims touch", L"They look at your hand", L"Other Sims look at hand"),
         link(L"Touch sounds", L"On clothes", L"Touch sounds cloth"),
         link(L"Touch sounds", L"On bare skin", L"Touch sounds skin"),
         link(L"Touch sounds", L"Volume of your own sounds", L"Touch sounds volume"),
-        link(L"Touch sounds", L"Slaps and punches", L"Touch sounds hits"),
         link(L"Touch sounds", L"Hitting objects", L"Touch sounds objects"),
         link(L"Graphics", L"Picture", L"View picture"),
         link(L"Graphics", L"Mirrors and reflections", L"View mirrors"),
@@ -469,18 +510,11 @@ std::vector<Row> makeRows() {
         link(L"Graphics", L"Performance and tests", L"View speed"),
         link(L"View eyes", L"Right eye alignment (depth eye)", L"View align"),
         link(L"Controls", L"Moving", L"Moving"),
+        link(L"Controls", L"Walls and furniture", L"Collision"),
         link(L"Controls", L"Turning", L"Turning"),
         link(L"Controls", L"Hands and touch", L"Hands"),
+        link(L"Controls", L"Hand gestures", L"Other Sims gestures"),
         link(L"Controls", L"Head and body", L"View head"),
-        link(L"Interface", L"Wrist HUD", L"HUD"),
-        link(L"Interface", L"Pie menu", L"Menus pie"),
-        link(L"Interface", L"Pickers on objects", L"Menus pickers"),
-        link(L"Interface", L"Popups", L"Menus popups"),
-        link(L"Interface", L"Speech bubbles and skill bars", L"Bubbles"),
-        link(L"Interface", L"Phone", L"Phone"),
-        link(L"Interface", L"Tablet", L"Tablet"),
-        link(L"Interface", L"Notebook", L"Notebook"),
-        link(L"Interface", L"Panels and flat screen", L"Menus panels"),
         // Their pages come from their own menu exports once they are loaded (mergeMenus, v0.13.236/237).
         link(L"Other mods", L"Integrated Body Physics", L"ibp:main"),
         link(L"Other mods", L"Extended Sound Control", L"esc:main"),
@@ -621,30 +655,35 @@ std::vector<Row> makeRows() {
         flag(moving, L"Stairs and ladders carry you", "body", "carried_stairs", true),
         toggle(moving, L"Body drawn at your height (stairs)", "body", "keep_height", &Config::bodyKeepHeight, kWalk),
         toggle(moving, L"Slide smoothly along walls", "body", "smooth_slide", &Config::bodySmoothSlide, kWalk),
-        flag(moving, L"Map walls and furniture around you", "body", "collision_scene", true, kLive),  // collide.py
-        toggle(moving, L"Walls and furniture stop you", "body", "collision", &Config::bodyCollision, kWalk),
-        number(moving, L"Body keeps clear of walls by", "body", "body_radius", &Config::bodyRadius, 0.1f, 0.5f, 0.025f, 100,
+        flag(L"Collision", L"Map walls and furniture around you", "body", "collision_scene", true, kLive),  // collide.py
+        toggle(L"Collision", L"Walls and furniture stop you", "body", "collision", &Config::bodyCollision, kWalk),
+        number(L"Collision", L"Body keeps clear of walls by", "body", "body_radius", &Config::bodyRadius, 0.1f, 0.5f, 0.025f, 100,
                L"%.1f cm", kWalk),
-        number(moving, L"Body keeps clear of furniture by", "body", "furniture_radius", &Config::furnitureRadius, 0.05f, 0.5f,
+        number(L"Collision", L"Body keeps clear of furniture by", "body", "furniture_radius", &Config::furnitureRadius, 0.05f, 0.5f,
                0.01f, 100, L"%.0f cm", kWalk),
-        toggle(moving, L"Hands stop at walls and furniture", "body", "hand_collision", &Config::handCollision, kWalk),
-        number(moving, L"Hand gap to furniture", "body", "hand_object_gap", &Config::handObjectGap, -0.05f, 0.05f,
+        toggle(L"Collision", L"Hands stop at walls and furniture", "body", "hand_collision", &Config::handCollision, kWalk),
+        number(L"Collision", L"Hand gap to furniture", "body", "hand_object_gap", &Config::handObjectGap, -0.05f, 0.05f,
                0.0025f, 100, L"%.2f cm", kWalk),
-        number(moving, L"Hand gap to walls", "body", "hand_wall_gap", &Config::handWallGap, -0.05f, 0.05f, 0.0025f, 100,
+        number(L"Collision", L"Hand gap to walls", "body", "hand_wall_gap", &Config::handWallGap, -0.05f, 0.05f, 0.0025f, 100,
                L"%.2f cm", kWalk),
+        flag(moving, L"Walking animation on stairs", "body", "stairs_walk", true, kLive),  // stride.py
         toggle(moving, L"Start and stop walking animations", "body", "walk_clips", &Config::bodyWalkClips, kWalk),
         number(moving, L"Stop smoothness (0 = instant)", "body", "stop_time", &Config::bodyStopTime, 0, 1.5f, 0.05f, 1,
                L"%.2f s", kWalk),
-        toggle(moving, L"Crouch (push right stick down)", "body", "crouch", &Config::crouch, kWalk),
-        number(moving, L"Crouch depth", "body", "crouch_depth", &Config::crouchDepth, 0.1f, 0.9f, 0.05f, 100, L"%.0f cm",
+        toggle(L"Crouch", L"Crouch (push right stick down)", "body", "crouch", &Config::crouch, kWalk),
+        number(L"Crouch", L"Crouch depth", "body", "crouch_depth", &Config::crouchDepth, 0.1f, 0.9f, 0.05f, 100, L"%.0f cm",
                kWalk),
-        number(moving, L"Crouch walking speed", "body", "crouch_speed", &Config::crouchSpeed, 0.1f, 1, 0.05f, 100,
+        number(L"Crouch", L"Crouch walking speed", "body", "crouch_speed", &Config::crouchSpeed, 0.1f, 1, 0.05f, 100,
                L"%.0f%%", kWalk),
-        number(moving, L"Crouch down/up time", "body", "crouch_seconds", &Config::crouchSeconds, 0.1f, 1.5f, 0.05f, 1,
+        number(L"Crouch", L"Crouch down/up time", "body", "crouch_seconds", &Config::crouchSeconds, 0.1f, 1.5f, 0.05f, 1,
                L"%.2f s", kWalk),
         toggle(moving, L"Glide out over the stop animation", "body", "stop_glide", &Config::bodyStopGlide, kWalk),
 
         flag(L"Reach", L"Only use what's within 1 m", "body", "reach_only", true, kLive),  // reach.py
+        flag(L"Doors", L"Doors open by hand", "body", "manual_doors", true, kLive),  // doors.py, collide.py
+        number(L"Doors", L"Door push: hand speed that opens it", "body", "door_push_speed", &Config::doorPushSpeed, 0.3f, 3,
+               0.1f, 1, L"%.1f m/s"),  // doors.py
+        flag(L"Doors", L"Doors swing the other way", "body", "door_flip", false, kLive),  // doors.py
         flag(L"Reach", L"Grey out what is too far", "body", "grey_far", true, kLive),  // reach.py
         flag(L"Reach", L"Reactions don't stop you", "body", "reactions_in_place", true, kLive),  // scripted.py
         flag(L"Reach", L"The game can't send you to things", "body", "no_errands", true, kLive),  // scripted.py
@@ -656,40 +695,68 @@ std::vector<Row> makeRows() {
 
         toggle(L"Other Sims touch", L"Their bodies stop your hands", "physical", "bodies", &Config::touchBodies, kTouch),
         toggle(L"Other Sims touch", L"Hold hands", "physical", "hold_hands", &Config::holdHands, kTouch),
-        toggle(sims, L"They look at you", "physical", "look_at_you", &Config::lookAtYou, kTouch),
+        toggle(L"Other Sims talk", L"They look at you", "physical", "look_at_you", &Config::lookAtYou, kTouch),
         toggle(L"Other Sims touch", L"Your head stays out of them", "physical", "head", &Config::headRepel, kTouch),
         number(L"Other Sims touch", L"Head keeps clear by", "physical", "head_radius", &Config::headRadius, 0.02f, 0.2f, 0.01f, 100, L"%.0f cm", kTouch),
-        toggle(L"Other Sims touch", L"Grab their bodies (grip + trigger)", "physical", "grab_bodies", &Config::grabBodies, kTouch),
-        number(L"Other Sims touch", L"Grab: finger bend", "physical", "grab_curl", &Config::grabCurl, 0, 1, 0.05f, 100, L"%.0f%%", kTouch),
-        number(L"Other Sims touch", L"Grab: how far you drag them", "physical", "grab_drag", &Config::grabDrag, 0, 0.6f, 0.025f, 100,
+        toggle(L"Other Sims grab", L"Grab their bodies (grip + trigger)", "physical", "grab_bodies", &Config::grabBodies, kTouch),
+        number(L"Other Sims grab", L"Grab: finger bend", "physical", "grab_curl", &Config::grabCurl, 0, 1, 0.05f, 100, L"%.0f%%", kTouch),
+        number(L"Other Sims grab", L"Holding a breast: finger bend", "physical", "breast_grab_curl", &Config::breastCurl, 0, 1, 0.05f, 100, L"%.0f%%", kTouch),
+        number(L"Other Sims grab", L"Holding the butt: finger bend", "physical", "butt_grab_curl", &Config::buttCurl, 0, 1, 0.05f, 100, L"%.0f%%", kTouch),
+        number(L"Other Sims grab", L"Grab: how far you drag them", "physical", "grab_drag", &Config::grabDrag, 0, 0.6f, 0.025f, 100,
                L"%.1f cm", kTouch),
-        flag(L"Other Sims touch", L"They react to being grabbed", "physical", "grab_reactions", true, kLive),  // bodygrab.py
-        flag(L"Other Sims touch", L"They react to being touched", "physical", "touch_reactions", true, kLive),  // bodygrab.py
-        flag(L"Other Sims touch", L"Touches change your relationship", "physical", "touch_relationship", true, kLive),  // bodygrab.py
+        flag(L"Other Sims grab", L"They react to being grabbed", "physical", "grab_reactions", true, kLive),  // bodygrab.py
+        flag(L"Other Sims reactions", L"They react to being touched", "physical", "touch_reactions", true, kLive),  // bodygrab.py
+        scriptNumber(L"Other Sims reactions", L"Touch counts only within your look", "physical", "touch_look_angle", 50, 10, 180, 5,
+                     L"%.0f°"),  // bodygrab.py: 180 = anywhere
+        scriptNumber(L"Other Sims reactions", L"Touch counts from (lighter is ignored)", "physical", "touch_min_speed", 0.15f, 0, 1.5f,
+                     0.05f, L"%.2f m/s"),  // bodygrab.py
+        flag(L"Other Sims reactions", L"Touches change your relationship", "physical", "touch_relationship", true, kLive),  // bodygrab.py
         // reactions.py: what they do about your touches, and how they show what they feel about you
-        flag(L"Other Sims touch", L"A hit or unwelcome touch stops what they do", "physical", "touch_interrupts", true, kLive),
-        flag(L"Other Sims touch", L"They act on it (slap back, yell, hug, kiss...)", "physical", "touch_consequences", true, kLive),
-        scriptNumber(L"Other Sims touch", L"How often they act on it", "physical", "consequence_chance", 1, 0, 3, 0.25f, L"%.2fx"),
-        flag(L"Other Sims touch", L"Hits can start fights", "physical", "touch_fights", true, kLive),
-        flag(L"Other Sims touch", L"Sims who see it call you out", "physical", "touch_witnesses", true, kLive),
-        flag(L"Other Sims touch", L"They show how they feel about you", "physical", "show_feelings", true, kLive),
-        toggle(L"Other Sims touch", L"They look at the hand that touches them", "physical", "look_at_hand", &Config::lookAtHand, kTouch),
-        number(L"Other Sims touch", L"Look: how fast it moves", "physical", "look_speed", &Config::lookSpeed, 1, 20, 0.5f, 1, L"%.1f", kTouch),
-        number(L"Other Sims touch", L"Look: eyes only within", "physical", "look_eyes_within", &Config::lookEyesWithin, 0, 1, 0.05f, 100, L"%.0f cm", kTouch),
-        number(L"Other Sims touch", L"Look: whole head from", "physical", "look_head_from", &Config::lookHeadFrom, 0.1f, 2, 0.05f, 100, L"%.0f cm", kTouch),
-        scriptNumber(sims, L"They follow you from (0 off)", "body", "follow_distance", 2.5f, 0, 10, 0.5f,
+        flag(L"Other Sims reactions", L"A hit or unwelcome touch stops what they do", "physical", "touch_interrupts", true, kLive),
+        flag(L"Other Sims reactions", L"They act on it (slap back, yell, hug, kiss...)", "physical", "touch_consequences", true, kLive),
+        flag(L"Other Sims reactions", L"Hits leave moodlets (angry, hurt, scared)", "physical", "touch_moodlets", true, kLive),
+        scriptNumber(L"Other Sims reactions", L"How often they act on it", "physical", "consequence_chance", 1, 0, 3, 0.25f, L"%.2fx"),
+        flag(L"Other Sims reactions", L"Hits can start fights", "physical", "touch_fights", true, kLive),
+        flag(L"Other Sims reactions", L"Sims who see it call you out", "physical", "touch_witnesses", true, kLive),
+        flag(L"Other Sims reactions", L"They show how they feel about you", "physical", "show_feelings", true, kLive),
+        // bodygrab.force_of: how hard a touch was and how much it hurts there
+        scriptNumber(L"Other Sims hit strength", L"A slap from", "physical", "slap_speed", 1.8f, 0.8f, 4, 0.1f, L"%.1f m/s"),
+        scriptNumber(L"Other Sims hit strength", L"A hard hit from", "physical", "hard_hit_speed", 3, 1.5f, 6, 0.1f, L"%.1f m/s"),
+        scriptNumber(L"Other Sims hit strength", L"How much hits hurt", "physical", "hit_weight", 0.9f, 0, 2, 0.05f, L"%.2fx"),
+        scriptNumber(L"Other Sims hit strength", L"Counts as a hit from (pain)", "physical", "hit_from", 0.3f, 0, 1.5f, 0.05f, L"%.2f"),
+        scriptNumber(L"Other Sims hit strength", L"Counts as a hard hit from (pain)", "physical", "hard_pain", 0.8f, 0.2f, 2, 0.05f, L"%.2f"),
+        scriptNumber(L"Other Sims hit strength", L"How much a hard pull hurts", "physical", "pull_pain", 0.5f, 0, 1.5f, 0.05f, L"%.2fx"),
+        scriptNumber(L"Other Sims hit strength", L"How close you must be for intimate places", "physical", "intimacy_weight", 0.6f, 0, 1.5f, 0.05f, L"%.2fx"),
+        toggle(L"Other Sims look at hand", L"They look at the hand that touches them", "physical", "look_at_hand", &Config::lookAtHand, kTouch),
+        number(L"Other Sims look at hand", L"Look: how fast it moves", "physical", "look_speed", &Config::lookSpeed, 1, 20, 0.5f, 1, L"%.1f", kTouch),
+        number(L"Other Sims look at hand", L"Look: eyes only within", "physical", "look_eyes_within", &Config::lookEyesWithin, 0, 1, 0.05f, 100, L"%.0f cm", kTouch),
+        number(L"Other Sims look at hand", L"Look: whole head from", "physical", "look_head_from", &Config::lookHeadFrom, 0.1f, 2, 0.05f, 100, L"%.0f cm", kTouch),
+        scriptNumber(L"Other Sims talk", L"They follow you from (0 off)", "body", "follow_distance", 2.5f, 0, 10, 0.5f,
                      L"%.1f m"),  // hint.py: the Sims you talk with follow you
-        scriptNumber(sims, L"Talk starts within", "body", "talk_distance", 3, 1, 10, 0.5f,
+        scriptNumber(L"Other Sims talk", L"Talk starts within", "body", "talk_distance", 3, 1, 10, 0.5f,
                      L"%.1f m"),  // scripted.py, reach.py, trail.py: closer, a picked social just starts
-        flag(sims, L"Their chats with you stay where you are", "body", "socials_in_place", true, kLive),  // scripted.py
+        flag(L"Other Sims talk", L"Their chats with you stay where you are", "body", "socials_in_place", true, kLive),  // scripted.py
+        flag(L"Other Sims talk", L"Sims turn to face you in interactions", "body", "face_you", true, kLive),  // facing.py
+        scriptNumber(L"Other Sims talk", L"They turn when facing away more than", "body", "face_angle", 45, 15, 120, 5,
+                     L"%.0f°"),  // facing.py
+        flag(L"Other Sims hugs", L"Hugs and kisses fit your body", "pair", "anchor", true, kLive),  // pair.py
+        flag(L"Other Sims hugs", L"Partner steps onto its spot at the start", "pair", "snap", true, kLive),  // pair.py
+        flag(L"Other Sims hugs", L"Hugs and kisses hold you in place", "pair", "lock", true, kLive),  // pair.py
+        scriptNumber(L"Other Sims hugs", L"Kiss: partner steps in by", "pair", "kiss_in", 10, 0, 40, 1, L"%.0f cm"),  // pair.py
         // gestures.py: hand gestures at other Sims (thread "Hand gesture interactions with Sims")
         flag(L"Other Sims gestures", L"Wave: they wave back", "gestures", "wave", true, kLive),
         flag(L"Other Sims gestures", L"Open-palm come hither: they walk to you", "gestures", "come_hither", true, kLive),
-        flag(L"Other Sims gestures", L"Crooked finger (grip + trigger twice): Follow me", "gestures", "follow_me", true, kLive),
-        flag(L"Other Sims gestures", L"Follow me: they react first (mood, relationship)", "gestures", "follow_reactions", true, kLive),
-        flag(L"Other Sims gestures", L"Follow me: Sims who dislike you refuse", "gestures", "follow_refuse", true, kLive),
-        flag(L"Other Sims gestures", L"Wave at a follower: they wave and stop following", "gestures", "wave_dismiss", true, kLive),
-        flag(L"Other Sims gestures", L"They nod as they come or start following", "gestures", "nod", true, kLive),
+        flag(L"Gesture follow", L"Crooked finger (grip + trigger twice): Follow me", "gestures", "follow_me", true, kLive),
+        flag(L"Gesture follow", L"Follow me: they react first (mood, relationship)", "gestures", "follow_reactions", true, kLive),
+        flag(L"Gesture follow", L"Follow me: Sims who dislike you refuse", "gestures", "follow_refuse", true, kLive),
+        flag(L"Other Sims high five", L"High five: raise an open hand and hold it", "gestures", "high_five", true, kLive),
+        number(L"Other Sims high five", L"High five: hold your hand up for", "gestures", "high_five_hold", &Config::highFiveHold, 0.5f, 6, 0.25f, 1, L"%.2f s", kTouch),
+        flag(L"Other Sims high five", L"Tap or poke twice from behind: they turn to you", "gestures", "tap_to_turn", true, kLive),
+        flag(L"Gesture follow", L"Wave at a follower: they wave and stop following", "gestures", "wave_dismiss", true, kLive),
+        flag(L"Gesture shoo", L"Shoo (both palms down, flick up): they go away", "gestures", "shoo", true, kLive),
+        number(L"Gesture shoo", L"Shoo: how far the fingers swing up", "gestures", "shoo_angle", &Config::shooAngle, 20, 80, 5, 1, L"%.0f deg", kTouch),
+        number(L"Gesture shoo", L"Shoo: flicks needed", "gestures", "shoo_flicks", &Config::shooFlicks, 1, 4, 1, 1, L"%.0f", kTouch),
+        flag(L"Gesture follow", L"They nod as they come or start following", "gestures", "nod", true, kLive),
         flag(L"Other Sims gestures", L"Vibrate when a hand gesture is seen", "gestures", "haptics", false, kLive),
         // foley.py: the game's foley when your hands touch other Sims (thread "Add touch foley sounds for Sim contact");
         // the names must match foley.py's lists.
@@ -697,19 +764,29 @@ std::vector<Row> makeRows() {
         scriptNumber(L"Touch sounds", L"A pat from (into them)", "foley", "pat_speed", 0.5f, 0.1f, 3, 0.1f, L"%.1f m/s"),
         scriptNumber(L"Touch sounds", L"A slap from (into them)", "foley", "slap_speed", 2.2f, 0.5f, 6, 0.1f, L"%.1f m/s"),
         // armik.cpp foleyTrack / knockBack, foleyaudio.cpp (user 2026-10-26 21:30Z)
-        scriptNumber(L"Touch sounds hits", L"A punch from (fist, into them)", "foley", "punch_speed", 1.8f, 0.5f, 6, 0.1f,
+        scriptNumber(L"Touch sounds", L"A punch from (fist, into them)", "foley", "punch_speed", 1.8f, 0.5f, 6, 0.1f,
                      L"%.1f m/s"),
-        flag(L"Touch sounds hits", L"Hits while you walk with the stick", "foley", "walk_hits", true, kLive),
-        percent(scriptNumber(L"Touch sounds hits", L"Knockback where you hit", "foley", "knockback", 1.0f, 0, 2, 0.05f,
+        flag(L"Other Sims hits", L"Hits while you walk with the stick", "foley", "walk_hits", true, kLive),
+        percent(scriptNumber(L"Other Sims hits", L"Knockback where you hit", "foley", "knockback", 1.0f, 0, 2, 0.05f,
                              L"%.0f%%")),
+        // ragdoll.cpp (thread "Build ragdoll system for punching", docs/RAGDOLL.md)
+        flag(L"Ragdoll", L"Ragdoll falls on", "ragdoll", "on", true, kLive),
+        flag(L"Ragdoll", L"Test: your slaps and punches drop the Sim limp", "ragdoll", "test_on_hit", false, kLive),
+        scriptNumber(L"Ragdoll", L"Blow: share of your hand's speed they take", "ragdoll", "strength", 0.5f, 0, 3, 0.05f,
+                     L"%.2f"),
+        scriptNumber(L"Ragdoll", L"Limp for (then they blend back)", "ragdoll", "limp_seconds", 4, 0.5f, 30, 0.5f,
+                     L"%.1f s"),
+        scriptNumber(L"Ragdoll", L"Gravity", "ragdoll", "gravity", 1.0f, 0.2f, 2, 0.1f, L"%.1f x"),
+        scriptNumber(L"Ragdoll", L"Damping (how fast motion dies away)", "ragdoll", "damping", 1.5f, 0, 4, 0.1f,
+                     L"%.1f"),
         // knockout.py (user 2026-10-26 22:03Z)
-        flag(L"Touch sounds hits", L"Knock Sims out", "knockout", "on", true, kLive),
-        scriptNumber(L"Touch sounds hits", L"Knocked out at (daze)", "knockout", "score", 40, 5, 200, 5, L"%.0f"),
-        scriptNumber(L"Touch sounds hits", L"One blow knocks out from (0 = never)", "knockout", "one_blow", 6.0f, 0, 12,
+        flag(L"Knockout", L"Knock Sims out", "knockout", "on", true, kLive),
+        scriptNumber(L"Knockout", L"Knocked out at (daze)", "knockout", "score", 40, 5, 200, 5, L"%.0f"),
+        scriptNumber(L"Knockout", L"One blow knocks out from (0 = never)", "knockout", "one_blow", 6.0f, 0, 12,
                      0.5f, L"%.1f m/s"),
-        scriptNumber(L"Touch sounds hits", L"Daze halves every", "knockout", "recover", 8, 1, 60, 1, L"%.0f s"),
-        flag(L"Touch sounds hits", L"Knocked out unconscious (off: asleep)", "knockout", "unconscious", true, kLive),
-        scriptNumber(L"Touch sounds hits", L"Knocked out for", "knockout", "minutes", 20, 1, 180, 1, L"%.0f Sim min"),
+        scriptNumber(L"Knockout", L"Daze halves every", "knockout", "recover", 8, 1, 60, 1, L"%.0f s"),
+        flag(L"Knockout", L"Knocked out unconscious (off: asleep)", "knockout", "unconscious", true, kLive),
+        scriptNumber(L"Knockout", L"Knocked out for", "knockout", "minutes", 20, 1, 180, 1, L"%.0f Sim min"),
         scriptNumber(L"Touch sounds", L"Rub sounds from (0 = none)", "foley", "rub_speed", 0.3f, 0, 2, 0.05f,
                      L"%.2f m/s"),
         // foleyaudio.cpp: the user's own sounds (sounds/touch), before the game's
@@ -727,15 +804,18 @@ std::vector<Row> makeRows() {
         flag(L"Touch sounds objects", L"Sounds when you hit objects and walls", "foley", "objects", true, kLive),
         scriptNumber(L"Touch sounds objects", L"A tap from (into it)", "foley", "object_tap_speed", 0.8f, 0.2f, 4, 0.1f, L"%.1f m/s"),
         foley(L"Touch sounds objects", L"Tap (game sound)", "object_tap", &Config::foleyObjectTap, 12,
-              {L"None", L"Wall knocks", L"Finger tap", L"Head bonk", L"Clay thump"}),
+              {L"None", L"Hand on tile", L"Hand on door frame", L"Hand plant", L"Quiet tap", L"Put down",
+               L"Finger tap", L"Clay thump", L"Wall knocks (spooky)"}),
         foley(L"Touch sounds objects", L"Slap (game sound)", "object_slap", &Config::foleyObjectSlap, 13,
-              {L"None", L"Table slam", L"Game piece slam", L"Bang on keyboard"}),
+              {L"None", L"Table slam", L"Hand hit", L"Game piece slam", L"Bang on keyboard", L"Hand on door frame"}),
         foley(L"Touch sounds objects", L"Punch (game sound)", "object_punch", &Config::foleyObjectPunch, 14,
-              {L"None", L"Table slam", L"Fist pound", L"Head bonk", L"Bang fist on door"}),
-        foley(L"Touch sounds objects", L"Metal (game sound)", "object_metal", &Config::foleyObjectMetal, 15,
+              {L"None", L"Table slam", L"Fist pound", L"Head bonk", L"Bang fist on door", L"Hand hit"}),
+        foley(L"Touch sounds objects", L"Metal tap (game sound)", "object_metal_tap", &Config::foleyObjectMetalTap, 17,
+              {L"None", L"Metal ladder hand", L"Ladder grab", L"Hand on tile"}),
+        foley(L"Touch sounds objects", L"Metal slap or punch (game sound)", "object_metal", &Config::foleyObjectMetal, 15,
               {L"None", L"Locker punch", L"Bang fist on door", L"Locker kick"}),
         foley(L"Touch sounds objects", L"Soft (game sound)", "object_soft", &Config::foleyObjectSoft, 16,
-              {L"None", L"Cloth rustle", L"Back pat", L"Clay thump", L"Body grab"}),
+              {L"None", L"Hand on blanket", L"Cloth rustle", L"Back pat", L"Clay thump", L"Body grab"}),
         foley(L"Touch sounds", L"Hands meet (pat or faster)", "hands", &Config::foleyHands, 10,
               {L"None", L"High five", L"Hand clasp", L"Clasp (soft)"}),
         foley(L"Touch sounds", L"Taking their hand", "hold_hands", &Config::foleyHoldHands, 11,
@@ -800,7 +880,6 @@ std::vector<Row> makeRows() {
         number(L"Menus panels", L"Game UI on the wrist (UI button): size", "ui", "wrist_width", &Config::wristWidth, 0.2f, 0.8f,
                0.02f, 100, L"%.0f cm"),
         // The notification card in front of you (user 2026-10-23): where it sits and its size; also set by dragging it.
-        link(L"Interface", L"Notification card", L"HUD note"),
         component(L"HUD note", L"Notification card: right", "phone", "note_place", &Config::notePlace, 0, -1, 1, 0.02f, 100,
                   L"%+.0f cm"),
         component(L"HUD note", L"Notification card: up", "phone", "note_place", &Config::notePlace, 1, -1, 1, 0.02f, 100,
@@ -812,6 +891,12 @@ std::vector<Row> makeRows() {
         toggle(L"HUD watch", L"Watch on your left wrist", "wrist", "watch", &Config::wristTime),
         toggle(L"HUD pause", L"Pause symbol while paused", "wrist", "pause", &Config::wristPause),
         toggle(L"HUD sleep", L"Clock in view while asleep", "wrist", "sleep_clock", &Config::wristSleepClock),
+        number(L"HUD lot intro", L"Cut-out width (share of the UI)", "wrist", "lot_intro_crop_w", &Config::wristLotCropW, 0.1f, 1, 0.02f, 100,
+               L"%.0f %%"),
+        number(L"HUD lot intro", L"Cut-out height (share of the UI)", "wrist", "lot_intro_crop_h", &Config::wristLotCropH, 0.05f, 1, 0.01f, 100,
+               L"%.0f %%"),
+        number(L"HUD lot intro", L"Cut-out shift down (share of the UI)", "wrist", "lot_intro_crop_y", &Config::wristLotCropY, -0.5f, 0.5f, 0.01f,
+               100, L"%+.0f %%"),
         toggle(L"HUD lot intro", L"Show the lot name and traits while your eyes are shut for a load", "wrist", "lot_intro",
                &Config::wristLotIntro),  // lotintro.py
         toggle(L"HUD needs", L"Needs inside your right forearm", "wrist", "needs", &Config::wristNeeds),
@@ -1323,8 +1408,10 @@ void applyChange(Apply apply) {
         case kHands: armik::configureHands(c.handPitch, c.headTracking); break;
         case kTouch:
             armik::configureTouch(c.touchBodies, c.holdHands, c.lookAtYou, c.grabBodies);
-            armik::configureGrab(c.grabCurl, c.grabDrag);
+            armik::configureGrab(c.grabCurl, c.grabDrag, c.breastCurl, c.buttCurl);
             armik::setLookAtHand(c.lookAtHand, c.lookSpeed, c.lookEyesWithin, c.lookHeadFrom);
+            gesture::setHighFiveHold(c.highFiveHold);
+            gesture::setShoo(c.shooAngle, static_cast<int>(c.shooFlicks + 0.5f));
             player::setHeadRepel(c.headRepel, c.headRadius);
             player::configure(c.walkSpeed, c.runSpeed, c.bodyForward, c.bodyHeight, c.touchBodies && c.armIk);
             break;

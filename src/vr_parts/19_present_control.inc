@@ -134,7 +134,7 @@ int onFrame(ID3D11Texture2D* backbuffer, HWND window, bool ownMirror) {
             backbuffer->GetDesc(&desc);
             updateControls(frame.predictedDisplayTime, desc);
             drawHud(backbuffer);
-            XrCompositionLayerQuad quad, uiQuad, pieQuad, beamQuad, tipQuad, phoneQuad, settingsQuad, sleepQuad;
+            XrCompositionLayerQuad quad, uiQuad, pieQuad, beamQuad, tipQuad, phoneQuad, settingsQuad, sleepQuad, lotQuad;
             XrCompositionLayerProjection projection;
             XrCompositionLayerProjectionView views[2];
             const XrCompositionLayerBaseHeader* layers[10] = {};
@@ -149,7 +149,16 @@ int onFrame(ID3D11Texture2D* backbuffer, HWND window, bool ownMirror) {
                 if (dropped++ < 10) LOG("Dropped a broken layer (type %d) instead of sending it to the headset", header->type);
             };
 
-            bool stereo = frame.shouldRender && g_appSpace && mode() == Mode::Stereo && camera::available();
+            // Claude Bustin Out's drive (17_render.inc driveLayer) takes the headset while it runs.
+            const bool driveRuns = g_appSpace && bustinOutDriving();
+            const bool driving = frame.shouldRender && driveRuns;
+            static bool droveBefore = false;
+            if (droveBefore && !driveRuns) {
+                destroySwapchain(g_driveChains[0]);
+                destroySwapchain(g_driveChains[1]);
+            }
+            droveBefore = driveRuns;
+            bool stereo = !driving && frame.shouldRender && g_appSpace && mode() == Mode::Stereo && camera::available();
             stereoFrame = stereo;
             if (!stereo) pieInWorld(false);
             if (frame.shouldRender && g_appSpace) {
@@ -169,6 +178,8 @@ int onFrame(ID3D11Texture2D* backbuffer, HWND window, bool ownMirror) {
                         bool pieIn3d = pieInWorld(showPie || (g_pie.active && g_pie.own && g_hud[kHudPie].m.active));
                         // Asleep (first person): the clock over the closed eyelids.
                         if (hudSleepLayer(hud::texture(), sleepQuad)) add(&sleepQuad);
+                        // The lot's name and traits while the eyes are held shut for a load.
+                        if (hudLotIntroLayer(lotQuad)) add(&lotQuad);
                         if ((showPie || showPhone || showObject || showWrist || showPanel) && renderUiPanel(uiQuad)) {
                             bool phoneIn3d = showPhone && phone3d::drawnRecently();
                             if (showPhone && !phoneIn3d && !g_tablet) {
@@ -189,6 +200,12 @@ int onFrame(ID3D11Texture2D* backbuffer, HWND window, bool ownMirror) {
                             }
                         }
                     }
+                } else if (driving && driveLayer(backbuffer, frame.predictedDisplayTime, projection, views)) {
+                    static int driveLogged = 0;
+                    if (driveLogged++ == 0) LOG("Claude Bustin Out: the drive is in the headset (%ux%u per eye)",
+                                                g_driveChains[0].width, g_driveChains[0].height);
+                    add(&projection);
+                    scene = true;
                 } else if (renderQuad(backbuffer, desc, quad)) {
                     // The black room as one projection layer under the screen (voidLayer).
                     ID3D11Device* device = nullptr;

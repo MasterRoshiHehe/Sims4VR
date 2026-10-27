@@ -530,7 +530,12 @@ static bool renderStereo(ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_DESC
     // 1. The backbuffer holds what the camera hook rendered: the oldest
     //    entry, since the game thread can run a frame ahead of Present.
     camera::Rendered rendered;
-    if (camera::takeRendered(rendered)) {
+    bool havePicture = camera::takeRendered(rendered);
+    if (havePicture && rendered.eye == 2) {
+        storeViewfinder(backbuffer, desc);  // the phone lens' picture: onto the phone's screen, not to an eye
+        havePicture = false;
+    }
+    if (havePicture) {
         int eye = rendered.eye;
         // Paired eyes: a left eye waits for its right eye (in the left
         // swapchain not shown now).
@@ -635,17 +640,35 @@ static bool renderStereo(ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_DESC
                            {rp.orientation.x, rp.orientation.y, rp.orientation.z, rp.orientation.w},
                            {rf.angleLeft, rf.angleRight, rf.angleUp, rf.angleDown});
     }
-    const XrPosef& p = located[next].pose;
-    XrFovf f = located[next].fov;
+    // A photo session: the phone lens' picture after each pair (the phone must be out, where it has a place).
+    const bool lens = camera::photoSession() && g_phoneOut && g_phoneFrontOk &&
+                      !both && !depthEye && !depthCompare() && !alignEyes() && g_config.pairedEyes && camera::bodyActive();
+    if (lens && g_renderingEye == 1) {
+        const XrVector3f back = g_phoneAxes[2];
+        const float behind = g_phoneGlassOut + 0.004f;  // the lens just behind the phone's back
+        const XrVector3f at{g_phoneBodyPose.position.x - back.x * behind, g_phoneBodyPose.position.y - back.y * behind,
+                            g_phoneBodyPose.position.z - back.z * behind};
+        const float vertical = kLensFov * 0.5f * 0.0174533f;  // half the lens' vertical angle
+        const float horizontal = std::atan(std::tan(vertical) * static_cast<float>(desc.Width) /
+                                           static_cast<float>(desc.Height));
+        const XrQuaternionf o = g_phoneBodyPose.orientation;  // x right, y up, z back: the lens looks out the back
+        camera::apply(2, {at.x, at.y, at.z}, {o.x, o.y, o.z, o.w}, {-horizontal, horizontal, vertical, -vertical});
+        g_renderingEye = 2;
+        next = 2;
+    }
+    const XrPosef& p = located[next == 2 ? 0 : next].pose;
+    XrFovf f = located[next == 2 ? 0 : next].fov;
     if (depthEye || depthCompare()) {  // the compare view: both eyes drawn exactly as the depth eye draws them
         const XrFovf& o = located[1 - next].fov;
         f = {std::min(f.angleLeft, o.angleLeft), std::max(f.angleRight, o.angleRight), std::max(f.angleUp, o.angleUp),
              std::min(f.angleDown, o.angleDown)};
     }
-    camera::apply(next, {p.position.x, p.position.y, p.position.z},
-                  {p.orientation.x, p.orientation.y, p.orientation.z, p.orientation.w},
-                  {f.angleLeft, f.angleRight, f.angleUp, f.angleDown});
-    g_renderingEye = next;
+    if (next != 2) {
+        camera::apply(next, {p.position.x, p.position.y, p.position.z},
+                      {p.orientation.x, p.orientation.y, p.orientation.z, p.orientation.w},
+                      {f.angleLeft, f.angleRight, f.angleUp, f.angleDown});
+        g_renderingEye = next;
+    }
 
     // 3. Submit once both eyes hold an image. Each view carries the pose its
     //    image was rendered with, so the runtime reprojects it correctly.
