@@ -48,7 +48,10 @@ PROBE = 0.4 + 0.123  # metres: walk.PROBE_DISTANCE plus the navmesh's agent radi
 RAYS = 24
 
 walls = []    # (ax, az, bx, bz, y0, y1)
-hand_shapes = []  # (polygon, y0, y1, its footprint polygon): what your hands meet of an object (its model's box)
+hand_shapes = []  # (polygon, y0, y1, None): what your hands meet of an object (its meshes' boxes)
+_hand_skip = set()  # id() of the footprint polygons hand_shapes stand in for
+_meshes = {}  # definition id: [(min xyz, max xyz)] of its model's meshes, () for a stand-in model, or None
+_model_users = {}  # model instance: {tuning name: definition id} of the objects using it
 objects = []  # (polygon [(x, z), ...], y0, y1, blocks the navmesh, name)
 _state = None  # (centre x, z, level, planner build id)
 _pending = None  # generator of a build in progress
@@ -109,7 +112,7 @@ def _send():
     shapes = [o for o in objects if 3 <= len(o[0]) < 256]
     # Your hands meet an object at its model's box where there is one (collide.cpp
     # stopHand: flag 2, hands only); its footprint then gets flag 4 (not for hands).
-    with_box = set(id(h[3]) for h in hand_shapes)
+    with_box = _hand_skip
     data.append(float(len(shapes) + len(hand_shapes)))
     for o in shapes:
         pts, y0, y1, blocks = o[:4]
@@ -133,6 +136,7 @@ def forget():
     walls = []
     objects = []
     hand_shapes.clear()
+    _hand_skip.clear()
     try:
         _send()
     except Exception:
@@ -280,6 +284,88 @@ def _y_range(obj, footprint):
         return None
 
 
+def _mesh_boxes(obj):
+    """[(min xyz, max xyz)] of each mesh in the object's model, from its first
+    detail level (MLOD; each mesh entry carries its bounds), flat ones (drop
+    shadows) left out; None if unknown. The model's overall box (MODL) reaches
+    far past the object (a counter's is a metre deep, a bookshelf's too: user
+    2026-10-27, hands hovering short of objects)."""
+    key = getattr(obj.definition, 'id', None)
+    if key in _meshes:
+        return _meshes[key]
+    boxes = None
+    try:
+        from sims4vr import objmenu
+        model = obj.definition.get_model(0)
+        instance = getattr(model, 'instance', None)
+        found = native.model_bytes(instance) if instance is not None else None
+        if found is not None and found[0] == 1:
+            return None  # the game's models are still being indexed: next time
+        # One model under several unrelated objects (wild plants, spawners) is a
+        # stand-in, not what you see: hands go through those. (Swatches share a
+        # model too, but also their tuning.)
+        users = _model_users.setdefault(instance, {})
+        users[str(obj).split(':')[0]] = key
+        if len(users) > 2:
+            for k in users.values():
+                _meshes[k] = ()
+            return ()
+        if found is not None and found[0] == 0:
+            data = objmenu._unpack(found[1], found[2], found[3])
+            _public, chunks = objmenu._rcol_chunks(data)
+            for tag, pos, size in chunks:
+                if tag != b'MLOD':
+                    continue
+                count = struct.unpack_from('<I', data, pos + 8)[0]
+                at, end = pos + 12, pos + size
+                got = []
+                for _ in range(min(count, 64)):
+                    if at + 76 > end:
+                        break
+                    length = struct.unpack_from('<I', data, at)[0]
+                    b = struct.unpack_from('<6f', data, at + 4 + 48)
+                    size3 = [b[3 + i] - b[i] for i in range(3)]
+                    if all(math.isfinite(v) for v in b) and size3[1] >= 0.02 and all(0.0 <= v < 20.0 for v in size3):
+                        got.append(b)
+                    at += 4 + length
+                if got:
+                    boxes = got
+                    break
+    except Exception as e:
+        _log('mesh boxes of {}: {!r}'.format(obj, e))
+        boxes = None
+    _meshes[key] = boxes
+    if len(_meshes) <= 60:
+        _log('hands meet {}: {}'.format(str(obj).split(':')[0], 'its model unknown (the footprint, cut to the model box)'
+             if boxes is None else ', '.join('{:.2f} x {:.2f} x {:.2f} m'.format(b[3] - b[0], b[4] - b[1], b[5] - b[2])
+                                             for b in boxes[:6]) + (' ...' if len(boxes) > 6 else '')))
+    return boxes
+
+
+def _mesh_shapes(obj, top):
+    """What your hands meet of an object: each mesh's box, turned, scaled and
+    placed like the object, as (polygon, y0, y1, None); None if unknown, empty
+    for a stand-in model (hands go through)."""
+    boxes = _mesh_boxes(obj)
+    if boxes is None or boxes == ():
+        return boxes
+    scale = getattr(obj, 'scale', 1.0) or 1.0
+    p, q = obj.position, obj.orientation
+
+    def world(lx, lz):
+        x, z = lx * scale, lz * scale
+        tx, ty, tz = 2 * q.y * z, 2 * (q.z * x - q.x * z), -2 * q.y * x
+        return (p.x + x + q.w * tx + (q.y * tz - q.z * ty), p.z + z + q.w * tz + (q.x * ty - q.y * tx))
+
+    shapes = []
+    for b in boxes:
+        y0, y1 = p.y + b[1] * scale, min(p.y + b[4] * scale, top)
+        if y1 - y0 < 0.01:
+            continue
+        shapes.append(([world(b[0], b[2]), world(b[3], b[2]), world(b[3], b[5]), world(b[0], b[5])], y0, y1, None))
+    return shapes
+
+
 def _hand_polygon(obj, pts):
     """The footprint polygon cut down to the object's model box (its mesh's
     bounds, turned and scaled like the object): what your hand touches. A lamp's
@@ -338,7 +424,7 @@ def _blocks_navmesh(surface, pts, y):
 
 def _build(sim, x, y, z, surface):
     """Generator: yields between batches; ends with the new scene in place."""
-    global walls, objects, hand_shapes
+    global walls, objects, hand_shapes, _hand_skip
     spent = 0.0
     started = time.perf_counter()
     level = surface.secondary_id
@@ -404,6 +490,7 @@ def _build(sim, x, y, z, surface):
     # 3. Objects with their height ranges.
     new_objects = []
     new_hands = []
+    new_skip = set()
     for i, obj in enumerate(near):
         if i and i % BATCH == 0:
             spent += time.perf_counter() - started
@@ -428,16 +515,22 @@ def _build(sim, x, y, z, surface):
         if y1 - y0 < MIN_HEIGHT or y1 <= floor:
             continue
         name = str(obj)[:48]
+        meshes = _mesh_shapes(obj, y1)
         for polygon in polygons:
             pts = [(v.x, v.z) for v in polygon]
             if len(pts) >= 3:
                 blocks = y0 < floor + HIP and _blocks_navmesh(surface, pts, floor)
                 new_objects.append((pts, y0, y1, blocks, name))
-                hand = _hand_polygon(obj, pts)
-                if hand is not None:
-                    new_hands.append((hand, y0, y1, pts))
+                if meshes is not None:
+                    new_skip.add(id(pts))
+                else:
+                    hand = _hand_polygon(obj, pts)
+                    if hand is not None:
+                        new_hands.append((hand, y0, y1, None))
+                        new_skip.add(id(pts))
+        new_hands.extend(meshes or ())
     spent += time.perf_counter() - started
-    walls, objects, hand_shapes = new_walls, new_objects, new_hands
+    walls, objects, hand_shapes, _hand_skip = new_walls, new_objects, new_hands, new_skip
     _send()
     body = sum(1 for o in new_objects if o[3])
     high = sum(1 for o in new_objects if o[1] >= floor + HIP)
