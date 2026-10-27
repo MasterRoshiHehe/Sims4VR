@@ -209,6 +209,32 @@ void resolveAll() {
         uint8_t* found = nullptr;
         uint8_t* all[6] = {};
         int hits = scan(p, &found, all);
+        if (hits != 1) {
+            // Look-alikes (or none, if the whole-text scan stopped early): search only around the old place.
+            const uint8_t* lo = b + (r.rva > 0x4000 ? r.rva - 0x4000 : 0);
+            const uint8_t* hi = b + r.rva + 0x4000 + p.bytes.size();
+            const uint8_t* savedText = g_text;
+            const size_t savedSize = g_textSize;
+            g_text = const_cast<uint8_t*>(lo);
+            g_textSize = static_cast<size_t>(hi - lo);
+            uint8_t* local = nullptr;
+            uint8_t* localAll[6] = {};
+            const int localHits = scan(p, &local, localAll);
+            g_text = const_cast<uint8_t*>(savedText);
+            g_textSize = savedSize;
+            // Identical twins (ConfigInt, OptGetUInt share their first 96 bytes) keep their order from 1.128.
+            const int rank = std::strcmp(r.name, "ConfigInt") == 0 ? 0 : std::strcmp(r.name, "OptGetUInt") == 0 ? 1 : -1;
+            if (localHits == 2 && rank >= 0) {
+                LOG("Game address %s: twin %d of 2 near its old place", r.name, rank);
+                local = localAll[rank];
+                hits = 1;
+                found = local;
+            } else if (localHits == 1) {
+                LOG("Game address %s: %d look-alikes in the whole text, one near its old place", r.name, hits);
+                found = local;
+                hits = 1;
+            }
+        }
         if (hits > 1) {
             // A patch shifts code a little: of several look-alikes take the one near the old place, if only one is.
             int closeHits = 0;

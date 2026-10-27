@@ -5,14 +5,13 @@
 #include <cmath>
 #include <cstring>
 
+#include "addrs.h"
 #include "gameaddr.h"
 #include "log.h"
 
 namespace s4vr::mirrorcap {
 
 namespace {
-
-constexpr uint32_t kOptGetBool = 0x117e430, kOptGetFloat = 0x117e520;
 
 using FloatFn = float(__fastcall*)(void* options, const char* name, float fallback);
 using BoolFn = bool(__fastcall*)(void* options, const char* name, bool fallback);
@@ -67,13 +66,12 @@ void install(float interiorMetres, float exteriorMetres, bool reflectionsOff, bo
     g_reflectionsOff = reflectionsOff;
     g_ssaoOff = ssaoOff;
     if (!(g_interior > 0 || g_exterior > 0 || g_reflectionsOff || g_ssaoOff)) return;
-    if (!gameaddr::recognised() || gameaddr::dx9()) {
-        LOG("Mirror cap: game build not recognised; the game's own mirror distance");
+    uint8_t* fl = gameaddr::dx9() ? nullptr : addrs::fn("OptGetFloat");
+    uint8_t* bo = gameaddr::dx9() ? nullptr : addrs::fn("OptGetBool");
+    if (!fl || !bo) {
+        LOG("Mirror cap: the game's option getters not found in this build; the game's own mirror distance");
         return;
     }
-    uint8_t* base = reinterpret_cast<uint8_t*>(GetModuleHandleW(nullptr));
-    uint8_t* fl = base + kOptGetFloat;
-    uint8_t* bo = base + kOptGetBool;
     MH_STATUS status = MH_Initialize();
     if (status != MH_OK && status != MH_ERROR_ALREADY_INITIALIZED) return;
     if (MH_CreateHook(fl, reinterpret_cast<void*>(&hookedFloat), reinterpret_cast<void**>(&g_float)) != MH_OK ||

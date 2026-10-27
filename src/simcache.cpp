@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include "addrs.h"
 #include "gameaddr.h"
 #include "log.h"
 
@@ -14,7 +15,6 @@ namespace s4vr::simcache {
 
 namespace {
 
-constexpr uint32_t kOptGetUInt = 0x117e660, kOptGetVec4 = 0x117e770;
 
 using UIntFn = uint32_t(__fastcall*)(void* options, const char* name, uint32_t fallback);
 using Vec4Fn = bool(__fastcall*)(void* options, const char* name, float* out);
@@ -101,13 +101,12 @@ void install(bool boost, int cacheMb, float lodScale) {
     g_boost = boost;
     g_cacheMb = std::clamp(cacheMb, 16, 2048);
     g_lodScale = std::isfinite(lodScale) ? std::clamp(lodScale, 1.f, 4.f) : 1.f;
-    if (!gameaddr::recognised() || gameaddr::dx9()) {
-        LOG("Sim cache: game build not recognised; the game's own values");
+    uint8_t* u = gameaddr::dx9() ? nullptr : addrs::fn("OptGetUInt");
+    uint8_t* v = gameaddr::dx9() ? nullptr : addrs::fn("OptGetVec4");
+    if (!u || !v) {
+        LOG("Sim cache: the game's option getters not found in this build; the game's own values");
         return;
     }
-    uint8_t* base = reinterpret_cast<uint8_t*>(GetModuleHandleW(nullptr));
-    uint8_t* u = base + kOptGetUInt;
-    uint8_t* v = base + kOptGetVec4;
     MH_STATUS status = MH_Initialize();
     if (status != MH_OK && status != MH_ERROR_ALREADY_INITIALIZED) return;
     if (MH_CreateHook(u, reinterpret_cast<void*>(&hookedUInt), reinterpret_cast<void**>(&g_uint)) != MH_OK ||
