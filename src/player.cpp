@@ -59,6 +59,10 @@ std::atomic<bool> g_headRepel{true};
 std::atomic<float> g_headRadius{0.08f};  // metres around your view
 int g_repelLogs = 0;
 int g_collideLogs = 0;
+// How far walls and furniture are holding your own step or lean back (world
+// metres, already in g_base); given back as you pull back, so your head
+// can't shove you across the room.
+float g_lean[2] = {};
 ULONGLONG g_collideLogTick = 0;
 ULONGLONG g_repelLogTick = 0;
 std::atomic<bool> g_running{false};  // left stick tapped: run speed and the Sim's run walk
@@ -601,6 +605,7 @@ bool update(const Input& in, float viewYaw, float turn, Output& out) {
         turnXZ(g_viewYaw, in.hmd[0] * s, in.hmd[2] * s, hx, hz);
         g_base[0] = in.headJoint[0] - hx;
         g_base[1] = in.headJoint[2] - hz;
+        g_lean[0] = g_lean[1] = 0;
         g_simYaw = actorYaw;
         g_facingHead = false;
         g_speed = 0;
@@ -742,25 +747,34 @@ bool update(const Input& in, float viewYaw, float turn, Output& out) {
     hz += g_base[1];
 
     // Walls and furniture: your body (bodyRadius round the point under your
-    // head) is pushed back out, whether the stick or your own feet took you
-    // in; along a wall that leaves the part of the step that goes along it.
+    // head) is kept out, whether the stick or your own feet took you in;
+    // along a wall that leaves the part of the step that goes along it. A
+    // walk is kept; your own step or lean is only held back while it lasts
+    // (g_lean), so pulling back puts you where you stood.
+    const bool walking = vx * vx + vz * vz > 1e-4f * s * s;
     if (scene) {
-        float x = hx, z = hz;
+        float rx = hx - g_lean[0], rz = hz - g_lean[1];  // where you'd be without the hold
+        float x = rx, z = rz;
         int what = 0;
         float moved = collide::pushOut(x, z, bodyRadius * s, g_floorY, (bodyRadius + 0.25f) * s, what);
+        float lx = walking ? 0 : x - rx, lz = walking ? 0 : z - rz;
+        g_base[0] += x - hx;
+        g_base[1] += z - hz;
+        g_lean[0] = lx;
+        g_lean[1] = lz;
+        hx = x;
+        hz = z;
         if (moved > 0) {
-            g_base[0] += x - hx;
-            g_base[1] += z - hz;
-            hx = x;
-            hz = z;
             ULONGLONG tick = GetTickCount64();
             if (moved > 0.02f * s && g_collideLogs < 60 && tick - g_collideLogTick > 1000) {
                 g_collideLogTick = tick;
                 ++g_collideLogs;
                 LOG("Player: kept out of %s: pushed back %.0f mm (%s)", what ? "furniture" : "a wall",
-                    moved * 1000 / s, std::sqrt(vx * vx + vz * vz) > 0.1f * s ? "walking" : "your own step or lean");
+                    moved * 1000 / s, walking ? "walking" : "your own step or lean (given back as you pull back)");
             }
         }
+    } else {
+        g_lean[0] = g_lean[1] = 0;
     }
 
     // On a flight of stairs its sides hold you (the railings, the walls beside
