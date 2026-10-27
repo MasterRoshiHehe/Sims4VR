@@ -756,7 +756,8 @@ bool update(const Input& in, float viewYaw, float turn, Output& out) {
         float rx = hx - g_lean[0], rz = hz - g_lean[1];  // where you'd be without the hold
         float x = rx, z = rz;
         int what = 0;
-        float moved = collide::pushOut(x, z, bodyRadius * s, g_floorY, (bodyRadius + 0.25f) * s, what);
+        float moved = collide::pushOut(x, z, bodyRadius * s, collide::furnitureRadius() * s, g_floorY,
+                                        (bodyRadius + 0.25f) * s, what);
         float lx = walking ? 0 : x - rx, lz = walking ? 0 : z - rz;
         g_base[0] += x - hx;
         g_base[1] += z - hz;

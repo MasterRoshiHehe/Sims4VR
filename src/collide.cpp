@@ -34,6 +34,7 @@ std::vector<float> g_points;
 std::atomic<uint32_t> g_version{0};
 std::atomic<bool> g_on{true};
 std::atomic<float> g_radius{0.3f};
+std::atomic<float> g_furniture{0.12f};
 
 // The game thread's copy.
 std::vector<Wall> t_walls;
@@ -138,6 +139,13 @@ void configure(bool on, float bodyRadius) {
         LOG("Collision: walls and furniture %s, body radius %.2f m", on ? "stop you" : "off", bodyRadius);
 }
 
+void setFurnitureRadius(float metres) {
+    if (!(metres > 0.02f && metres < 1.0f)) metres = 0.12f;
+    if (g_furniture.exchange(metres) != metres) LOG("Collision: your body keeps %.2f m clear of furniture", metres);
+}
+
+float furnitureRadius() { return g_furniture.load(std::memory_order_relaxed); }
+
 bool active(float& bodyRadius) {
     if (!g_on.load(std::memory_order_relaxed)) return false;
     takeScene();
@@ -145,7 +153,7 @@ bool active(float& bodyRadius) {
     return !t_walls.empty() || !t_shapes.empty();
 }
 
-float pushOut(float& x, float& z, float radius, float feetY, float maxDepth, int& what) {
+float pushOut(float& x, float& z, float radius, float objectRadius, float feetY, float maxDepth, int& what) {
     takeScene();
     const float x0 = x, z0 = z;
     const float lo = feetY + kStepUp, hi = feetY + kBodyTop;
@@ -174,7 +182,8 @@ float pushOut(float& x, float& z, float radius, float feetY, float maxDepth, int
         }
         for (const Shape& s : t_shapes) {
             if (!(s.flags & 1) || s.y1 <= lo || s.y0 >= hi) continue;
-            if (x < s.minX - radius || x > s.maxX + radius || z < s.minZ - radius || z > s.maxZ + radius) continue;
+            const float ro = objectRadius;
+            if (x < s.minX - ro || x > s.maxX + ro || z < s.minZ - ro || z > s.maxZ + ro) continue;
             const float* p = &t_points[s.first * 2];
             float bx = 0, bz = 0, best = 1e30f;
             for (int i = 0, j = s.count - 1; i < s.count; j = i++) {
@@ -185,15 +194,15 @@ float pushOut(float& x, float& z, float radius, float feetY, float maxDepth, int
             }
             float d = std::sqrt(best);
             bool in = inside(s, x, z);
-            if (!in && d >= radius) continue;
-            if (in && d + radius > maxDepth) continue;  // deep inside (teleported in): walk out yourself
+            if (!in && d >= ro) continue;
+            if (in && d + ro > maxDepth) continue;  // deep inside (teleported in): walk out yourself
             float nx = x - bx, nz = z - bz;
             float l = std::sqrt(nx * nx + nz * nz);
             if (l < 1e-5f) continue;
             nx /= l, nz /= l;
             if (in) nx = -nx, nz = -nz;  // the edge is ahead of the centre: out is the other way
-            x = bx + nx * radius;
-            z = bz + nz * radius;
+            x = bx + nx * ro;
+            z = bz + nz * ro;
             what = 1;
             moved = true;
         }

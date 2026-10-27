@@ -17,13 +17,19 @@ void setScene(const float* data, int count);
 
 // [body] collision and body_radius (debug menu: Controls > Moving).
 void configure(bool on, float bodyRadius);
+// [body] furniture_radius: how far your body keeps clear of furniture (walls
+// keep body_radius). Smaller than the walls' so you squeeze between pieces
+// placed close together, as Sims do (their routing radius is 0.123 m).
+void setFurnitureRadius(float metres);
+float furnitureRadius();
 
 // Game thread: pushes (x, z) out of the walls and body-stopping objects
-// around feet height feetY, keeping radius clear (world metres). A point
+// around feet height feetY, keeping radius clear of walls and objectRadius
+// clear of objects (world metres). A point
 // already deeper than maxDepth inside something is left alone (teleported
 // in: you walk out). Returns how far it moved (0: untouched); `what` names
 // the kind of shape it last pushed out of (0 wall, 1 object).
-float pushOut(float& x, float& z, float radius, float feetY, float maxDepth, int& what);
+float pushOut(float& x, float& z, float radius, float objectRadius, float feetY, float maxDepth, int& what);
 
 // Game thread: on, with a scene; radius from configure (game metres, scale 1).
 bool active(float& bodyRadius);

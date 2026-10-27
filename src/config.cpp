@@ -417,6 +417,7 @@ Config loadConfig(const std::wstring& ini) {
     c.bodySmoothSlide = readInt(ini, "body", "smooth_slide", 1) != 0;
     c.bodyCollision = readInt(ini, "body", "collision", 1) != 0;
     c.bodyRadius = readFloat(ini, "body", "body_radius", c.bodyRadius);
+    c.furnitureRadius = readFloat(ini, "body", "furniture_radius", c.furnitureRadius);
     c.handCollision = readInt(ini, "body", "hand_collision", 1) != 0;
     c.crouch = readInt(ini, "body", "crouch", 1) != 0;
     c.crouchDepth = readFloat(ini, "body", "crouch_depth", c.crouchDepth);

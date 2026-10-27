@@ -289,7 +289,8 @@ struct Config {
     bool bodyStopGlide = false;  // first person: slowing down covers the walk's stop clip distance (~0.9 m)
     bool bodySmoothSlide = true;  // first person: slide along walls smoothly, not in 15 degree steps
     bool bodyCollision = true;  // first person: walls and furniture (collide.py scene) stop your body
-    float bodyRadius = 0.3f;  // first person: metres your body keeps clear of walls and furniture
+    float bodyRadius = 0.3f;  // first person: metres your body keeps clear of walls
+    float furnitureRadius = 0.12f;  // first person: metres your body keeps clear of furniture
     bool handCollision = true;  // first person: your Sim's hands stop at walls and furniture
 
     // Hands (first person): close a hand near an object to pick it up, open it to put it down
