@@ -35,6 +35,67 @@ static constexpr int kAlphaStep = 8;
 static std::vector<uint8_t> g_tabletAlpha;
 static int g_tabletAlphaW = 0, g_tabletAlphaH = 0;
 
+// Each separate solid part of the UI in the alpha map (8 px cells): a panel, a dropdown, a tooltip. The layout
+// below cuts the UI's empty middle out, so a part reaching into it (the lot traits' dropdown under the lot panel,
+// a tooltip beside it) is placed on the tablet as its own piece (user 2026-10-27: the dropdown was cut in half).
+// Each row's solid span is kept, so the piece can be cut to the rows the layout leaves out.
+struct TabletPart {
+    int y0 = 0, y1 = 0;       // cell rows, y1 past the last
+    std::vector<int16_t> x0, x1;  // per row (y - y0): its solid cells' first and past-last column, x0 >= x1 = none
+    int cells = 0;
+};
+static std::vector<TabletPart> g_tabletParts;
+static constexpr int kMaxTabletParts = 24;
+
+static void findTabletParts() {
+    const int aw = g_tabletAlphaW, ah = g_tabletAlphaH;
+    std::vector<int> mark(static_cast<size_t>(aw) * ah, 0);
+    std::vector<int> stack;
+    std::vector<TabletPart> parts;
+    int id = 0;
+    for (int sy = 0; sy < ah; ++sy)
+        for (int sx = 0; sx < aw; ++sx) {
+            const size_t s0 = static_cast<size_t>(sy) * aw + sx;
+            if (mark[s0] || g_tabletAlpha[s0] <= 24) continue;
+            ++id;
+            TabletPart part;
+            part.y0 = sy;
+            part.y1 = sy + 1;
+            std::vector<std::pair<int, int>> got;
+            stack.assign(1, static_cast<int>(s0));
+            mark[s0] = id;
+            while (!stack.empty()) {
+                const int c = stack.back();
+                stack.pop_back();
+                const int cx = c % aw, cy = c / aw;
+                got.push_back({cx, cy});
+                for (int dy = -1; dy <= 1; ++dy)
+                    for (int dx = -1; dx <= 1; ++dx) {
+                        const int nx = cx + dx, ny = cy + dy;
+                        if (nx < 0 || ny < 0 || nx >= aw || ny >= ah) continue;
+                        const size_t n = static_cast<size_t>(ny) * aw + nx;
+                        if (mark[n] || g_tabletAlpha[n] <= 24) continue;
+                        mark[n] = id;
+                        stack.push_back(static_cast<int>(n));
+                    }
+            }
+            if (got.size() < 6) continue;  // specks
+            for (auto& g : got) part.y1 = std::max(part.y1, g.second + 1);
+            part.x0.assign(static_cast<size_t>(part.y1 - part.y0), static_cast<int16_t>(aw));
+            part.x1.assign(static_cast<size_t>(part.y1 - part.y0), 0);
+            for (auto& g : got) {
+                const size_t r = static_cast<size_t>(g.second - part.y0);
+                part.x0[r] = std::min<int16_t>(part.x0[r], static_cast<int16_t>(g.first));
+                part.x1[r] = std::max<int16_t>(part.x1[r], static_cast<int16_t>(g.first + 1));
+            }
+            part.cells = static_cast<int>(got.size());
+            parts.push_back(std::move(part));
+        }
+    std::sort(parts.begin(), parts.end(), [](const TabletPart& a, const TabletPart& b) { return a.cells > b.cells; });
+    if (parts.size() > kMaxTabletParts) parts.resize(kMaxTabletParts);
+    g_tabletParts = std::move(parts);
+}
+
 static void readTabletScan(const uint8_t* px, UINT pitch, int W, int H) {
     {
         const int aw = W / kAlphaStep, ah = H / kAlphaStep;
@@ -45,17 +106,27 @@ static void readTabletScan(const uint8_t* px, UINT pitch, int W, int H) {
                     px[static_cast<size_t>(y * kAlphaStep) * pitch + static_cast<size_t>(x * kAlphaStep) * 4 + 3];
         g_tabletAlphaW = aw;
         g_tabletAlphaH = ah;
+        findTabletParts();
     }
     float s = H / 2808.0f;
     int y0, y1;
     tabletScanBand(W, H, y0, y1);
     auto alpha = [&](int x, int y) { return px[static_cast<size_t>(y - y0) * pitch + static_cast<size_t>(x) * 4 + 3]; };
-    // The middle: rows above the tooltip's band, clear of the catalog's left panel, every 16 px.
-    int midEnd = H - static_cast<int>(600 * s), solid = 0, total = 0;
-    for (int y = y0; y < midEnd; y += 16)
-        for (int x = static_cast<int>(600 * s); x < W - static_cast<int>(600 * s); x += 16, ++total)
-            solid += alpha(x, y) > 200;
-    bool middle = total > 0 && solid * 25 > total;  // over 4% of it solid
+    // The middle: a big part standing free in the middle of the UI (a dialog, the game menu) shows the whole UI.
+    // Smaller ones (tooltips, dropdowns) get their own pieces in tabletLayout: switching to the whole UI for a
+    // tooltip moved what the laser was on, the tooltip went, and the UI flickered between the two (user 2026-10-27).
+    bool middle = false;
+    for (const TabletPart& p : g_tabletParts) {
+        int px0 = g_tabletAlphaW, px1 = 0;
+        for (size_t r = 0; r < p.x0.size(); ++r)
+            if (p.x0[r] < p.x1[r]) {
+                px0 = std::min<int>(px0, p.x0[r]);
+                px1 = std::max<int>(px1, p.x1[r]);
+            }
+        const float w = static_cast<float>(px1 - px0) / g_tabletAlphaW, h = static_cast<float>(p.y1 - p.y0) / g_tabletAlphaH;
+        const float top = static_cast<float>(p.y0) / g_tabletAlphaH, bottom = static_cast<float>(p.y1) / g_tabletAlphaH;
+        if (w > 0.3f && h > 0.25f && top > 0.08f && bottom < 0.92f) middle = true;
+    }
     g_tabletMiddleRuns = middle == g_tabletScan.middle ? 0 : g_tabletMiddleRuns + 1;
     if (g_tabletMiddleRuns >= 2) {  // twice in a row before it changes
         g_tabletScan.middle = middle;
@@ -392,6 +463,45 @@ static int tabletLayout(int W, int H, float dst[][4], float src[][4], float& asp
         const float topH = std::min(Hf / 2, SH * 0.4f / k), bottomH = std::min(Hf - topH, (SH - topH * k) / k);
         put(0, 0, Wf, topH, 0, 0, k);
         put(0, Hf - bottomH, Wf, Hf, 0, SH - bottomH * k, k);
+        // Parts reaching into the cut-out middle: their rows there as their own piece, after the two (last wins
+        // on the screen and for the laser). One hanging from the top keeps the top's place (it reads as the
+        // game's: under the panel it opens from), one standing on the bottom the bottom's, a free one the nearer;
+        // moved back onto the screen if it would run off it.
+        const float cut0 = topH, cut1 = Hf - bottomH, cw = Wf / std::max(1, g_tabletAlphaW),
+                    ch = Hf / std::max(1, g_tabletAlphaH);
+        int floats = 0;
+        for (const TabletPart& p : g_tabletParts) {
+            if (n >= phone3d::kMaxTiles) break;
+            const float py0 = p.y0 * ch, py1 = p.y1 * ch;
+            if (py1 <= cut0 || py0 >= cut1) continue;
+            float x0 = Wf, x1 = 0, y0 = Hf, y1 = 0;
+            for (size_t r = 0; r < p.x0.size(); ++r) {
+                const float ry0 = (p.y0 + static_cast<float>(r)) * ch, ry1 = ry0 + ch;
+                if (p.x0[r] >= p.x1[r] || ry1 <= cut0 || ry0 >= cut1) continue;
+                x0 = std::min(x0, p.x0[r] * cw);
+                x1 = std::max(x1, p.x1[r] * cw);
+                y0 = std::min(y0, ry0);
+                y1 = std::max(y1, ry1);
+            }
+            if (x1 <= x0 || y1 <= y0) continue;
+            // A cell's edge more on each side, so the part's soft edge is not cut.
+            x0 = std::max(0.0f, x0 - cw);
+            x1 = std::min(Wf, x1 + cw);
+            y0 = std::max(cut0, y0 - ch);
+            y1 = std::min(cut1, y1 + ch);
+            const bool fromTop = py0 < cut0, fromBottom = py1 > cut1;
+            const bool useTop = fromTop || (!fromBottom && (y0 - cut0) < (cut1 - y1));
+            float atY = useTop ? y0 * k : SH - (Hf - y0) * k;
+            const float h = (y1 - y0) * k;
+            atY = std::max(0.0f, std::min(SH - h, atY));
+            put(x0, y0, x1, y1, x0 * k, atY, k);
+            ++floats;
+        }
+        static int loggedFloats = -1, floatLogs = 0;
+        if (floats != loggedFloats && floatLogs++ < 40) {
+            loggedFloats = floats;
+            LOG("Tablet: %d part(s) of the UI in the cut-out middle placed as their own pieces", floats);
+        }
     }
     static float loggedZoom = 0, loggedAspect = 0;
     static int logs = 0;
@@ -424,4 +534,5 @@ static void resetTabletScan() {
     g_tabletLeftSeen = g_tabletGridSeen = 0;
     g_tabletMiddleRuns = 0;
     g_tabletAlpha.clear();
+    g_tabletParts.clear();
 }
