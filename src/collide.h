@@ -11,7 +11,8 @@ namespace s4vr::collide {
 // Python (any thread): the scene, packed as floats:
 //   wall count, then 6 per wall side (ax, az, bx, bz, y0, y1),
 //   shape count, then per shape: point count n, y0, y1, flags (1: stops your
-//   body), then n x, z pairs.
+//   body; 2: what your hands meet of an object, its model's box; 4: a
+//   footprint your hands skip, as it has a 2), then n x, z pairs.
 // An empty or short array clears the scene.
 void setScene(const float* data, int count);
 
@@ -45,10 +46,13 @@ void configureHands(bool on);
 // handshape). Gives where the drawn palm goes: moved from its last place
 // toward yours in small steps, every ball kept out of walls and objects
 // (sliding along them), so the hand rests flush on the surface while your
-// real hand goes on, and catches up as you pull back. Starts over at your
-// hand after a jump of over `snap` or a pause. Returns how far apart they
-// are (0: the drawn hand is where yours is).
+// real hand goes on, and catches up as you pull back. Caught behind
+// something (a door jamb as you walk through, the side of a flight of
+// steps), it comes the way your arm does instead, out from `shoulder`
+// (world; null: never), when that gets it nearer your hand. Starts over at
+// your hand after a jump of over `snap` or a pause. Returns how far apart
+// they are (0: the drawn hand is where yours is).
 float stopHand(int side, const float target[3], const float* offsets, const float* radii, int count, float snap,
-               float out[3]);
+               const float* shoulder, float out[3]);
 
 }  // namespace s4vr::collide

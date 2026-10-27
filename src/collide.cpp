@@ -230,6 +230,7 @@ struct HandStop {
     bool known = false;
     int logs = 0;
     ULONGLONG logTick = 0;
+    unsigned armTries = 0;  // solves caught since the way from the shoulder last helped
 };
 HandStop g_handStop[2];
 
@@ -314,7 +315,7 @@ void configureHands(bool on) {
 }
 
 float stopHand(int side, const float target[3], const float* offsets, const float* radii, int count, float snap,
-               float out[3]) {
+               const float* shoulder, float out[3]) {
     out[0] = target[0], out[1] = target[1], out[2] = target[2];
     if (side < 0 || side > 1 || count <= 0) return 0;
     HandStop& h = g_handStop[side];
@@ -354,9 +355,15 @@ float stopHand(int side, const float target[3], const float* offsets, const floa
     }
     if (!(thinnest > 1e-3f) || !std::isfinite(reach)) return 0;
     const float m = reach + thinnest;
-    const float x0 = std::min(h.p[0], tx) - m, x1 = std::max(h.p[0], tx) + m;
-    const float y0 = std::min(h.p[1], ty) - m, y1 = std::max(h.p[1], ty) + m;
-    const float z0 = std::min(h.p[2], tz) - m, z1 = std::max(h.p[2], tz) + m;
+    const bool arm = shoulder && std::isfinite(shoulder[0] + shoulder[1] + shoulder[2]);
+    float x0 = std::min(h.p[0], tx) - m, x1 = std::max(h.p[0], tx) + m;
+    float y0 = std::min(h.p[1], ty) - m, y1 = std::max(h.p[1], ty) + m;
+    float z0 = std::min(h.p[2], tz) - m, z1 = std::max(h.p[2], tz) + m;
+    if (arm) {
+        x0 = std::min(x0, shoulder[0] - m), x1 = std::max(x1, shoulder[0] + m);
+        y0 = std::min(y0, shoulder[1] - m), y1 = std::max(y1, shoulder[1] + m);
+        z0 = std::min(z0, shoulder[2] - m), z1 = std::max(z1, shoulder[2] + m);
+    }
     thread_local Near around;
     around.walls.clear();
     around.shapes.clear();
@@ -365,42 +372,65 @@ float stopHand(int side, const float target[3], const float* offsets, const floa
         if (w.y1 >= y0 && w.y0 <= y1 && std::max(w.ax, w.bx) >= x0 && std::min(w.ax, w.bx) <= x1 &&
             std::max(w.az, w.bz) >= z0 && std::min(w.az, w.bz) <= z1)
             around.walls.push_back(&w);
-    for (const Shape& s : shapes)
-        if (s.y1 >= y0 && s.y0 <= y1 && s.maxX >= x0 && s.minX <= x1 && s.maxZ >= z0 && s.minZ <= z1)
+    for (const Shape& s : shapes)  // flag 4: a footprint whose model's box (flag 2) is what hands meet
+        if (!(s.flags & 4) && s.y1 >= y0 && s.y0 <= y1 && s.maxX >= x0 && s.minX <= x1 && s.maxZ >= z0 &&
+            s.minZ <= z1)
             around.shapes.push_back(&s);
     if (around.walls.empty() && around.shapes.empty()) {
         h.p[0] = tx, h.p[1] = ty, h.p[2] = tz;
         return 0;
     }
-    // Toward your hand in steps under half its thinnest part, so no part
-    // gets past a wall's face; each step slides along what it touches. A
-    // wall pushes each part back toward the side the middle of the hand is
-    // on (a finger turned into the wall comes back out the near side).
-    const float step = std::max(thinnest * 0.4f, 0.002f);
-    for (int i = 0; i < 160; ++i) {
-        float dx = tx - h.p[0], dy = ty - h.p[1], dz = tz - h.p[2], d = std::sqrt(dx * dx + dy * dy + dz * dz);
-        float from[3] = {h.p[0], h.p[1], h.p[2]};
-        if (d > step) dx *= step / d, dy *= step / d, dz *= step / d;
-        h.p[0] += dx, h.p[1] += dy, h.p[2] += dz;
-        const float middle[3] = {from[0] + centre[0], from[1] + centre[1], from[2] + centre[2]};
-        for (int pass = 0; pass < 2; ++pass) {
-            bool moved = false;
-            for (int k = 0; k < count; ++k) {
-                const float* o = offsets + k * 3;
-                float ball[3] = {h.p[0] + o[0], h.p[1] + o[1], h.p[2] + o[2]};
-                float was[3] = {ball[0], ball[1], ball[2]};
-                if (ballOut(ball, radii[k], middle, around)) {
-                    h.p[0] += ball[0] - was[0], h.p[1] += ball[1] - was[1], h.p[2] += ball[2] - was[2];
-                    moved = true;
+    // Toward your hand in steps under its thinnest part, so no part gets
+    // past a wall's face; each step slides along what it touches. A wall
+    // pushes each part back toward the side the middle of the hand is on (a
+    // finger turned into the wall comes back out the near side).
+    const float step = std::max(thinnest * 0.8f, 0.002f);
+    auto sweep = [&](float p[3], int steps) {
+        for (int i = 0; i < steps; ++i) {
+            float dx = tx - p[0], dy = ty - p[1], dz = tz - p[2], d = std::sqrt(dx * dx + dy * dy + dz * dz);
+            float from[3] = {p[0], p[1], p[2]};
+            if (d > step) dx *= step / d, dy *= step / d, dz *= step / d;
+            p[0] += dx, p[1] += dy, p[2] += dz;
+            const float middle[3] = {from[0] + centre[0], from[1] + centre[1], from[2] + centre[2]};
+            for (int pass = 0; pass < 2; ++pass) {
+                bool moved = false;
+                for (int k = 0; k < count; ++k) {
+                    const float* o = offsets + k * 3;
+                    float ball[3] = {p[0] + o[0], p[1] + o[1], p[2] + o[2]};
+                    float was[3] = {ball[0], ball[1], ball[2]};
+                    if (ballOut(ball, radii[k], middle, around)) {
+                        p[0] += ball[0] - was[0], p[1] += ball[1] - was[1], p[2] += ball[2] - was[2];
+                        moved = true;
+                    }
                 }
+                if (!moved) break;
             }
-            if (!moved) break;
+            float mx = p[0] - from[0], my = p[1] - from[1], mz = p[2] - from[2];
+            if (d <= step || mx * mx + my * my + mz * mz < 1e-8f) break;  // there, or held against something
         }
-        float mx = h.p[0] - from[0], my = h.p[1] - from[1], mz = h.p[2] - from[2];
-        if (d <= step || mx * mx + my * my + mz * mz < 1e-8f) break;  // there, or held against something
+        float ax = tx - p[0], ay = ty - p[1], az = tz - p[2];
+        return std::sqrt(ax * ax + ay * ay + az * az);
+    };
+    float apart = sweep(h.p, 120);
+    // Caught (on a door jamb you walked past, the side of the steps): your
+    // arm brings it in from your shoulder instead, if that's nearer.
+    // Tried every few solves while it stays caught (it costs a long sweep).
+    if (arm && apart > 0.04f && ++h.armTries % 4 == 1) {
+        float q[3] = {shoulder[0] - centre[0], shoulder[1] - centre[1], shoulder[2] - centre[2]};
+        float other = sweep(q, 200);
+        if (other < apart - 0.02f) {
+            h.armTries = 0;
+            h.p[0] = q[0], h.p[1] = q[1], h.p[2] = q[2];
+            apart = other;
+            if (h.logs < 20 && now - h.logTick > 2000) {
+                ++h.logs;
+                h.logTick = now;
+                LOG("Collision: your %s hand was caught; brought round from your shoulder (%.0f mm from your hand)",
+                    side ? "right" : "left", apart * 1000);
+            }
+        }
     }
     out[0] = h.p[0], out[1] = h.p[1], out[2] = h.p[2];
-    float ax = tx - h.p[0], ay = ty - h.p[1], az = tz - h.p[2], apart = std::sqrt(ax * ax + ay * ay + az * az);
     if (apart > 0.03f && h.logs < 20 && now - h.logTick > 2000) {
         ++h.logs;
         h.logTick = now;

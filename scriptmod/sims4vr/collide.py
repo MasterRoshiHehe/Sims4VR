@@ -48,6 +48,7 @@ PROBE = 0.4 + 0.123  # metres: walk.PROBE_DISTANCE plus the navmesh's agent radi
 RAYS = 24
 
 walls = []    # (ax, az, bx, bz, y0, y1)
+hand_shapes = []  # (polygon, y0, y1, its footprint polygon): what your hands meet of an object (its model's box)
 objects = []  # (polygon [(x, z), ...], y0, y1, blocks the navmesh, name)
 _state = None  # (centre x, z, level, planner build id)
 _pending = None  # generator of a build in progress
@@ -106,9 +107,19 @@ def _send():
     for w in walls:
         data.extend(w)
     shapes = [o for o in objects if 3 <= len(o[0]) < 256]
-    data.append(float(len(shapes)))
-    for pts, y0, y1, blocks, _ in shapes:
-        data.extend((float(len(pts)), y0, y1, 1.0 if blocks else 0.0))
+    # Your hands meet an object at its model's box where there is one (collide.cpp
+    # stopHand: flag 2, hands only); its footprint then gets flag 4 (not for hands).
+    with_box = set(id(h[3]) for h in hand_shapes)
+    data.append(float(len(shapes) + len(hand_shapes)))
+    for o in shapes:
+        pts, y0, y1, blocks = o[:4]
+        material = o[5] if len(o) > 5 else 0  # touch sounds (foley.py)
+        flags = (1 if blocks else 0) | material << 8 | (4 if id(pts) in with_box else 0)
+        data.extend((float(len(pts)), y0, y1, float(flags)))
+        for x, z in pts:
+            data.extend((x, z))
+    for pts, y0, y1, _ in hand_shapes:
+        data.extend((float(len(pts)), y0, y1, 2.0))
         for x, z in pts:
             data.extend((x, z))
     fn(struct.pack('<{}f'.format(len(data)), *data))
@@ -121,6 +132,7 @@ def forget():
     _dirty = 0.0
     walls = []
     objects = []
+    hand_shapes.clear()
     try:
         _send()
     except Exception:
@@ -222,6 +234,34 @@ def _cut(segment, gap):
     return parts
 
 
+def _jamb_ends(jambs, gaps, piece, a, b, top):
+    """Notes where a doorway's cut ended this wall piece: (gap, which end) ->
+    [(across, x, z, top)]. The wall contours have no doorways, so cutting one
+    leaves the wall open at its sides; _jambs closes them again."""
+    for px, pz in ((piece[0], piece[1]), (piece[2], piece[3])):
+        if math.hypot(px - a.x, pz - a.z) < 1e-3 or math.hypot(px - b.x, pz - b.z) < 1e-3:
+            continue  # a corner of the wall, not a cut
+        for i, ((cx, cz), (ux, uz), half, (nx, nz), depth) in enumerate(gaps):
+            along = (px - cx) * ux + (pz - cz) * uz
+            across = (px - cx) * nx + (pz - cz) * nz
+            if abs(across) <= depth + 1e-3 and abs(abs(along) - half) < 0.01:
+                jambs.setdefault((i, along > 0), []).append((across, px, pz, top))
+                break
+
+
+def _jambs(jambs, floor):
+    """The sides of each doorway (its jambs): one wall side across the wall
+    between the two faces cut at each end of the gap (user 2026-10-27: hands
+    went into the wall between two arches from the arch side)."""
+    sides = []
+    for ends in jambs.values():
+        ends.sort()
+        for (_, ax, az, top0), (_, bx, bz, top1) in zip(ends[0::2], ends[1::2]):
+            if math.hypot(bx - ax, bz - az) < 0.6:  # a wall's thickness, not two walls
+                sides.append((ax, az, bx, bz, floor, min(top0, top1)))
+    return sides
+
+
 def _y_range(obj, footprint):
     """World height range the object covers, or None."""
     y = obj.position.y
@@ -240,6 +280,52 @@ def _y_range(obj, footprint):
         return None
 
 
+def _hand_polygon(obj, pts):
+    """The footprint polygon cut down to the object's model box (its mesh's
+    bounds, turned and scaled like the object): what your hand touches. A lamp's
+    or bookshelf's footprint reaches well past it (user 2026-10-27: hands
+    stopped 10 cm short). None without a model box."""
+    try:
+        from sims4vr import objmenu
+        box, _ = objmenu._model_box(obj)
+    except Exception:
+        return None
+    if box is None:
+        return None
+    scale = getattr(obj, 'scale', 1.0) or 1.0
+    p, q = obj.position, obj.orientation
+
+    def world(lx, lz):  # object space to the world: q * v * q^-1 about y and the rest
+        x, y, z = lx * scale, 0.0, lz * scale
+        tx = 2 * (q.y * z - q.z * y)
+        ty = 2 * (q.z * x - q.x * z)
+        tz = 2 * (q.x * y - q.y * x)
+        return (p.x + x + q.w * tx + (q.y * tz - q.z * ty), p.z + z + q.w * tz + (q.x * ty - q.y * tx))
+
+    rect = [world(box[0], box[2]), world(box[3], box[2]), world(box[3], box[5]), world(box[0], box[5])]
+    # Clip the footprint to the box (Sutherland-Hodgman; the box is convex).
+    area = sum(rect[i][0] * rect[(i + 1) % 4][1] - rect[(i + 1) % 4][0] * rect[i][1] for i in range(4))
+    sign = 1.0 if area > 0 else -1.0
+    out = list(pts)
+    for i in range(4):
+        if len(out) < 3:
+            return None
+        (ax, az), (bx, bz) = rect[i], rect[(i + 1) % 4]
+        inside = lambda pt: sign * ((bx - ax) * (pt[1] - az) - (bz - az) * (pt[0] - ax)) >= 0
+        src, out = out, []
+        for j in range(len(src)):
+            cur, nxt = src[j], src[(j + 1) % len(src)]
+            if inside(cur):
+                out.append(cur)
+            if inside(cur) != inside(nxt):
+                dx, dz = nxt[0] - cur[0], nxt[1] - cur[1]
+                den = (bx - ax) * dz - (bz - az) * dx
+                if abs(den) > 1e-12:
+                    t = ((bz - az) * (cur[0] - ax) - (bx - ax) * (cur[1] - az)) / den
+                    out.append((cur[0] + dx * t, cur[1] + dz * t))
+    return out if 3 <= len(out) < 256 else None
+
+
 def _blocks_navmesh(surface, pts, y):
     """True when the navmesh is cut at the middle of the footprint (Sims can't stand there)."""
     cx = sum(p[0] for p in pts) / len(pts)
@@ -252,7 +338,7 @@ def _blocks_navmesh(surface, pts, y):
 
 def _build(sim, x, y, z, surface):
     """Generator: yields between batches; ends with the new scene in place."""
-    global walls, objects
+    global walls, objects, hand_shapes
     spent = 0.0
     started = time.perf_counter()
     level = surface.secondary_id
@@ -293,6 +379,7 @@ def _build(sim, x, y, z, surface):
             gaps.append(gap)
     new_walls = []
     tops = {}
+    jambs = {}
     for contour in build_buy.get_wall_contours(x, z, surface, False):
         n = len(contour)
         for i in range(n):
@@ -309,11 +396,14 @@ def _build(sim, x, y, z, surface):
                     if top is None:
                         top = tops[cell] = _top(level, (s[0] + s[2]) / 2, (s[1] + s[3]) / 2, floor)
                     new_walls.append(s + (floor, top))
+                    _jamb_ends(jambs, gaps, s, a, b, top)
+    new_walls.extend(_jambs(jambs, floor))
     spent += time.perf_counter() - started
     yield
     started = time.perf_counter()
     # 3. Objects with their height ranges.
     new_objects = []
+    new_hands = []
     for i, obj in enumerate(near):
         if i and i % BATCH == 0:
             spent += time.perf_counter() - started
@@ -343,8 +433,11 @@ def _build(sim, x, y, z, surface):
             if len(pts) >= 3:
                 blocks = y0 < floor + HIP and _blocks_navmesh(surface, pts, floor)
                 new_objects.append((pts, y0, y1, blocks, name))
+                hand = _hand_polygon(obj, pts)
+                if hand is not None:
+                    new_hands.append((hand, y0, y1, pts))
     spent += time.perf_counter() - started
-    walls, objects = new_walls, new_objects
+    walls, objects, hand_shapes = new_walls, new_objects, new_hands
     _send()
     body = sum(1 for o in new_objects if o[3])
     high = sum(1 for o in new_objects if o[1] >= floor + HIP)

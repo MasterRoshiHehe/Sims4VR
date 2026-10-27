@@ -1259,7 +1259,8 @@ bool reachArm(void* pose, uint8_t* skeleton, Xf* locals, const Arm& arm, const A
 }
 
 // Your hand stopped at walls and furniture (collide.py's scene).
-void keepOutOfScene(int sideIndex, Vec3& palm, Vec3& wrist, const Quat& gripWorld, float scale, const Quat& heading);
+void keepOutOfScene(int sideIndex, Vec3& palm, Vec3& wrist, const Quat& gripWorld, float scale, const Quat& heading,
+                    const float eye[3]);
 // Your hand pushed back out of other Sims' bodies; returns how deep it went (world units).
 float keepOutOfBodies(int sideIndex, Vec3& palm, Vec3& wrist, const Quat& gripWorld, float scale);
 
@@ -1324,7 +1325,7 @@ void solveArm(void* pose, uint8_t* skeleton, Xf* locals, const Arm& arm, int sid
     Quat pinGrip = qmul(frame.heading, grip);
     // A tracked hand (your real one, looks only) touches no Sim.
     float depth = hand.tracked ? 0.0f : keepOutOfBodies(sideIndex, palm, world, gripWorld, frame.scale);
-    keepOutOfScene(sideIndex, palm, world, gripWorld, frame.scale, frame.heading);
+    keepOutOfScene(sideIndex, palm, world, gripWorld, frame.scale, frame.heading, frame.eye);
     GrabPlace stuck;
     const bool grabbing =
         !hand.tracked && g_grabPlace[sideIndex].read(stuck) && stuck.on && ageMs(GetTickCount64(), stuck.tick) < 200;
@@ -2489,7 +2490,8 @@ float keepOutOfBodies(int sideIndex, Vec3& palm, Vec3& wrist, const Quat& gripWo
 // the palm and each finger segment with its thickness), so it rests flush on
 // the surface; before the first one is drawn, a ball at the palm and one at
 // the fingertips. No vibration.
-void keepOutOfScene(int sideIndex, Vec3& palm, Vec3& wrist, const Quat& gripWorld, float scale, const Quat& heading) {
+void keepOutOfScene(int sideIndex, Vec3& palm, Vec3& wrist, const Quat& gripWorld, float scale, const Quat& heading,
+                    const float eye[3]) {
     if (!(scale > 0)) return;
     float offsets[64 * 3], radii[64];
     int n = 0;
@@ -2518,8 +2520,10 @@ void keepOutOfScene(int sideIndex, Vec3& palm, Vec3& wrist, const Quat& gripWorl
         n = 2;
     }
     const float target[3] = {palm.x, palm.y, palm.z};
+    // Where your arms come from, near enough: your chest, below your eyes.
+    const float shoulder[3] = {eye[0], eye[1] - 0.22f * scale, eye[2]};
     float out[3];
-    if (collide::stopHand(sideIndex, target, offsets, radii, n, 0.6f * scale, out) <= 0) return;
+    if (collide::stopHand(sideIndex, target, offsets, radii, n, 0.6f * scale, shoulder, out) <= 0) return;
     const Vec3 shift{out[0] - palm.x, out[1] - palm.y, out[2] - palm.z};
     palm = add(palm, shift);
     wrist = add(wrist, shift);
