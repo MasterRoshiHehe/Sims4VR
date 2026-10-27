@@ -48,9 +48,13 @@ PROBE = 0.4 + 0.123  # metres: walk.PROBE_DISTANCE plus the navmesh's agent radi
 RAYS = 24
 
 walls = []    # (ax, az, bx, bz, y0, y1)
-hand_shapes = []  # (polygon, y0, y1, None): what your hands meet of an object (its meshes' boxes)
+hand_shapes = []  # (polygon, y0, y1, flags): what your hands meet of an object (its visible shape or meshes' boxes;
+                  # flags None: hands only, else as the footprint's: its body too)
 _hand_skip = set()  # id() of the footprint polygons hand_shapes stand in for
 _meshes = {}  # definition id: [(min xyz, max xyz)] of its model's meshes, () for a stand-in model, or None
+_shapes = {}  # definition id: [(corners, y0, y1)] of its model's visible shape (model space), () stand-in, None
+_placed = {}  # object id: (where it stands, its visible shape there): turned and moved once while it stays
+_body_skip = set()  # id() of the footprint polygons whose body part the visible shape took over
 _model_users = {}  # model instance: {tuning name: definition id} of the objects using it
 objects = []  # (polygon [(x, z), ...], y0, y1, blocks the navmesh, name)
 _state = None  # (centre x, z, level, planner build id)
@@ -117,12 +121,12 @@ def _send():
     for o in shapes:
         pts, y0, y1, blocks = o[:4]
         material = o[5] if len(o) > 5 else 0  # touch sounds (foley.py)
-        flags = (1 if blocks else 0) | material << 8 | (4 if id(pts) in with_box else 0)
+        flags = (1 if blocks and id(pts) not in _body_skip else 0) | material << 8 | (4 if id(pts) in with_box else 0)
         data.extend((float(len(pts)), y0, y1, float(flags)))
         for x, z in pts:
             data.extend((x, z))
-    for pts, y0, y1, _ in hand_shapes:
-        data.extend((float(len(pts)), y0, y1, 2.0))
+    for pts, y0, y1, f in hand_shapes:
+        data.extend((float(len(pts)), y0, y1, 2.0 if f is None else float(f)))
         for x, z in pts:
             data.extend((x, z))
     fn(struct.pack('<{}f'.format(len(data)), *data))
@@ -137,6 +141,8 @@ def forget():
     objects = []
     hand_shapes.clear()
     _hand_skip.clear()
+    _body_skip.clear()
+    _placed.clear()
     try:
         _send()
     except Exception:
@@ -342,6 +348,72 @@ def _mesh_boxes(obj):
     return boxes
 
 
+def _model_shape(obj):
+    """[(corners, y0, y1)] of the object's visible shape in its model's own space
+    (the DLL's meshshape: each separate piece of the model sliced into 5 cm
+    layers, each layer the piece's outline there; user 2026-10-27: a round
+    parasol table and its pole met you as squares). () for a stand-in model,
+    None if unknown (older DLL, model not in the game's packages)."""
+    key = getattr(obj.definition, 'id', None)
+    if key in _shapes:
+        return _shapes[key]
+    name = str(obj).split(':')[0]
+    try:
+        model = obj.definition.get_model(0)
+        instance = getattr(model, 'instance', None)
+        if instance is None:
+            _shapes[key] = None
+            return None
+        users = _model_users.setdefault(instance, {})
+        users[name] = key
+        if len(users) > 2:  # a stand-in (see _mesh_boxes)
+            for k in users.values():
+                _shapes[k] = ()
+            return ()
+        found = native.model_shape(instance)
+        if found is None:
+            return None  # an older DLL: the meshes' boxes
+        if found[0] == 1:
+            return None  # the game's models are still being indexed: next time
+        prisms = found[1] if found[0] == 0 and found[1] else None
+        note = found[2]
+    except Exception as e:
+        prisms, note = None, repr(e)
+    _shapes[key] = prisms
+    if len(_shapes) <= 80:
+        _log('{} meets you at {}'.format(name, 'its shape: ' + note if prisms else 'its footprint ({})'.format(note or 'no model')))
+    return prisms
+
+
+def _shape_of(obj, top):
+    """The object's visible shape where it stands: [(polygon, y0, y1)] (world), cut
+    at top; () for a stand-in, None if unknown."""
+    prisms = _model_shape(obj)
+    if not prisms:
+        return prisms
+    scale = getattr(obj, 'scale', 1.0) or 1.0
+    p, q = obj.position, obj.orientation
+    where = (p.x, p.y, p.z, q.x, q.y, q.z, q.w, scale, top)
+    placed = _placed.get(obj.id)
+    if placed is not None and placed[0] == where:
+        return placed[1]
+
+    def world(lx, lz):
+        x, z = lx * scale, lz * scale
+        tx, ty, tz = 2 * q.y * z, 2 * (q.z * x - q.x * z), -2 * q.y * x
+        return (p.x + x + q.w * tx + (q.y * tz - q.z * ty), p.z + z + q.w * tz + (q.x * ty - q.y * tx))
+
+    shapes = []
+    for corners, y0, y1 in prisms:
+        y0, y1 = p.y + y0 * scale, min(p.y + y1 * scale, top)
+        if y1 - y0 > 0.0005:
+            shapes.append(([world(x, z) for x, z in corners], y0, y1))
+    if len(_placed) > 2000:
+        _placed.clear()
+    _placed[obj.id] = (where, shapes)
+    return shapes
+
+
 def _mesh_shapes(obj, top):
     """What your hands meet of an object: each mesh's box, turned, scaled and
     placed like the object, as (polygon, y0, y1, None); None if unknown, empty
@@ -424,7 +496,7 @@ def _blocks_navmesh(surface, pts, y):
 
 def _build(sim, x, y, z, surface):
     """Generator: yields between batches; ends with the new scene in place."""
-    global walls, objects, hand_shapes, _hand_skip
+    global walls, objects, hand_shapes, _hand_skip, _body_skip
     spent = 0.0
     started = time.perf_counter()
     level = surface.secondary_id
@@ -491,6 +563,7 @@ def _build(sim, x, y, z, surface):
     new_objects = []
     new_hands = []
     new_skip = set()
+    new_body_skip = set()
     for i, obj in enumerate(near):
         if i and i % BATCH == 0:
             spent += time.perf_counter() - started
@@ -515,22 +588,35 @@ def _build(sim, x, y, z, surface):
         if y1 - y0 < MIN_HEIGHT or y1 <= floor:
             continue
         name = str(obj)[:48]
-        meshes = _mesh_shapes(obj, y1)
+        shape = _shape_of(obj, y1)
+        meshes = None if shape else _mesh_shapes(obj, y1)
+        first = len(new_objects)
+        if time.perf_counter() - started > 0.004:
+            spent += time.perf_counter() - started
+            yield
+            started = time.perf_counter()
         for polygon in polygons:
             pts = [(v.x, v.z) for v in polygon]
             if len(pts) >= 3:
                 blocks = y0 < floor + HIP and _blocks_navmesh(surface, pts, floor)
                 new_objects.append((pts, y0, y1, blocks, name))
-                if meshes is not None:
+                if shape:  # its visible shape stands in for the footprint, for hands and body
+                    new_skip.add(id(pts))
+                    new_body_skip.add(id(pts))
+                elif meshes is not None:
                     new_skip.add(id(pts))
                 else:
                     hand = _hand_polygon(obj, pts)
                     if hand is not None:
                         new_hands.append((hand, y0, y1, None))
                         new_skip.add(id(pts))
+        if shape:
+            mine = new_objects[first:]
+            flags = (1 if any(o[3] for o in mine) else 0) | next((o[5] for o in mine if len(o) > 5), 0) << 8
+            new_hands.extend((pts, a, b, flags) for pts, a, b in shape)
         new_hands.extend(meshes or ())
     spent += time.perf_counter() - started
-    walls, objects, hand_shapes, _hand_skip = new_walls, new_objects, new_hands, new_skip
+    walls, objects, hand_shapes, _hand_skip, _body_skip = new_walls, new_objects, new_hands, new_skip, new_body_skip
     _send()
     body = sum(1 for o in new_objects if o[3])
     high = sum(1 for o in new_objects if o[1] >= floor + HIP)

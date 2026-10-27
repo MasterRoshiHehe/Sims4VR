@@ -223,6 +223,7 @@ float pushOut(float& x, float& z, float radius, float objectRadius, float feetY,
 namespace {
 
 std::atomic<bool> g_handsOn{true};
+std::atomic<float> g_wallGap{0.0f}, g_objectGap{0.0f};
 
 struct HandStop {
     float p[3] = {0, 0, 0};  // where the drawn palm is (world)
@@ -254,8 +255,9 @@ bool insideOf(const Shape& s, const float* points, float x, float z) {
 // y0 to y1) and object prisms (footprint from y0 to y1). `ref` is on the side
 // the ball came from: a wall pushes toward it, even if p went past the wall's
 // face line. Returns whether it moved.
-bool ballOut(float p[3], float r, const float ref[3], const Near& around) {
+bool ballOut(float p[3], float radius, const float ref[3], const Near& around) {
     bool moved = false;
+    float r = std::max(radius + g_wallGap.load(std::memory_order_relaxed), 0.002f);
     for (const Wall* w : around.walls) {
         float cx, cz;
         closest(p[0], p[2], w->ax, w->az, w->bx, w->bz, cx, cz);
@@ -273,6 +275,7 @@ bool ballOut(float p[3], float r, const float ref[3], const Near& around) {
         }
         moved = true;
     }
+    r = std::max(radius + g_objectGap.load(std::memory_order_relaxed), 0.002f);
     for (const Shape* s : around.shapes) {
         if (p[1] > s->y1 + r || p[1] < s->y0 - r || p[0] < s->minX - r || p[0] > s->maxX + r ||
             p[2] < s->minZ - r || p[2] > s->maxZ + r)
@@ -312,6 +315,13 @@ bool ballOut(float p[3], float r, const float ref[3], const Near& around) {
 
 void configureHands(bool on) {
     if (g_handsOn.exchange(on) != on) LOG("Collision: your hands %s walls and furniture", on ? "stop at" : "go through");
+}
+
+void setHandGaps(float wall, float object) {
+    wall = std::clamp(std::isfinite(wall) ? wall : 0.0f, -0.05f, 0.05f);
+    object = std::clamp(std::isfinite(object) ? object : 0.0f, -0.05f, 0.05f);
+    if (g_wallGap.exchange(wall) != wall || g_objectGap.exchange(object) != object)
+        LOG("Collision: your hands keep %.1f cm from walls and %.1f cm from furniture", wall * 100, object * 100);
 }
 
 float stopHand(int side, const float target[3], const float* offsets, const float* radii, int count, float snap,
@@ -354,7 +364,7 @@ float stopHand(int side, const float target[3], const float* offsets, const floa
         thinnest = std::min(thinnest, radii[k]);
     }
     if (!(thinnest > 1e-3f) || !std::isfinite(reach)) return 0;
-    const float m = reach + thinnest;
+    const float m = reach + thinnest + std::max(0.0f, std::max(g_wallGap.load(), g_objectGap.load()));
     const bool arm = shoulder && std::isfinite(shoulder[0] + shoulder[1] + shoulder[2]);
     float x0 = std::min(h.p[0], tx) - m, x1 = std::max(h.p[0], tx) + m;
     float y0 = std::min(h.p[1], ty) - m, y1 = std::max(h.p[1], ty) + m;

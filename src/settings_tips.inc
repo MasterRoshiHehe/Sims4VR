@@ -94,6 +94,8 @@ const TipText kTips[] = {
     {"body.body_radius", L"How far your body stays from walls. Smaller gets you closer; larger clips less."},
     {"body.furniture_radius", L"How far your body stays from furniture. Small lets you squeeze between pieces placed close together (Sims keep 12 cm); larger keeps you further off."},
     {"body.collision_scene", L"Keeps a map of the walls and furniture around you for collisions (your body, your hands, touch sounds). Off: none of those, and a little time saved on the game's thread."},
+    {"body.hand_object_gap", L"How close your hand comes to furniture. 0 = it touches the shape the game draws; plus keeps it that far off, minus lets it sink in. Move it while touching something to find what looks right."},
+    {"body.hand_wall_gap", L"How close your hand comes to walls. 0 = it touches the wall's surface; plus keeps it that far off, minus lets it sink in."},
     {"body.hand_collision", L"Your Sim's hands stop at walls and furniture while your real hands go on, and catch up as you pull back. No vibration. Needs the map row on."},
     {"body.walk_clips", L"Plays the Sim's start and stop walking animations as you move."},
     {"body.crouch", L"Push the right stick down to crouch, again to stand. Only while you walk freely (not in an animation, action, scene or seat)."},

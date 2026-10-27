@@ -292,6 +292,8 @@ struct Config {
     float bodyRadius = 0.3f;  // first person: metres your body keeps clear of walls
     float furnitureRadius = 0.12f;  // first person: metres your body keeps clear of furniture
     bool handCollision = true;  // first person: your Sim's hands stop at walls and furniture
+    float handWallGap = 0.0f;    // metres the hand keeps from walls beyond its shape (minus: sinks in)
+    float handObjectGap = 0.0f;  // the same for furniture
 
     // Hands (first person): close a hand near an object to pick it up, open it to put it down
     bool grab = true;

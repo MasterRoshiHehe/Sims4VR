@@ -76,6 +76,7 @@ void s4vr_sims_forever(int on, const float* v, const char* exe, const char* args
 void s4vr_sims_forever_surface(int nx, int ny, const float* depths, int count);
 void s4vr_claude_screen(int on, const float* v, const char* exe);
 int s4vr_model_bytes(unsigned long long instance, int* compression, unsigned* size, const char** data, int* length);
+int s4vr_model_shape(unsigned long long instance, const float** data, int* count, const char** note);
 int s4vr_phone_mount(float* out);
 void s4vr_set_phone_prop(float w, float h, float d);
 void s4vr_set_held(const unsigned long long* ids, int count);
@@ -508,6 +509,17 @@ PyObject* modelBytes(PyObject*, PyObject* args) {
     PyObject* bytes = py.PyBytes_FromStringAndSize(length > 0 ? data : "", length);
     return py.Py_BuildValue("(iiIN)", status, compression, size, bytes);
 }
+PyObject* modelShape(PyObject*, PyObject* args) {
+    unsigned long long instance = 0;
+    if (!py.PyArg_ParseTuple(args, "K", &instance)) return nullptr;
+    const float* data = nullptr;
+    const char* note = "";
+    int count = 0;
+    int status = s4vr_model_shape(instance, &data, &count, &note);
+    PyObject* bytes = py.PyBytes_FromStringAndSize(count > 0 ? reinterpret_cast<const char*>(data) : "",
+                                                   count > 0 ? count * 4 : 0);
+    return py.Py_BuildValue("(iNs)", status, bytes, note ? note : "");
+}
 PyObject* setObjectMenu(PyObject*, PyObject* args) {
     int kind = 0;
     float v[11] = {};
@@ -872,6 +884,8 @@ PyMethodDef methods[] = {
      "set_tablet_wallpaper(type, bytes): the phone background picture (unpacked) for the build/buy tablet"},
     {"model_bytes", modelBytes, METH_VARARGS,
      "model_bytes(instance) -> (status, compression, size, bytes): an object model as stored (status 0 found, 1 not indexed yet, 2 none, 3 read failed)"},
+    {"model_shape", modelShape, METH_VARARGS,
+     "model_shape(instance) -> (status, bytes, note): an object model's visible shape as packed floats (count, y0, y1, x z...; model space), status as model_bytes"},
     {"claude_screen", claudeScreen, METH_VARARGS,
      "claude_screen(on, cx, cy, cz, nx, ny, nz, ux, uy, uz, width, height, exe): the Claude app on a computer's screen (0: off)"},
     {"sims_forever_surface", simsForeverSurface, METH_VARARGS,

@@ -5,6 +5,7 @@ module (PyInit__sims4vr) and is loaded with importlib.
 """
 import atexit
 import os
+import struct
 import time
 import traceback
 
@@ -538,6 +539,24 @@ def model_bytes(instance):
     if fn is None:
         return None
     return fn(int(instance) & 0xFFFFFFFFFFFFFFFF)
+
+
+def model_shape(instance):
+    """An object model's visible shape for collision: (status, [(corners, y0, y1)]
+    in the model's own space, note); status as model_bytes (3 also: no usable
+    mesh). None with an older DLL."""
+    fn = _optional('model_shape')
+    if fn is None:
+        return None
+    status, data, note = fn(int(instance) & 0xFFFFFFFFFFFFFFFF)
+    f = struct.unpack('<{}f'.format(len(data) // 4), data) if data else ()
+    prisms = []
+    i = 0
+    while i + 3 <= len(f):
+        n = int(f[i])
+        prisms.append(([(f[i + 3 + 2 * k], f[i + 4 + 2 * k]) for k in range(n)], f[i + 1], f[i + 2]))
+        i += 3 + 2 * n
+    return status, prisms, note
 
 
 def set_object_menu(kind, centre=(0, 0, 0), normal=(0, 0, 1), up=(0, 1, 0), width=0.0, height=0.0):

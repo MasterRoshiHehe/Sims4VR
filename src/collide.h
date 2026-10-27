@@ -38,6 +38,9 @@ bool active(float& bodyRadius);
 // [body] hand_collision (debug menu: Controls > Moving): your Sim's hands stop
 // at walls and furniture.
 void configureHands(bool on);
+// [body] hand_wall_gap / hand_object_gap (debug menu, Controls > Moving): metres
+// your hand keeps from walls / furniture beyond its own shape (minus: it sinks in).
+void setHandGaps(float wall, float object);
 
 // The pose hook (armik.cpp), every solve of your Sim's arm (side 0 left):
 // where your real palm is (`target`, world) and the hand's shape around it:

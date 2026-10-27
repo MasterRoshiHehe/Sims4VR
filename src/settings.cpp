@@ -628,6 +628,10 @@ std::vector<Row> makeRows() {
         number(moving, L"Body keeps clear of furniture by", "body", "furniture_radius", &Config::furnitureRadius, 0.05f, 0.5f,
                0.01f, 100, L"%.0f cm", kWalk),
         toggle(moving, L"Hands stop at walls and furniture", "body", "hand_collision", &Config::handCollision, kWalk),
+        number(moving, L"Hand gap to furniture", "body", "hand_object_gap", &Config::handObjectGap, -0.05f, 0.05f,
+               0.0025f, 100, L"%.2f cm", kWalk),
+        number(moving, L"Hand gap to walls", "body", "hand_wall_gap", &Config::handWallGap, -0.05f, 0.05f, 0.0025f, 100,
+               L"%.2f cm", kWalk),
         toggle(moving, L"Start and stop walking animations", "body", "walk_clips", &Config::bodyWalkClips, kWalk),
         number(moving, L"Stop smoothness (0 = instant)", "body", "stop_time", &Config::bodyStopTime, 0, 1.5f, 0.05f, 1,
                L"%.2f s", kWalk),
@@ -1310,6 +1314,7 @@ void applyChange(Apply apply) {
             collide::configure(c.bodyCollision, c.bodyRadius);
             collide::setFurnitureRadius(c.furnitureRadius);
             collide::configureHands(c.handCollision);
+            collide::setHandGaps(c.handWallGap, c.handObjectGap);
             player::setStopTime(c.bodyStopTime);
             player::configureCrouch(c.crouch, c.crouchDepth, c.crouchSpeed, c.crouchSeconds);
             player::setStopGlide(c.bodyStopGlide);

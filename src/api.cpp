@@ -50,6 +50,8 @@
 #include "uihook.h"
 #include "log.h"
 #include "modelbox.h"
+#include "meshshape.h"
+#include "modelparse.h"
 #include "nodim.h"
 #include "pointer.h"
 #include "vr.h"
@@ -384,6 +386,30 @@ S4VR_API void s4vr_sims_forever(int on, const float* v, const char* exe, const c
 S4VR_API void s4vr_claude_screen(int on, const float* v, const char* exe) { s4vr::claudescreen::set(on, v, exe); }
 S4VR_API void s4vr_sims_forever_surface(int nx, int ny, const float* depths, int count) {
     s4vr::simsforever::setSurface(nx, ny, depths, count);
+}
+// An object model's visible shape for collision (meshshape::fromModel: prisms in the model's own
+// space; collide.py). Status as s4vr_model_bytes (3 also: no usable mesh). *data and *note stay
+// valid until the next call (game thread only).
+S4VR_API int s4vr_model_shape(unsigned long long instance, const float** data, int* count, const char** note) {
+    static std::vector<float> shape;
+    static std::string text;
+    static std::vector<uint8_t> stored, bytes;
+    shape.clear();
+    text.clear();
+    s4vr::modelbox::start();
+    uint16_t c = 0;
+    uint32_t n = 0;
+    int status = s4vr::modelbox::read(instance, c, n, stored);
+    if (status == 0) {
+        if (!cbo::parse::unpack(c, stored.data(), stored.size(), n, bytes))
+            status = 3, text = "unpacking failed";
+        else if (!s4vr::meshshape::fromModel(bytes, shape, text))
+            status = 3;
+    }
+    *data = shape.data();
+    *count = static_cast<int>(shape.size());
+    *note = text.c_str();
+    return status;
 }
 // An object model's stored bytes from the game's packages (modelbox::read's status; 0 = found).
 // *data stays valid until the next call (game thread only).

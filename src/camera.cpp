@@ -2717,6 +2717,7 @@ void init(const Config& config) {
     player::setSmoothSlide(config.bodySmoothSlide);
     collide::configure(config.bodyCollision, config.bodyRadius);
     collide::setFurnitureRadius(config.furnitureRadius);
+    collide::setHandGaps(config.handWallGap, config.handObjectGap);
     collide::configureHands(config.handCollision);
     player::setHeadRepel(config.headRepel, config.headRadius);
     player::setStopTime(config.bodyStopTime);
