@@ -1259,7 +1259,7 @@ bool reachArm(void* pose, uint8_t* skeleton, Xf* locals, const Arm& arm, const A
 }
 
 // Your hand stopped at walls and furniture (collide.py's scene).
-void keepOutOfScene(int sideIndex, Vec3& palm, Vec3& wrist, const Quat& gripWorld, float scale);
+void keepOutOfScene(int sideIndex, Vec3& palm, Vec3& wrist, const Quat& gripWorld, float scale, const Quat& heading);
 // Your hand pushed back out of other Sims' bodies; returns how deep it went (world units).
 float keepOutOfBodies(int sideIndex, Vec3& palm, Vec3& wrist, const Quat& gripWorld, float scale);
 
@@ -1324,7 +1324,7 @@ void solveArm(void* pose, uint8_t* skeleton, Xf* locals, const Arm& arm, int sid
     Quat pinGrip = qmul(frame.heading, grip);
     // A tracked hand (your real one, looks only) touches no Sim.
     float depth = hand.tracked ? 0.0f : keepOutOfBodies(sideIndex, palm, world, gripWorld, frame.scale);
-    keepOutOfScene(sideIndex, palm, world, gripWorld, frame.scale);
+    keepOutOfScene(sideIndex, palm, world, gripWorld, frame.scale, frame.heading);
     GrabPlace stuck;
     const bool grabbing =
         !hand.tracked && g_grabPlace[sideIndex].read(stuck) && stuck.on && ageMs(GetTickCount64(), stuck.tick) < 200;
@@ -2483,15 +2483,43 @@ float keepOutOfBodies(int sideIndex, Vec3& palm, Vec3& wrist, const Quat& gripWo
     return deepest;
 }
 
-// Walls and furniture ([body] hand_collision): the drawn hand stops at them,
-// fingertips included, while your real one goes on, and catches up as you
-// pull back (collide::stopHand). No vibration.
-void keepOutOfScene(int sideIndex, Vec3& palm, Vec3& wrist, const Quat& gripWorld, float scale) {
+// Walls and furniture ([body] hand_collision): the drawn hand stops at them
+// while your real one goes on, and catches up as you pull back
+// (collide::stopHand). The hand is its real shape as last drawn (handshape:
+// the palm and each finger segment with its thickness), so it rests flush on
+// the surface; before the first one is drawn, a ball at the palm and one at
+// the fingertips. No vibration.
+void keepOutOfScene(int sideIndex, Vec3& palm, Vec3& wrist, const Quat& gripWorld, float scale, const Quat& heading) {
     if (!(scale > 0)) return;
-    const Vec3 reach = rotate(gripWorld, {0, 0, -kFingerReach * scale});
-    const float target[3] = {palm.x, palm.y, palm.z}, tip[3] = {reach.x, reach.y, reach.z};
+    float offsets[64 * 3], radii[64];
+    int n = 0;
+    handshape::Shape hs;
+    if (handshape::latest(sideIndex, hs) && hs.valid && hs.segmentCount > 0) {
+        // Its parts from its wrist, carried to the wrist the controller asks for now.
+        const Vec3 base = sub(wrist, palm);
+        for (int k = 0; k < hs.segmentCount && n + 3 <= 64; ++k) {
+            const handshape::Segment& sg = hs.segment[k];
+            const Vec3 mid = mul(add(sg.a, sg.b), 0.5f);
+            const bool palmPart = sg.part == handshape::kPalm;  // long and flat: its middle too
+            const Vec3 ends[3] = {sg.a, sg.b, mid};
+            for (int e = 0; e < (palmPart ? 3 : 2); ++e) {
+                Vec3 o = add(base, rotate(heading, mul(sub(ends[e], hs.wrist), scale)));
+                offsets[n * 3] = o.x, offsets[n * 3 + 1] = o.y, offsets[n * 3 + 2] = o.z;
+                radii[n++] = sg.radius * scale;
+            }
+        }
+    }
+    if (!n) {
+        const Vec3 reach = rotate(gripWorld, {0, 0, -kFingerReach * scale});
+        offsets[0] = offsets[1] = offsets[2] = 0;
+        radii[0] = kHandRadius * scale;
+        offsets[3] = reach.x, offsets[4] = reach.y, offsets[5] = reach.z;
+        radii[1] = kHandRadius * 0.6f * scale;
+        n = 2;
+    }
+    const float target[3] = {palm.x, palm.y, palm.z};
     float out[3];
-    if (collide::stopHand(sideIndex, target, tip, kHandRadius * scale, 0.6f * scale, out) <= 0) return;
+    if (collide::stopHand(sideIndex, target, offsets, radii, n, 0.6f * scale, out) <= 0) return;
     const Vec3 shift{out[0] - palm.x, out[1] - palm.y, out[2] - palm.z};
     palm = add(palm, shift);
     wrist = add(wrist, shift);

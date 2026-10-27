@@ -313,9 +313,10 @@ void configureHands(bool on) {
     if (g_handsOn.exchange(on) != on) LOG("Collision: your hands %s walls and furniture", on ? "stop at" : "go through");
 }
 
-float stopHand(int side, const float target[3], const float reach[3], float radius, float snap, float out[3]) {
+float stopHand(int side, const float target[3], const float* offsets, const float* radii, int count, float snap,
+               float out[3]) {
     out[0] = target[0], out[1] = target[1], out[2] = target[2];
-    if (side < 0 || side > 1 || !(radius > 0)) return 0;
+    if (side < 0 || side > 1 || count <= 0) return 0;
     HandStop& h = g_handStop[side];
     // This thread's own copy of the scene (taken again when a new one came).
     thread_local std::vector<Wall> walls;
@@ -343,9 +344,16 @@ float stopHand(int side, const float target[3], const float reach[3], float radi
         h.known = true;
     }
     h.tick = now;
-    // What's near the way from the drawn hand to yours, fingertips included.
-    const float rl = std::sqrt(reach[0] * reach[0] + reach[1] * reach[1] + reach[2] * reach[2]);
-    const float m = rl + radius * 2;
+    // What's near the way from the drawn hand to yours, the whole hand.
+    float reach = 0, thinnest = 1e30f, centre[3] = {0, 0, 0};
+    for (int k = 0; k < count; ++k) {
+        const float* o = offsets + k * 3;
+        for (int c = 0; c < 3; ++c) centre[c] += o[c] / count;
+        reach = std::max(reach, std::sqrt(o[0] * o[0] + o[1] * o[1] + o[2] * o[2]) + radii[k]);
+        thinnest = std::min(thinnest, radii[k]);
+    }
+    if (!(thinnest > 1e-3f) || !std::isfinite(reach)) return 0;
+    const float m = reach + thinnest;
     const float x0 = std::min(h.p[0], tx) - m, x1 = std::max(h.p[0], tx) + m;
     const float y0 = std::min(h.p[1], ty) - m, y1 = std::max(h.p[1], ty) + m;
     const float z0 = std::min(h.p[2], tz) - m, z1 = std::max(h.p[2], tz) + m;
@@ -364,21 +372,27 @@ float stopHand(int side, const float target[3], const float reach[3], float radi
         h.p[0] = tx, h.p[1] = ty, h.p[2] = tz;
         return 0;
     }
-    // Toward your hand in steps under half the hand's size, so it never gets
-    // past a wall's face; each step slides along what it touches.
-    const float step = radius * 0.4f, tipRadius = radius * 0.6f;
-    for (int i = 0; i < 64; ++i) {
+    // Toward your hand in steps under half its thinnest part, so no part
+    // gets past a wall's face; each step slides along what it touches. A
+    // wall pushes each part back toward the side the middle of the hand is
+    // on (a finger turned into the wall comes back out the near side).
+    const float step = std::max(thinnest * 0.4f, 0.002f);
+    for (int i = 0; i < 160; ++i) {
         float dx = tx - h.p[0], dy = ty - h.p[1], dz = tz - h.p[2], d = std::sqrt(dx * dx + dy * dy + dz * dz);
         float from[3] = {h.p[0], h.p[1], h.p[2]};
         if (d > step) dx *= step / d, dy *= step / d, dz *= step / d;
         h.p[0] += dx, h.p[1] += dy, h.p[2] += dz;
+        const float middle[3] = {from[0] + centre[0], from[1] + centre[1], from[2] + centre[2]};
         for (int pass = 0; pass < 2; ++pass) {
-            bool moved = ballOut(h.p, radius, from, around);
-            float tip[3] = {h.p[0] + reach[0], h.p[1] + reach[1], h.p[2] + reach[2]};
-            float was[3] = {tip[0], tip[1], tip[2]};
-            if (ballOut(tip, tipRadius, h.p, around)) {
-                h.p[0] += tip[0] - was[0], h.p[1] += tip[1] - was[1], h.p[2] += tip[2] - was[2];
-                moved = true;
+            bool moved = false;
+            for (int k = 0; k < count; ++k) {
+                const float* o = offsets + k * 3;
+                float ball[3] = {h.p[0] + o[0], h.p[1] + o[1], h.p[2] + o[2]};
+                float was[3] = {ball[0], ball[1], ball[2]};
+                if (ballOut(ball, radii[k], middle, around)) {
+                    h.p[0] += ball[0] - was[0], h.p[1] += ball[1] - was[1], h.p[2] += ball[2] - was[2];
+                    moved = true;
+                }
             }
             if (!moved) break;
         }

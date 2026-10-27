@@ -39,13 +39,16 @@ bool active(float& bodyRadius);
 void configureHands(bool on);
 
 // The pose hook (armik.cpp), every solve of your Sim's arm (side 0 left):
-// where your real palm is (`target`, world) and the fingertips from it
-// (`reach`, world vector). Gives where the drawn palm goes: moved from its
-// last place toward yours in small steps, kept `radius` clear of walls and
-// objects (sliding along them), so it stops at the surface while your real
-// hand goes on, and catches up as you pull back. Starts over at your hand
-// after a jump of over `snap` or a pause. Returns how far apart they are
-// (0: the drawn hand is where yours is).
-float stopHand(int side, const float target[3], const float reach[3], float radius, float snap, float out[3]);
+// where your real palm is (`target`, world) and the hand's shape around it:
+// `count` balls, each `offsets` (x, y, z world vector from the palm) with
+// its radius (the palm's and every finger segment's thickness, from
+// handshape). Gives where the drawn palm goes: moved from its last place
+// toward yours in small steps, every ball kept out of walls and objects
+// (sliding along them), so the hand rests flush on the surface while your
+// real hand goes on, and catches up as you pull back. Starts over at your
+// hand after a jump of over `snap` or a pause. Returns how far apart they
+// are (0: the drawn hand is where yours is).
+float stopHand(int side, const float target[3], const float* offsets, const float* radii, int count, float snap,
+               float out[3]);
 
 }  // namespace s4vr::collide
