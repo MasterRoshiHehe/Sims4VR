@@ -207,4 +207,184 @@ float pushOut(float& x, float& z, float radius, float feetY, float maxDepth, int
     return m;
 }
 
+
+// ---------------------------------------------------------------------------
+// Your Sim's hands against walls and furniture (phase 3).
+
+namespace {
+
+std::atomic<bool> g_handsOn{true};
+
+struct HandStop {
+    float p[3] = {0, 0, 0};  // where the drawn palm is (world)
+    ULONGLONG tick = 0;
+    bool known = false;
+    int logs = 0;
+    ULONGLONG logTick = 0;
+};
+HandStop g_handStop[2];
+
+struct Near {
+    std::vector<const Wall*> walls;
+    std::vector<const Shape*> shapes;
+    const float* points = nullptr;
+};
+
+bool insideOf(const Shape& s, const float* points, float x, float z) {
+    bool in = false;
+    const float* p = &points[s.first * 2];
+    for (int i = 0, j = s.count - 1; i < s.count; j = i++) {
+        float xi = p[i * 2], zi = p[i * 2 + 1], xj = p[j * 2], zj = p[j * 2 + 1];
+        if ((zi > z) != (zj > z) && x < (xj - xi) * (z - zi) / (zj - zi) + xi) in = !in;
+    }
+    return in;
+}
+
+// A ball of radius r at p pushed out of the nearby walls (upright strips from
+// y0 to y1) and object prisms (footprint from y0 to y1). `ref` is on the side
+// the ball came from: a wall pushes toward it, even if p went past the wall's
+// face line. Returns whether it moved.
+bool ballOut(float p[3], float r, const float ref[3], const Near& around) {
+    bool moved = false;
+    for (const Wall* w : around.walls) {
+        float cx, cz;
+        closest(p[0], p[2], w->ax, w->az, w->bx, w->bz, cx, cz);
+        float cy = std::clamp(p[1], w->y0, w->y1);
+        float dx = p[0] - cx, dy = p[1] - cy, dz = p[2] - cz, d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 >= r * r) continue;
+        float sx = w->bx - w->ax, sz = w->bz - w->az, l = std::sqrt(sx * sx + sz * sz);
+        float nx = l > 1e-6f ? -sz / l : 0, nz = l > 1e-6f ? sx / l : 0;  // across the wall
+        if ((ref[0] - cx) * nx + (ref[2] - cz) * nz < 0) nx = -nx, nz = -nz;
+        float across = dx * nx + dz * nz, d = std::sqrt(d2);
+        if (across >= 0 && d > 1e-4f) {  // your side of it (its face, its top or an end): straight out
+            p[0] = cx + dx / d * r, p[1] = cy + dy / d * r, p[2] = cz + dz / d * r;
+        } else {  // past its face line: back out to your side
+            p[0] += nx * (r - across), p[2] += nz * (r - across);
+        }
+        moved = true;
+    }
+    for (const Shape* s : around.shapes) {
+        if (p[1] > s->y1 + r || p[1] < s->y0 - r || p[0] < s->minX - r || p[0] > s->maxX + r ||
+            p[2] < s->minZ - r || p[2] > s->maxZ + r)
+            continue;
+        const float* q = &around.points[s->first * 2];
+        float ex = 0, ez = 0, edge = 1e30f;
+        for (int i = 0, j = s->count - 1; i < s->count; j = i++) {
+            float cx, cz;
+            closest(p[0], p[2], q[j * 2], q[j * 2 + 1], q[i * 2], q[i * 2 + 1], cx, cz);
+            float d2 = (p[0] - cx) * (p[0] - cx) + (p[2] - cz) * (p[2] - cz);
+            if (d2 < edge) edge = d2, ex = cx, ez = cz;
+        }
+        edge = std::sqrt(edge);
+        const bool in = insideOf(*s, around.points, p[0], p[2]);
+        if (in && p[1] >= s->y0 && p[1] <= s->y1) {  // inside it: out the nearer way, its top or its side
+            float up = s->y1 + r - p[1], side = edge + r;
+            if (up <= side || edge < 1e-5f) {
+                p[1] = s->y1 + r;
+            } else {
+                p[0] += (ex - p[0]) / edge * side, p[2] += (ez - p[2]) / edge * side;
+            }
+            moved = true;
+            continue;
+        }
+        float hx = in ? p[0] : ex, hz = in ? p[2] : ez;
+        float cy = std::clamp(p[1], s->y0, s->y1);
+        float dx = p[0] - hx, dy = p[1] - cy, dz = p[2] - hz, d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 >= r * r || d2 < 1e-10f) continue;
+        float d = std::sqrt(d2);
+        p[0] = hx + dx / d * r, p[1] = cy + dy / d * r, p[2] = hz + dz / d * r;
+        moved = true;
+    }
+    return moved;
+}
+
+}  // namespace
+
+void configureHands(bool on) {
+    if (g_handsOn.exchange(on) != on) LOG("Collision: your hands %s walls and furniture", on ? "stop at" : "go through");
+}
+
+float stopHand(int side, const float target[3], const float reach[3], float radius, float snap, float out[3]) {
+    out[0] = target[0], out[1] = target[1], out[2] = target[2];
+    if (side < 0 || side > 1 || !(radius > 0)) return 0;
+    HandStop& h = g_handStop[side];
+    // This thread's own copy of the scene (taken again when a new one came).
+    thread_local std::vector<Wall> walls;
+    thread_local std::vector<Shape> shapes;
+    thread_local std::vector<float> points;
+    thread_local uint32_t version = 0;
+    uint32_t v = g_version.load(std::memory_order_acquire);
+    if (v != version) {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        walls = g_walls;
+        shapes = g_shapes;
+        points = g_points;
+        version = g_version.load(std::memory_order_relaxed);
+    }
+    ULONGLONG now = GetTickCount64();
+    const float tx = target[0], ty = target[1], tz = target[2];
+    if (!g_handsOn.load(std::memory_order_relaxed) || (walls.empty() && shapes.empty()) ||
+        !std::isfinite(tx + ty + tz)) {
+        h.known = false;
+        return 0;
+    }
+    float gx = tx - h.p[0], gy = ty - h.p[1], gz = tz - h.p[2];
+    if (!h.known || now - h.tick > 300 || gx * gx + gy * gy + gz * gz > snap * snap) {
+        h.p[0] = tx, h.p[1] = ty, h.p[2] = tz;  // start over at your hand
+        h.known = true;
+    }
+    h.tick = now;
+    // What's near the way from the drawn hand to yours, fingertips included.
+    const float rl = std::sqrt(reach[0] * reach[0] + reach[1] * reach[1] + reach[2] * reach[2]);
+    const float m = rl + radius * 2;
+    const float x0 = std::min(h.p[0], tx) - m, x1 = std::max(h.p[0], tx) + m;
+    const float y0 = std::min(h.p[1], ty) - m, y1 = std::max(h.p[1], ty) + m;
+    const float z0 = std::min(h.p[2], tz) - m, z1 = std::max(h.p[2], tz) + m;
+    thread_local Near around;
+    around.walls.clear();
+    around.shapes.clear();
+    around.points = points.data();
+    for (const Wall& w : walls)
+        if (w.y1 >= y0 && w.y0 <= y1 && std::max(w.ax, w.bx) >= x0 && std::min(w.ax, w.bx) <= x1 &&
+            std::max(w.az, w.bz) >= z0 && std::min(w.az, w.bz) <= z1)
+            around.walls.push_back(&w);
+    for (const Shape& s : shapes)
+        if (s.y1 >= y0 && s.y0 <= y1 && s.maxX >= x0 && s.minX <= x1 && s.maxZ >= z0 && s.minZ <= z1)
+            around.shapes.push_back(&s);
+    if (around.walls.empty() && around.shapes.empty()) {
+        h.p[0] = tx, h.p[1] = ty, h.p[2] = tz;
+        return 0;
+    }
+    // Toward your hand in steps under half the hand's size, so it never gets
+    // past a wall's face; each step slides along what it touches.
+    const float step = radius * 0.4f, tipRadius = radius * 0.6f;
+    for (int i = 0; i < 64; ++i) {
+        float dx = tx - h.p[0], dy = ty - h.p[1], dz = tz - h.p[2], d = std::sqrt(dx * dx + dy * dy + dz * dz);
+        float from[3] = {h.p[0], h.p[1], h.p[2]};
+        if (d > step) dx *= step / d, dy *= step / d, dz *= step / d;
+        h.p[0] += dx, h.p[1] += dy, h.p[2] += dz;
+        for (int pass = 0; pass < 2; ++pass) {
+            bool moved = ballOut(h.p, radius, from, around);
+            float tip[3] = {h.p[0] + reach[0], h.p[1] + reach[1], h.p[2] + reach[2]};
+            float was[3] = {tip[0], tip[1], tip[2]};
+            if (ballOut(tip, tipRadius, h.p, around)) {
+                h.p[0] += tip[0] - was[0], h.p[1] += tip[1] - was[1], h.p[2] += tip[2] - was[2];
+                moved = true;
+            }
+            if (!moved) break;
+        }
+        float mx = h.p[0] - from[0], my = h.p[1] - from[1], mz = h.p[2] - from[2];
+        if (d <= step || mx * mx + my * my + mz * mz < 1e-8f) break;  // there, or held against something
+    }
+    out[0] = h.p[0], out[1] = h.p[1], out[2] = h.p[2];
+    float ax = tx - h.p[0], ay = ty - h.p[1], az = tz - h.p[2], apart = std::sqrt(ax * ax + ay * ay + az * az);
+    if (apart > 0.03f && h.logs < 20 && now - h.logTick > 2000) {
+        ++h.logs;
+        h.logTick = now;
+        LOG("Collision: your %s hand held at a wall or object, your real hand %.0f mm further", side ? "right" : "left",
+            apart * 1000);
+    }
+    return apart;
+}
+
 }  // namespace s4vr::collide

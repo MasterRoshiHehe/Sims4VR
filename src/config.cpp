@@ -411,6 +411,7 @@ Config loadConfig(const std::wstring& ini) {
     c.bodySmoothSlide = readInt(ini, "body", "smooth_slide", 1) != 0;
     c.bodyCollision = readInt(ini, "body", "collision", 1) != 0;
     c.bodyRadius = readFloat(ini, "body", "body_radius", c.bodyRadius);
+    c.handCollision = readInt(ini, "body", "hand_collision", 1) != 0;
     c.bodyStopTime = readFloat(ini, "body", "stop_time", c.bodyStopTime);
     c.bodyWalkClips = readInt(ini, "body", "walk_clips", 1) != 0;
     c.armIk = readInt(ini, "body", "arm_ik", 1) != 0;

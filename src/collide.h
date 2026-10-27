@@ -28,4 +28,18 @@ float pushOut(float& x, float& z, float radius, float feetY, float maxDepth, int
 // Game thread: on, with a scene; radius from configure (game metres, scale 1).
 bool active(float& bodyRadius);
 
+// [body] hand_collision (debug menu: Controls > Moving): your Sim's hands stop
+// at walls and furniture.
+void configureHands(bool on);
+
+// The pose hook (armik.cpp), every solve of your Sim's arm (side 0 left):
+// where your real palm is (`target`, world) and the fingertips from it
+// (`reach`, world vector). Gives where the drawn palm goes: moved from its
+// last place toward yours in small steps, kept `radius` clear of walls and
+// objects (sliding along them), so it stops at the surface while your real
+// hand goes on, and catches up as you pull back. Starts over at your hand
+// after a jump of over `snap` or a pause. Returns how far apart they are
+// (0: the drawn hand is where yours is).
+float stopHand(int side, const float target[3], const float reach[3], float radius, float snap, float out[3]);
+
 }  // namespace s4vr::collide

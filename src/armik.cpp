@@ -12,6 +12,7 @@
 #include "addrs.h"
 #include "gameaddr.h"
 #include "bodyshape.h"
+#include "collide.h"
 #include "handshape.h"
 #include "log.h"
 #include "othermods.h"
@@ -1257,6 +1258,8 @@ bool reachArm(void* pose, uint8_t* skeleton, Xf* locals, const Arm& arm, const A
     return true;
 }
 
+// Your hand stopped at walls and furniture (collide.py's scene).
+void keepOutOfScene(int sideIndex, Vec3& palm, Vec3& wrist, const Quat& gripWorld, float scale);
 // Your hand pushed back out of other Sims' bodies; returns how deep it went (world units).
 float keepOutOfBodies(int sideIndex, Vec3& palm, Vec3& wrist, const Quat& gripWorld, float scale);
 
@@ -1321,6 +1324,7 @@ void solveArm(void* pose, uint8_t* skeleton, Xf* locals, const Arm& arm, int sid
     Quat pinGrip = qmul(frame.heading, grip);
     // A tracked hand (your real one, looks only) touches no Sim.
     float depth = hand.tracked ? 0.0f : keepOutOfBodies(sideIndex, palm, world, gripWorld, frame.scale);
+    keepOutOfScene(sideIndex, palm, world, gripWorld, frame.scale);
     GrabPlace stuck;
     const bool grabbing =
         !hand.tracked && g_grabPlace[sideIndex].read(stuck) && stuck.on && ageMs(GetTickCount64(), stuck.tick) < 200;
@@ -2477,6 +2481,20 @@ float keepOutOfBodies(int sideIndex, Vec3& palm, Vec3& wrist, const Quat& gripWo
         if (iter == 0) deepest = best;
     }
     return deepest;
+}
+
+// Walls and furniture ([body] hand_collision): the drawn hand stops at them,
+// fingertips included, while your real one goes on, and catches up as you
+// pull back (collide::stopHand). No vibration.
+void keepOutOfScene(int sideIndex, Vec3& palm, Vec3& wrist, const Quat& gripWorld, float scale) {
+    if (!(scale > 0)) return;
+    const Vec3 reach = rotate(gripWorld, {0, 0, -kFingerReach * scale});
+    const float target[3] = {palm.x, palm.y, palm.z}, tip[3] = {reach.x, reach.y, reach.z};
+    float out[3];
+    if (collide::stopHand(sideIndex, target, tip, kHandRadius * scale, 0.6f * scale, out) <= 0) return;
+    const Vec3 shift{out[0] - palm.x, out[1] - palm.y, out[2] - palm.z};
+    palm = add(palm, shift);
+    wrist = add(wrist, shift);
 }
 
 // The Sim was posed near you in the last moments.

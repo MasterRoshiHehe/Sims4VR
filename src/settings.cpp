@@ -580,6 +580,7 @@ std::vector<Row> makeRows() {
         toggle(moving, L"Walls and furniture stop you", "body", "collision", &Config::bodyCollision, kWalk),
         number(moving, L"Body keeps clear of walls by", "body", "body_radius", &Config::bodyRadius, 0.1f, 0.5f, 0.025f, 100,
                L"%.1f cm", kWalk),
+        toggle(moving, L"Hands stop at walls and furniture", "body", "hand_collision", &Config::handCollision, kWalk),
         toggle(moving, L"Start and stop walking animations", "body", "walk_clips", &Config::bodyWalkClips, kWalk),
         number(moving, L"Stop smoothness (0 = instant)", "body", "stop_time", &Config::bodyStopTime, 0, 1.5f, 0.1f, 1, L"%.1f s",
                kWalk),
@@ -1155,6 +1156,7 @@ void applyChange(Apply apply) {
             player::setKeepHeight(c.bodyKeepHeight);
             player::setSmoothSlide(c.bodySmoothSlide);
             collide::configure(c.bodyCollision, c.bodyRadius);
+            collide::configureHands(c.handCollision);
             player::setStopTime(c.bodyStopTime);
             walkstop::setClips(c.bodyWalkClips);
             break;
