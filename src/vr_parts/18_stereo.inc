@@ -493,6 +493,11 @@ static bool holdBothFirst(ID3D11Texture2D* backbuffer) {
         g_heldYaw = rendered.yaw;
     }
     g_frameEye = 0;
+    if (!g_ownMirror && copied) {
+        // This Present shows the left eye on the desktop; keep it as the monitor picture (or restore the kept one).
+        ID3D11Texture2D* bb = backbuffer;
+        steadyMirror(bb, desc, 0);
+    }
     static uint64_t held = 0;
     if (++held == 1 || held % 20000 == 0)
         LOG("Both eyes: %llu left eyes held for their right eye (one headset frame per game frame)",
@@ -573,6 +578,9 @@ static bool renderStereo(ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_DESC
         g_overlayEye = false;
         if (copied && eye == 0 && depthCompare() && screenshot::taking()) depthCompareEye(located, rendered);
         if (copied && hold) {
+            // The desktop window shows this left eye while the right eye's Present is on screen (steadyMirror);
+            // a held left eye used to skip this, so the monitor alternated the live right-eye frame's restore of a stale picture.
+            if (!g_ownMirror) steadyMirror(backbuffer, desc, 0);
             g_heldPose = g_overlayPose;
             g_heldFov = g_overlayFov;
             g_heldYaw = rendered.yaw;

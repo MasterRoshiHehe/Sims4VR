@@ -42,7 +42,7 @@ Palette	function	0x121d850	facehide	48 8b c4 48 89 58 08 57 48 83 ec 70 0f 29 70
 MeshDraw	function	0x121dcf0	facehide	40 55 57 48 81 ec f8 01 00 00 f6 81 cb 01 00 00	40 55 57 48 81 ec f8 01 00 00 f6 81 cb 01 00 00 02 48 8b ea 48 8b f9 0f 85 ?? ?? ?? ??	
 SkinUpdate	function	0x1220550	facehide	48 89 74 24 10 57 48 83 ec 30 48 8b 81 50 01 00	48 89 74 24 10 57 48 83 ec 30 48 8b 81 50 01 00 00 48 8b f2 48 8b f9 48 85 c0	
 Fit	function	0x126b820	shadows	48 8b c4 48 89 58 18 4c 89 48 20 48 89 48 08 55	48 8b c4 48 89 58 18 4c 89 48 20 48 89 48 08 55 56 57 41 54 41 55 41 56 41 57 48 8d 6c 24 a0 48 81 ec 60 01 00 00 0f 29 70 b8	Shadow cascade fit(sun, view cam, light cam, settings, cascade, map size).
-SkinVerts	function	0x1296ee0	facehide	55 48 83 ec 40 48 8d 6c 24 20 0f 29 75 e0 0f 29	55 48 83 ec 40 48 8d 6c 24 20 0f 29 75 e0 0f 29 7d f0 66 44 0f 7f 45 00 66 44 0f 7f 4d 10 66 44 0f 6f 0d b9 62 57 01	
+SkinVerts	function	0x1296ee0	facehide	55 48 83 ec 40 48 8d 6c 24 20 0f 29 75 e0 0f 29	55 48 83 ec 40 48 8d 6c 24 20 0f 29 75 e0 0f 29 7d f0 66 44 0f 7f 45 00 66 44 0f 7f 4d 10 66 44 0f 6f 0d ?? ?? ?? ??	
 GfxByIndex	function	0x129c370	uihook	40 53 48 83 ec 20 8b d9 e8 53 39 0d 00 48 85 c0	40 53 48 83 ec 20 8b d9 e8 ?? ?? ?? ?? 48 85 c0 74 0f 8b d3 48 8b c8 48 83 c4 20	Game D3D11 wrapper (gfx) by index.
 Gfx	function	0x129c3a0	renderscale	8b 0d 3a f9 6e 01 65 48 8b 04 25 58 00 00 00 ba	8b 0d ?? ?? ?? ?? 65 48 8b 04 25 58 00 00 00 ba 98 01 00 00 48 8b 04 c8	Main gfx getter.
 Reset	function	0x12a0000	renderscale	48 89 5c 24 08 57 48 83 ec 20 80 79 2c 00 0f b6	48 89 5c 24 08 57 48 83 ec 20 80 79 2c 00 0f b6 fa 48 8b d9 75 0b 80 79 37 00	gfx device reset.
@@ -62,19 +62,19 @@ StopMaster	global	0x1b45760	walkstop			Locomotion controller Stop (slot 57): mas
 StopSimple	global	0x1b45910	walkstop			Locomotion controller Stop (slot 57): simple.
 StopWalk	global	0x1b45c40	walkstop			Locomotion controller Stop (slot 57): walk.
 StopProxy	global	0x1b4c300	walkstop			Locomotion controller Stop (slot 57): proxy.
-PathVTable	global	0x1e6bfa8	walkstop			Path vtable (identifies path objects); no RTTI for it.
-ProxyVTable	global	0x22e9c30	walkstop			
-WalkLogicVTable	global	0x22ea6b8	walkstop			
-MasterVTable	global	0x22eb968	walkstop			
+PathVTable	global	0x1e6bfa8	walkstop		| anchor=PathAnchor:37:41	Path vtable (identifies path objects); no RTTI for it.
+ProxyVTable	global	0x22e9c30	walkstop		| anchor=WalkLogicCtor:460:464	
+WalkLogicVTable	global	0x22ea6b8	walkstop		| anchor=WalkLogicCtor:36:40	
+MasterVTable	global	0x22eb968	walkstop		| anchor=MasterCtor:23:27	
 FadeValuesGlobal	global	0x280ccf0	gamefix		| anchor=NearFade:82:86	Renderer.TunableFadeValues (6 floats: object/building/Sim fade starts and ends).
 ComponentMaskGlobal	global	0x2956160	doorswing		| anchor=WallsUpOp:603:607	Component kind the portal event looks up.
 RoutingMaskGlobal	global	0x2956928	walkstop		| anchor=FloorSnap:52:56	Routing component kind mask (set at runtime).
 ZoneGlobal	global	0x2956c30	gamefix		| anchor=LotById:205:209	Current zone (+0x160 active lot id).
 LotManagerGlobal	global	0x2956f28	gamefix		| anchor=LotById:117:121	Lot manager.
-DisplayManagerGlobal	global	0x295b790	renderscale			EA::Sims4::UI::DisplayManager*.
-SceneGlobal	global	0x2965ce8	touch			Render scene; +0x80 RenderPickManager.
+DisplayManagerGlobal	global	0x295b790	renderscale		| anchor=DisplayAnchor:9:13	EA::Sims4::UI::DisplayManager*.
+SceneGlobal	global	0x2965ce8	touch		| anchor=SceneAnchor:67:71	Render scene; +0x80 RenderPickManager.
 RenderSystemGlobal	global	0x2982de8	touch		| anchor=RenderSystem:3:7	RenderSystem*; +0x138 pick dispatcher.
-AudioManagerGlobal	global	0x29b0918	ambience			Audio manager (+0x3350 outdoor distance, +0x3391 override; listeners at +0x2dd0, 0x80 each, listener 0 loudness, 1 pan; sounds list +0x2ff8, next +0x2d8).
+AudioManagerGlobal	global	0x29b0918	ambience		| anchor=AudioAnchor:37:41	Audio manager (+0x3350 outdoor distance, +0x3391 override; listeners at +0x2dd0, 0x80 each, listener 0 loudness, 1 pan; sounds list +0x2ff8, next +0x2d8).
 CameraUpdate	function	0x1208eb0	singleview	48 8b c4 48 89 58 08 57 48 81 ec 10 01 00 00 0f	48 8b c4 48 89 58 08 57 48 81 ec 10 01 00 00 0f 29 70 e8 49 8b f8 0f 29 78 d8	Camera update (camera, 0, optional matrix): rebuilds the view matrices (+0xf0..) and calls Projection 0x1208640; run by the camera tick 0x1209c70 after the render-camera copy and by the renderer frame 0x137b830 before SceneRender. both_eyes calls it after writing the right eye.
 SceneJob	function	0x1379b20	singleview	40 57 48 81 ec 30 01 00 00 48 c7 44 24 20 fe ff	40 57 48 81 ec 30 01 00 00 48 c7 44 24 20 fe ff ff ff 48 89 9c 24 40 01 00 00 48 8b da	Scene render job body (task, data): data+0x1c skip byte, data+0x20 part mode (slot 6 = 3, slot 7 = 4, slot 8 = 8; bit 8 = post/FXAA) -> render view 0x11c7520(renderer->a8, mode) via thunk 0x11c7510. both_eyes logs per-part cost and can skip one part in the second eye.
 FrameBegin	function	0x11c1a60	singleview	40 57 48 81 ec 10 01 00 00 80 b9 d4 06 00 00 00	40 57 48 81 ec 10 01 00 00 80 b9 d4 06 00 00 00 48 8b f9 0f 29 b4 24 d0 00 00 00	Renderer frame begin (renderer->a8, seconds in xmm1), first call of SceneRender 0x137a710: frame counter +0x678, a main-thread render 0x1227430 (4 targets + depth), the sun shadow fits (return addresses 0x11c1cad < 0x11cc831 < 0x126aa19 -> Fit) and the cull jobs for every view (frame map, v0.13.316). both_eyes times it per pass and can leave it out of the second eye (both_eyes_skip 4).
@@ -99,3 +99,14 @@ InputManCtor	function	0x27d790	gamepad	4c 8b dc 49 89 4b 08 55 56 57 41 56 41 57
 CameraVTable	global	0x2049c68	camera		| anchor=CameraCopyCtor:34:38	Sims3::Cameras::Camera vtable (RTTI-free path).
 CameraManagerVTable	global	0x1e28b48	camera		| anchor=CameraManagerCtor:35:39	CameraControllerManager primary vtable (RTTI-free path).
 InputManVTable	global	0x1e488d8	gamepad		| anchor=InputManCtor:36:40	EA::Input::InputMan vtable (RTTI-free path).
+DisplayAnchor	function	0xdb0000	patch	40 53 48 83 ec 20 48 8b 1d 83 b7 ba 01 48 85 db	40 53 48 83 ec 20 48 8b 1d ?? ?? ?? ?? 48 85 db 74 38 e8 ?? ?? ?? ?? 48 85 c0	Function reading DisplayManagerGlobal; anchor when the exe moved.
+SceneAnchor	function	0x11ca130	patch	40 53 48 83 ec 20 48 8b d9 e8 42 4f 1a 00 ba f2	40 53 48 83 ec 20 48 8b d9 e8 ?? ?? ?? ?? ba f2 28 0c bc 48 8b c8 e8 ?? ?? ?? ??	Function reading SceneGlobal; anchor.
+AudioAnchor	function	0x1a89a70	patch	40 53 48 83 ec 30 48 c7 44 24 20 fe ff ff ff 48	40 53 48 83 ec 30 48 c7 44 24 20 fe ff ff ff 48 8b da e8 ?? ?? ?? ?? 84 c0	Function reading AudioManagerGlobal; anchor.
+PathAnchor	function	0x2efd60	patch	40 53 55 56 57 48 83 ec 38 48 8b f1 48 8d 05 15	40 53 55 56 57 48 83 ec 38 48 8b f1 48 8d 05 ?? ?? ?? ?? 48 89 01 48 8b fa	Function reading PathVTable; anchor.
+WalkLogicCtor	function	0x1b371c0	patch	48 89 4c 24 08 57 48 83 ec 30 48 c7 44 24 20 fe	48 89 4c 24 08 57 48 83 ec 30 48 c7 44 24 20 fe ff ff ff 48 89 5c 24 48 48 8b d9 e8 ?? ?? ?? ?? 90 48 8d 05 ?? ?? ?? ?? 48 89 03 48 8d 05 ?? ?? ?? ?? 48 89 43 10 48 8d 05 ?? ?? ?? ?? 48 89 43 18 48 8d 05 ?? ?? ?? ?? 48 89 43 58 33 ff 48 89 bb c0 00 00 00 48 89 bb c8 00 00 00	LocomotionControllerWalkLogic constructor; anchor of WalkLogicVTable.
+ProxyCtor	function	0x1b37360	patch	48 89 4c 24 08 57 48 83 ec 30 48 c7 44 24 20 fe	48 89 4c 24 08 57 48 83 ec 30 48 c7 44 24 20 fe ff ff ff 48 89 5c 24 48 48 89 74 24 50 49 8b f9 48 8b d9	LocomotionProxyController constructor; anchor of ProxyVTable.
+MasterCtor	function	0x1b38530	patch	48 89 5c 24 08 48 89 6c 24 10 48 89 74 24 18 57	48 89 5c 24 08 48 89 6c 24 10 48 89 74 24 18 57 48 83 ec 20 48 8d 05 ?? ?? ?? ?? 48 8b d9 48 89 01 8b f2	LocomotionControllerMaster constructor; anchor of MasterVTable.
+DriftCtor	function	0x1b38450	patch	48 89 5c 24 08 57 48 83 ec 20 48 8d 05 0f 29 7b	48 89 5c 24 08 57 48 83 ec 20 48 8d 05 ?? ?? ?? ?? 48 8b d9 48 89 01 8b fa 48 8d 05 ?? ?? ?? ?? 48 89 41 10 48 8d 05 ?? ?? ?? ?? 48 89 41 18 48 8d 05 ?? ?? ?? ?? 48 89 41 58 48 81 c1 c0 00 00 00 e8 ?? ?? ?? ?? 48 8b cb	LocomotionControllerDriftLogic constructor; anchor of DriftVTable.
+SimpleCtor	function	0x1b36ff0	patch	48 89 4c 24 08 57 48 83 ec 30 48 c7 44 24 20 fe	48 89 4c 24 08 57 48 83 ec 30 48 c7 44 24 20 fe ff ff ff 48 89 5c 24 48 48 8b d9 e8 ?? ?? ?? ?? 90 48 8d 05 ?? ?? ?? ?? 48 89 03 48 8d 05 ?? ?? ?? ?? 48 89 43 10 48 8d 05 ?? ?? ?? ?? 48 89 43 18 48 8d 05 ?? ?? ?? ?? 48 89 43 58 33 ff 48 89 bb c0 00 00 00 48 8d 8b c8 00 00 00	LocomotionControllerSimpleLogic constructor; anchor of SimpleVTable.
+DriftVTable	global	0x22ead70	walkstop		| anchor=DriftCtor:13:17	DriftLogic vtable (slot 57 = StopDrift).
+SimpleVTable	global	0x22eaa78	walkstop		| anchor=MasterCtor:557:561	SimpleLogic vtable (slot 57 = StopSimple).

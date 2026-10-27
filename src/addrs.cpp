@@ -91,7 +91,7 @@ bool matchAt(const uint8_t* at, const Pattern& p) {
 
 // Matches of a signature in .text, up to two (unique or not). Only committed, readable pages are looked at:
 // an unreadable gap in a protected exe must not take the game down.
-int scan(const Pattern& p, uint8_t** first) {
+int scan(const Pattern& p, uint8_t** first, uint8_t** all = nullptr) {
     if (p.bytes.empty() || !g_text) return 0;
     size_t lead = 0;
     while (lead < p.bytes.size() && !p.mask[lead]) ++lead;
@@ -107,8 +107,9 @@ int scan(const Pattern& p, uint8_t** first) {
         if (mbi.State == MEM_COMMIT && !(mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS))) {
             for (const uint8_t* q = at; q + n <= regionEnd; ++q) {
                 if (q[lead] != p.bytes[lead] || !matchAt(q, p)) continue;
-                if (!hits++ && first) *first = const_cast<uint8_t*>(q);
-                if (hits == 2) return hits;
+                if (!hits && first) *first = const_cast<uint8_t*>(q);
+                if (all) all[hits] = const_cast<uint8_t*>(q);
+                if (++hits == (all ? 6 : 2)) return hits;
             }
         }
         at = regionEnd;
@@ -171,15 +172,14 @@ uint8_t* viaAnchor(const Row& r, const char** why) {
     }
     const size_t nameLen = std::strlen(r.name);
     if (nameLen > 6 && std::strcmp(r.name + nameLen - 6, "VTable") == 0) {
-        uintptr_t first = 0, second = 0;
+        uintptr_t first = 0;
         if (!readableBytes(target, 16)) {
             *why = "vtable unreadable";
             return nullptr;
         }
         std::memcpy(&first, target, 8);
-        std::memcpy(&second, target + 8, 8);
         auto inText = [](uintptr_t v) { return v >= reinterpret_cast<uintptr_t>(g_text) && v < reinterpret_cast<uintptr_t>(g_text) + g_textSize; };
-        if (!inText(first) || !inText(second)) {
+        if (!inText(first)) {  // slot 0 only: a one-slot vtable (Camera) is followed by other data
             *why = "anchor target does not look like a vtable";
             return nullptr;
         }
@@ -207,7 +207,21 @@ void resolveAll() {
             continue;
         }
         uint8_t* found = nullptr;
-        int hits = scan(p, &found);
+        uint8_t* all[6] = {};
+        int hits = scan(p, &found, all);
+        if (hits > 1) {
+            // A patch shifts code a little: of several look-alikes take the one near the old place, if only one is.
+            int closeHits = 0;
+            for (int k = 0; k < hits; ++k)
+                if (std::llabs(static_cast<long long>(all[k] - b) - static_cast<long long>(r.rva)) < 0x4000) {
+                    found = all[k];
+                    ++closeHits;
+                }
+            if (closeHits == 1) {
+                LOG("Game address %s: %d look-alikes, taking the one closeHits its old place", r.name, hits);
+                hits = 1;
+            }
+        }
         if (hits == 1) {
             LOG("Game address %s: 0x%x -> 0x%llx (by signature)", r.name, r.rva,
                 static_cast<unsigned long long>(found - b));
@@ -249,6 +263,27 @@ void resolveAll() {
             s.state = State::Unresolved;
             s.why = why;
             ++bad;
+        }
+    }
+    if (!g_recognised && !dx9) {
+        // The routing Stop functions are slot 57 of their locomotion controller's vtable.
+        static const struct { const char* stop; const char* vtable; } kStops[] = {
+            {"StopWalk", "WalkLogicVTable"}, {"StopSimple", "SimpleVTable"}, {"StopDrift", "DriftVTable"},
+            {"StopMaster", "MasterVTable"}, {"StopProxy", "ProxyVTable"}};
+        for (const auto& st : kStops) {
+            size_t si, vi;
+            if (!find(st.stop, &si) || !find(st.vtable, &vi) || !g_slots[vi].found) continue;
+            uint8_t* slot = g_slots[vi].found + 57 * 8;
+            uintptr_t fn = 0;
+            if (!readableBytes(slot, 8)) continue;
+            std::memcpy(&fn, slot, 8);
+            if (fn < reinterpret_cast<uintptr_t>(g_text) || fn >= reinterpret_cast<uintptr_t>(g_text) + g_textSize) continue;
+            Slot& s = g_slots[si];
+            s.found = reinterpret_cast<uint8_t*>(fn);
+            s.addr = g_usable ? s.found : nullptr;
+            s.state = State::Moved;
+            s.why = "";
+            LOG("Game address %s: slot 57 of %s", st.stop, st.vtable);
         }
     }
     if (g_recognised)
