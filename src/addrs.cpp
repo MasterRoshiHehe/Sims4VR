@@ -223,9 +223,16 @@ void resolveAll() {
             g_text = const_cast<uint8_t*>(savedText);
             g_textSize = savedSize;
             // Identical twins (ConfigInt, OptGetUInt share their first 96 bytes) keep their order from 1.128.
-            const int rank = std::strcmp(r.name, "ConfigInt") == 0 ? 0 : std::strcmp(r.name, "OptGetUInt") == 0 ? 1 : -1;
-            if (localHits == 2 && rank >= 0) {
-                LOG("Game address %s: twin %d of 2 near its old place", r.name, rank);
+            static const struct { const char* name; int rank, count; } kTwins[] = {
+                {"ConfigInt", 0, 2}, {"OptGetUInt", 1, 2}, {"Canvas", 0, 3}};
+            int rank = -1, count = 0;
+            for (const auto& t : kTwins)
+                if (std::strcmp(r.name, t.name) == 0) {
+                    rank = t.rank;
+                    count = t.count;
+                }
+            if (rank >= 0 && localHits == count) {
+                LOG("Game address %s: twin %d of %d near its old place", r.name, rank, count);
                 local = localAll[rank];
                 hits = 1;
                 found = local;
