@@ -290,6 +290,8 @@ def _tick(_handle):
             elif 40 <= what <= 43:
                 from sims4vr import hudinfo
                 hudinfo.dismiss_want(what - 40)
+        from sims4vr import phonesound
+        phonesound.tick()
             elif 50 <= what <= 59:
                 from sims4vr import objmenu
                 objmenu.answer_popup(what - 50)

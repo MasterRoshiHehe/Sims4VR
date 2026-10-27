@@ -266,7 +266,7 @@ const TipText kTips[] = {
     {"phone.notes_overhead", L"Notices about one Sim show over their head. Off: only on the phone."},
     {"phone.hip_drop", L"How far below your eyes your hand must be to take out the phone."},
     {"phone.sound_mode", L"Sound: the tones play and the controllers buzz. Vibrate: only the buzz. Mute: neither."},
-    {"phone.ringtone", L"The tone a phone call rings with (one of the game's music stings)."},
+    {"phone.ringtone", L"The radio station a phone call rings with: a song of that station, up to 20 seconds or until the call's popup goes."},
     {"phone.text_tone", L"The tone for texts and new notifications (the game's notification sounds)."},
     {"phone.text_size", L"How big the texts on your phone are (the phone's Settings > Phone Options has this too)."},
     {"phone.popup_buzz", L"The phone buzzes when the game shows a popup (first person only)."},

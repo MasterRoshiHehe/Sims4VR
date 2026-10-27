@@ -910,8 +910,7 @@ std::vector<Row> makeRows() {
         // The phone's Sounds screen has these too (phonesound.py: the names match its tone lists).
         choice(phoneSounds, L"Phone", "phone", "sound_mode", &Config::phoneSoundMode, {L"Sound", L"Vibrate", L"Mute"}),
         choice(phoneSounds, L"Ringtone", "phone", "ringtone", &Config::phoneRingtone,
-               {L"None", L"Off to Work", L"Promotion", L"Skill Up", L"Collection", L"Karaoke Win", L"First Kiss", L"Birthday",
-                L"Reward", L"Eureka", L"Liftoff"}),
+               {L"None", L"Pop", L"Alternative", L"Electronica", L"Hip Hop", L"R&B", L"Spop", L"Sim Retro", L"Classical", L"Blues", L"Romance", L"World", L"New Age", L"Singer-Songwriter", L"Easy Listening", L"NuDisco", L"Latin Pop", L"Island Radio", L"Summer Strut", L"Americana", L"Soul", L"Metal", L"Focus", L"Afrobeats", L"Batuu Radio", L"Strange Tunes", L"Winter Holiday", L"Spooky"}),
         choice(phoneSounds, L"Text and notification tone", "phone", "text_tone", &Config::phoneTextTone,
                {L"None", L"Positive", L"Neutral", L"Uh-oh", L"Bills Paid", L"Club", L"Accepted", L"Moodlet", L"Advice"}),
         toggle(phoneSounds, L"Buzz when the game shows a popup", "phone", "popup_buzz", &Config::phonePopupBuzz),

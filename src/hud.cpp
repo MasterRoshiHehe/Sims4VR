@@ -4380,8 +4380,8 @@ Action drawPhone(ImDrawList* d, int* index) {
         // silence for calls, then the ringtones and the text and notification tones (the game's
         // stings and bumpers, phonesound.py); a press picks one and plays it.
         static const wchar_t* const kModes[3] = {L"Sound", L"Vibrate", L"Mute"};
-        static const wchar_t* const kRings[] = {L"None", L"Off to Work", L"Promotion", L"Skill Up", L"Collection", L"Karaoke Win",
-                                                L"First Kiss", L"Birthday", L"Reward", L"Eureka", L"Liftoff"};
+        // The ringtones: the game's radio stations (user 2026-10-27 14:28Z), as settings.cpp's row and phonesound.RINGTONES.
+        static const wchar_t* const kRings[] = {L"None", L"Pop", L"Alternative", L"Electronica", L"Hip Hop", L"R&B", L"Spop", L"Sim Retro", L"Classical", L"Blues", L"Romance", L"World", L"New Age", L"Singer-Songwriter", L"Easy Listening", L"NuDisco", L"Latin Pop", L"Island Radio", L"Summer Strut", L"Americana", L"Soul", L"Metal", L"Focus", L"Afrobeats", L"Batuu Radio", L"Strange Tunes", L"Winter Holiday", L"Spooky"};
         static const wchar_t* const kTexts[] = {L"None", L"Positive", L"Neutral", L"Uh-oh", L"Bills Paid", L"Club", L"Accepted",
                                                 L"Moodlet", L"Advice"};
         const std::vector<settings::PageRow> rows = settings::pageRows(L"Phone sounds", nullptr, nullptr);
@@ -4397,7 +4397,7 @@ Action drawPhone(ImDrawList* d, int* index) {
         };
         auto setTo = [](const settings::PageRow* row, int from, int to) {
             if (!row) return;
-            for (int k = 0; k < 20 && from != to; ++k) {
+            for (int k = 0; k < 40 && from != to; ++k) {
                 if (!settings::pageChange(row->row, to > from ? 1 : -1)) break;
                 from += to > from ? 1 : -1;
             }
@@ -4469,7 +4469,7 @@ Action drawPhone(ImDrawList* d, int* index) {
             }
             y += 6;
         };
-        list("Ringtone", rowFor(L"Ringtone"), kRings, static_cast<int>(sizeof kRings / sizeof kRings[0]), 0);
+        list("Ringtone (a radio station's song)", rowFor(L"Ringtone"), kRings, static_cast<int>(sizeof kRings / sizeof kRings[0]), 0);
         list("Text and notification tone", rowFor(L"Text and notification tone"), kTexts,
              static_cast<int>(sizeof kTexts / sizeof kTexts[0]), 1);
         d->PopClipRect();
