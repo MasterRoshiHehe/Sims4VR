@@ -46,6 +46,7 @@ uint32_t g_lastRequestPresent = ~0u;
 struct Request {
     bool used = false;
     bool laser = false;  // a point on the laser, not the fingertip
+    int sight = -1;      // a sight ask's point (askSight), not the finger or laser
     int x = 0, y = 0;
     float position[3] = {}, back[3] = {};
     float depth = 0;  // the fingertip's view depth
@@ -86,6 +87,24 @@ std::mutex g_laserMutex;
 Laser g_laser;
 LaserEnd g_laserEnd;
 int g_laserLogs = 0;
+
+// A sight ask (touch.h askSight): each point is picked in turn; every answer
+// that isn't you counts.
+struct SightAsk {
+    bool on = false;
+    uint64_t simId = 0;
+    float points[4][3] = {};
+    int count = 0;
+    int next = 0;        // the point asked next
+    int answers = 0;     // answers that weren't you (your hand in front of them)
+    int outOfView = 0;   // asks skipped because the point wasn't on screen, in a row
+    ULONGLONG since = 0;
+    Sight result;
+};
+std::mutex g_sightMutex;
+SightAsk g_sight;
+constexpr int kSightAnswers = 8;  // answers without seeing them before "in the way"
+constexpr ULONGLONG kSightMs = 1500;
 
 // Pick types with a place in the world (PickType, server/pick_info.py): not
 // portraits (10), the skewer (11) or the club panel (18), which are the UI.
@@ -157,7 +176,16 @@ void update(const uint8_t* camera, uint64_t self, bool haveTip, const camera::Ve
         laser = g_laser;
     }
     laser.on = laser.on && GetTickCount64() - laser.tick < 250;
-    if (!haveTip && !laser.on) {
+    bool sightOn;
+    {
+        std::lock_guard<std::mutex> lock(g_sightMutex);
+        if (g_sight.on && GetTickCount64() - g_sight.since > kSightMs) {
+            g_sight.on = false;
+            g_sight.result.state = g_sight.answers ? 2 : 3;
+        }
+        sightOn = g_sight.on;
+    }
+    if (!haveTip && !laser.on && !sightOn) {
         for (Request& r : g_requests) r.used = false;
         return;
     }
@@ -191,6 +219,43 @@ void update(const uint8_t* camera, uint64_t self, bool haveTip, const camera::Ve
     for (int k = 0; k < 8; ++k) {
         Request& r = g_requests[(g_nextRequest + 7 - k) % 8];  // newest first
         if (!r.used || r.x != hx || r.y != hy || now - r.tick > 500) continue;
+        if (r.sight >= 0) {
+            int type = *reinterpret_cast<const int*>(d + 0x68);
+            uint64_t id = *reinterpret_cast<const uint64_t*>(d + 0x88);
+            float hit[3];
+            std::memcpy(hit, d + 0x70, sizeof(hit));
+            std::lock_guard<std::mutex> lock(g_sightMutex);
+            SightAsk& a = g_sight;
+            if (a.on && id != self) {
+                float rel[3] = {hit[0] - r.position[0], hit[1] - r.position[1], hit[2] - r.position[2]};
+                float hd = type ? std::sqrt(dot(rel, rel)) : 0;
+                if (id == a.simId) {
+                    a.result.state = 1;
+                    a.on = false;
+                } else {
+                    ++a.answers;
+                    // The nearest thing in the way so far.
+                    if (type && (!a.result.hitId || hd < a.result.hitDistance)) {
+                        a.result.hitType = type;
+                        a.result.hitId = id;
+                        a.result.hitDistance = hd;
+                    }
+                    if (a.answers >= kSightAnswers) {
+                        a.result.state = 2;
+                        a.on = false;
+                    }
+                }
+                if (!a.on && g_logs < 80) {
+                    ++g_logs;
+                    LOG("Sight: Sim %016llx %s (in the way: %016llx, pick type %d, %.2f of %.2f)",
+                        static_cast<unsigned long long>(a.simId), a.result.state == 1 ? "seen" : "NOT seen",
+                        static_cast<unsigned long long>(a.result.hitId), a.result.hitType, a.result.hitDistance,
+                        a.result.targetDistance);
+                }
+            }
+            r.used = false;
+            break;
+        }
         if (r.laser) {
             answerLaser(r, d, self, now);
             r.used = false;
@@ -240,20 +305,49 @@ void update(const uint8_t* camera, uint64_t self, bool haveTip, const camera::Ve
     std::memcpy(up, camera + kUp, sizeof(up));
     std::memcpy(back, camera + kBack, sizeof(back));
     std::memcpy(position, camera + kPosition, sizeof(position));
-    camera::Vec3 at = tip;
-    if (!haveTip)
-        at = {laser.origin[0] + laser.dir[0] * laser.length, laser.origin[1] + laser.dir[1] * laser.length,
-              laser.origin[2] + laser.dir[2] * laser.length};
-    float rel[3] = {at.x - position[0], at.y - position[1], at.z - position[2]};
-    float depth = -dot(rel, back);
-    if (!(depth > 0.05f) || !(tanX2 > 0) || !(tanY2 > 0)) return;
-    float fx = (dot(rel, right) / depth / tanX2 + 0.5f) * W - 0.5f;
-    float fy = (0.5f - dot(rel, up) / depth / tanY2) * H - 0.5f;
-    if (!(fx >= 0 && fx < W && fy >= 0 && fy < H)) return;
+    auto pixel = [&](const camera::Vec3& at, float& fx, float& fy, float& depth) {
+        float rel[3] = {at.x - position[0], at.y - position[1], at.z - position[2]};
+        depth = -dot(rel, back);
+        if (!(depth > 0.05f) || !(tanX2 > 0) || !(tanY2 > 0)) return false;
+        fx = (dot(rel, right) / depth / tanX2 + 0.5f) * W - 0.5f;
+        fy = (0.5f - dot(rel, up) / depth / tanY2) * H - 0.5f;
+        return fx >= 0 && fx < W && fy >= 0 && fy < H;
+    };
+    float fx = 0, fy = 0, depth = 0;
+    int sightPoint = -1;
+    if (sightOn) {
+        // A sight ask takes this frame's pick: its next point that is on screen.
+        std::lock_guard<std::mutex> lock(g_sightMutex);
+        SightAsk& a = g_sight;
+        for (int k = 0; a.on && k < a.count && sightPoint < 0; ++k) {
+            int i = (a.next + k) % a.count;
+            camera::Vec3 p{a.points[i][0], a.points[i][1], a.points[i][2]};
+            if (pixel(p, fx, fy, depth)) {
+                sightPoint = i;
+                a.next = (i + 1) % a.count;
+                a.outOfView = 0;
+                float rel[3] = {p.x - position[0], p.y - position[1], p.z - position[2]};
+                if (i == 0) a.result.targetDistance = std::sqrt(dot(rel, rel));
+            }
+        }
+        if (a.on && sightPoint < 0 && ++a.outOfView > 30) {
+            a.on = false;
+            a.result.state = 3;
+        }
+    }
+    if (sightPoint < 0) {
+        if (!haveTip && !laser.on) return;
+        camera::Vec3 at = tip;
+        if (!haveTip)
+            at = {laser.origin[0] + laser.dir[0] * laser.length, laser.origin[1] + laser.dir[1] * laser.length,
+                  laser.origin[2] + laser.dir[2] * laser.length};
+        if (!pixel(at, fx, fy, depth)) return;
+    }
     Request& r = g_requests[g_nextRequest];
     g_nextRequest = (g_nextRequest + 1) % 8;
     r.used = true;
     r.laser = !haveTip;
+    r.sight = sightPoint;
     std::memcpy(r.origin, laser.origin, sizeof(r.origin));
     std::memcpy(r.dir, laser.dir, sizeof(r.dir));
     r.x = static_cast<int>(fx + 0.5f);
@@ -265,7 +359,7 @@ void update(const uint8_t* camera, uint64_t self, bool haveTip, const camera::Ve
     g_lastRequestPresent = present;
     g_requestPick(const_cast<uint8_t*>(m), r.x, r.y);
     static int asked = 0;
-    if (haveTip && ++asked == 1) LOG("Touch: first pick asked at %d,%d (fingertip %.2f m from the eye)", r.x, r.y, depth);
+    if (sightPoint < 0 && haveTip && ++asked == 1) LOG("Touch: first pick asked at %d,%d (fingertip %.2f m from the eye)", r.x, r.y, depth);
 }
 
 Contact latest() {
@@ -299,6 +393,23 @@ void laserOff() {
     std::lock_guard<std::mutex> lock(g_laserMutex);
     g_laser.on = false;
     g_laserEnd.valid = false;
+}
+
+void askSight(uint64_t simId, const float* xyz, int count) {
+    std::lock_guard<std::mutex> lock(g_sightMutex);
+    g_sight = SightAsk{};
+    g_sight.simId = simId;
+    g_sight.count = std::min(std::max(count, 0), 4);
+    std::memcpy(g_sight.points, xyz, sizeof(float) * 3 * g_sight.count);
+    g_sight.on = g_sight.count > 0;
+    g_sight.since = GetTickCount64();
+    g_sight.result.simId = simId;
+    g_sight.result.state = g_sight.on ? 0 : 3;
+}
+
+Sight sight() {
+    std::lock_guard<std::mutex> lock(g_sightMutex);
+    return g_sight.result;
 }
 
 LaserEnd laserEnd() {

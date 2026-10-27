@@ -14,9 +14,19 @@
 // Come hither (open palm, no buttons): an open hand, palm up or toward your
 // face, its fingertips pulled toward you and back: three turns of at least
 // 4 cm within 1.6 s.
+// Follow me (finger come hither, user 2026-10-24): hand upright, palm toward
+// your face, middle/ring/little closed, the index finger crooked twice within
+// 1.2 s (on a controller: grip held, trigger pressed twice).
 namespace s4vr::gesture {
 
-enum Kind { kWave = 1, kComeHither = 2 };
+// High five (user 2026-10-26 23:55Z): an open hand raised to about head
+// height or above, fingers up, palm away from you, held still (no buttons)
+// for the high_five_hold seconds.
+enum Kind { kWave = 1, kComeHither = 2, kFollowMe = 3, kHighFive = 4, kShoo = 5 };
+// Shoo (user 2026-10-27 15:01Z): both palms down, both hands flicked up together
+// (fingers swing up from the wrist) `flicks` times within 2 s: send Sims away.
+void setShoo(float angleDegrees, int flicks);
+void setHighFiveHold(float seconds);
 
 struct Event {
     int kind = 0;

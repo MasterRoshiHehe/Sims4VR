@@ -65,4 +65,20 @@ struct LaserEnd {
 };
 LaserEnd laserEnd();
 
+// Can you and another Sim see each other (hand gestures, gestures.py; user
+// 2026-10-26: across rooms through windows, open doors and arches)? The same
+// GPU pick as the finger, asked from your eye through each of `count` points
+// on their body (world, up to 4: head, chest, ...), a few frames each. Seen as
+// soon as one answer is that Sim. One ask at a time; a new one replaces it.
+void askSight(uint64_t simId, const float* xyz, int count);
+struct Sight {
+    uint64_t simId = 0;
+    int state = 0;        // 0 waiting, 1 seen, 2 something else in the way, 3 none of the points in your view
+    int hitType = 0;      // in the way: its pick type ...
+    uint64_t hitId = 0;   // ... and object id (0: nothing hit)
+    float hitDistance = 0, targetDistance = 0;  // world units from your eye
+};
+// Python: the answer to the last ask (state 0 while it is still being asked).
+Sight sight();
+
 }  // namespace s4vr::touch
