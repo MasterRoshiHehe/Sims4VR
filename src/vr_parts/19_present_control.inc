@@ -348,6 +348,52 @@ int onFrame(ID3D11Texture2D* backbuffer, HWND window, bool ownMirror) {
     updateRenderSize(stereoFrame);
     texbias::setActive(stereoFrame);
     lastPresent = now();
+    // Into or out of build/buy mode in first person (user 2026-10-28): the eyes close as it is asked for or seen,
+    // and open once the game has run [buildbuy] eyes_frames frames in a row under eyes_frame_ms each, after the
+    // switch; at most eyes_max_wait seconds. An ask with no switch after 3 s opens them again.
+    {
+        static int state = 0;  // 0 open, 1 asked (waiting for the switch), 2 switched (waiting for steady frames)
+        static ULONGLONG since = 0;
+        static int steady = 0, slow = 0;
+        static double worst = 0;
+        const ULONGLONG tick = GetTickCount64();
+        const bool firstPerson = mode() == Mode::Stereo && camera::bodyActive();
+        const bool asked = g_buildEyesAsked.exchange(false, std::memory_order_relaxed);
+        const bool switched = g_buildEyesSwitched.exchange(false, std::memory_order_relaxed);
+        if (!g_config.buildEyes) {
+            if (state) eyelids::setTransition(false);
+            state = 0;
+        } else {
+            if (switched && (firstPerson || state)) {
+                state = 2;
+                since = tick;
+                steady = slow = 0;
+                worst = 0;
+            } else if (asked && firstPerson && !state) {
+                state = 1;
+                since = tick;
+            }
+            if (state == 1 && tick - since > 3000) {
+                LOG("Build/buy eyes: no switch 3 s after the build button, opening");
+                state = 0;
+            } else if (state == 2) {
+                if (gameMs > 0 && gameMs < g_config.buildEyesFrameMs) {
+                    ++steady;
+                } else {
+                    steady = 0;
+                    ++slow;
+                    worst = std::max(worst, gameMs);
+                }
+                const bool done = steady >= g_config.buildEyesFrames;
+                if (done || tick - since > static_cast<ULONGLONG>(g_config.buildEyesMaxWait * 1000)) {
+                    LOG("Build/buy eyes: %s %.1f s after the switch (%d slow frames, worst %.0f ms)",
+                        done ? "steady" : "still not steady, opening anyway", (tick - since) / 1000.0, slow, worst);
+                    state = 0;
+                }
+            }
+            eyelids::setTransition(state != 0);
+        }
+    }
     // Frame pacing: frames that took far longer than the ones before them are
     // what you notice as a stutter. Counted, with the worst, every 3000 frames.
     {

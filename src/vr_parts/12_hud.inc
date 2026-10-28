@@ -1176,6 +1176,7 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
             break;
         case hud::kBuildPressed:
             g_buildKeyFrames = 3;
+            g_buildEyesAsked.store(true, std::memory_order_relaxed);  // the eyes start to close before the switch
             LOG("HUD: build button (F2)");
             break;
         case hud::kCancel:

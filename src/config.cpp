@@ -388,6 +388,13 @@ Config loadConfig(const std::wstring& ini) {
     if (!(c.tabletUiScale >= 0.3f && c.tabletUiScale <= 4.0f)) c.tabletUiScale = 2.0f;
     c.tabletTrayScale = readFloat(ini, "tablet", "tray_scale", c.tabletTrayScale);
     if (!(c.tabletTrayScale >= 0.3f && c.tabletTrayScale <= 1.45f)) c.tabletTrayScale = 1.0f;
+    c.buildEyes = readBool(ini, "buildbuy", "eyes", true);
+    c.buildEyesFrames = readFloat(ini, "buildbuy", "eyes_frames", c.buildEyesFrames);
+    if (!(c.buildEyesFrames >= 1 && c.buildEyesFrames <= 600)) c.buildEyesFrames = 45;
+    c.buildEyesFrameMs = readFloat(ini, "buildbuy", "eyes_frame_ms", c.buildEyesFrameMs);
+    if (!(c.buildEyesFrameMs >= 5 && c.buildEyesFrameMs <= 200)) c.buildEyesFrameMs = 30;
+    c.buildEyesMaxWait = readFloat(ini, "buildbuy", "eyes_max_wait", c.buildEyesMaxWait);
+    if (!(c.buildEyesMaxWait >= 0.5f && c.buildEyesMaxWait <= 30)) c.buildEyesMaxWait = 6;
     c.phoneCropWidth = readFloat(ini, "phone", "crop_width", c.phoneCropWidth);
     c.phoneCropHeight = readFloat(ini, "phone", "crop_height", c.phoneCropHeight);
     if (!(c.phoneCropWidth > 0.05f && c.phoneCropWidth <= 2.0f)) c.phoneCropWidth = 0.45f;

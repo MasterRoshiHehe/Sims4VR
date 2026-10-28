@@ -211,9 +211,14 @@ void setCall(bool on) {
 // Build/buy mode (buildbuy.py): in first person the phone gesture brings out
 // the tablet, with the whole build/buy UI on its screen.
 static std::atomic<bool> g_buildBuy{false};
+// Eyes shut across the switch (19_present_control.inc): asked for (the HUD's build button) or the switch seen.
+static std::atomic<bool> g_buildEyesAsked{false}, g_buildEyesSwitched{false};
 
 void setBuildBuy(bool on) {
-    if (g_buildBuy.exchange(on) != on) LOG("Build/buy mode: %s", on ? "on" : "off");
+    if (g_buildBuy.exchange(on) != on) {
+        LOG("Build/buy mode: %s", on ? "on" : "off");
+        g_buildEyesSwitched.store(true, std::memory_order_relaxed);
+    }
 }
 
 // Before the menu is measured: a tall box in the middle of the UI.

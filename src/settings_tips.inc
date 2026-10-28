@@ -371,6 +371,9 @@ const TipText kTips[] = {
     {"tablet.hold", L"How far in from the edge your hand holds the tablet."},
     {"tablet.menu_size", L"Size of the whole build UI on the tablet, scaled by the mod: each part keeps its place at the screen's edges or middle. 100 % = the UI's height fills the screen. Changes live."},
     {"tablet.tray_scale", L"Size of the tool tray on the tablet's right side. Changes live."},
+    {"buildbuy.eyes", L"In first person, your eyes close as you go into or out of build mode and open once the game runs smoothly again, hiding the jump and any stutter while it loads."},
+    {"buildbuy.eyes_frames", L"How many smooth frames in a row the game has to run after the switch before your eyes open (a frame counts as smooth under [buildbuy] eyes_frame_ms, 30 ms)."},
+    {"buildbuy.eyes_max_wait", L"Your eyes open after this long even if the game is still stuttering."},
     // Sound
     {"audio.follow_head", L"Sound comes from where your head is, not from the camera. Takes effect next start."},
     {"audio.voice_near", L"Voices the game plays flat (WickedWhims) are full volume up to this far away."},

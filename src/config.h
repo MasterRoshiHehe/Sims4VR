@@ -388,6 +388,10 @@ struct Config {
     float tabletHold = 0.035f;    // how far in from its side edge the hand holds it (metres)
     float tabletUiScale = 2.0f;   // [tablet] menu_size: the whole build UI on the tablet (1 = its height fills the screen's)
     float tabletTrayScale = 1.0f; // the tool tray's size (1 = two thirds of the screen's height)
+    bool buildEyes = true;         // [buildbuy] eyes: eyes shut across first-person build/buy switches
+    float buildEyesFrames = 45;     // eyes_frames: steady game frames in a row before they open
+    float buildEyesFrameMs = 30;   // eyes_frame_ms: a frame of the game's own work under this counts as steady
+    float buildEyesMaxWait = 6;    // eyes_max_wait: seconds after the switch they open anyway
 
     // Voice: your mic moves your Sim's mouth (voice.cpp)
     bool voiceMic = false;         // [voice] mic = true / false
