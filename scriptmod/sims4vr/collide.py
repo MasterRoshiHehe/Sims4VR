@@ -58,8 +58,10 @@ _shapes = {}  # definition id: [(corners, y0, y1)] of its model's visible shape 
 _placed = {}  # object id: (where it stands, its visible shape there): turned and moved once while it stays
 _body_skip = set()  # id() of the footprint polygons whose body part the visible shape took over
 _soft = set()  # id() of the footprint polygons of plants (flag 16: they slow you, collide.cpp softSlow)
-_soft_kinds = {}  # definition id: True for bushes, flowers and garden plants
+_soft_kinds = {}  # definition id: 2 bushes, flowers, garden plants (soft); 1 other plants and trees (leaves soft); 0
 _SOFT_TAGS = ('Build_Shrub', 'Build_Flower', 'Func_Bush', 'Func_OutdoorPlant')  # trees and potted plants stay solid
+_LEAFY_TAGS = ('BuyCatLD_Plant', 'Build_Tree', 'Func_Tree', 'Func_Grass', 'Func_Gardening', 'BuyCatEE_Gardening')
+_LEAFY_WORDS = ('plant', 'tree', 'fern', 'palm', 'flower', 'bush', 'shrub', 'hedge', 'grass', 'ivy', 'vine', 'cactus')
 _model_users = {}  # model instance: {tuning name: definition id} of the objects using it
 objects = []  # (polygon [(x, z), ...], y0, y1, blocks the navmesh, name, material, object id)
 
@@ -139,7 +141,7 @@ def _send():
         pts, y0, y1, blocks = o[:4]
         material = o[5] if len(o) > 5 else 0  # touch sounds (foley.py)
         flags = (1 if blocks and id(pts) not in _body_skip else 0) | material << 8 | (4 if id(pts) in with_box else 0)
-        flags |= 16 if id(pts) in _soft else 0
+        flags |= 16 | 32 if id(pts) in _soft else 0  # 32: this footprint slows you (collide.cpp plantSpeed)
         data.extend((float(len(pts)), y0, y1, float(flags)))
         for x, z in pts:
             data.extend((x, z))
@@ -376,24 +378,41 @@ def _mesh_boxes(obj):
     return boxes
 
 
-def _is_soft(obj):
-    """A bush, flower or garden plant (the game's own build/buy tags): you walk
+def _plant_kind(obj):
+    """2: a bush, flower or garden plant (the game's own build/buy tags): you walk
     through it, slowed (user 2026-10-28: no collision with bushes, slow you
-    down instead)."""
+    down instead). 1: another plant or a tree (tags, else its tuning name): its
+    leaves (alpha cut-out meshes) are soft, its pot or trunk solid (user
+    2026-10-28: a big fern's fronds held you in mid-air). 0: neither."""
     key = getattr(obj.definition, 'id', None)
-    soft = _soft_kinds.get(key)
-    if soft is None:
-        soft = False
+    kind = _soft_kinds.get(key)
+    if kind is None:
+        kind = 0
+        name = str(obj).split(':')[0]
+        why = ''
         try:
             import tag
-            wanted = set(int(v) for v in (getattr(tag.Tag, n, None) for n in _SOFT_TAGS) if v is not None)
-            soft = bool(wanted & set(int(t) for t in obj.get_tags()))
+            tags = set(int(t) for t in obj.get_tags())
+            for k, names in ((2, _SOFT_TAGS), (1, _LEAFY_TAGS)):
+                hit = [n for n in names if getattr(tag.Tag, n, None) is not None and int(getattr(tag.Tag, n)) in tags]
+                if hit:
+                    kind, why = k, hit[0]
+                    break
         except Exception as e:
             _log('plant check of {}: {!r}'.format(obj, e))
-        _soft_kinds[key] = soft
-        if soft and sum(_soft_kinds.values()) <= 30:
-            _log('{} is a plant: it slows you instead of stopping you'.format(str(obj).split(':')[0]))
-    return soft
+        if not kind:
+            word = next((w for w in _LEAFY_WORDS if w in name.lower()), None)
+            if word:
+                kind, why = 1, 'name: ' + word
+        _soft_kinds[key] = kind
+        if kind and sum(1 for v in _soft_kinds.values() if v) <= 40:
+            _log('{} ({}) {}'.format(name, why, 'is a plant: it slows you instead of stopping you' if kind == 2
+                                      else 'has leaves: they let you through, the rest stops you'))
+    return kind
+
+
+def _is_soft(obj):
+    return _plant_kind(obj) == 2
 
 
 def _model_shape(obj):
@@ -452,10 +471,10 @@ def _shape_of(obj, top):
         return (p.x + x + q.w * tx + (q.y * tz - q.z * ty), p.z + z + q.w * tz + (q.x * ty - q.y * tx))
 
     shapes = []
-    for corners, y0, y1 in prisms:
+    for corners, y0, y1, leaves in prisms:
         y0, y1 = p.y + y0 * scale, min(p.y + y1 * scale, top)
         if y1 - y0 > 0.0005:
-            shapes.append(([world(x, z) for x, z in corners], y0, y1))
+            shapes.append(([world(x, z) for x, z in corners], y0, y1, leaves))
     if len(_placed) > 2000:
         _placed.clear()
     _placed[obj.id] = (where, shapes)
@@ -670,7 +689,9 @@ def _build(sim, x, y, z, surface):
         if shape:
             mine = new_objects[first:]
             flags = (1 if any(o[3] for o in mine) else 0) | next((o[5] for o in mine if len(o) > 5), 0) << 8
-            new_hands.extend((pts, a, b, flags) for pts, a, b in shape)
+            # Leaves and fronds are soft like bushes (plant flag 16): no stop, they slow you.
+            leafy = _plant_kind(obj) > 0  # alpha cut-outs elsewhere are solid (a laptop's body has one)
+            new_hands.extend((pts, a, b, flags | (16 if leaves and leafy else 0)) for pts, a, b, leaves in shape)
         new_hands.extend(meshes or ())
         if _is_soft(obj):
             new_soft.update(id(o[0]) for o in new_objects[first:])

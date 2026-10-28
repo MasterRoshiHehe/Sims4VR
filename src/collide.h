@@ -43,8 +43,9 @@ void configureHands(bool on);
 void setHandGaps(float wall, float object);
 
 // [body] soft_plants / plant_slowdown (debug menu, Controls > Moving): plants
-// (shapes with flag 16: bushes, flowers) don't stop your body or hands; walking
-// into them slows you, up to maxSlow (0.5 = half speed) deep in a tall one.
+// (shapes with flag 16: bushes, flowers, the leaves of other plants and trees)
+// don't stop your body or hands; walking into a bush's footprint (flag 32)
+// slows you, up to maxSlow (0.5 = half speed) deep in a tall one.
 void configurePlants(bool soft, float maxSlow);
 // Game thread: the stick walking speed factor at (x, z) for feet at feetY
 // (1: nothing slows you; 1 - maxSlow at most).

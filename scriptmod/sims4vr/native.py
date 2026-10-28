@@ -578,8 +578,8 @@ def model_bytes(instance):
 
 
 def model_shape(instance):
-    """An object model's visible shape for collision: (status, [(corners, y0, y1)]
-    in the model's own space, note); status as model_bytes (3 also: no usable
+    """An object model's visible shape for collision: (status, [(corners, y0, y1,
+    leaves)] in the model's own space, note); status as model_bytes (3 also: no usable
     mesh). None with an older DLL."""
     fn = _optional('model_shape')
     if fn is None:
@@ -590,7 +590,8 @@ def model_shape(instance):
     i = 0
     while i + 3 <= len(f):
         n = int(f[i])
-        prisms.append(([(f[i + 3 + 2 * k], f[i + 4 + 2 * k]) for k in range(n)], f[i + 1], f[i + 2]))
+        leaves, n = n < 0, abs(n)  # foliage (alpha cut-out meshes): soft
+        prisms.append(([(f[i + 3 + 2 * k], f[i + 4 + 2 * k]) for k in range(n)], f[i + 1], f[i + 2], leaves))
         i += 3 + 2 * n
     return status, prisms, note
 

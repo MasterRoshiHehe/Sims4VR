@@ -38,6 +38,7 @@ std::atomic<float> g_furniture{0.12f};
 std::atomic<bool> g_softPlants{true};
 std::atomic<float> g_plantSlow{0.5f};
 constexpr uint32_t kPlant = 16;  // shape flag: a plant (soft)
+constexpr uint32_t kSlows = 32;  // shape flag: a bush's footprint (walking in it slows you)
 bool solid(uint32_t flags) { return !(flags & kPlant) || !g_softPlants.load(std::memory_order_relaxed); }
 
 // The game thread's copy.
@@ -402,7 +403,7 @@ float plantSpeed(float x, float z, float feetY) {
     const float r = g_furniture.load(std::memory_order_relaxed);
     float worst = 0;
     for (const Shape& s : t_shapes) {
-        if (!(s.flags & kPlant) || s.y1 <= feetY + 0.02f || s.y0 >= feetY + kBodyTop) continue;
+        if (!(s.flags & kSlows) || s.y1 <= feetY + 0.02f || s.y0 >= feetY + kBodyTop) continue;
         if (x < s.minX - r || x > s.maxX + r || z < s.minZ - r || z > s.maxZ + r) continue;
         const float* p = &t_points[s.first * 2];
         float best = 1e30f;

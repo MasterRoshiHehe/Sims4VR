@@ -153,14 +153,17 @@ void slice(const std::vector<Tri>& tris, const std::vector<int>& mine, float ban
         std::vector<P2> h = outline(pts[i]);
         if (h.empty()) continue;
         if (open && alike(cur.h, h)) {
-            curPts.insert(curPts.end(), pts[i].begin(), pts[i].end());
+            // The outline of the joined layers is that of their own outlines' corners (not every point again:
+            // that took 20-30 ms for a bookshelf).
+            std::vector<P2> full = hull(pts[i]);
+            curPts.insert(curPts.end(), full.begin(), full.end());
             cur.h = outline(curPts);
             cur.y1 = std::max(cur.y1, yhi[i]);
             continue;
         }
         if (open) out.push_back(cur);
         cur = {h, ylo[i], yhi[i]};
-        curPts = pts[i];
+        curPts = hull(pts[i]);
         open = true;
     }
     if (open) out.push_back(cur);
@@ -171,36 +174,8 @@ int findRoot(std::vector<int>& up, int a) {
     return a;
 }
 
-}  // namespace
-
-bool fromModel(const std::vector<uint8_t>& res, std::vector<float>& out, std::string& note) {
-    const auto started = std::chrono::steady_clock::now();
-    out.clear();
-    cbo::parse::Geometry g;
-    std::string why;
-    if (!cbo::parse::readGeometry(res, -1, 0, g, why)) {
-        note = why;
-        return false;
-    }
-    std::vector<Tri> tris;
-    for (const auto& m : g.meshes)
-        for (uint32_t k = 0; k + 2 < m.indexCount; k += 3) {
-            Tri t;
-            bool ok = true;
-            for (int c = 0; c < 3; ++c) {
-                uint32_t v = g.indices[m.firstIndex + k + c];
-                if (v >= g.vertices.size()) {
-                    ok = false;
-                    break;
-                }
-                for (int a = 0; a < 3; ++a) t.v[c][a] = g.vertices[v].pos[a];
-            }
-            if (ok) tris.push_back(t);
-        }
-    if (tris.empty()) {
-        note = "no triangles";
-        return false;
-    }
+// One kind's prisms (solid, or foliage: count negative) onto out.
+void shapeOf(const std::vector<Tri>& tris, bool leaf, std::vector<float>& out, std::string& note) {
     // Pieces: triangles sharing a corner (welded by position) are one.
     std::unordered_map<uint64_t, int> corner;
     std::vector<int> up(tris.size());
@@ -250,17 +225,58 @@ bool fromModel(const std::vector<uint8_t>& res, std::vector<float>& out, std::st
     }
     if (prisms.size() > kMaxPrisms) prisms.resize(kMaxPrisms);
     for (const Prism& p : prisms) {
-        out.push_back(static_cast<float>(p.h.size()));
+        out.push_back(static_cast<float>(p.h.size()) * (leaf ? -1.0f : 1.0f));
         out.push_back(p.y0);
         out.push_back(p.y1);
         for (const P2& q : p.h) out.push_back(q.x), out.push_back(q.z);
     }
-    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
     char text[160];
-    std::snprintf(text, sizeof(text), "%zu triangles, %zu pieces, %zu prisms (%s, %.0f cm layers), %.1f ms", tris.size(),
-                  kept.size(), prisms.size(), joined ? "pieces joined" : "each piece", band * 100, ms);
-    note = text;
-    return !prisms.empty();
+    std::snprintf(text, sizeof(text), "%s%zu triangles, %zu pieces, %zu prisms (%s, %.0f cm layers)",
+                  leaf ? "leaves " : "", tris.size(), kept.size(), prisms.size(), joined ? "pieces joined" : "each piece",
+                  band * 100);
+    note += (note.empty() ? "" : "; ") + std::string(text);
+}
+
+}  // namespace
+
+bool fromModel(const std::vector<uint8_t>& res, std::vector<float>& out, std::string& note) {
+    const auto started = std::chrono::steady_clock::now();
+    out.clear();
+    note.clear();
+    cbo::parse::Geometry g;
+    std::string why;
+    if (!cbo::parse::readGeometry(res, -1, 0, g, why)) {
+        note = why;
+        return false;
+    }
+    // Meshes drawn with an alpha cut-out (leaves, fronds, grass) are foliage: shaped on their own and marked
+    // soft (user 2026-10-28: a big fern's fronds held hands in mid-air).
+    std::vector<Tri> tris[2];
+    for (const auto& m : g.meshes)
+        for (uint32_t k = 0; k + 2 < m.indexCount; k += 3) {
+            Tri t;
+            bool ok = true;
+            for (int c = 0; c < 3; ++c) {
+                uint32_t v = g.indices[m.firstIndex + k + c];
+                if (v >= g.vertices.size()) {
+                    ok = false;
+                    break;
+                }
+                for (int a = 0; a < 3; ++a) t.v[c][a] = g.vertices[v].pos[a];
+            }
+            if (ok) tris[m.alphaClip > 0 ? 1 : 0].push_back(t);
+        }
+    if (tris[0].empty() && tris[1].empty()) {
+        note = "no triangles";
+        return false;
+    }
+    for (int leaf = 0; leaf < 2; ++leaf)
+        if (!tris[leaf].empty()) shapeOf(tris[leaf], leaf == 1, out, note);
+    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+    char text[32];
+    std::snprintf(text, sizeof(text), ", %.1f ms", ms);
+    note += text;
+    return !out.empty();
 }
 
 }  // namespace s4vr::meshshape
