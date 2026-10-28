@@ -2786,6 +2786,7 @@ void init(const Config& config) {
     collide::configure(config.bodyCollision, config.bodyRadius);
     collide::setFurnitureRadius(config.furnitureRadius);
     collide::setHandGaps(config.handWallGap, config.handObjectGap);
+    collide::configurePlants(config.softPlants, config.plantSlowdown);
     collide::configureHands(config.handCollision);
     player::setHeadRepel(config.headRepel, config.headRadius);
     player::setStopTime(config.bodyStopTime);

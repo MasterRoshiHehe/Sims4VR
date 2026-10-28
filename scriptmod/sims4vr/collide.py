@@ -57,6 +57,9 @@ _meshes = {}  # definition id: [(min xyz, max xyz)] of its model's meshes, () fo
 _shapes = {}  # definition id: [(corners, y0, y1)] of its model's visible shape (model space), () stand-in, None
 _placed = {}  # object id: (where it stands, its visible shape there): turned and moved once while it stays
 _body_skip = set()  # id() of the footprint polygons whose body part the visible shape took over
+_soft = set()  # id() of the footprint polygons of plants (flag 16: they slow you, collide.cpp softSlow)
+_soft_kinds = {}  # definition id: True for bushes, flowers and garden plants
+_SOFT_TAGS = ('Build_Shrub', 'Build_Flower', 'Func_Bush', 'Func_OutdoorPlant')  # trees and potted plants stay solid
 _model_users = {}  # model instance: {tuning name: definition id} of the objects using it
 objects = []  # (polygon [(x, z), ...], y0, y1, blocks the navmesh, name, material, object id)
 
@@ -136,6 +139,7 @@ def _send():
         pts, y0, y1, blocks = o[:4]
         material = o[5] if len(o) > 5 else 0  # touch sounds (foley.py)
         flags = (1 if blocks and id(pts) not in _body_skip else 0) | material << 8 | (4 if id(pts) in with_box else 0)
+        flags |= 16 if id(pts) in _soft else 0
         data.extend((float(len(pts)), y0, y1, float(flags)))
         for x, z in pts:
             data.extend((x, z))
@@ -156,6 +160,7 @@ def forget():
     hand_shapes.clear()
     _hand_skip.clear()
     _body_skip.clear()
+    _soft.clear()
     _placed.clear()
     _door_panels.clear()
     try:
@@ -371,6 +376,26 @@ def _mesh_boxes(obj):
     return boxes
 
 
+def _is_soft(obj):
+    """A bush, flower or garden plant (the game's own build/buy tags): you walk
+    through it, slowed (user 2026-10-28: no collision with bushes, slow you
+    down instead)."""
+    key = getattr(obj.definition, 'id', None)
+    soft = _soft_kinds.get(key)
+    if soft is None:
+        soft = False
+        try:
+            import tag
+            wanted = set(int(v) for v in (getattr(tag.Tag, n, None) for n in _SOFT_TAGS) if v is not None)
+            soft = bool(wanted & set(int(t) for t in obj.get_tags()))
+        except Exception as e:
+            _log('plant check of {}: {!r}'.format(obj, e))
+        _soft_kinds[key] = soft
+        if soft and sum(_soft_kinds.values()) <= 30:
+            _log('{} is a plant: it slows you instead of stopping you'.format(str(obj).split(':')[0]))
+    return soft
+
+
 def _model_shape(obj):
     """[(corners, y0, y1)] of the object's visible shape in its model's own space
     (the DLL's meshshape: each separate piece of the model sliced into 5 cm
@@ -519,7 +544,7 @@ def _blocks_navmesh(surface, pts, y):
 
 def _build(sim, x, y, z, surface):
     """Generator: yields between batches; ends with the new scene in place."""
-    global walls, objects, hand_shapes, _hand_skip, _body_skip
+    global walls, objects, hand_shapes, _hand_skip, _body_skip, _soft
     spent = 0.0
     started = time.perf_counter()
     level = surface.secondary_id
@@ -593,6 +618,7 @@ def _build(sim, x, y, z, surface):
     new_hands = []
     new_skip = set()
     new_body_skip = set()
+    new_soft = set()
     for i, obj in enumerate(near):
         if i and i % BATCH == 0:
             spent += time.perf_counter() - started
@@ -621,6 +647,7 @@ def _build(sim, x, y, z, surface):
         shape = _shape_of(obj, y1)
         meshes = None if shape else _mesh_shapes(obj, y1)
         first = len(new_objects)
+        hands_from = len(new_hands)
         if time.perf_counter() - started > 0.004:
             spent += time.perf_counter() - started
             yield
@@ -645,8 +672,12 @@ def _build(sim, x, y, z, surface):
             flags = (1 if any(o[3] for o in mine) else 0) | next((o[5] for o in mine if len(o) > 5), 0) << 8
             new_hands.extend((pts, a, b, flags) for pts, a, b in shape)
         new_hands.extend(meshes or ())
+        if _is_soft(obj):
+            new_soft.update(id(o[0]) for o in new_objects[first:])
+            new_hands[hands_from:] = [(p, a, b, (2 if f is None else f) | 16) for p, a, b, f in new_hands[hands_from:]]
     spent += time.perf_counter() - started
-    walls, objects, hand_shapes, _hand_skip, _body_skip = new_walls, new_objects, new_hands, new_skip, new_body_skip
+    walls, objects, hand_shapes, _hand_skip, _body_skip, _soft = (new_walls, new_objects, new_hands, new_skip,
+                                                                  new_body_skip, new_soft)
     _door_panels.clear()
     _door_panels.update(panels)
     _apply_doors()

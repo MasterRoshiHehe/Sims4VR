@@ -667,6 +667,9 @@ std::vector<Row> makeRows() {
                0.0025f, 100, L"%.2f cm", kWalk),
         number(L"Collision", L"Hand gap to walls", "body", "hand_wall_gap", &Config::handWallGap, -0.05f, 0.05f, 0.0025f, 100,
                L"%.2f cm", kWalk),
+        toggle(L"Collision", L"Walk through bushes and flowers", "body", "soft_plants", &Config::softPlants, kWalk),
+        number(L"Collision", L"Bushes slow you by up to", "body", "plant_slowdown", &Config::plantSlowdown, 0, 0.9f, 0.05f,
+               100, L"%.0f%%", kWalk),
         flag(moving, L"Walking animation on stairs", "body", "stairs_walk", true, kLive),  // stride.py
         toggle(moving, L"Start and stop walking animations", "body", "walk_clips", &Config::bodyWalkClips, kWalk),
         number(moving, L"Stop smoothness (0 = instant)", "body", "stop_time", &Config::bodyStopTime, 0, 1.5f, 0.05f, 1,
@@ -1401,6 +1404,7 @@ void applyChange(Apply apply) {
             collide::setFurnitureRadius(c.furnitureRadius);
             collide::configureHands(c.handCollision);
             collide::setHandGaps(c.handWallGap, c.handObjectGap);
+            collide::configurePlants(c.softPlants, c.plantSlowdown);
             player::setStopTime(c.bodyStopTime);
             player::configureCrouch(c.crouch, c.crouchDepth, c.crouchSpeed, c.crouchSeconds);
             player::setStopGlide(c.bodyStopGlide);

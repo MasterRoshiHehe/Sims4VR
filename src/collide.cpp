@@ -35,6 +35,10 @@ std::atomic<uint32_t> g_version{0};
 std::atomic<bool> g_on{true};
 std::atomic<float> g_radius{0.3f};
 std::atomic<float> g_furniture{0.12f};
+std::atomic<bool> g_softPlants{true};
+std::atomic<float> g_plantSlow{0.5f};
+constexpr uint32_t kPlant = 16;  // shape flag: a plant (soft)
+bool solid(uint32_t flags) { return !(flags & kPlant) || !g_softPlants.load(std::memory_order_relaxed); }
 
 // The game thread's copy.
 std::vector<Wall> t_walls;
@@ -181,7 +185,7 @@ float pushOut(float& x, float& z, float radius, float objectRadius, float feetY,
             moved = true;
         }
         for (const Shape& s : t_shapes) {
-            if (!(s.flags & 1) || s.y1 <= lo || s.y0 >= hi) continue;
+            if (!(s.flags & 1) || !solid(s.flags) || s.y1 <= lo || s.y0 >= hi) continue;
             const float ro = objectRadius;
             if (x < s.minX - ro || x > s.maxX + ro || z < s.minZ - ro || z > s.maxZ + ro) continue;
             const float* p = &t_points[s.first * 2];
@@ -248,7 +252,7 @@ bool handContact(float x, float y, float z, float radius, float normal[3], int& 
     }
     for (const Shape& s : shapes) {
         if (y < s.y0 || y > s.y1 + radius || x < s.minX - radius || x > s.maxX + radius || z < s.minZ - radius ||
-            z > s.maxZ + radius)
+            z > s.maxZ + radius || !solid(s.flags))
             continue;
         // The nearest edge, and whether (x, z) is inside the footprint.
         const float* p = &points[s.first * 2];
@@ -386,6 +390,37 @@ void configureHands(bool on) {
     if (g_handsOn.exchange(on) != on) LOG("Collision: your hands %s walls and furniture", on ? "stop at" : "go through");
 }
 
+void configurePlants(bool soft, float maxSlow) {
+    maxSlow = std::clamp(std::isfinite(maxSlow) ? maxSlow : 0.5f, 0.0f, 0.9f);
+    if (g_softPlants.exchange(soft) != soft || g_plantSlow.exchange(maxSlow) != maxSlow)
+        LOG("Collision: plants %s (slowing you up to %.0f%%)", soft ? "let you through" : "stop you", maxSlow * 100);
+}
+
+float plantSpeed(float x, float z, float feetY) {
+    if (!g_softPlants.load(std::memory_order_relaxed) || !g_on.load(std::memory_order_relaxed)) return 1;
+    takeScene();
+    const float r = g_furniture.load(std::memory_order_relaxed);
+    float worst = 0;
+    for (const Shape& s : t_shapes) {
+        if (!(s.flags & kPlant) || s.y1 <= feetY + 0.02f || s.y0 >= feetY + kBodyTop) continue;
+        if (x < s.minX - r || x > s.maxX + r || z < s.minZ - r || z > s.maxZ + r) continue;
+        const float* p = &t_points[s.first * 2];
+        float best = 1e30f;
+        for (int i = 0, j = s.count - 1; i < s.count; j = i++) {
+            float cx, cz;
+            closest(x, z, p[j * 2], p[j * 2 + 1], p[i * 2], p[i * 2 + 1], cx, cz);
+            best = std::min(best, (x - cx) * (x - cx) + (z - cz) * (z - cz));
+        }
+        const float edge = std::sqrt(best), depth = inside(s, x, z) ? r + edge : r - edge;
+        if (depth <= 0) continue;
+        // Deeper in (full past 30 cm) and taller (a flower bed a little, waist high and up fully) slows more.
+        const float into = std::min(depth / 0.3f, 1.0f);
+        const float tall = std::clamp((std::min(s.y1, feetY + 1.2f) - feetY) / 1.0f, 0.2f, 1.0f);
+        worst = std::max(worst, into * tall);
+    }
+    return 1 - worst * g_plantSlow.load(std::memory_order_relaxed);
+}
+
 void setHandGaps(float wall, float object) {
     wall = std::clamp(std::isfinite(wall) ? wall : 0.0f, -0.05f, 0.05f);
     object = std::clamp(std::isfinite(object) ? object : 0.0f, -0.05f, 0.05f);
@@ -452,7 +487,7 @@ float stopHand(int side, const float target[3], const float* offsets, const floa
             std::max(w.az, w.bz) >= z0 && std::min(w.az, w.bz) <= z1)
             around.walls.push_back(&w);
     for (const Shape& s : shapes)  // flag 4: a footprint whose model's box (flag 2) is what hands meet
-        if (!(s.flags & 4) && s.y1 >= y0 && s.y0 <= y1 && s.maxX >= x0 && s.minX <= x1 && s.maxZ >= z0 &&
+        if (!(s.flags & 4) && solid(s.flags) && s.y1 >= y0 && s.y0 <= y1 && s.maxX >= x0 && s.minX <= x1 && s.maxZ >= z0 &&
             s.minZ <= z1)
             around.shapes.push_back(&s);
     if (around.walls.empty() && around.shapes.empty()) {

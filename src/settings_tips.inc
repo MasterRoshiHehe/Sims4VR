@@ -97,6 +97,8 @@ const TipText kTips[] = {
     {"body.collision_scene", L"Keeps a map of the walls and furniture around you for collisions (your body, your hands, touch sounds). Off: none of those, and a little time saved on the game's thread."},
     {"body.hand_object_gap", L"How close your hand comes to furniture. 0 = it touches the shape the game draws; plus keeps it that far off, minus lets it sink in. Move it while touching something to find what looks right."},
     {"body.hand_wall_gap", L"How close your hand comes to walls. 0 = it touches the wall's surface; plus keeps it that far off, minus lets it sink in."},
+    {"body.soft_plants", L"On: bushes, flowers and garden plants don't stop you or your hands; walking into them slows you instead. Off: they stop you like furniture. Trees and potted plants always stop you."},
+    {"body.plant_slowdown", L"How much bushes slow you at most: deep in a waist-high or taller one. Low flower beds slow you less, and only while you are in them."},
     {"body.hand_collision", L"Your Sim's hands stop at walls and furniture while your real hands go on, and catch up as you pull back. No vibration. Needs the map row on."},
     {"body.stairs_walk", L"Plays the walking animation on stairs while you steer; off keeps the standing pose."},
     {"body.walk_clips", L"Plays the Sim's start and stop walking animations as you move."},

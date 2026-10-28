@@ -104,6 +104,7 @@ bool g_slowing = false;
 bool g_stopForClip = false;
 float g_stopW = 0;
 float g_rest = 0;  // metres still to go while slowing (published with the pose)
+float g_plantSpeed = 1;  // walking through bushes (collide::plantSpeed, eased)
 float g_floorY = 0;
 float g_eyeAboveFloor = 0;
 float g_mark[2] = {};  // last sane eye offset from the root, in the body's frame
@@ -689,6 +690,9 @@ bool update(const Input& in, float viewYaw, float turn, Output& out) {
         target = (running() && !crouched ? g_runSpeed : g_walkSpeed) * s * (strength > 0.8f ? 1.0f : strength / 0.8f);
         if (crouched) target *= g_crouchSpeed.load(std::memory_order_relaxed);
     }
+    // Bushes and flowers slow you (collide::plantSpeed), eased over about a fifth of a second.
+    g_plantSpeed += (collide::plantSpeed(cur[0], cur[2], g_floorY) - g_plantSpeed) * (dt > 0 ? 1 - std::exp(-dt * 6) : 0);
+    target *= g_plantSpeed;
     float stopTime = g_stopTime.load(std::memory_order_relaxed);
     float clipStop = g_stopGlide.load(std::memory_order_relaxed) ? g_clipStop.load(std::memory_order_relaxed) : 0;
     if (target < g_speed && stopTime < 0.05f && clipStop <= 0.05f) {

@@ -302,6 +302,8 @@ struct Config {
     bool handCollision = true;  // first person: your Sim's hands stop at walls and furniture
     float handWallGap = 0.0f;    // metres the hand keeps from walls beyond its shape (minus: sinks in)
     float handObjectGap = 0.0f;  // the same for furniture
+    bool softPlants = true;      // bushes and flowers don't stop you; they slow you
+    float plantSlowdown = 0.5f;  // at most this much slower, deep in a tall one
 
     // Hands (first person): close a hand near an object to pick it up, open it to put it down
     bool grab = true;

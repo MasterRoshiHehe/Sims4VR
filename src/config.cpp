@@ -429,6 +429,8 @@ Config loadConfig(const std::wstring& ini) {
     c.handCollision = readInt(ini, "body", "hand_collision", 1) != 0;
     c.handWallGap = readFloat(ini, "body", "hand_wall_gap", c.handWallGap);
     c.handObjectGap = readFloat(ini, "body", "hand_object_gap", c.handObjectGap);
+    c.softPlants = readInt(ini, "body", "soft_plants", 1) != 0;
+    c.plantSlowdown = readFloat(ini, "body", "plant_slowdown", c.plantSlowdown);
     c.crouch = readInt(ini, "body", "crouch", 1) != 0;
     c.crouchDepth = readFloat(ini, "body", "crouch_depth", c.crouchDepth);
     c.crouchSpeed = readFloat(ini, "body", "crouch_speed", c.crouchSpeed);

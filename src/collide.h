@@ -42,6 +42,14 @@ void configureHands(bool on);
 // your hand keeps from walls / furniture beyond its own shape (minus: it sinks in).
 void setHandGaps(float wall, float object);
 
+// [body] soft_plants / plant_slowdown (debug menu, Controls > Moving): plants
+// (shapes with flag 16: bushes, flowers) don't stop your body or hands; walking
+// into them slows you, up to maxSlow (0.5 = half speed) deep in a tall one.
+void configurePlants(bool soft, float maxSlow);
+// Game thread: the stick walking speed factor at (x, z) for feet at feetY
+// (1: nothing slows you; 1 - maxSlow at most).
+float plantSpeed(float x, float z, float feetY);
+
 // The pose hook (armik.cpp), every solve of your Sim's arm (side 0 left):
 // where your real palm is (`target`, world) and the hand's shape around it:
 // `count` balls, each `offsets` (x, y, z world vector from the palm) with
