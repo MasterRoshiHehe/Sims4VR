@@ -667,6 +667,7 @@ std::vector<Row> makeRows() {
                0.0025f, 100, L"%.2f cm", kWalk),
         number(L"Collision", L"Hand gap to walls", "body", "hand_wall_gap", &Config::handWallGap, -0.05f, 0.05f, 0.0025f, 100,
                L"%.2f cm", kWalk),
+        flag(L"Collision", L"Neighbourhood scenery stops you", "body", "world_scenery", true, kLive),  // collide.py
         toggle(L"Collision", L"Walk through bushes and flowers", "body", "soft_plants", &Config::softPlants, kWalk),
         number(L"Collision", L"Bushes slow you by up to", "body", "plant_slowdown", &Config::plantSlowdown, 0, 0.9f, 0.05f,
                100, L"%.0f%%", kWalk),

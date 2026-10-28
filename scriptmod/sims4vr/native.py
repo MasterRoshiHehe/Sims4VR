@@ -596,6 +596,19 @@ def model_shape(instance):
     return status, prisms, note
 
 
+def world_scenery(lot_description_id):
+    """The neighbourhood's placed scenery (trees, rocks, lamps, fences) of the area
+    holding this lot, from its .world file (worldscenery.cpp): (status, [(model,
+    x, y, z, qx, qy, qz, qw, scale)], area file name); status 0 found, 1 still
+    looking, 2 no area has that lot, 3 read failed. None with an older DLL."""
+    fn = _optional('world_scenery')
+    if fn is None:
+        return None
+    status, data, area = fn(int(lot_description_id) & 0xFFFFFFFFFFFFFFFF)
+    placed = [struct.unpack_from('<Q8f', data, i) for i in range(0, len(data) - 39, 40)]
+    return status, placed, area
+
+
 def set_object_menu(kind, centre=(0, 0, 0), normal=(0, 0, 1), up=(0, 1, 0), width=0.0, height=0.0):
     """Show the open picker on an object's front face (kind 1 a door or front,
     2 a screen; world units), or take it off (kind 0)."""

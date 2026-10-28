@@ -59,6 +59,12 @@ _placed = {}  # object id: (where it stands, its visible shape there): turned an
 _body_skip = set()  # id() of the footprint polygons whose body part the visible shape took over
 _soft = set()  # id() of the footprint polygons of plants (flag 16: they slow you, collide.cpp softSlow)
 _soft_logs = [0, set()]  # bushes logged with their solid and leaf layers
+_scenery = {'zone': None, 'lot': None, 'status': None, 'area': '', 'cells': {}, 'count': 0}  # the area's scenery
+_scenery_shapes = {}  # model instance: (prisms, reach, height, kind) in model space, or None (no model)
+_scenery_on = [True, -1e9]  # [body] world_scenery, when last read
+_scenery_logs = [0, None]
+SCENERY_CELL = 16.0  # metres: the area's scenery is kept in a grid of these
+SCENERY_BIG = 40.0  # metres: wider models (backdrops, terrain pieces) are left out
 _soft_kinds = {}  # definition id: 2 bushes, flowers, garden plants (soft); 1 other plants and trees (leaves soft); 0
 _SOFT_TAGS = ('Build_Shrub', 'Build_Flower', 'Func_Bush', 'Func_OutdoorPlant')  # trees and potted plants stay solid
 _LEAFY_TAGS = ('BuyCatLD_Plant', 'Build_Tree', 'Func_Tree', 'Func_Grass', 'Func_Gardening', 'BuyCatEE_Gardening')
@@ -482,6 +488,142 @@ def _shape_of(obj, top):
     return shapes
 
 
+def _scenery_retry():
+    """Build again shortly (the DLL is still reading the area or the models)."""
+    global _dirty
+    _dirty = time.monotonic()
+
+
+def _scenery_load():
+    """The area's placed scenery into _scenery['cells']: True once known (found or
+    not), False while the DLL still reads the .world files."""
+    s = _scenery
+    zone = services.current_zone_id()
+    if s['zone'] != zone:
+        s.update(zone=zone, lot=None, status=None, area='', cells={}, count=0)
+    if s['status'] not in (None, 1):
+        return True
+    if s['lot'] is None:
+        try:
+            z = services.current_zone()
+            world = services.get_world_description_id(z.world_id)
+            s['lot'] = int(services.get_lot_description_id(z.lot.lot_id, world) or 0)
+        except Exception as e:
+            _log('scenery: no lot description id: {!r}'.format(e))
+            s['status'] = -1
+            return True
+    found = native.world_scenery(s['lot'])
+    if found is None:
+        s['status'] = -1  # an older DLL
+        return True
+    status, placed, area = found
+    s['status'], s['area'] = status, area
+    if status == 1:
+        return False
+    cells = {}
+    for p in placed:
+        cells.setdefault((int(p[1] // SCENERY_CELL), int(p[3] // SCENERY_CELL)), []).append(p)
+    s['cells'], s['count'] = cells, len(placed)
+    _log('scenery: lot {:016X}: {} ({} placed objects)'.format(
+        s['lot'], {0: 'area ' + area, 2: 'no area has this lot', 3: 'reading ' + area + ' failed'}.get(status, status),
+        len(placed)))
+    return True
+
+
+def _scenery_shape(model):
+    """A scenery model's visible shape: (prisms, reach, height, kind) in model space
+    (kind: 'plant' leaves soft, 'bush' all leaves and low: slows you, 'thin' alpha
+    cut-out fence or lattice: solid, 'solid'); None without a model, False while the
+    game's models are still being indexed."""
+    if model in _scenery_shapes:
+        return _scenery_shapes[model]
+    shape, note = None, ''
+    for key in (model, (model >> 32) | (model & 0xFFFFFFFF) << 32):  # the record's key, then its halves swapped
+        found = native.model_shape(key)
+        if found is None:
+            return None
+        if found[0] == 1:
+            return False
+        if found[0] == 0 and found[1]:
+            shape, note = found[1], found[2] + ('' if key == model else ' (instance halves swapped)')
+            break
+        note = note or found[2]
+    if shape:
+        pts = [c for corners, _, _, _ in shape for c in corners]
+        reach = max(math.hypot(px, pz) for px, pz in pts)
+        height = max(p[2] for p in shape) - min(p[1] for p in shape)
+        leaf = [c for corners, _, _, leaves in shape if leaves for c in corners]
+        kind = 'solid'
+        if leaf:
+            wx = max(c[0] for c in leaf) - min(c[0] for c in leaf)
+            wz = max(c[1] for c in leaf) - min(c[1] for c in leaf)
+            if min(wx, wz) < 0.25 and max(wx, wz) > 0.8:
+                kind = 'thin'  # a chain-link fence or lattice, drawn with an alpha cut-out like leaves
+            elif len(leaf) == len(pts) and height < 2.5:
+                kind = 'bush'
+            else:
+                kind = 'plant'
+        shape = (shape, reach, height, kind)
+    _scenery_shapes[model] = shape
+    if len(_scenery_shapes) <= 60:
+        _log('scenery model {:016X}: {}'.format(model, '{}, {}'.format(shape[3], note) if shape
+                                                else 'no shape ({})'.format(note or 'not in the game\'s packages')))
+    return shape
+
+
+def _scenery_near(x, z):
+    """Generator: yields between batches; ends returning [(polygon, y0, y1, flags)] of the
+    neighbourhood scenery near (x, z) (flags as hand_shapes: 1 stops you, 16 leaves, 32 slows)."""
+    out = []
+    if not _scenery_load():
+        _scenery_retry()
+        return out
+    cx, cz = int(x // SCENERY_CELL), int(z // SCENERY_CELL)
+    near = [p for i in (cx - 1, cx, cx + 1) for j in (cz - 1, cz, cz + 1) for p in _scenery['cells'].get((i, j), ())]
+    started = time.perf_counter()
+    waiting = big = used = 0
+    for model, px, py, pz, qx, qy, qz, qw, sc in near:
+        if time.perf_counter() - started > 0.004:
+            yield
+            started = time.perf_counter()
+        found = _scenery_shape(model)
+        if found is False:
+            waiting += 1
+            continue
+        if not found:
+            continue
+        prisms, reach, height, kind = found
+        sc = sc or 1.0
+        if reach * sc > SCENERY_BIG / 2:
+            big += 1
+            continue
+        if math.hypot(px - x, pz - z) - reach * sc > RADIUS:
+            continue
+        used += 1
+
+        def world(lx, lz):
+            vx, vz = lx * sc, lz * sc
+            tx, ty, tz = 2 * qy * vz, 2 * (qz * vx - qx * vz), -2 * qy * vx
+            return (px + vx + qw * tx + (qy * tz - qz * ty), pz + vz + qw * tz + (qx * ty - qy * tx))
+
+        for corners, y0, y1, leaves in prisms:
+            if not leaves or kind in ('solid', 'thin'):
+                flags = 1
+            else:
+                flags = 16 | (32 if kind == 'bush' else 0)
+            out.append(([world(lx, lz) for lx, lz in corners], py + y0 * sc, py + y1 * sc, flags))
+    if waiting:
+        _scenery_retry()
+    key = (_scenery['area'], used, big, waiting)
+    if _scenery_logs[0] < 30 and key != _scenery_logs[1]:
+        _scenery_logs[0] += 1
+        _scenery_logs[1] = key
+        _log('scenery near {:.1f} {:.1f}: {} objects, {} shapes{}{}'.format(
+            x, z, used, len(out), ', {} too big left out'.format(big) if big else '',
+            ', {} models still loading'.format(waiting) if waiting else ''))
+    return out
+
+
 def _mesh_shapes(obj, top):
     """What your hands meet of an object: each mesh's box, turned, scaled and
     placed like the object, as (polygon, y0, y1, None); None if unknown, empty
@@ -710,6 +852,18 @@ def _build(sim, x, y, z, surface):
     spent += time.perf_counter() - started
     walls, objects, hand_shapes, _hand_skip, _body_skip, _soft = (new_walls, new_objects, new_hands, new_skip,
                                                                   new_body_skip, new_soft)
+    # 4. The neighbourhood's own scenery (the area's .world file: trees, rocks, lamps, fences; drawn by the game,
+    #    never live objects; user 2026-10-28: walked right through them). [body] world_scenery
+    _scenery_on[0] = native.setting_flag('body', 'world_scenery', True)
+    if _scenery_on[0]:
+        spent += time.perf_counter() - started
+        try:
+            scenery = yield from _scenery_near(x, z)
+        except Exception as e:
+            scenery = []
+            _log('scenery failed: {!r}'.format(e))
+        started = time.perf_counter()
+        hand_shapes = hand_shapes + scenery
     _door_panels.clear()
     _door_panels.update(panels)
     _apply_doors()
@@ -808,6 +962,10 @@ def update(sim, x, y, z, surface, free, mask):
                 forget()
     if not _switch[0] or surface is None:
         return
+    if now - _scenery_on[1] > SWITCH_EVERY:
+        _scenery_on[1] = now
+        if native.setting_flag('body', 'world_scenery', True) != _scenery_on[0]:
+            _state = None  # neighbourhood scenery switched: build the scene again
     _watch(True)
     if _pending is not None:
         try:

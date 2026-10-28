@@ -83,6 +83,7 @@ void s4vr_sims_forever_surface(int nx, int ny, const float* depths, int count);
 void s4vr_claude_screen(int on, const float* v, const char* exe);
 int s4vr_model_bytes(unsigned long long instance, int* compression, unsigned* size, const char** data, int* length);
 int s4vr_model_shape(unsigned long long instance, const float** data, int* count, const char** note);
+int s4vr_world_scenery(unsigned long long lot, const char** data, int* length, const char** area);
 int s4vr_phone_mount(float* out);
 void s4vr_set_phone_prop(float w, float h, float d);
 void s4vr_set_held(const unsigned long long* ids, int count);
@@ -571,6 +572,16 @@ PyObject* modelShape(PyObject*, PyObject* args) {
                                                    count > 0 ? count * 4 : 0);
     return py.Py_BuildValue("(iNs)", status, bytes, note ? note : "");
 }
+PyObject* worldScenery(PyObject*, PyObject* args) {
+    unsigned long long lot = 0;
+    if (!py.PyArg_ParseTuple(args, "K", &lot)) return nullptr;
+    const char* data = nullptr;
+    const char* area = "";
+    int length = 0;
+    int status = s4vr_world_scenery(lot, &data, &length, &area);
+    PyObject* bytes = py.PyBytes_FromStringAndSize(length > 0 ? data : "", length > 0 ? length : 0);
+    return py.Py_BuildValue("(iNs)", status, bytes, area ? area : "");
+}
 PyObject* setObjectMenu(PyObject*, PyObject* args) {
     int kind = 0;
     float v[11] = {};
@@ -976,6 +987,8 @@ PyMethodDef methods[] = {
      "model_bytes(instance) -> (status, compression, size, bytes): an object model as stored (status 0 found, 1 not indexed yet, 2 none, 3 read failed)"},
     {"model_shape", modelShape, METH_VARARGS,
      "model_shape(instance) -> (status, bytes, note): an object model's visible shape as packed floats (count, y0, y1, x z...; model space), status as model_bytes"},
+    {"world_scenery", worldScenery, METH_VARARGS,
+     "world_scenery(lot_description_id) -> (status, bytes, area): the area's placed scenery (u64 model + 8 floats each)"},
     {"claude_screen", claudeScreen, METH_VARARGS,
      "claude_screen(on, cx, cy, cz, nx, ny, nz, ux, uy, uz, width, height, exe): the Claude app on a computer's screen (0: off)"},
     {"sims_forever_surface", simsForeverSurface, METH_VARARGS,

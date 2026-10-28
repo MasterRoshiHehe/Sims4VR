@@ -52,6 +52,7 @@
 #include "log.h"
 #include "modelbox.h"
 #include "meshshape.h"
+#include "worldscenery.h"
 #include "modelparse.h"
 #include "foleyaudio.h"
 #include "nodim.h"
@@ -433,6 +434,19 @@ S4VR_API int s4vr_model_shape(unsigned long long instance, const float** data, i
     *data = shape.data();
     *count = static_cast<int>(shape.size());
     *note = text.c_str();
+    return status;
+}
+// The neighbourhood's placed scenery of the area holding this lot (worldscenery::forLot's status), packed as
+// worldscenery::Placed records (u64 model, x y z qx qy qz qw scale). *data stays valid until the next call (game
+// thread only).
+S4VR_API int s4vr_world_scenery(unsigned long long lot, const char** data, int* length, const char** area) {
+    static_assert(sizeof(s4vr::worldscenery::Placed) == 40, "native.py world_scenery reads 40-byte records");
+    static std::vector<s4vr::worldscenery::Placed> placed;
+    static std::string name;
+    int status = s4vr::worldscenery::forLot(lot, placed, name);
+    *data = reinterpret_cast<const char*>(placed.data());
+    *length = static_cast<int>(placed.size() * sizeof(s4vr::worldscenery::Placed));
+    *area = name.c_str();
     return status;
 }
 // An object model's stored bytes from the game's packages (modelbox::read's status; 0 = found).
