@@ -58,6 +58,7 @@ _shapes = {}  # definition id: [(corners, y0, y1)] of its model's visible shape 
 _placed = {}  # object id: (where it stands, its visible shape there): turned and moved once while it stays
 _body_skip = set()  # id() of the footprint polygons whose body part the visible shape took over
 _soft = set()  # id() of the footprint polygons of plants (flag 16: they slow you, collide.cpp softSlow)
+_soft_logs = [0, set()]  # bushes logged with their solid and leaf layers
 _soft_kinds = {}  # definition id: 2 bushes, flowers, garden plants (soft); 1 other plants and trees (leaves soft); 0
 _SOFT_TAGS = ('Build_Shrub', 'Build_Flower', 'Func_Bush', 'Func_OutdoorPlant')  # trees and potted plants stay solid
 _LEAFY_TAGS = ('BuyCatLD_Plant', 'Build_Tree', 'Func_Tree', 'Func_Grass', 'Func_Gardening', 'BuyCatEE_Gardening')
@@ -695,7 +696,17 @@ def _build(sim, x, y, z, surface):
         new_hands.extend(meshes or ())
         if _is_soft(obj):
             new_soft.update(id(o[0]) for o in new_objects[first:])
-            new_hands[hands_from:] = [(p, a, b, (2 if f is None else f) | 16) for p, a, b, f in new_hands[hands_from:]]
+            # Its leaves are soft already (above); the opaque rest (a planter box, an edge) stops you, unless
+            # the model has no leaf meshes to tell them apart: then all of it is soft.
+            leafy_layers = sum(1 for _, _, _, leaves in shape or () if leaves)
+            if _soft_logs[0] < 40 and obj.definition.id not in _soft_logs[1]:
+                _soft_logs[0] += 1
+                _soft_logs[1].add(obj.definition.id)
+                _log('{}: {} leaf layers soft, {} other layers {}'.format(
+                    str(obj).split(':')[0], leafy_layers, len(shape or ()) - leafy_layers,
+                    'stop you' if leafy_layers else 'soft too (no leaf meshes to tell apart)'))
+            if not leafy_layers:
+                new_hands[hands_from:] = [(p, a, b, (2 if f is None else f) | 16) for p, a, b, f in new_hands[hands_from:]]
     spent += time.perf_counter() - started
     walls, objects, hand_shapes, _hand_skip, _body_skip, _soft = (new_walls, new_objects, new_hands, new_skip,
                                                                   new_body_skip, new_soft)
