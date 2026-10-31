@@ -7,6 +7,7 @@
 #include <cstring>
 #include <memory>
 #include <mutex>
+#include <vector>
 
 #include "addrs.h"
 #include "armik.h"
@@ -206,7 +207,9 @@ struct Rig {
     int upper[2] = {-1, -1}, fore[2] = {-1, -1}, hand[2] = {-1, -1};
     int knuckle[2][4] = {{-1, -1, -1, -1}, {-1, -1, -1, -1}};  // index, middle, ring, little
     bool arm[2] = {false, false};
+    int thigh[2] = {-1, -1}, calf[2] = {-1, -1}, foot[2] = {-1, -1};
     uint8_t chain[kMaxJoints] = {};
+    int16_t parent[kMaxJoints] = {};  // -1: none
 };
 std::mutex g_rigMutex;
 std::shared_ptr<const Rig> g_rig;
@@ -278,6 +281,16 @@ std::shared_ptr<const Rig> rigFor(const uint8_t* actor, uint32_t poseCount) {
             knuckles = knuckles && r->knuckle[side][k] >= 0;
         }
         r->arm[side] = r->upper[side] >= 0 && r->fore[side] >= 0 && r->hand[side] >= 0 && knuckles;
+        std::snprintf(name, sizeof(name), "b__%s_Thigh__", s);
+        r->thigh[side] = find(name);
+        std::snprintf(name, sizeof(name), "b__%s_Calf__", s);
+        r->calf[side] = find(name);
+        std::snprintf(name, sizeof(name), "b__%s_Foot__", s);
+        r->foot[side] = find(name);
+    }
+    for (uint32_t j = 0; j < count; ++j) {
+        const int p = parent(static_cast<int>(j));
+        r->parent[j] = static_cast<int16_t>(p >= 0 && p < static_cast<int>(count) && p != static_cast<int>(j) ? p : -1);
     }
     if (r->head < 0 || !r->arm[0] || !r->arm[1]) {
         if (g_rigLogs.fetch_add(1) < 5)
@@ -323,7 +336,7 @@ struct Prepared {
     const uint8_t* model = nullptr;
     const uint8_t* pose = nullptr;
     std::shared_ptr<const Rig> rig;
-    Affine move[kChains];
+    Affine joint[kMaxJoints];  // every joint's model-space map (the CAS Sim's pose -> your body)
     Vec3 fold{0, 0, 0};
     ULONGLONG tick = 0;
     bool usedSecond = false;
@@ -459,6 +472,150 @@ bool reach(Vec3 S, Vec3 E, Vec3 W, const Vec3 knuckles[4], Vec3 wrist, const Qua
     return true;
 }
 
+// ---- a still body ([cas] body_still) ----
+// The body stands in one pose instead of playing the CAS Sim's idle (user spec 2026-10-29: the double does not copy
+// the CAS Sim's motion): the most upright pose seen in the first 3 s with this skeleton (head over the middle of the
+// feet), kept as joint rotations; the bone offsets come from the live pose every frame, so edits that move joints still
+// fit. Self-check: an arm or leg bone's offset in its parent's frame is the same in any animation frame, so if the
+// frozen and the live offsets disagree the quaternions are being read wrong (or the skeleton changed): picked again,
+// and after 3 such picks the body plays the live idle (logged).
+std::atomic<bool> g_still{true};
+struct Freeze {
+    std::shared_ptr<const Rig> rig;
+    std::vector<uint8_t> pose;
+    float score = 1e9f;
+    ULONGLONG since = 0;
+    int bad = 0;      // frames in a row the offsets disagreed
+    int picks = 0;    // picks for this skeleton
+    bool off = false; // given up: live idle
+    bool proven = false;
+} g_freeze;
+constexpr ULONGLONG kFreezePick = 3000;
+constexpr float kFreezeMismatch = 0.015f;  // metres
+
+Quat jointQuat(const uint8_t* pose, int joint) {
+    Quat q;
+    std::memcpy(&q, pose + static_cast<size_t>(joint) * kPoseJointSize + 0x10, sizeof(q));
+    return qnormalize(q);
+}
+
+float uprightScore(const uint8_t* pose, const Rig& r) {
+    if (r.foot[0] < 0 || r.foot[1] < 0) return 0;
+    const Vec3 h = jointAt(pose, r.head), f = mul(add(jointAt(pose, r.foot[0]), jointAt(pose, r.foot[1])), 0.5f);
+    const float dx = h.x - f.x, dz = h.z - f.z;
+    return std::sqrt(dx * dx + dz * dz);
+}
+
+// The largest difference (metres) between live and frozen arm/leg bone offsets in their parents' frames, and how far
+// those bones moved in the model between the two poses (to know the check meant something).
+float offsetMismatch(const uint8_t* live, const uint8_t* frozen, const Rig& r, float& moved) {
+    const int joints[] = {r.fore[0], r.fore[1], r.hand[0], r.hand[1], r.calf[0], r.calf[1], r.foot[0], r.foot[1]};
+    float worst = 0;
+    moved = 0;
+    for (int j : joints) {
+        if (j < 0 || r.parent[j] < 0) continue;
+        const int p = r.parent[j];
+        const Vec3 dl = sub(jointAt(live, j), jointAt(live, p)), df = sub(jointAt(frozen, j), jointAt(frozen, p));
+        const Vec3 a = rotate(conj(jointQuat(live, p)), dl), b = rotate(conj(jointQuat(frozen, p)), df);
+        const float d = length(sub(a, b)), m = length(sub(dl, df));
+        if (!std::isfinite(d)) return 1e9f;
+        worst = d > worst ? d : worst;
+        moved = m > moved ? m : moved;
+    }
+    return worst;
+}
+
+// The frozen pose for this frame, or null (the live idle). Under g_cacheMutex.
+const uint8_t* frozenPose(const uint8_t* pose, const std::shared_ptr<const Rig>& rig, ULONGLONG now) {
+    if (!g_still.load(std::memory_order_relaxed)) return nullptr;
+    const Rig& r = *rig;
+    const size_t bytes = static_cast<size_t>(r.count) * kPoseJointSize;
+    auto pick = [&](bool fresh) {
+        g_freeze.pose.assign(pose, pose + bytes);
+        g_freeze.score = uprightScore(pose, r);
+        g_freeze.since = now;
+        g_freeze.bad = 0;
+        if (fresh) {
+            g_freeze.picks = 0;
+            g_freeze.off = false;
+            g_freeze.proven = false;
+        }
+        ++g_freeze.picks;
+    };
+    if (g_freeze.rig != rig || g_freeze.pose.size() != bytes) {
+        g_freeze.rig = rig;
+        pick(true);
+        return g_freeze.pose.data();
+    }
+    if (g_freeze.off) return nullptr;
+    if (now - g_freeze.since < kFreezePick) {
+        const float score = uprightScore(pose, r);
+        if (score < g_freeze.score - 0.005f) {
+            g_freeze.pose.assign(pose, pose + bytes);
+            g_freeze.score = score;
+        }
+        return g_freeze.pose.data();
+    }
+    float moved = 0;
+    const float mismatch = offsetMismatch(pose, g_freeze.pose.data(), r, moved);
+    if (mismatch < kFreezeMismatch) {
+        g_freeze.bad = 0;
+        if (!g_freeze.proven && moved > 0.05f) {
+            g_freeze.proven = true;
+            LOG("CAS body: still pose checked: the bones moved %.0f mm in the model since it was picked and their "
+                "offsets agree within %.1f mm (head over feet %.0f mm)",
+                moved * 1000, mismatch * 1000, g_freeze.score * 1000);
+        }
+    } else if (++g_freeze.bad >= 60) {
+        if (g_freeze.picks >= 3) {
+            g_freeze.off = true;
+            LOG("CAS body: still pose given up (bone offsets off by %.0f mm after 3 picks): the body plays the CAS idle",
+                mismatch * 1000);
+            return nullptr;
+        }
+        LOG("CAS body: still pose off by %.0f mm from the live bones (skeleton changed?): picked again", mismatch * 1000);
+        pick(false);
+    }
+    return g_freeze.pose.data();
+}
+
+// The body's base pose: the frozen rotations on the live bone offsets (or the live pose itself), model space.
+void basePose(const uint8_t* live, const uint8_t* frozen, const Rig& r, Vec3* bp, Quat* bq) {
+    const uint32_t n = r.count;
+    if (!frozen) {
+        for (uint32_t j = 0; j < n; ++j) {
+            bp[j] = jointAt(live, static_cast<int>(j));
+            bq[j] = jointQuat(live, static_cast<int>(j));
+        }
+        return;
+    }
+    bool done[kMaxJoints] = {};
+    for (int pass = 0; pass < 64; ++pass) {
+        bool more = false;
+        for (uint32_t j = 0; j < n; ++j) {
+            if (done[j]) continue;
+            const int p = r.parent[j];
+            const int jj = static_cast<int>(j);
+            if (p < 0) {
+                bp[j] = jointAt(frozen, jj);
+                bq[j] = jointQuat(frozen, jj);
+            } else if (done[p]) {
+                const Quat local = qmul(conj(jointQuat(frozen, p)), jointQuat(frozen, jj));
+                const Vec3 offset = rotate(conj(jointQuat(live, p)), sub(jointAt(live, jj), jointAt(live, p)));
+                bq[j] = qnormalize(qmul(bq[p], local));
+                bp[j] = add(bp[p], rotate(bq[p], offset));
+            } else {
+                more = true;
+                continue;
+            }
+            done[j] = true;
+        }
+        if (!more) break;
+    }
+    for (uint32_t j = 0; j < n; ++j)
+        if (!done[j]) bp[j] = jointAt(live, static_cast<int>(j)), bq[j] = jointQuat(live, static_cast<int>(j));
+}
+
 bool compute(const uint8_t* model, const uint8_t* pose, const std::shared_ptr<const Rig>& rig, Prepared& out) {
     // The CAS Sim's world matrix (row vectors) as a column map: world = A x + t.
     float rows[16];
@@ -486,9 +643,17 @@ bool compute(const uint8_t* model, const uint8_t* pose, const std::shared_ptr<co
     camera::View view;
     if (!camera::headInWorld(head, hRight, hUp, hBack) || !camera::lastView(view) || !(view.scale > 0)) return false;
     const float scale = view.scale;
+    const ULONGLONG now = GetTickCount64();
+
+    // The pose the body takes before the arms: still ([cas] body_still) or the CAS Sim's own.
+    static Vec3 bp[kMaxJoints];  // under g_cacheMutex
+    static Quat bq[kMaxJoints];
+    const uint8_t* frozen = frozenPose(pose, rig, now);
+    basePose(pose, frozen, *rig, bp, bq);
+    auto P = [&](int joint) { return bp[joint]; };
 
     // Which way the Sim faces in the world now, from its shoulders.
-    const Vec3 across = applyLinear(sim, sub(jointAt(pose, rig->upper[1]), jointAt(pose, rig->upper[0])));
+    const Vec3 across = applyLinear(sim, sub(P(rig->upper[1]), P(rig->upper[0])));
     const Vec3 simAhead{across.z, 0, -across.x};  // up x (left to right)
     if (!(length(simAhead) > 1e-4f)) return false;
     const float simYaw = std::atan2(simAhead.x, simAhead.z);
@@ -496,7 +661,6 @@ bool compute(const uint8_t* model, const uint8_t* pose, const std::shared_ptr<co
     // Which way you face: the head's forward, or (looking down) its top, which then points ahead.
     const float down = hBack.y > 0 ? hBack.y : 0;
     Vec3 facing{-hBack.x + hUp.x * down, 0, -hBack.z + hUp.z * down};
-    const ULONGLONG now = GetTickCount64();
     {
         const float dt = g_yawTick ? static_cast<float>(now - g_yawTick) * 0.001f : 0;
         g_yawTick = now;
@@ -520,7 +684,7 @@ bool compute(const uint8_t* model, const uint8_t* pose, const std::shared_ptr<co
     // The body as placed in the world: the Sim turned to face your way, its head joint under and behind your eyes,
     // its feet on the CAS floor (lowered if it is taller than your eyes).
     Affine body = compose(turnAbout(turn, {0, 0, 0}, {0, 0, 0}), sim);
-    const Vec3 headLinear = applyLinear(body, jointAt(pose, rig->head));
+    const Vec3 headLinear = applyLinear(body, P(rig->head));
     Vec3 aheadOfHead = normalize(Vec3{facing.x, 0, facing.z});
     if (!(length(aheadOfHead) > 0.5f)) aheadOfHead = bodyAhead;
     const Vec3 headAt = sub(head, mul(aheadOfHead, kHeadBehindEyes * scale));
@@ -534,8 +698,9 @@ bool compute(const uint8_t* model, const uint8_t* pose, const std::shared_ptr<co
     g_lastYaw = g_bodyYaw;
 
     const Affine root = compose(simInv, body);  // CAS Sim model space -> the body, in the same model space
-    for (auto& m : out.move) m = root;
-    out.fold = apply(root, jointAt(pose, rig->head));
+    Affine move[kChains];
+    for (auto& m : move) m = root;
+    out.fold = apply(root, P(rig->head));
 
     // The arms reach for your controllers.
     armik::Hand hands[2];
@@ -549,27 +714,33 @@ bool compute(const uint8_t* model, const uint8_t* pose, const std::shared_ptr<co
             Vec3 wristXr = add(hands[side].position, rotate(gripXr, Vec3{-s * 0.02f, 0, 0.08f}));
             Vec3 wrist = add(view.anchor, rotate(view.heading, mul(wristXr, scale)));
             Quat grip = qnormalize(qmul(view.heading, gripXr));
-            Vec3 S = apply(body, jointAt(pose, rig->upper[side])), E = apply(body, jointAt(pose, rig->fore[side])),
-                 W = apply(body, jointAt(pose, rig->hand[side]));
+            Vec3 S = apply(body, P(rig->upper[side])), E = apply(body, P(rig->fore[side])), W = apply(body, P(rig->hand[side]));
             Vec3 knuckles[4];
-            for (int k = 0; k < 4; ++k) knuckles[k] = apply(body, jointAt(pose, rig->knuckle[side][k]));
+            for (int k = 0; k < 4; ++k) knuckles[k] = apply(body, P(rig->knuckle[side][k]));
             const Vec3 outward = side == 0 ? mul(rightDir, -1) : rightDir;
             Affine upper, fore, hand;
             if (!finite(wrist) || !reach(S, E, W, knuckles, wrist, grip, up, bodyAhead, outward, upper, fore, hand))
                 continue;
             const int base = side == 0 ? kUpperL : kUpperR;
-            out.move[base] = compose(simInv, compose(upper, body));
-            out.move[base + 1] = compose(simInv, compose(fore, body));
-            out.move[base + 2] = compose(simInv, compose(hand, body));
+            move[base] = compose(simInv, compose(upper, body));
+            move[base + 1] = compose(simInv, compose(fore, body));
+            move[base + 2] = compose(simInv, compose(hand, body));
             g_statArms[side].fetch_add(1, std::memory_order_relaxed);
         }
+    }
+    // Each joint: from where the CAS Sim's pose has it to the base pose (a turn about it), then its chain's move.
+    for (uint32_t j = 0; j < rig->count; ++j) {
+        const int jj = static_cast<int>(j);
+        const Affine still =
+            frozen ? turnAbout(qnormalize(qmul(bq[j], conj(jointQuat(pose, jj)))), jointAt(pose, jj), bp[j]) : identity();
+        out.joint[j] = compose(move[rig->chain[j]], still);
     }
     if (g_placeLogs.fetch_add(1) < 6) {
         const Vec3 feet = apply(body, Vec3{0, 0, 0});
         LOG("CAS body: placed with its feet at %.2f %.2f %.2f facing %.0f deg (the CAS Sim at %.2f %.2f %.2f faces "
-            "%.0f deg); your eyes at %.2f %.2f %.2f, its head joint %.2f m above its feet, lowered %.2f m",
+            "%.0f deg); your eyes at %.2f %.2f %.2f, its head joint %.2f m above its feet, lowered %.2f m; %s pose",
             feet.x, feet.y, feet.z, g_bodyYaw * 57.2958f, t.x, t.y, t.z, simYaw * 57.2958f, head.x, head.y, head.z,
-            headLinear.y / scale, drop / scale);
+            headLinear.y / scale, drop / scale, frozen ? "still" : "the CAS Sim's own");
     }
     out.model = model;
     out.pose = pose;
@@ -702,7 +873,7 @@ void palette(const uint8_t* mesh, uint8_t* out, const uint8_t* pose) {
         }
         Affine old;
         std::memcpy(old.m, m, sizeof(old.m));
-        const Affine moved = compose(t_prep.move[chain], old);
+        const Affine moved = compose(t_prep.joint[joint], old);
         std::memcpy(m, moved.m, sizeof(moved.m));
     }
     g_statPalettes.fetch_add(1, std::memory_order_relaxed);
@@ -720,6 +891,10 @@ bool eyeHeight(float& worldY) {
 
 void setEyesAtBody(bool on) {
     if (g_eyesAtBody.exchange(on) != on) LOG("CAS body: eyes at the body's height %s", on ? "on" : "off");
+}
+
+void setStill(bool on) {
+    if (g_still.exchange(on) != on) LOG("CAS body: still pose %s", on ? "on" : "off");
 }
 
 bool skipBatch() { return g_skipBatch.load(std::memory_order_relaxed); }

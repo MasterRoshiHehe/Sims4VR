@@ -8,7 +8,8 @@
 // skeleton is moved under your headset and turned to where you face, its head and face folded away (as the face is in
 // live first person), and both arms reach for your controllers (two-bone IK, hands turned like the controllers). It is
 // the same model the game rebuilds on every edit, so clothes, body shape, skin and hair edits show on both at once.
-// The torso and legs keep the CAS Sim's own pose (its idle). Only your eyes see it: no shadow, no thumbnails.
+// The torso and legs stand still in one calm pose of the CAS Sim's ([cas] body_still), or follow its idle. Only your eyes
+// see it: no shadow, no thumbnails.
 namespace s4vr::casbody {
 
 // [cas] body, live.
@@ -36,6 +37,8 @@ void palette(const uint8_t* mesh, uint8_t* out, const uint8_t* pose);
 // live first person. False: use [cas] eye_height.
 bool eyeHeight(float& worldY);
 void setEyesAtBody(bool on);
+// [cas] body_still: the body stands in one calm pose picked in its first 3 s, not the CAS Sim's idle. Live.
+void setStill(bool on);
 // The second draw reached no mesh for a while (the game queued them for later): leave the view's batch sink out
 // for it (facehide clears view+0x58 around the call).
 bool skipBatch();
