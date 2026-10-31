@@ -35,8 +35,9 @@ Probe (debug menu, developer row "Outfit probe"): catalog sizes and times, the c
 CAS thumbnails asked for, a wear + undo on your top (timed), and whether the last change was still worn after the
 last load (checked by itself on every lot load, from outfit_probe.json).
 
-Switches ([outfit] in sims4vr.ini, debug menu Options > Game settings > Planning outfits in the room): on, drawers,
-always, drawer_pull, sounds, tags; developer: all_variants, apply_route, log.
+Switches ([outfit] in sims4vr.ini, debug menu Options > Game settings > Live outfit planning): on (the whole feature:
+off = Plan Outfit goes to CAS, no drawers, no Store options), drawers, always, drawer_pull, sounds, tags; developer:
+all_variants, apply_route, log.
 """
 import json
 import math
@@ -146,6 +147,11 @@ def _log(message, most=400):
 
 def _dll(name):
     return native._optional(name)
+
+
+def _on():
+    """Live outfit planning on (debug menu row "Live outfit planning"): off, everything is the game's own."""
+    return native.setting_flag('outfit', 'on', True)
 
 
 def _setting_number(key, default):
@@ -1127,8 +1133,8 @@ def _take_over(interaction, how):
     """Our panel (or, on a dresser, the wait for a pulled drawer) for this Plan Outfit; False: the game's CAS."""
     global _waiting, _why
     _why = ''
-    if not native.setting_flag('outfit', 'on', True):
-        _why = 'switched off'
+    if not _on():
+        _why = 'Live outfit planning is off'
         return False
     sim = _fp_sim()
     actor = getattr(interaction, 'sim', None)
@@ -1218,7 +1224,7 @@ def _gesture_tick(_handle):
     try:
         snap = native.hands()
         sim = _fp_sim()
-        if snap is None or sim is None or not hooks.in_first_person():
+        if snap is None or sim is None or not hooks.in_first_person() or not _on():
             _stop_gestures()
             return
         head = snap[0]
@@ -1370,7 +1376,7 @@ def _occasions_of(obj):
 def pie_extras(target):
     """pie.py (our own pie in first person): this object's Store options, [(label json, what)], in PIE_CATEGORY."""
     try:
-        if not native.setting_flag('outfit', 'tags', True) or _kind_of(target) != DRAWER:
+        if not _on() or not native.setting_flag('outfit', 'tags', True) or _kind_of(target) != DRAWER:
             return []
         from sims4vr import objmenu
         from sims4.localization import LocalizationHelperTuning
@@ -1422,6 +1428,14 @@ def pie_pick(what):
 def tick():
     global _waiting
     try:
+        if not _on():
+            if _session is not None:
+                close(True, 'Live outfit planning switched off')
+            _waiting = None
+            if _gesture_alarm is not None:
+                _stop_gestures()
+            _probe_tick()
+            return
         if _session is None and _waiting is None and not native.setting_flag('outfit', 'always', True):
             _probe_tick()
             return
@@ -1446,7 +1460,7 @@ def tick():
                 snap = native.hands()
                 if snap is not None and math.hypot(s.face[0][0] - snap[0][0], s.face[0][2] - snap[0][2]) > WALK_AWAY:
                     close(True, 'walked away')
-        if native.setting_flag('outfit', 'on', True) and (native.setting_flag('outfit', 'always', True) or _waiting):
+        if native.setting_flag('outfit', 'always', True) or _waiting:
             _scan()
             snap = snap or native.hands()
             if snap is not None and _gesture_alarm is None and (_candidates(snap[0]) or (_session and _session.kind == DRAWER)):
