@@ -114,6 +114,7 @@ UPPER, LOWER, FULL = 6, 7, 5
 DRAWER_SOUNDS = (0x0C82AD1773D1BEC8, 0x6CD00FE9B4B4A0C4)
 
 _logs = 0
+ALWAYS = 10 ** 9   # log limit for the Plan Outfit decisions (rare, and the test needs every one)
 _owner = type('_Owner', (), {})()
 _session = None
 _lot = []            # [(object id, kind)] of the dressers, wardrobes and mirrors on the lot (_scan)
@@ -124,6 +125,7 @@ _faces = {}          # object id: (time, face) from _face
 _grab = [None, None]  # per hand: what it holds of a front (dict) while grip and trigger stay closed
 _gesture_alarm = None
 _waiting = None      # (object id, Sim id): Plan Outfit on a dresser waits for a pulled drawer
+_why = ''            # why the last CAS command was left to the game (log)
 _catalogs = {}       # (Sim id, category, occasions, all variants): [(part, locked tooltip id)]
 _colour_fail = 0
 _colour_logged = 0
@@ -636,9 +638,15 @@ def _open(sim, obj, kind, tabs=None, drawer=-1, how=''):
         s.occasions = ()
     s.message = ''
     _session = s
-    _load_tab(s)
-    _place(s)
-    _send()
+    try:
+        _load_tab(s)
+        _place(s)
+        _send()
+    except Exception as e:
+        _session = None
+        _clear_panel()
+        _log('panel not opened ({!r}): {} left to the game'.format(e, how), 20)
+        return False
     if kind == DRAWER:
         _sound(obj, 0)
     _log('panel opened ({}) on {}: {}{}'.format({MIRROR: 'mirror', DRAWER: 'drawer', FRONT: 'in front of you'}[kind],
@@ -659,15 +667,32 @@ def close(keep=True, why=''):
             _write_record(s.record)
         except Exception as e:
             _log('cancel: the outfit not put back: {!r}'.format(e), 40)
+    _clear_panel()
+    if s.kind == DRAWER and s.obj is not None:
+        _sound(s.obj, 1)
+    _log('panel closed ({}; {}, {} changes)'.format(why, 'kept' if keep else 'put back as it was', s.changes), 200)
+
+
+def _clear_panel():
     place = _dll('outfit_place')
     content = _dll('outfit_content')
     if place is not None:
         place(0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0)
     if content is not None:
         content(b'')
-    if s.kind == DRAWER and s.obj is not None:
-        _sound(s.obj, 1)
-    _log('panel closed ({}; {}, {} changes)'.format(why, 'kept' if keep else 'put back as it was', s.changes), 200)
+
+
+def _note(text, title):
+    """A notification from us (in first person it shows on the notification card)."""
+    try:
+        from sims4.localization import LocalizationHelperTuning
+        from ui.ui_dialog_notification import UiDialogNotification
+        dialog = UiDialogNotification.TunableFactory().default(
+            _fp_sim(), text=lambda *_, **__: LocalizationHelperTuning.get_raw_text(text),
+            title=lambda *_, **__: LocalizationHelperTuning.get_raw_text(title))
+        dialog.show_dialog()
+    except Exception as e:
+        _log('notification not shown: {!r}'.format(e), 20)
 
 
 def _send():
@@ -853,7 +878,11 @@ def _place(s):
     if place is None:
         return
     if s.kind in (MIRROR, DRAWER) and s.obj is not None:
-        s.face = _face(s.obj)
+        try:
+            s.face = _face(s.obj)
+        except Exception as e:
+            _log('the front of {} not read ({!r}): the panel in front of you'.format(s.obj, e), 20)
+            s.face = None
     if s.kind == MIRROR and s.face is not None:
         c, n, u, w, h, d = s.face
         args = (MIRROR, c[0], c[1], c[2], n[0], n[1], n[2], u[0], u[1], u[2], w, h, 0.0)
@@ -993,37 +1022,120 @@ def _scan(force=False):
 # ---------------------------------------------------------------------------------------------------------------
 # The game's Plan Outfit: its trip to CAS.
 
-def _client_cheat(original, s, context=None, *args, **kwargs):
-    if isinstance(s, str) and (s.startswith('sims.exit2caswithhouseholdid ') or s.startswith('sims.exit2cas ')):
+_PLAN_WORDS = ('planoutfit', 'plan_outfit', 'changeappearance', 'change_appearance')
+_CAS_COMMANDS = ('sims.modify_in_cas_with_householdid', 'sims.modify_in_cas')
+_passing = False     # a CAS command the DoCommand hook left to the game is running (client_cheat lets it through)
+
+
+def _name_of(interaction):
+    return type(interaction).__name__ if interaction is not None else 'no interaction'
+
+
+def _plans(interaction):
+    """A Plan Outfit / Change Appearance interaction (the testing cheat's Modify in CAS keeps the game's CAS)."""
+    name = _name_of(interaction).lower()
+    return 'cheat' not in name and any(w in name for w in _PLAN_WORDS)
+
+
+def _do_command(original, self, *args, **kwargs):
+    """DoCommand._do_behavior: Plan Outfit's command (sims.modify_in_cas_with_householdId) not run, our panel instead.
+    Here the interaction and its object are known for sure."""
+    global _passing
+    command = (getattr(self, 'command', None) or '').strip()
+    if command.lower() in _CAS_COMMANDS:
+        interaction = getattr(self, 'interaction', None)
         try:
-            if _from_game(s):
-                return None
+            if not hooks.in_first_person():
+                _log('"{}" of {}: left to the game (not in first person)'.format(command, _name_of(interaction)), ALWAYS)
+            elif not _plans(interaction):
+                _log('"{}" of {}: left to the game (not a Plan Outfit)'.format(command, _name_of(interaction)), ALWAYS)
+            elif _take_over(interaction, '{} ({})'.format(_name_of(interaction), command)):
+                _log('"{}" of {}: taken over'.format(command, _name_of(interaction)), ALWAYS)
+                return True
+            else:
+                _log('"{}" of {}: left to the game ({})'.format(command, _name_of(interaction),
+                                                                _why or 'the panel did not open, see above'), ALWAYS)
         except Exception as e:
-            _log('Plan Outfit not taken over ({!r}): the game\'s CAS'.format(e), 40)
+            _log('"{}" of {} not taken over ({!r}): the game\'s CAS'.format(command, _name_of(interaction), e), ALWAYS)
+        _passing = True
+        try:
+            return original(self, *args, **kwargs)
+        finally:
+            _passing = False
+    return original(self, *args, **kwargs)
+
+
+def _client_cheat(original, s, context=None, *args, **kwargs):
+    """The client's CAS trip ("sims.exit2caswithhouseholdid A B" / "sims.exit2cas A B C"): a Plan Outfit the
+    DoCommand hook did not see (another route to the command) is taken over here."""
+    if not _passing and isinstance(s, str) and (s.startswith('sims.exit2caswithhouseholdid ') or
+                                                s.startswith('sims.exit2cas ')):
+        try:
+            if not hooks.in_first_person():
+                _log('game command "{}": left to the game (not in first person)'.format(s), ALWAYS)
+            elif _from_game(s):
+                _log('game command "{}": taken over'.format(s), ALWAYS)
+                return None
+            else:
+                _log('game command "{}": left to the game ({})'.format(s, _why or 'the panel did not open, see above'),
+                     ALWAYS)
+        except Exception as e:
+            _log('game command "{}" not taken over ({!r}): the game\'s CAS'.format(s, e), ALWAYS)
     return original(s, context, *args, **kwargs)
 
 
 def _from_game(command):
-    global _waiting
+    """client_cheat: the interaction that sent it, from the callers (the DoCommand element, or the command's
+    _interaction_id); only a Plan Outfit / Change Appearance one is taken over."""
+    global _why
+    _why = ''
     words = command.split()
     plain = (words[0] == 'sims.exit2caswithhouseholdid' and len(words) == 3) or \
             (words[0] == 'sims.exit2cas' and len(words) == 4)
-    if not plain or not native.setting_flag('outfit', 'on', True):
+    if not plain:
+        _why = 'not a plain Plan Outfit / Change Appearance'
         return False
     sim = _fp_sim()
     if sim is None or str(sim.sim_id) != words[1]:
+        _why = 'not the Sim you are in ({})'.format(getattr(sim, 'sim_id', None))
         return False
+    interaction = None
     interaction_id = None
     frame = hooks.caller_frame(1)
-    for _ in range(10):
+    for _ in range(25):
         if frame is None:
             break
-        if '_interaction_id' in frame.f_locals:
-            interaction_id = frame.f_locals.get('_interaction_id')
-            break
+        here = frame.f_locals
+        element = here.get('self')
+        if interaction is None and element is not None and type(element).__name__ == 'DoCommand':
+            interaction = getattr(element, 'interaction', None)
+        if interaction_id is None and here.get('_interaction_id') is not None:
+            interaction_id = here.get('_interaction_id')
         frame = frame.f_back
-    interaction = _find_interaction(sim, int(interaction_id) if interaction_id is not None else 0)
-    obj = getattr(interaction, 'target', None) if interaction is not None else None
+    if interaction is None and interaction_id is not None:
+        interaction = _find_interaction(sim, int(interaction_id))
+    if interaction is None:
+        _why = 'no interaction found that sent it'
+        return False
+    if not _plans(interaction):
+        _why = '{} is not a Plan Outfit'.format(_name_of(interaction))
+        return False
+    return _take_over(interaction, '{} ({})'.format(_name_of(interaction), command))
+
+
+def _take_over(interaction, how):
+    """Our panel (or, on a dresser, the wait for a pulled drawer) for this Plan Outfit; False: the game's CAS."""
+    global _waiting, _why
+    _why = ''
+    if not native.setting_flag('outfit', 'on', True):
+        _why = 'switched off'
+        return False
+    sim = _fp_sim()
+    actor = getattr(interaction, 'sim', None)
+    if sim is None or actor is None or actor.sim_id != sim.sim_id:
+        _why = 'not the Sim you are in'
+        return False
+    obj = getattr(interaction, 'target', None)
     if obj is sim or getattr(obj, 'is_sim', False):
         obj = None
     _scan()
@@ -1032,14 +1144,16 @@ def _from_game(command):
         near = _nearest(sim, (MIRROR, DRAWER))
         if near is not None:
             obj, kind = near, _kind_of(near)
-    how = '{} ({})'.format(type(interaction).__name__ if interaction is not None else 'no interaction found', command)
     if kind == DRAWER and native.setting_flag('outfit', 'drawers', True):
         if sim.sim_info.get_current_outfit()[0] not in PLANNABLE or _dll('outfit_place') is None:
+            _why = 'outfit {} is not planned here'.format(sim.sim_info.get_current_outfit())
             return False
         _waiting = (obj.id, sim.sim_id)
         _start_gestures()
         native.haptic(1, 0.2, 0.05)
-        _log('Plan Outfit on {}: waits for you to pull a drawer ({})'.format(obj, how), 100)
+        _note('Grab a drawer front with grip and trigger and pull it toward you. The drawer that slides out holds '
+              'that part of your outfit.', 'Plan Outfit')
+        _log('Plan Outfit on {}: waits for you to pull a drawer ({})'.format(obj, how), ALWAYS)
         return True
     if kind == DRAWER:
         kind = MIRROR  # drawers off: the panel on the dresser's front
@@ -1288,6 +1402,13 @@ def pie_pick(what):
             tags.add(key)
         _set_tags(obj, tags)
         _log('{} stores: {}'.format(obj, ', '.join(sorted(tags)) or 'everything'), 60)
+        names = [n for k, n in KIND_NAMES if k in tags] + [n for k, n, _ in OCCASIONS if k in tags]
+        how = 'Grab a drawer front with grip and trigger and pull it toward you' if native.setting_flag(
+            'outfit', 'always', True) else 'Pick Plan Outfit on it, then grab a drawer front with grip and trigger and pull it'
+        if names:
+            _note('It now holds: {}. {}: its drawers show only those.'.format(', '.join(names), how), 'Store')
+        else:
+            _note('It holds everything again. {} to open a drawer.'.format(how), 'Store')
         s = _session
         if s is not None and s.obj_id == obj_id and s.kind == DRAWER:
             close(True, 'its Store tags changed')
@@ -1478,7 +1599,14 @@ def _fnv1a64(text):
 
 def _install():
     import sims4.commands
-    hooks.hook('outfit', sims4.commands, 'client_cheat', _client_cheat, first_person_only=True)
+    # Not first-person-only hooks: both check first person themselves, only for the game's CAS commands, so a
+    # Plan Outfit left to the game is always in the log with its reason.
+    hooks.hook('outfit', sims4.commands, 'client_cheat', _client_cheat)
+    try:
+        from interactions.utils.tunable import DoCommand
+        hooks.hook('outfit', DoCommand, '_do_behavior', _do_command)
+    except Exception as e:
+        _log('Plan Outfit hook on DoCommand not made: {!r}'.format(e), ALWAYS)
     try:
         from sims4vr import pie
         pie.custom_categories[PIE_CATEGORY] = 'Store'
