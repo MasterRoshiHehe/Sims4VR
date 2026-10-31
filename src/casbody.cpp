@@ -210,6 +210,8 @@ struct Rig {
     int thigh[2] = {-1, -1}, calf[2] = {-1, -1}, foot[2] = {-1, -1};
     uint8_t chain[kMaxJoints] = {};
     int16_t parent[kMaxJoints] = {};  // -1: none
+    int finger[2][4][3] = {};         // index, middle, ring, little: joints 0..2 from the knuckle out (-1: missing)
+    int8_t fingerOf[kMaxJoints] = {}; // side * 12 + finger * 3 + joint of the nearest finger joint at or above, or -1
 };
 std::mutex g_rigMutex;
 std::shared_ptr<const Rig> g_rig;
@@ -287,6 +289,24 @@ std::shared_ptr<const Rig> rigFor(const uint8_t* actor, uint32_t poseCount) {
         r->calf[side] = find(name);
         std::snprintf(name, sizeof(name), "b__%s_Foot__", s);
         r->foot[side] = find(name);
+    }
+    static const char* const kFinger[4] = {"Index", "Mid", "Ring", "Pinky"};
+    for (int side = 0; side < 2; ++side)
+        for (int f = 0; f < 4; ++f)
+            for (int k = 0; k < 3; ++k) {
+                std::snprintf(name, sizeof(name), "b__%s_%s%d__", side ? "R" : "L", kFinger[f], k);
+                r->finger[side][f][k] = find(name);
+            }
+    for (uint32_t j = 0; j < count; ++j) {
+        r->fingerOf[j] = -1;
+        int k = static_cast<int>(j);
+        for (int steps = 0; k >= 0 && k < static_cast<int>(count) && steps < 8 && r->fingerOf[j] < 0; ++steps) {
+            for (int side = 0; side < 2; ++side)
+                for (int f = 0; f < 4; ++f)
+                    for (int n = 0; n < 3; ++n)
+                        if (r->finger[side][f][n] == k) r->fingerOf[j] = static_cast<int8_t>(side * 12 + f * 3 + n);
+            k = parent(k);
+        }
     }
     for (uint32_t j = 0; j < count; ++j) {
         const int p = parent(static_cast<int>(j));
@@ -700,6 +720,9 @@ bool compute(const uint8_t* model, const uint8_t* pose, const std::shared_ptr<co
     const Affine root = compose(simInv, body);  // CAS Sim model space -> the body, in the same model space
     Affine move[kChains];
     for (auto& m : move) m = root;
+    // Finger curls (world, after the hand is placed): [side][finger][joint]; valid per side.
+    Affine curl[2][4][3];
+    bool curled[2] = {false, false};
     out.fold = apply(root, P(rig->head));
 
     // The arms reach for your controllers.
@@ -726,6 +749,31 @@ bool compute(const uint8_t* model, const uint8_t* pose, const std::shared_ptr<co
             move[base + 1] = compose(simInv, compose(fore, body));
             move[base + 2] = compose(simInv, compose(hand, body));
             g_statArms[side].fetch_add(1, std::memory_order_relaxed);
+            // The fingers close with the buttons as on a lot (armik.cpp's fist): the index finger on the trigger, the
+            // other three on the grip, each joint about the hand's across axis toward the palm, on top of the pose's
+            // own relaxed curl (so a little less than armik's from-straight angles).
+            static const float kCurl[3] = {1.0f, 1.4f, 0.9f};
+            const Affine handWorld = compose(hand, body);
+            const Vec3 hf = normalize(sub(apply(handWorld, P(rig->knuckle[side][1])), apply(handWorld, P(rig->hand[side])))),
+                       ht = normalize(sub(apply(handWorld, P(rig->knuckle[side][0])), apply(handWorld, P(rig->knuckle[side][3]))));
+            Vec3 palm = normalize(cross(hf, ht));
+            if (side == 1) palm = mul(palm, -1);  // cross(forward, thumb) faces the palm on the left hand only
+            const Vec3 axis = normalize(cross(hf, palm));
+            if (finite(axis) && length(axis) > 0.5f) {
+                curled[side] = true;
+                for (int f = 0; f < 4; ++f) {
+                    const float amount = f == 0 ? hands[side].index : hands[side].grip;
+                    Affine sofar = identity();
+                    for (int k = 0; k < 3; ++k) {
+                        const int j = rig->finger[side][f][k];
+                        if (j >= 0 && amount > 0.01f) {
+                            const Vec3 at = apply(sofar, apply(handWorld, P(j)));
+                            sofar = compose(turnAbout(axisAngle(axis, amount * kCurl[k]), at, at), sofar);
+                        }
+                        curl[side][f][k] = sofar;
+                    }
+                }
+            }
         }
     }
     // Each joint: from where the CAS Sim's pose has it to the base pose (a turn about it), then its chain's move.
@@ -733,7 +781,17 @@ bool compute(const uint8_t* model, const uint8_t* pose, const std::shared_ptr<co
         const int jj = static_cast<int>(j);
         const Affine still =
             frozen ? turnAbout(qnormalize(qmul(bq[j], conj(jointQuat(pose, jj)))), jointAt(pose, jj), bp[j]) : identity();
-        out.joint[j] = compose(move[rig->chain[j]], still);
+        const int fo = rig->fingerOf[j];
+        const int fside = fo >= 0 ? fo / 12 : -1;
+        if (fside >= 0 && curled[fside]) {
+            const int f = (fo % 12) / 3, k = fo % 3;
+            // simInv . curl . hand . body: move[] holds simInv . hand . body, so put the curl in between.
+            const Affine curledHand =
+                compose(simInv, compose(curl[fside][f][k], compose(sim, move[fside == 0 ? kHandL : kHandR])));
+            out.joint[j] = compose(curledHand, still);
+        } else {
+            out.joint[j] = compose(move[rig->chain[j]], still);
+        }
     }
     if (g_placeLogs.fetch_add(1) < 6) {
         const Vec3 feet = apply(body, Vec3{0, 0, 0});
