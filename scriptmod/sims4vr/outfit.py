@@ -56,7 +56,8 @@ GUID = 0x5653344F55544649                 # our appearance modifiers' id (no per
 
 WALK_AWAY = 2.0      # m from the object's front (flat) that closes the panel (kept)
 REACH = 1.3          # m from your head to a dresser's front for its drawers to answer a pull
-FRONT_NEAR = 0.16    # m: a hand this close to a front (along its normal) can take hold of it
+FRONT_NEAR = 0.2     # m: a hand this far out from a front (along its normal) can take hold of it
+FRONT_BEHIND = 0.12  # m: ... or this far behind it (the hand stops at the visible front; palm centre, slack)
 DRAWER_PULL = 0.18   # m: default [outfit] drawer_pull
 SCAN_EVERY = 30.0    # s between looks for dressers / wardrobes / mirrors on the lot
 GESTURE_TICK = 0.05  # s: hands polled this often while one of them is near a front
@@ -123,6 +124,8 @@ _scanned = 0.0
 _scan_zone = None
 _kinds = {}          # object definition id: its kind (MIRROR, DRAWER or 0)
 _faces = {}          # object id: (time, face) from _face
+_front_noted = set()  # definition ids whose front was logged
+_hold_notes = [0, 0.0]  # hand-near-a-front-but-no-hold log lines written, when the last one was
 _grab = [None, None]  # per hand: what it holds of a front (dict) while grip and trigger stay closed
 _gesture_alarm = None
 _waiting = None      # (object id, Sim id): Plan Outfit on a dresser waits for a pulled drawer
@@ -855,16 +858,62 @@ def _face(obj):
     from sims4vr import objmenu
     centre, normal, up, width, height, _video = objmenu._front(obj)
     depth = 0.45
+    box = None
     try:
         box, _screen = objmenu._model_box(obj)
         if box is not None:
             depth = (box[5] - box[2]) * (getattr(obj, 'scale', 1.0) or 1.0)
     except Exception:
         pass
+    visible = _visible_front(obj)
+    if visible is not None:
+        centre, width, height, depth, front_z = visible
+        key = getattr(getattr(obj, 'definition', None), 'id', None)
+        if key not in _front_noted:
+            _front_noted.add(key)
+            _log('front of {}: its visible shape, {:.2f} x {:.2f} m, {:.2f} m deep{}'.format(
+                obj, width, height, depth, '; the model box reaches {:.2f} m further out (floor shadow)'.format(
+                    box[5] - front_z) if box is not None else ''), 300)
     n = math.hypot(normal[0], normal[2]) or 1.0
     face = (centre, (normal[0] / n, 0.0, normal[2] / n), (0.0, 1.0, 0.0), width, height, depth)
     _faces[obj.id] = (now, face)
     return face
+
+
+def _visible_front(obj):
+    """(centre, width, height, depth, front z in model space) of what your hands meet of the object: its model's
+    visible shape (collide.py's pieces, the shape that stops your hands), not the model box (objmenu), which reaches
+    out to the floor shadow (user 2026-10-31: pulling a drawer did nothing, the hand never got near that front).
+    None if the shape is unknown (the box is used then)."""
+    try:
+        from sims4vr import collide
+        prisms = collide._model_shape(obj)
+    except Exception:
+        return None
+    if not prisms:
+        return None
+    pts = []
+    bottom = top = None
+    for corners, y0, y1, _leaves in prisms:
+        bottom = y0 if bottom is None else min(bottom, y0)
+        top = y1 if top is None else max(top, y1)
+        if y1 > 0.25:  # feet, plinths and rugs below that are not the front
+            pts.extend(corners)
+    if not pts or top - bottom < 0.2:
+        return None
+    min_x, max_x = min(x for x, _z in pts), max(x for x, _z in pts)
+    min_z, max_z = min(z for _x, z in pts), max(z for _x, z in pts)
+    scale = getattr(obj, 'scale', 1.0) or 1.0
+    try:
+        from sims4vr import objmenu
+        tr = obj.transform
+        p, o = tr.translation, tr.orientation
+        r = objmenu._rotate((o.x, o.y, o.z, o.w), ((min_x + max_x) / 2 * scale, (bottom + top) / 2 * scale,
+                                                   max_z * scale))
+    except Exception:
+        return None
+    return ((p.x + r[0], p.y + r[1], p.z + r[2]), (max_x - min_x) * scale, (top - bottom) * scale,
+            (max_z - min_z) * scale, max_z)
 
 
 def _drawers(face, wardrobe):
@@ -1238,6 +1287,11 @@ def _gesture_tick(_handle):
             hand = snap[3 + side]
             g = _grab[side]
             if not hand[0] or hand[3] < 0.35 or hand[4] < 0.35 or hand[5]:
+                if g is None and hand[0] and hand[3] >= 0.5 and not hand[5]:
+                    _no_hold(side, hand[1], near, 'gripped without the trigger (both take hold)')
+                if g is not None and not g['push']:
+                    _log('hand {} let go of the drawer front after pulling {:.2f} of {:.2f} m{}'.format(
+                        'LR'[side], g['most'], _pull(), ' (it held an object)' if hand[5] else ''), 300)
                 _grab[side] = None
                 continue
             p = hand[1]
@@ -1254,6 +1308,7 @@ def _gesture_tick(_handle):
                     _grab[side] = None
                     close(True, 'drawer pushed back')
                 continue
+            g['most'] = max(g['most'], rel - g['rel'])
             if rel - g['rel'] >= _pull():
                 native.haptic(side, 0.35, 0.05)
                 _grab[side] = None
@@ -1279,16 +1334,38 @@ def _take_hold(side, p, head, near, s):
         c, n, _u, w, h, _d = face
         along = (p[0] - c[0]) * n[0] + (p[2] - c[2]) * n[2]
         lat = abs((p[0] - c[0]) * -n[2] + (p[2] - c[2]) * n[0])
-        if not (-0.06 < along < FRONT_NEAR) or lat > w / 2 + 0.03:
+        if not (-FRONT_BEHIND < along < FRONT_NEAR) or lat > w / 2 + 0.08:
             continue
         bands = _drawers(face, h > 1.3)
-        band = next((i for i, (lo, hi) in enumerate(bands) if lo - 0.03 <= p[1] <= hi + 0.03), -1)
+        band = next((i for i, (lo, hi) in enumerate(bands) if lo - 0.05 <= p[1] <= hi + 0.05), -1)
         if band < 0:
             continue
         native.haptic(side, 0.15, 0.04)
+        rel = (p[0] - head[0]) * n[0] + (p[2] - head[2]) * n[2]
+        _log('hand {} holds drawer {} of {} of {}: pull {:.2f} m toward you to open it'.format(
+            'LR'[side], band + 1, len(bands), obj, _pull()), 300)
         return {'push': False, 'obj': obj.id, 'band': band, 'bands': len(bands), 'n': (n[0], n[2]),
-                'rel': (p[0] - head[0]) * n[0] + (p[2] - head[2]) * n[2]}
+                'rel': rel, 'most': 0.0}
+    _no_hold(side, p, near)
     return None
+
+
+def _no_hold(side, p, near, how='closed'):
+    """Log (a few lines, 2 s apart) why a closed hand at a dresser took hold of nothing."""
+    now = time.monotonic()
+    if _hold_notes[0] >= 30 or now - _hold_notes[1] < 2.0 or not near:
+        return
+    obj, face = min(near, key=lambda of: math.hypot(of[1][0][0] - p[0], of[1][0][2] - p[2]))
+    c, n, _u, w, h, _d = face
+    along = (p[0] - c[0]) * n[0] + (p[2] - c[2]) * n[2]
+    lat = abs((p[0] - c[0]) * -n[2] + (p[2] - c[2]) * n[0])
+    bands = _drawers(face, h > 1.3)
+    _hold_notes[0] += 1
+    _hold_notes[1] = now
+    _log('hand {} {} at {} but holds nothing: {:.2f} m out from its front (takes hold {:.2f} to {:.2f}), {:.2f} m '
+         'from its middle (up to {:.2f}), {:.2f} m high (drawers {:.2f} to {:.2f})'.format(
+             'LR'[side], how, obj, along, -FRONT_BEHIND, FRONT_NEAR, lat, w / 2 + 0.08, p[1] - (c[1] - h / 2),
+             bands[-1][0] - (c[1] - h / 2), bands[0][1] - (c[1] - h / 2)), 1000)
 
 
 def _layout(obj, count):
