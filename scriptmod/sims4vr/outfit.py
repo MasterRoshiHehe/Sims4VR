@@ -47,6 +47,7 @@ import time
 from sims4vr import hooks, native
 
 MIRROR, DRAWER, FRONT = 1, 2, 3           # outfit_place kinds: on a mirror's glass, a drawer, in front of you
+RACK = 4   # a coat / clothes / hat / shoe rack: grabbed and pulled like a drawer, the panel on its front (DLL: MIRROR)
 CONTROL = 8600000                         # controls.py sends 8600000..8699999 here (control)
 C_TAB, C_GROUP, C_PART, C_COLOUR = 0, 100, 1000, 70000
 C_UNDO, C_REDO, C_REMOVE, C_DONE, C_CANCEL = 80000, 80001, 80002, 80003, 80004
@@ -122,11 +123,13 @@ _session = None
 _lot = []            # [(object id, kind)] of the dressers, wardrobes and mirrors on the lot (_scan)
 _scanned = 0.0
 _scan_zone = None
-_kinds = {}          # object definition id: its kind (MIRROR, DRAWER or 0)
+_kinds = {}          # object definition id: its kind (MIRROR, DRAWER, RACK or 0)
 _faces = {}          # object id: (time, face) from _face
 _front_noted = set()  # definition ids whose front was logged
 _hold_notes = [0, 0.0]  # hand-near-a-front-but-no-hold log lines written, when the last one was
 _grab = [None, None]  # per hand: what it holds of a front (dict) while grip and trigger stay closed
+_closed = [False, False]  # per hand: grip and trigger closed at the last tick (_note_unknown)
+_unknown_noted = set()  # definition ids a closing hand was logged by, "not a dresser ..." (once each)
 _gesture_alarm = None
 _waiting = None      # (object id, Sim id): Plan Outfit on a dresser waits for a pulled drawer
 _why = ''            # why the last CAS command was left to the game (log)
@@ -236,7 +239,7 @@ def _by_tracker(sim_info, part=None, body_type=None):
     """The game's own live route (jewelry, tattoos): a permanent appearance modifier on the current outfit."""
     from buffs.appearance_modifier.appearance_modifier import AppearanceModifier, AppearanceModifierPriority
     from objects.components.jewelry_component import AppearanceModifierTuple
-    from sims4.tuning.tunable import TunableMultiplier
+    from tunable_multiplier import TunableMultiplier  # as jewelry_component.py imports it
     if part is not None:
         modifier = AppearanceModifier.SetCASPart(
             cas_part=part, should_toggle=False, replace_with_random=False, update_genetics=True,
@@ -424,18 +427,54 @@ def _catalog(sim_info, key, occasions, all_variants):
                 locked = int(info[1] or 0)
             except Exception:
                 locked = 0
-            found.append((int(part), locked))
+            found.append((int(part), locked, _tags_of(info)))
+    own, other = _preference_tags(sim_info)
     seen = set()
     unique = []
-    for part, locked in found:
-        if part not in seen:
-            seen.add(part)
-            unique.append((part, locked))
-    _log('catalog {} ({}{}): {} parts, {} locked, {:.0f} ms'.format(
+    left_out = 0
+    for part, locked, tags in found:
+        if part in seen:
+            continue
+        seen.add(part)
+        if other in tags and own not in tags:  # the other clothing preference's only (CAS leaves these out too)
+            left_out += 1
+            continue
+        unique.append((part, locked))
+    _log('catalog {} ({}{}): {} parts, {} locked, {} of the other clothing preference left out, {:.0f} ms'.format(
         key, 'occasions {} '.format(list(occasions)) if occasions else '', 'every colour' if all_variants else 'bases',
-        len(unique), sum(1 for _, l in unique if l), (time.perf_counter() - started) * 1000), 120)
+        len(unique), sum(1 for _, l in unique if l), left_out, (time.perf_counter() - started) * 1000), 120)
     _catalogs[cache_key] = unique
     return unique
+
+
+def _tags_of(info):
+    """The part's tags as ints, from the catalog's (tags, locked tooltip id) (cas_catalog_picker.picker_rows_gen)."""
+    try:
+        return {int(t) for t in (info[0] or ())}
+    except Exception:
+        return set()
+
+
+GENDER_TAGS = {'MALE': 1529, 'FEMALE': 1530}  # GenderAppropriate_Male / _Female (tag tuning), if the tuning is not read
+
+
+def _preference_tags(sim_info):
+    """(own, other): the GenderAppropriate tag of the Sim's clothing preference and the other one. CAS shows clothes
+    by clothing preference (client tagtuning TagGenderMapping; the game's own copy is
+    GlobalGenderPreferenceTuning.GENDERED_CLOTHING_PREFERENCE_TAGS, read by custom_schedule_outfit_tuning)."""
+    try:
+        from sims.sim_info_types import Gender
+        own = sim_info.clothing_preference_gender
+        other = Gender.FEMALE if own == Gender.MALE else Gender.MALE
+    except Exception as e:
+        _log('clothing preference not read ({!r}): nothing left out by it'.format(e), 20)
+        return -1, -2
+    try:
+        from sims.global_gender_preference_tuning import GlobalGenderPreferenceTuning
+        tags = GlobalGenderPreferenceTuning.GENDERED_CLOTHING_PREFERENCE_TAGS
+        return int(tags[own]), int(tags[other])
+    except Exception:
+        return GENDER_TAGS.get(getattr(own, 'name', ''), -1), GENDER_TAGS.get(getattr(other, 'name', ''), -2)
 
 
 def _all_variants():
@@ -618,14 +657,17 @@ def _load_tab(s):
     _ask_colours(s, worn[0] if worn else 0)
 
 
-def _open(sim, obj, kind, tabs=None, drawer=-1, how=''):
+def _open(sim, obj, kind, tabs=None, drawer=-1, how='', pulled=False):
     global _session
     sim_info = sim.sim_info
     if _dll('outfit_content') is None or _dll('outfit_place') is None:
         _log('the DLL has no outfit panel (older DLL): {} left to the game'.format(how), 20)
         return False
     if sim_info.get_current_outfit()[0] not in PLANNABLE:
-        _log('outfit {} is not one you plan here: {} left to the game'.format(sim_info.get_current_outfit(), how), 40)
+        _log('outfit {} is not one you plan here: {} left to the game'.format(sim_info.get_current_outfit(), how), ALWAYS)
+        if pulled:  # no CAS trip follows a pull: say why nothing opens
+            _note('The outfit you are wearing can\'t be planned here. Live outfit planning changes Everyday, Formal, '
+                  'Athletic, Sleep, Party, Swimwear and Hot or Cold weather outfits.', 'Plan Outfit')
         return False
     if _session is not None and _session.sim_id == sim_info.sim_id and _session.obj_id == getattr(obj, 'id', 0):
         s = _session  # another drawer of the same dresser: the same session (undo goes on)
@@ -634,9 +676,16 @@ def _open(sim, obj, kind, tabs=None, drawer=-1, how=''):
         close(True, 'another panel opened')
         s = _Session(sim_info, obj, kind)
     s.drawer = drawer
-    if kind == DRAWER:
+    if kind == DRAWER or (kind == RACK and len(tabs or ()) < 2):
         s.groups, s.group = [], 0
         s.tabs = [c for g in tabs for c in GROUPS[g]] if tabs else list(GROUPS['tops'])
+        s.tab = 0
+        s.occasions = _occasions_of(obj)
+    elif kind == RACK:
+        # What it holds as the mirror's categories down the left (no hair: a rack holds clothes).
+        s.groups = [g for g in MIRROR_GROUPS if g in tabs]
+        s.group = s.groups.index('tops') if 'tops' in s.groups else 0
+        s.tabs = list(GROUPS[s.groups[s.group]])
         s.tab = 0
         s.occasions = _occasions_of(obj)
     else:
@@ -658,7 +707,8 @@ def _open(sim, obj, kind, tabs=None, drawer=-1, how=''):
         return False
     if kind == DRAWER:
         _sound(obj, 0)
-    _log('panel opened ({}) on {}: {}{}'.format({MIRROR: 'mirror', DRAWER: 'drawer', FRONT: 'in front of you'}[kind],
+    _log('panel opened ({}) on {}: {}{}'.format({MIRROR: 'mirror', DRAWER: 'drawer', FRONT: 'in front of you',
+                                                 RACK: 'rack'}[kind],
                                                 obj, how, ' drawer {}'.format(drawer) if drawer >= 0 else ''), 200)
     return True
 
@@ -721,7 +771,7 @@ def _send():
     hint = next((i for i, (p, _) in enumerate(s.parts) if p in worn_here), -1)
     gender = _gender_letter(s.sim_info)
     records = ['outfit\x1f{}\x1f{}\x1f{}\x1f{{"hash": {}}}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}'.format(
-        s.kind, gender, flags, name, s.tab, s.serial, hint, s.group if s.groups else -1, _raw(s.message))]
+        MIRROR if s.kind == RACK else s.kind, gender, flags, name, s.tab, s.serial, hint, s.group if s.groups else -1, _raw(s.message))]
     for g in s.groups:
         gname, gicon, gsel = _group_look(g)
         records.append('group\x1f{}\x1f{{"hash": {}}}\x1f{}\x1f{}'.format(g, gname, gicon, gsel))
@@ -932,13 +982,13 @@ def _place(s):
     place = _dll('outfit_place')
     if place is None:
         return
-    if s.kind in (MIRROR, DRAWER) and s.obj is not None:
+    if s.kind in (MIRROR, DRAWER, RACK) and s.obj is not None:
         try:
             s.face = _face(s.obj)
         except Exception as e:
             _log('the front of {} not read ({!r}): the panel in front of you'.format(s.obj, e), 20)
             s.face = None
-    if s.kind == MIRROR and s.face is not None:
+    if s.kind in (MIRROR, RACK) and s.face is not None:
         c, n, u, w, h, d = s.face
         args = (MIRROR, c[0], c[1], c[2], n[0], n[1], n[2], u[0], u[1], u[2], w, h, 0.0)
     elif s.kind == DRAWER and s.face is not None:
@@ -966,11 +1016,36 @@ def _place(s):
 # Objects: mirrors, dressers, wardrobes.
 
 _MIRROR_WORDS = ('mirror',)
+# Racks (user 2026-10-31: "a wall mounted coat rack thing ... that and other items in the future"): what hangs or
+# stands rather than sits in drawers. By tuning name (str(obj); the game has no model names at run time, its
+# definition.name is None, as lightswitch.py found): the hanging-clothes dressers (object_dresser_Hang_Clothes,
+# object_dresser_Hang_Lrg: Dream Home Decorator's wall racks and others), the shoe racks of the shoes-off rule
+# (Object_shoeRemovalSign_Rack; not the sign, Object_shoeRemovalSign), and a mod's racks named so.
+_RACK_WORDS = ('dresser_hang', 'shoeremovalsign_rack', 'coatrack', 'coat_rack', 'coathanger', 'coat_hanger',
+               'coathook', 'coat_hook', 'clothesrack', 'clothes_rack', 'clothingrack', 'clothing_rack', 'garmentrack',
+               'garment_rack', 'clotheshanger', 'clothes_hanger', 'hatrack', 'hat_rack', 'hatstand', 'hat_stand',
+               'shoerack', 'shoe_rack', 'shoeshelf', 'shoe_shelf', 'coatstand', 'coat_stand')
+# EA's racks under decoration or shelf tunings, by definition (OBJD) id: re/tuning/objects.tsv (1.121). A new one:
+# grab it with grip and trigger (the log names its tuning and definition id, "not a dresser ...") and add it here.
+_RACK_RANGES = (
+    (0xA512, 0xA513), (0xA515, 0xA515),  # sculptWallGENCoatRack_01 (wall coat rack)
+    (0xA5C7, 0xA5C9),  # sculptFloorGENCoatRack_01 (floor coat rack)
+    (0xB647, 0xB64C), (0xB653, 0xB658), (0xB65E, 0xB663), (0xB7DF, 0xB7E4),  # sculptWallGEN{FC,FF,MC,MF}Hanger_01
+    (0x786AB, 0x786B4),  # sculptWall_SP71CK007coatrack
+    (0x78694, 0x78698), (0x786A5, 0x786A9),  # sculptWall_SP71CK007hatrack
+    (0x4B2A9, 0x4B2AE),  # sculptFloor_EP12THRIFTclothes
+    (0x2F5ED, 0x2F5F5),  # shelfFloor2x1_EP05WOODcoatHanger
+    (0x5388F, 0x5389E),  # shelfFloor2x1_EP14CFclothes
+    (0x6C4D0, 0x6C4DB),  # shelfFloor2x1_SP55KIDclothingRack
+    (0x3729E, 0x372A5),  # dresserTall2x1_SP15GENclothingRack (a dresser: one rail, no drawers)
+    (0x32C48, 0x32C51),  # dresserTall1x1_EP06NBshoeRackTileable3Tile (a dresser: shoe shelves)
+)
+_RACK_DEFINITIONS = frozenset(i for first, last in _RACK_RANGES for i in range(first, last + 1))
 _DRESSER_WORDS = ('dresser', 'wardrobe', 'closet', 'armoire', 'drawers', 'chestofdrawer', 'chest_of_drawer')
 
 
 def _kind_of(obj, interaction=None):
-    """MIRROR, DRAWER (dressers, wardrobes) or 0."""
+    """MIRROR, DRAWER (dressers, wardrobes), RACK (coat, clothes, hat, shoe racks) or 0."""
     if obj is None:
         return 0
     if interaction is not None and 'mirror' in type(interaction).__name__.lower():
@@ -981,8 +1056,12 @@ def _kind_of(obj, interaction=None):
     kind = 0
     try:
         text = (type(obj).__name__ + ' ' + str(obj)).lower()
-        if any(w in text for w in _MIRROR_WORDS):
+        if key in _RACK_DEFINITIONS:
+            kind = RACK
+        elif any(w in text for w in _MIRROR_WORDS):
             kind = MIRROR
+        elif any(w in text for w in _RACK_WORDS):
+            kind = RACK
         elif any(w in text for w in _DRESSER_WORDS):
             kind = DRAWER
         if not kind:
@@ -1070,8 +1149,63 @@ def _scan(force=False):
     except Exception as e:
         _log('scan failed: {!r}'.format(e), 20)
     if len(found) != len(_lot):
-        _log('{} dressers / wardrobes / mirrors on the lot ({:.0f} ms)'.format(len(found), (time.perf_counter() - started) * 1000), 60)
+        _log('{} dressers / wardrobes / racks / mirrors on the lot ({:.0f} ms)'.format(
+            len(found), (time.perf_counter() - started) * 1000), 60)
     _lot = found
+
+
+def _box_distance(obj, p):
+    """m from the point p to the object's model box (objmenu's MODL bounds, turned and scaled as placed), or None."""
+    from sims4vr import objmenu
+    box, _screen = objmenu._model_box(obj)
+    if box is None:
+        return None
+    tr = obj.transform
+    t, o = tr.translation, tr.orientation
+    scale = getattr(obj, 'scale', 1.0) or 1.0
+    q = objmenu._rotate((-o.x, -o.y, -o.z, o.w), (p[0] - t.x, p[1] - t.y, p[2] - t.z))
+    q = [v / scale for v in q]
+    d = [max(box[i] - q[i], 0.0, q[i] - box[i + 3]) for i in range(3)]
+    return math.sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]) * scale
+
+
+def _note_unknown(snap):
+    """A hand closing (grip and trigger) on something that is not a dresser, wardrobe, rack or mirror: what it is
+    (tuning, definition id) in the log, once per definition, so an item you grab and mark can be added as a rack
+    (user 2026-10-31: "that and other items in the future")."""
+    import services
+    for side in (0, 1):
+        hand = snap[3 + side]
+        closed = bool(hand[0] and hand[3] >= 0.5 and hand[4] >= 0.5 and not hand[5])
+        was, _closed[side] = _closed[side], closed
+        if not closed or was or _grab[side] is not None or len(_unknown_noted) >= 40:
+            continue
+        p = hand[1]
+        near = []
+        for obj in list(services.object_manager().values()):
+            try:
+                if not getattr(obj, 'is_sim', False):
+                    flat = math.hypot(obj.position.x - p[0], obj.position.z - p[2])
+                    if flat < 1.2:
+                        near.append((flat, obj))
+            except Exception:
+                continue
+        best, best_d = None, 0.25
+        for _flat, obj in sorted(near, key=lambda fo: fo[0])[:8]:  # a model read each at most: no hitch
+            try:
+                d = _box_distance(obj, p)
+            except Exception:
+                continue
+            if d is not None and d < best_d:
+                best, best_d = obj, d
+        if best is None or _kind_of(best):
+            continue
+        key = getattr(getattr(best, 'definition', None), 'id', None)
+        if key in _unknown_noted:
+            continue
+        _unknown_noted.add(key)
+        _log('hand {} closed on {} (definition {:#x}), {:.2f} m from its box: not a dresser, wardrobe, rack or '
+             'mirror (a mark now and it can be added)'.format('LR'[side], best, key or 0, best_d), ALWAYS)
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -1196,7 +1330,7 @@ def _take_over(interaction, how):
     _scan()
     kind = _kind_of(obj, interaction)
     if obj is None or not kind:
-        near = _nearest(sim, (MIRROR, DRAWER))
+        near = _nearest(sim, (MIRROR, DRAWER, RACK))
         if near is not None:
             obj, kind = near, _kind_of(near)
     if kind == DRAWER and native.setting_flag('outfit', 'drawers', True):
@@ -1212,7 +1346,7 @@ def _take_over(interaction, how):
         return True
     if kind == DRAWER:
         kind = MIRROR  # drawers off: the panel on the dresser's front
-    return _open(sim, obj, kind or FRONT, how=how)
+    return _open(sim, obj, kind or FRONT, tabs=_layout(obj, 1)[0] if kind == RACK else None, how=how)
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -1245,9 +1379,9 @@ def _candidates(head):
     out = []
     always = native.setting_flag('outfit', 'always', True)
     for obj_id, kind in _lot:
-        if kind != DRAWER:
+        if kind not in (DRAWER, RACK):
             continue
-        if not always and (_waiting is None or _waiting[0] != obj_id) and \
+        if kind == DRAWER and not always and (_waiting is None or _waiting[0] != obj_id) and \
                 (_session is None or _session.obj_id != obj_id):
             continue
         obj = _object(obj_id)
@@ -1313,9 +1447,13 @@ def _gesture_tick(_handle):
                 native.haptic(side, 0.35, 0.05)
                 _grab[side] = None
                 obj = _object(g['obj'])
-                if obj is not None:
+                if obj is not None and _kind_of(obj) == RACK:
+                    _open(sim, obj, RACK, tabs=_layout(obj, 1)[0], how='rack pulled by hand {}'.format('LR'[side]),
+                          pulled=True)
+                elif obj is not None:
                     tabs = _layout(obj, g['bands'])[g['band']]
-                    _open(sim, obj, DRAWER, tabs=tabs, drawer=g['band'], how='drawer pulled by hand {}'.format('LR'[side]))
+                    _open(sim, obj, DRAWER, tabs=tabs, drawer=g['band'], how='drawer pulled by hand {}'.format('LR'[side]),
+                          pulled=True)
     except Exception as e:
         _stop_gestures()
         _log('drawer hands failed: {!r}'.format(e), 40)
@@ -1336,14 +1474,15 @@ def _take_hold(side, p, head, near, s):
         lat = abs((p[0] - c[0]) * -n[2] + (p[2] - c[2]) * n[0])
         if not (-FRONT_BEHIND < along < FRONT_NEAR) or lat > w / 2 + 0.08:
             continue
-        bands = _drawers(face, h > 1.3)
+        rack = _kind_of(obj) == RACK
+        bands = [(c[1] - h / 2, c[1] + h / 2)] if rack else _drawers(face, h > 1.3)
         band = next((i for i, (lo, hi) in enumerate(bands) if lo - 0.05 <= p[1] <= hi + 0.05), -1)
         if band < 0:
             continue
         native.haptic(side, 0.15, 0.04)
         rel = (p[0] - head[0]) * n[0] + (p[2] - head[2]) * n[2]
-        _log('hand {} holds drawer {} of {} of {}: pull {:.2f} m toward you to open it'.format(
-            'LR'[side], band + 1, len(bands), obj, _pull()), 300)
+        _log('hand {} holds {} of {}: pull {:.2f} m toward you to open it'.format(
+            'LR'[side], 'it' if rack else 'drawer {} of {}'.format(band + 1, len(bands)), obj, _pull()), 300)
         return {'push': False, 'obj': obj.id, 'band': band, 'bands': len(bands), 'n': (n[0], n[2]),
                 'rel': rel, 'most': 0.0}
     _no_hold(side, p, near)
@@ -1453,7 +1592,7 @@ def _occasions_of(obj):
 def pie_extras(target):
     """pie.py (our own pie in first person): this object's Store options, [(label json, what)], in PIE_CATEGORY."""
     try:
-        if not _on() or not native.setting_flag('outfit', 'tags', True) or _kind_of(target) != DRAWER:
+        if not _on() or not native.setting_flag('outfit', 'tags', True) or _kind_of(target) not in (DRAWER, RACK):
             return []
         from sims4vr import objmenu
         from sims4.localization import LocalizationHelperTuning
@@ -1486,14 +1625,19 @@ def pie_pick(what):
         _set_tags(obj, tags)
         _log('{} stores: {}'.format(obj, ', '.join(sorted(tags)) or 'everything'), 60)
         names = [n for k, n in KIND_NAMES if k in tags] + [n for k, n, _ in OCCASIONS if k in tags]
-        how = 'Grab a drawer front with grip and trigger and pull it toward you' if native.setting_flag(
-            'outfit', 'always', True) else 'Pick Plan Outfit on it, then grab a drawer front with grip and trigger and pull it'
-        if names:
-            _note('It now holds: {}. {}: its drawers show only those.'.format(', '.join(names), how), 'Store')
+        if _kind_of(obj) == RACK:
+            how, shows = 'Grab it with grip and trigger and pull it toward you', 'it shows only those'
         else:
-            _note('It holds everything again. {} to open a drawer.'.format(how), 'Store')
+            how = 'Grab a drawer front with grip and trigger and pull it toward you' if native.setting_flag(
+                'outfit', 'always', True) else 'Pick Plan Outfit on it, then grab a drawer front with grip and trigger ' \
+                                               'and pull it'
+            shows = 'its drawers show only those'
+        if names:
+            _note('It now holds: {}. {}: {}.'.format(', '.join(names), how, shows), 'Store')
+        else:
+            _note('It holds everything again. {} to see it all.'.format(how), 'Store')
         s = _session
-        if s is not None and s.obj_id == obj_id and s.kind == DRAWER:
+        if s is not None and s.obj_id == obj_id and s.kind in (DRAWER, RACK):
             close(True, 'its Store tags changed')
     except Exception as e:
         _log('Store pick failed: {!r}'.format(e), 20)
@@ -1542,6 +1686,8 @@ def tick():
             snap = snap or native.hands()
             if snap is not None and _gesture_alarm is None and (_candidates(snap[0]) or (_session and _session.kind == DRAWER)):
                 _start_gestures()
+            if snap is not None and _session is None:
+                _note_unknown(snap)
         if _waiting is not None and _object(_waiting[0]) is None:
             _waiting = None
     except Exception as e:
@@ -1617,8 +1763,11 @@ def probe():
         _log('probe: not in first person', 20)
         return
     si = sim.sim_info
-    _log('probe: {} outfit {}, worn {}; {}'.format(si, si.get_current_outfit(), _short(_worn(si)),
-                                                   _probe_result or 'no earlier change noted'), 200)
+    own, other = _preference_tags(si)
+    _log('probe: {} outfit {}, worn {}, clothing preference {} (tag {}, other {}); {}'.format(
+        si, si.get_current_outfit(), _short(_worn(si)), getattr(getattr(si, 'clothing_preference_gender', None), 'name',
+                                                                '?'), own, other,
+        _probe_result or 'no earlier change noted'), 200)
     _catalogs.clear()
     for key in ('tops', 'bottoms', 'shoes', 'hats', 'necklaces'):
         _catalog(si, key, (), False)
@@ -1631,7 +1780,13 @@ def probe():
         path = 'cas/c_{}_l_{}'.format(part, gender)
         ident = _fnv1a64('thumbs/' + path)
         asked = thumb(ident, path) if thumb is not None else None
-        _log('probe: thumbnail {} as {:016x}: {}'.format(path, ident, 'asked' if asked else 'NOT asked'), 200)
+        try:
+            from cas import cas
+            marks = 'own preference tag {}, other {}'.format(bool(cas.caspart_has_tag(part, [own])),
+                                                             bool(cas.caspart_has_tag(part, [other])))
+        except Exception as e:
+            marks = 'tags not read: {!r}'.format(e)
+        _log('probe: thumbnail {} as {:016x}: {}; {}'.format(path, ident, 'asked' if asked else 'NOT asked', marks), 200)
     ask = _dll('service_query')
     if ask is not None and worn.get(UPPER):
         payload = json.dumps({'base': str(worn[UPPER][0]), 'simId': str(si.sim_id), 'targetSimId': str(si.sim_id)})
