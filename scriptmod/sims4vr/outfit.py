@@ -48,6 +48,10 @@ from sims4vr import hooks, native
 
 MIRROR, DRAWER, FRONT = 1, 2, 3           # outfit_place kinds: on a mirror's glass, a drawer, in front of you
 RACK = 4   # a coat / clothes / hat / shoe rack: grabbed and pulled like a drawer, the panel on its front (DLL: MIRROR)
+WARDROBE = 5  # a wardrobe's doors (a dresser front taller than WARDROBE_HEIGHT): grabbed and pulled open, the panel
+              # on its front (DLL: MIRROR). The game has no door animation for wardrobes (Sims spin in front of them).
+WARDROBE_HEIGHT = 1.3  # m: a dresser's front taller than this is a wardrobe, opened by its doors (user 2026-10-31,
+                       # 809: a drawer sliding out of a wardrobe's doors looked wrong)
 CONTROL = 8600000                         # controls.py sends 8600000..8699999 here (control)
 C_TAB, C_GROUP, C_PART, C_COLOUR = 0, 100, 1000, 70000
 C_UNDO, C_REDO, C_REMOVE, C_DONE, C_CANCEL = 80000, 80001, 80002, 80003, 80004
@@ -115,6 +119,8 @@ PLANNABLE = (0, 1, 2, 3, 4, 9, 10, 11)
 UPPER, LOWER, FULL = 6, 7, 5
 # A drawer's sounds, where the game has them (EP pet cage drawers; nothing plays without that pack): open, close.
 DRAWER_SOUNDS = (0x0C82AD1773D1BEC8, 0x6CD00FE9B4B4A0C4)
+# A wardrobe's doors: Lovestruck's closet door (ep16_closet_woohoo_door_open / _close, re/audio configs.tsv): open, close.
+DOOR_SOUNDS = (0x9F5CC3180B8A5DBE, 0x319F407B2BE65DDA)
 
 _logs = 0
 ALWAYS = 10 ** 9   # log limit for the Plan Outfit decisions (rare, and the test needs every one)
@@ -123,7 +129,7 @@ _session = None
 _lot = []            # [(object id, kind)] of the dressers, wardrobes and mirrors on the lot (_scan)
 _scanned = 0.0
 _scan_zone = None
-_kinds = {}          # object definition id: its kind (MIRROR, DRAWER, RACK or 0)
+_kinds = {}          # object definition id: its kind (MIRROR, DRAWER, RACK or 0; a tall DRAWER opens as WARDROBE)
 _faces = {}          # object id: (time, face) from _face
 _front_noted = set()  # definition ids whose front was logged
 _hold_notes = [0, 0.0]  # hand-near-a-front-but-no-hold log lines written, when the last one was
@@ -670,19 +676,21 @@ def _open(sim, obj, kind, tabs=None, drawer=-1, how='', pulled=False):
                   'Athletic, Sleep, Party, Swimwear and Hot or Cold weather outfits.', 'Plan Outfit')
         return False
     if _session is not None and _session.sim_id == sim_info.sim_id and _session.obj_id == getattr(obj, 'id', 0):
+        if kind in (RACK, WARDROBE) and _session.kind == kind:
+            return True  # the other hand on the same doors / rack (809: both hands pulled the doors at once)
         s = _session  # another drawer of the same dresser: the same session (undo goes on)
         s.kind = kind
     else:
         close(True, 'another panel opened')
         s = _Session(sim_info, obj, kind)
     s.drawer = drawer
-    if kind == DRAWER or (kind == RACK and len(tabs or ()) < 2):
+    if kind == DRAWER or (kind in (RACK, WARDROBE) and len(tabs or ()) < 2):
         s.groups, s.group = [], 0
         s.tabs = [c for g in tabs for c in GROUPS[g]] if tabs else list(GROUPS['tops'])
         s.tab = 0
         s.occasions = _occasions_of(obj)
-    elif kind == RACK:
-        # What it holds as the mirror's categories down the left (no hair: a rack holds clothes).
+    elif kind in (RACK, WARDROBE):
+        # What it holds as the mirror's categories down the left (no hair: a rack or wardrobe holds clothes).
         s.groups = [g for g in MIRROR_GROUPS if g in tabs]
         s.group = s.groups.index('tops') if 'tops' in s.groups else 0
         s.tabs = list(GROUPS[s.groups[s.group]])
@@ -707,8 +715,10 @@ def _open(sim, obj, kind, tabs=None, drawer=-1, how='', pulled=False):
         return False
     if kind == DRAWER:
         _sound(obj, 0)
+    elif kind == WARDROBE:
+        _sound(obj, 0, DOOR_SOUNDS)
     _log('panel opened ({}) on {}: {}{}'.format({MIRROR: 'mirror', DRAWER: 'drawer', FRONT: 'in front of you',
-                                                 RACK: 'rack'}[kind],
+                                                 RACK: 'rack', WARDROBE: 'wardrobe doors'}[kind],
                                                 obj, how, ' drawer {}'.format(drawer) if drawer >= 0 else ''), 200)
     return True
 
@@ -729,6 +739,8 @@ def close(keep=True, why=''):
     _clear_panel()
     if s.kind == DRAWER and s.obj is not None:
         _sound(s.obj, 1)
+    elif s.kind == WARDROBE and s.obj is not None:
+        _sound(s.obj, 1, DOOR_SOUNDS)
     _log('panel closed ({}; {}, {} changes)'.format(why, 'kept' if keep else 'put back as it was', s.changes), 200)
 
 
@@ -771,7 +783,7 @@ def _send():
     hint = next((i for i, (p, _) in enumerate(s.parts) if p in worn_here), -1)
     gender = _gender_letter(s.sim_info)
     records = ['outfit\x1f{}\x1f{}\x1f{}\x1f{{"hash": {}}}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}'.format(
-        MIRROR if s.kind == RACK else s.kind, gender, flags, name, s.tab, s.serial, hint, s.group if s.groups else -1, _raw(s.message))]
+        MIRROR if s.kind in (RACK, WARDROBE) else s.kind, gender, flags, name, s.tab, s.serial, hint, s.group if s.groups else -1, _raw(s.message))]
     for g in s.groups:
         gname, gicon, gsel = _group_look(g)
         records.append('group\x1f{}\x1f{{"hash": {}}}\x1f{}\x1f{}'.format(g, gname, gicon, gsel))
@@ -982,13 +994,13 @@ def _place(s):
     place = _dll('outfit_place')
     if place is None:
         return
-    if s.kind in (MIRROR, DRAWER, RACK) and s.obj is not None:
+    if s.kind in (MIRROR, DRAWER, RACK, WARDROBE) and s.obj is not None:
         try:
             s.face = _face(s.obj)
         except Exception as e:
             _log('the front of {} not read ({!r}): the panel in front of you'.format(s.obj, e), 20)
             s.face = None
-    if s.kind in (MIRROR, RACK) and s.face is not None:
+    if s.kind in (MIRROR, RACK, WARDROBE) and s.face is not None:
         c, n, u, w, h, d = s.face
         args = (MIRROR, c[0], c[1], c[2], n[0], n[1], n[2], u[0], u[1], u[2], w, h, 0.0)
     elif s.kind == DRAWER and s.face is not None:
@@ -1340,9 +1352,14 @@ def _take_over(interaction, how):
         _waiting = (obj.id, sim.sim_id)
         _start_gestures()
         native.haptic(1, 0.2, 0.05)
-        _note('Grab a drawer front with grip and trigger and pull it toward you. The drawer that slides out holds '
-              'that part of your outfit.', 'Plan Outfit')
-        _log('Plan Outfit on {}: waits for you to pull a drawer ({})'.format(obj, how), ALWAYS)
+        if _wardrobe(obj):
+            _note('Grab its doors with grip and trigger and pull them toward you. Your outfit shows on its front.',
+                  'Plan Outfit')
+            _log('Plan Outfit on {}: waits for you to open its doors ({})'.format(obj, how), ALWAYS)
+        else:
+            _note('Grab a drawer front with grip and trigger and pull it toward you. The drawer that slides out holds '
+                  'that part of your outfit.', 'Plan Outfit')
+            _log('Plan Outfit on {}: waits for you to pull a drawer ({})'.format(obj, how), ALWAYS)
         return True
     if kind == DRAWER:
         kind = MIRROR  # drawers off: the panel on the dresser's front
@@ -1422,7 +1439,7 @@ def _gesture_tick(_handle):
             g = _grab[side]
             if not hand[0] or hand[3] < 0.35 or hand[4] < 0.35 or hand[5]:
                 if g is None and hand[0] and hand[3] >= 0.5 and not hand[5]:
-                    _no_hold(side, hand[1], near, 'gripped without the trigger (both take hold)')
+                    _no_hold(side, hand[1], near, 'gripped without the trigger (both take hold)', open_now=s is not None)
                 if g is not None and not g['push']:
                     _log('hand {} let go of the drawer front after pulling {:.2f} of {:.2f} m{}'.format(
                         'LR'[side], g['most'], _pull(), ' (it held an object)' if hand[5] else ''), 300)
@@ -1447,9 +1464,10 @@ def _gesture_tick(_handle):
                 native.haptic(side, 0.35, 0.05)
                 _grab[side] = None
                 obj = _object(g['obj'])
-                if obj is not None and _kind_of(obj) == RACK:
-                    _open(sim, obj, RACK, tabs=_layout(obj, 1)[0], how='rack pulled by hand {}'.format('LR'[side]),
-                          pulled=True)
+                opens = g.get('opens', DRAWER)
+                if obj is not None and opens in (RACK, WARDROBE):
+                    _open(sim, obj, opens, tabs=_layout(obj, 1)[0], how='{} pulled by hand {}'.format(
+                        'rack' if opens == RACK else 'wardrobe doors', 'LR'[side]), pulled=True)
                 elif obj is not None:
                     tabs = _layout(obj, g['bands'])[g['band']]
                     _open(sim, obj, DRAWER, tabs=tabs, drawer=g['band'], how='drawer pulled by hand {}'.format('LR'[side]),
@@ -1474,37 +1492,60 @@ def _take_hold(side, p, head, near, s):
         lat = abs((p[0] - c[0]) * -n[2] + (p[2] - c[2]) * n[0])
         if not (-FRONT_BEHIND < along < FRONT_NEAR) or lat > w / 2 + 0.08:
             continue
-        rack = _kind_of(obj) == RACK
-        bands = [(c[1] - h / 2, c[1] + h / 2)] if rack else _drawers(face, h > 1.3)
+        opens, bands = _bands(obj, face)
         band = next((i for i, (lo, hi) in enumerate(bands) if lo - 0.05 <= p[1] <= hi + 0.05), -1)
         if band < 0:
             continue
         native.haptic(side, 0.15, 0.04)
         rel = (p[0] - head[0]) * n[0] + (p[2] - head[2]) * n[2]
-        _log('hand {} holds {} of {}: pull {:.2f} m toward you to open it'.format(
-            'LR'[side], 'it' if rack else 'drawer {} of {}'.format(band + 1, len(bands)), obj, _pull()), 300)
+        what = {RACK: 'the rack', WARDROBE: 'the doors of'}.get(opens) or 'drawer {} of {} of'.format(band + 1, len(bands))
+        _log('hand {} holds {} {}: pull {:.2f} m toward you to open {}'.format(
+            'LR'[side], what, obj, _pull(), 'them' if opens == WARDROBE else 'it'), 300)
         return {'push': False, 'obj': obj.id, 'band': band, 'bands': len(bands), 'n': (n[0], n[2]),
-                'rel': rel, 'most': 0.0}
-    _no_hold(side, p, near)
+                'rel': rel, 'most': 0.0, 'opens': opens}
+    _no_hold(side, p, near, open_now=s is not None)
     return None
 
 
-def _no_hold(side, p, near, how='closed'):
-    """Log (a few lines, 2 s apart) why a closed hand at a dresser took hold of nothing."""
+def _bands(obj, face):
+    """(how it opens, [(bottom y, top y)] where a hand takes hold, top to bottom): a rack as one piece (RACK), a
+    wardrobe's doors as one (WARDROBE: a dresser front taller than WARDROBE_HEIGHT, from 30 cm up), else a dresser's
+    drawers (DRAWER)."""
+    c, _n, _u, _w, h, _d = face
+    base = c[1] - h / 2
+    if _kind_of(obj) == RACK:
+        return RACK, [(base, base + h)]
+    if h > WARDROBE_HEIGHT:
+        return WARDROBE, [(base + 0.3, base + h)]
+    return DRAWER, _drawers(face, False)
+
+
+def _wardrobe(obj):
+    """A dresser that opens by its doors (front taller than WARDROBE_HEIGHT)."""
+    try:
+        return _kind_of(obj) == DRAWER and _face(obj)[4] > WARDROBE_HEIGHT
+    except Exception:
+        return False
+
+
+def _no_hold(side, p, near, how='closed', open_now=False):
+    """Log (a few lines, 2 s apart) why a closed hand at a dresser took hold of nothing. Not while a panel is open
+    (809: a hand gripping at the open panel used up all 30 lines)."""
     now = time.monotonic()
-    if _hold_notes[0] >= 30 or now - _hold_notes[1] < 2.0 or not near:
+    if _hold_notes[0] >= 30 or now - _hold_notes[1] < 2.0 or not near or open_now:
         return
     obj, face = min(near, key=lambda of: math.hypot(of[1][0][0] - p[0], of[1][0][2] - p[2]))
     c, n, _u, w, h, _d = face
     along = (p[0] - c[0]) * n[0] + (p[2] - c[2]) * n[2]
     lat = abs((p[0] - c[0]) * -n[2] + (p[2] - c[2]) * n[0])
-    bands = _drawers(face, h > 1.3)
+    opens, bands = _bands(obj, face)
     _hold_notes[0] += 1
     _hold_notes[1] = now
     _log('hand {} {} at {} but holds nothing: {:.2f} m out from its front (takes hold {:.2f} to {:.2f}), {:.2f} m '
-         'from its middle (up to {:.2f}), {:.2f} m high (drawers {:.2f} to {:.2f})'.format(
+         'from its middle (up to {:.2f}), {:.2f} m high ({} {:.2f} to {:.2f})'.format(
              'LR'[side], how, obj, along, -FRONT_BEHIND, FRONT_NEAR, lat, w / 2 + 0.08, p[1] - (c[1] - h / 2),
-             bands[-1][0] - (c[1] - h / 2), bands[0][1] - (c[1] - h / 2)), 1000)
+             {RACK: 'rack', WARDROBE: 'doors'}.get(opens, 'drawers'), bands[-1][0] - (c[1] - h / 2),
+             bands[0][1] - (c[1] - h / 2)), 1000)
 
 
 def _layout(obj, count):
@@ -1523,14 +1564,15 @@ def _layout(obj, count):
     return layout
 
 
-def _sound(obj, which):
+def _sound(obj, which, sounds=DRAWER_SOUNDS):
+    """The open (0) or close (1) sound at the object, 3D at its place: a drawer's, or a wardrobe's doors (DOOR_SOUNDS)."""
     if not native.setting_flag('outfit', 'sounds', True):
         return
     try:
         from audio.primitive import PlaySound
-        PlaySound(obj, DRAWER_SOUNDS[which]).start()
+        PlaySound(obj, sounds[which]).start()
     except Exception as e:
-        _log('drawer sound not played: {!r}'.format(e), 10)
+        _log('drawer / door sound not played: {!r}'.format(e), 10)
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -1625,8 +1667,12 @@ def pie_pick(what):
         _set_tags(obj, tags)
         _log('{} stores: {}'.format(obj, ', '.join(sorted(tags)) or 'everything'), 60)
         names = [n for k, n in KIND_NAMES if k in tags] + [n for k, n, _ in OCCASIONS if k in tags]
+        then = '' if native.setting_flag('outfit', 'always', True) else 'Pick Plan Outfit on it, then '
         if _kind_of(obj) == RACK:
             how, shows = 'Grab it with grip and trigger and pull it toward you', 'it shows only those'
+        elif _wardrobe(obj):
+            how = then + ('grab' if then else 'Grab') + ' its doors with grip and trigger and pull them toward you'
+            shows = 'it shows only those'
         else:
             how = 'Grab a drawer front with grip and trigger and pull it toward you' if native.setting_flag(
                 'outfit', 'always', True) else 'Pick Plan Outfit on it, then grab a drawer front with grip and trigger ' \
@@ -1637,7 +1683,7 @@ def pie_pick(what):
         else:
             _note('It holds everything again. {} to see it all.'.format(how), 'Store')
         s = _session
-        if s is not None and s.obj_id == obj_id and s.kind in (DRAWER, RACK):
+        if s is not None and s.obj_id == obj_id and s.kind in (DRAWER, RACK, WARDROBE):
             close(True, 'its Store tags changed')
     except Exception as e:
         _log('Store pick failed: {!r}'.format(e), 20)
