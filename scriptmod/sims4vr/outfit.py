@@ -95,6 +95,8 @@ GROUPS = {
     'shoes': ('shoes',),
     'accessories': ('glasses', 'earrings', 'necklaces', 'bracelets', 'rings', 'gloves', 'socks', 'tights'),
 }
+SINGLE_ACCESSORIES = GROUPS['accessories']
+GROUPS.update({k: (k,) for k in SINGLE_ACCESSORIES})  # Store > Type > Single accessories: one CAS category each
 GROUP_LOOK = {'accessories': (0x8D495509, 0xd960de5e7b5f328e, 0x51e278d1d2f71e05)}
 MIRROR_GROUPS = ('hair', 'hats', 'tops', 'bottoms', 'fullbody', 'shoes', 'accessories')
 # A dresser's drawers, top to bottom, by how many it has (its front's height); a wardrobe's shelves the same.
@@ -113,6 +115,30 @@ OCCASIONS = (('everyday', 'Everyday', 77), ('formal', 'Formal', 78), ('athletic'
              ('hot', 'Hot weather', 2053), ('cold', 'Cold weather', 2054))
 KIND_NAMES = (('accessories', 'Accessories'), ('hats', 'Hats'), ('tops', 'Tops'), ('fullbody', 'Full body'),
               ('bottoms', 'Bottoms'), ('shoes', 'Shoes'))
+SINGLE_NAMES = (('glasses', 'Glasses'), ('earrings', 'Earrings'), ('necklaces', 'Necklaces'), ('bracelets', 'Bracelets'),
+                ('rings', 'Rings'), ('gloves', 'Gloves'), ('socks', 'Socks'), ('tights', 'Tights'))
+STORE_KINDS = ('accessories',) + SINGLE_ACCESSORIES + ('hats', 'tops', 'fullbody', 'bottoms', 'shoes')  # drawer order
+# Store's tag groups (user 2026-11-04: tags in submenus, any within a submenu, all across): the game's own CAS part
+# tags, the groups CAS's filter panel offers (re/cas/tuning/Client_CASUIFilterCategories.xml; ids re/client/cas/tags.tsv).
+GENDERS = (('female', 'Feminine', 1530), ('male', 'Masculine', 1529))     # GenderAppropriate_*
+STYLES = (('basics', 'Basics', 240), ('polished', 'Polished', 245), ('designer', 'Designer', 241),
+          ('preppy', 'Preppy', 246), ('trendy', 'Party trendy', 244), ('summer', 'Summer', 237),
+          ('bohemian', 'Bohemian', 1495), ('goth', 'Goth, rock, punk', 289), ('romantic', 'Romantic', 247),
+          ('hipster', 'Hipster', 986), ('country', 'Country', 985), ('classics', 'Classics', 239),
+          ('street', 'Street', 1592), ('outdoor', 'Outdoor', 243), ('citysleek', 'City sleek', 238),
+          ('gala', 'Gala', 3418))                                          # Style_*
+COLOURS = (('black', 'Black', 93), ('white', 'White', 105), ('gray', 'Gray', 92), ('brown', 'Brown', 91),
+           ('red', 'Red', 65), ('orange', 'Orange', 95), ('yellow', 'Yellow', 104), ('green', 'Green', 69),
+           ('blue', 'Blue', 68), ('purple', 'Purple', 107), ('pink', 'Pink', 106))   # Color_*
+FABRICS = (('cotton', 'Cotton', 532), ('synthetic', 'Synthetic', 584), ('denim', 'Denim', 587), ('wool', 'Wool', 586),
+           ('silk', 'Silk', 585), ('leather', 'Leather', 531), ('metal', 'Metal', 932))   # Fabric_*
+SORTS = (('game', 'Game order'), ('newest', 'Newest first'), ('colour', 'By colour'), ('pack', 'By pack'))
+TAG_GROUPS = (('gender', GENDERS), ('style', STYLES), ('colour', COLOURS), ('fabric', FABRICS))  # beside occasions
+# Store's submenus: pie categories under PIE_CATEGORY (pie.custom_category_parents).
+STORE_SUBS = (('owner', 'Owner', 1), ('type', 'Type', 2), ('single', 'Single accessories', 3), ('occ', 'Occasion', 4),
+              ('gender', 'Gender', 5), ('style', 'Style', 6), ('colour', 'Colour', 7), ('fabric', 'Fabric', 8),
+              ('sort', 'Sort', 9))
+NO_FILTER = ((), (), False, 'game')   # (occasion tag ids, ((tag ids), ...) all must match, gender set, sort)
 # Plannable outfit categories (sims.outfits.outfit_enums REGULAR_OUTFIT_CATEGORIES): Everyday, Formal, Athletic,
 # Sleep, Party, Swimwear, Hot / Cold weather. Others (bathing, career, situation...) go to the game's CAS.
 PLANNABLE = (0, 1, 2, 3, 4, 9, 10, 11)
@@ -139,7 +165,8 @@ _unknown_noted = set()  # definition ids a closing hand was logged by, "not a dr
 _gesture_alarm = None
 _waiting = None      # (object id, Sim id): Plan Outfit on a dresser waits for a pulled drawer
 _why = ''            # why the last CAS command was left to the game (log)
-_catalogs = {}       # (Sim id, category, occasions, all variants): [(part, locked tooltip id)]
+_catalogs = {}       # (Sim id, category, filter, all variants): [(part, locked tooltip id)]
+_packs = {}          # CAS part -> its pack's place in sims4.common.Pack (release order), for Sort
 _colour_fail = 0
 _colour_logged = 0
 _tags = None         # {save guid: {"zone:object": [tags]}} (outfit_tags.json)
@@ -403,8 +430,10 @@ def _short(worn):
 # ---------------------------------------------------------------------------------------------------------------
 # The catalog and colours.
 
-def _catalog(sim_info, key, occasions, all_variants):
-    cache_key = (sim_info.sim_id, key, tuple(occasions), bool(all_variants))
+def _catalog(sim_info, key, flt, all_variants):
+    flt = flt or NO_FILTER
+    occasions, groups, gender_set, sort = flt
+    cache_key = (sim_info.sim_id, key, flt, bool(all_variants))
     if cache_key in _catalogs:
         return _catalogs[cache_key]
     from cas import cas
@@ -438,19 +467,62 @@ def _catalog(sim_info, key, occasions, all_variants):
     seen = set()
     unique = []
     left_out = 0
+    filtered = 0
     for part, locked, tags in found:
         if part in seen:
             continue
         seen.add(part)
-        if other in tags and own not in tags:  # the other clothing preference's only (CAS leaves these out too)
-            left_out += 1
+        if not gender_set and other in tags and own not in tags:  # the other clothing preference's only (CAS leaves
+            left_out += 1                                           # these out too); a Gender tag on the container wins
             continue
-        unique.append((part, locked))
+        if any(not (tags & set(ids)) for ids in groups):  # Store tags: every submenu ticked must match
+            filtered += 1
+            continue
+        unique.append((part, locked, tags))
+    unique = _sorted(unique, sort)
+    if groups:
+        _log('catalog {}: {} left out by the Store tags'.format(key, filtered), 120)
     _log('catalog {} ({}{}): {} parts, {} locked, {} of the other clothing preference left out, {:.0f} ms'.format(
         key, 'occasions {} '.format(list(occasions)) if occasions else '', 'every colour' if all_variants else 'bases',
         len(unique), sum(1 for _, l in unique if l), left_out, (time.perf_counter() - started) * 1000), 120)
     _catalogs[cache_key] = unique
     return unique
+
+
+_COLOUR_ORDER = {t: i for i, (_k, _n, t) in enumerate(COLOURS)}
+
+
+def _pack_place(part):
+    """The part's pack as its place in sims4.common.Pack (declared in release order); custom content (instance ids
+    over 2^32: every EA part's is under, re/client/cas/README.md) after every pack. [guess: build_buy's pack lookup
+    answers for a CAS part key; base game when it does not]"""
+    if part in _packs:
+        return _packs[part]
+    place = 0
+    if part >= 1 << 32:
+        place = 1 << 20
+    else:
+        try:
+            import build_buy
+            from sims4.common import Pack
+            pack = build_buy.get_object_pack_by_key(0x034AEECB, part, 0)
+            order = list(Pack)
+            place = order.index(Pack(pack)) if pack is not None else 0
+        except Exception:
+            place = 0
+    _packs[part] = place
+    return place
+
+
+def _sorted(parts, sort):
+    """[(part, locked)] in the container's Sort order (Store > Sort); the game's order otherwise."""
+    if sort == 'colour':
+        parts = sorted(parts, key=lambda r: min([_COLOUR_ORDER[t] for t in r[2] if t in _COLOUR_ORDER] or [99]))
+    elif sort == 'pack':
+        parts = sorted(parts, key=lambda r: _pack_place(r[0]))
+    elif sort == 'newest':
+        parts = sorted(parts, key=lambda r: -_pack_place(r[0]))
+    return [(part, locked) for part, locked, _tags in parts]
 
 
 def _tags_of(info):
@@ -627,7 +699,8 @@ class _Session(object):
         self.group = 0
         self.tabs = []        # the categories over the grid
         self.tab = 0
-        self.occasions = ()   # tag ids the container is tagged with (drawers)
+        self.filter = NO_FILTER   # what the container's Store tags let through (_filter_of)
+        self.tag_line = ''        # its tags in words, shown on the panel when nothing else is ("Bella · Tops")
         self.parts = []
         self.serial = 0
         self.start = _snapshot(sim_info)
@@ -657,7 +730,7 @@ def _key(s):
 
 def _load_tab(s):
     key = _key(s)
-    s.parts = _catalog(s.sim_info, key, s.occasions, _all_variants())
+    s.parts = _catalog(s.sim_info, key, s.filter, _all_variants())
     s.serial += 1
     worn = [p for bt in CATEGORIES[key][3] for p in _worn(s.sim_info).get(bt, ())]
     _ask_colours(s, worn[0] if worn else 0)
@@ -668,6 +741,12 @@ def _open(sim, obj, kind, tabs=None, drawer=-1, how='', pulled=False):
     sim_info = sim.sim_info
     if _dll('outfit_content') is None or _dll('outfit_place') is None:
         _log('the DLL has no outfit panel (older DLL): {} left to the game'.format(how), 20)
+        return False
+    owners = _owners(_tagset(obj)) if obj is not None and kind != MIRROR else set()
+    if owners and sim_info.sim_id not in owners:
+        _log('{} belongs to {}: not {} ({})'.format(obj, sorted(owners), sim_info.sim_id, how), ALWAYS)
+        if pulled:  # Plan Outfit on it goes to the game's CAS (user 2026-11-04 doc default)
+            _note('This is {}.'.format(_owner_words(owners, obj)), 'Store')
         return False
     if sim_info.get_current_outfit()[0] not in PLANNABLE:
         _log('outfit {} is not one you plan here: {} left to the game'.format(sim_info.get_current_outfit(), how), ALWAYS)
@@ -688,21 +767,22 @@ def _open(sim, obj, kind, tabs=None, drawer=-1, how='', pulled=False):
         s.groups, s.group = [], 0
         s.tabs = [c for g in tabs for c in GROUPS[g]] if tabs else list(GROUPS['tops'])
         s.tab = 0
-        s.occasions = _occasions_of(obj)
+        s.filter = _filter_of(obj)
     elif kind in (RACK, WARDROBE):
         # What it holds as the mirror's categories down the left (no hair: a rack or wardrobe holds clothes).
-        s.groups = [g for g in MIRROR_GROUPS if g in tabs]
+        s.groups = [g for g in MIRROR_GROUPS + SINGLE_ACCESSORIES if g in tabs]
         s.group = s.groups.index('tops') if 'tops' in s.groups else 0
         s.tabs = list(GROUPS[s.groups[s.group]])
         s.tab = 0
-        s.occasions = _occasions_of(obj)
+        s.filter = _filter_of(obj)
     else:
         s.groups = list(MIRROR_GROUPS)
         s.group = s.groups.index('tops')
         s.tabs = list(GROUPS[s.groups[s.group]])
         s.tab = 0
-        s.occasions = ()
+        s.filter = NO_FILTER
     s.message = ''
+    s.tag_line = _describe(_tagset(obj)) if kind != MIRROR and obj is not None else ''
     _session = s
     try:
         _load_tab(s)
@@ -783,7 +863,8 @@ def _send():
     hint = next((i for i, (p, _) in enumerate(s.parts) if p in worn_here), -1)
     gender = _gender_letter(s.sim_info)
     records = ['outfit\x1f{}\x1f{}\x1f{}\x1f{{"hash": {}}}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}'.format(
-        MIRROR if s.kind in (RACK, WARDROBE) else s.kind, gender, flags, name, s.tab, s.serial, hint, s.group if s.groups else -1, _raw(s.message))]
+        MIRROR if s.kind in (RACK, WARDROBE) else s.kind, gender, flags, name, s.tab, s.serial, hint, s.group if s.groups else -1,
+        _raw(s.message or s.tag_line))]
     for g in s.groups:
         gname, gicon, gsel = _group_look(g)
         records.append('group\x1f{}\x1f{{"hash": {}}}\x1f{}\x1f{}'.format(g, gname, gicon, gsel))
@@ -1550,8 +1631,8 @@ def _no_hold(side, p, near, how='closed', open_now=False):
 
 def _layout(obj, count):
     """What each drawer holds, top to bottom: DRAWER_LAYOUTS, or the container's tagged kinds spread over them."""
-    tags = _tags_for(obj)
-    kinds = [k for k in DRAWER_KINDS if k in tags]
+    tags = _tagset(obj)
+    kinds = [k for k in STORE_KINDS if 'type:' + k in tags]
     count = max(1, min(5, count))
     if not kinds:
         return list(DRAWER_LAYOUTS[count])
@@ -1626,25 +1707,131 @@ def _set_tags(obj, tags):
         _log('tags not saved: {!r}'.format(e), 20)
 
 
-def _occasions_of(obj):
-    tags = _tags_for(obj)
-    return tuple(t for key, _name, t in OCCASIONS if key in tags)
+_LEGACY = dict([(k, 'type:' + k) for k in DRAWER_KINDS] + [(k, 'occ:' + k) for k, _n, _t in OCCASIONS])
+
+
+def _tagset(obj):
+    """The container's Store tags as 'group:key' (Store saved before 2026-11-04 kept bare kinds and occasions)."""
+    if obj is None:
+        return set()
+    return {_LEGACY.get(t, t) for t in _tags_for(obj)}
+
+
+def _owners(tags):
+    out = set()
+    for t in tags:
+        if t.startswith('owner:'):
+            try:
+                out.add(int(t[6:]))
+            except ValueError:
+                pass
+    return out
+
+
+def _filter_of(obj):
+    """What a container shows: NO_FILTER's shape, from its Store tags (any tag within a submenu, all submenus)."""
+    tags = _tagset(obj)
+    occasions = tuple(t for key, _n, t in OCCASIONS if 'occ:' + key in tags)
+    groups = []
+    gender_set = False
+    for group, table in TAG_GROUPS:
+        ids = tuple(t for key, _n, t in table if '{}:{}'.format(group, key) in tags)
+        if ids:
+            groups.append(ids)
+            gender_set = gender_set or group == 'gender'
+    sort = next((t[5:] for t in sorted(tags) if t.startswith('sort:')), 'game')
+    return occasions, tuple(groups), gender_set, sort
+
+
+def _household():
+    """[(sim id, name)] of the active household (Store > Owner)."""
+    import services
+    out = []
+    try:
+        household = services.active_household()
+        for info in household.sim_info_gen():
+            out.append((info.sim_id, '{} {}'.format(info.first_name, info.last_name).strip() or str(info.sim_id)))
+    except Exception as e:
+        _log('household for Store > Owner not read: {!r}'.format(e), 10)
+    return out
+
+
+def _owner_words(owners, obj=None):
+    import services
+    names = []
+    for sim_id in sorted(owners):
+        try:
+            info = services.sim_info_manager().get(sim_id)
+            names.append(info.first_name if info is not None else '?')
+        except Exception:
+            names.append('?')
+    whose = ' and '.join(names) if len(names) < 3 else ', '.join(names[:-1]) + ' and ' + names[-1]
+    what = 'rack' if obj is not None and _kind_of(obj) == RACK else 'wardrobe' if obj is not None and _wardrobe(obj) \
+        else 'dresser'
+    return "{}'s {}".format(whose, what)
+
+
+def _describe(tags):
+    """The tags in words, in submenu order: "Bella · Tops · Swimwear · Feminine · sorted by colour"."""
+    words = []
+    owners = _owners(tags)
+    if owners:
+        import services
+        for sim_id in sorted(owners):
+            try:
+                info = services.sim_info_manager().get(sim_id)
+                words.append(info.first_name if info is not None else '?')
+            except Exception:
+                words.append('?')
+    words += [n for k, n in KIND_NAMES + SINGLE_NAMES if 'type:' + k in tags]
+    words += [n for k, n, _ in OCCASIONS if 'occ:' + k in tags]
+    for group, table in TAG_GROUPS:
+        words += [n for k, n, _ in table if '{}:{}'.format(group, k) in tags]
+    sort = next((t[5:] for t in sorted(tags) if t.startswith('sort:')), 'game')
+    if sort != 'game':
+        words.append(dict(SORTS).get(sort, sort).lower())
+    return ' · '.join(words)
+
+
+def _sub_key(sub):
+    return PIE_CATEGORY + dict((k, n) for k, _l, n in STORE_SUBS)[sub]
 
 
 def pie_extras(target):
-    """pie.py (our own pie in first person): this object's Store options, [(label json, what)], in PIE_CATEGORY."""
+    """pie.py (our own pie in first person): this object's Store options, [(label json, what, pie category)]:
+    Store > Owner / Type (> Single accessories) / Occasion / Gender / Style / Colour / Fabric / Sort, and Clear."""
     try:
         if not _on() or not native.setting_flag('outfit', 'tags', True) or _kind_of(target) not in (DRAWER, RACK):
             return []
         from sims4vr import objmenu
         from sims4.localization import LocalizationHelperTuning
-        tags = _tags_for(target)
+        tags = _tagset(target)
         out = []
-        for key, label in KIND_NAMES + tuple((k, n) for k, n, _ in OCCASIONS):
-            text = label + (' (stored here)' if key in tags else '')
-            out.append((objmenu._loc(LocalizationHelperTuning.get_raw_text(text)), ('tag', target.id, key)))
+
+        def add(text, what, sub):
+            out.append((objmenu._loc(LocalizationHelperTuning.get_raw_text(text)), what, _sub_key(sub)))
+
+        def toggle(sub, group, key, label):
+            tag = '{}:{}'.format(group, key)
+            add(label + (' (on)' if tag in tags else ''), ('tag', target.id, tag), sub)
+
+        for sim_id, name in _household():
+            toggle('owner', 'owner', sim_id, name)
+        for key, label in KIND_NAMES:
+            toggle('type', 'type', key, label)
+        for key, label in SINGLE_NAMES:
+            toggle('single', 'type', key, label)
+        for key, label, _t in OCCASIONS:
+            toggle('occ', 'occ', key, label)
+        for group, table in TAG_GROUPS:
+            for key, label, _t in table:
+                toggle(group, group, key, label)
+        sort = next((t[5:] for t in sorted(tags) if t.startswith('sort:')), 'game')
+        for key, label in SORTS:
+            add(label + (' (on)' if key == sort else ''), ('sort', target.id, key), 'sort')
         if tags:
-            out.append((objmenu._loc(LocalizationHelperTuning.get_raw_text('Everything (clear)')), ('clear', target.id, '')))
+            out.append((objmenu._loc(LocalizationHelperTuning.get_raw_text('Clear all tags')), ('clear', target.id, ''),
+                        PIE_CATEGORY))
         return out
     except Exception as e:
         _log('Store options not made: {!r}'.format(e), 20)
@@ -1657,16 +1844,21 @@ def pie_pick(what):
         obj = _object(obj_id)
         if obj is None:
             return
-        tags = _tags_for(obj)
+        tags = _tagset(obj)
+        key = _LEGACY.get(key, key)
         if action == 'clear':
             tags = set()
+        elif action == 'sort':
+            tags = {t for t in tags if not t.startswith('sort:')}
+            if key != 'game':
+                tags.add('sort:' + key)
         elif key in tags:
             tags.discard(key)
         else:
             tags.add(key)
         _set_tags(obj, tags)
         _log('{} stores: {}'.format(obj, ', '.join(sorted(tags)) or 'everything'), 60)
-        names = [n for k, n in KIND_NAMES if k in tags] + [n for k, n, _ in OCCASIONS if k in tags]
+        words = _describe(tags)
         then = '' if native.setting_flag('outfit', 'always', True) else 'Pick Plan Outfit on it, then '
         if _kind_of(obj) == RACK:
             how, shows = 'Grab it with grip and trigger and pull it toward you', 'it shows only those'
@@ -1678,8 +1870,10 @@ def pie_pick(what):
                 'outfit', 'always', True) else 'Pick Plan Outfit on it, then grab a drawer front with grip and trigger ' \
                                                'and pull it'
             shows = 'its drawers show only those'
-        if names:
-            _note('It now holds: {}. {}: {}.'.format(', '.join(names), how, shows), 'Store')
+        if action == 'sort' and words:
+            _note('Now: {}.'.format(words), 'Store')
+        elif words:
+            _note('Tags: {}. {}: {}.'.format(words, how, shows), 'Store')
         else:
             _note('It holds everything again. {} to see it all.'.format(how), 'Store')
         s = _session
@@ -1902,6 +2096,13 @@ def _install():
     try:
         from sims4vr import pie
         pie.custom_categories[PIE_CATEGORY] = 'Store'
+        pie.custom_category_icons[PIE_CATEGORY] = pie.VR_ICON_ID
+        parents = getattr(pie, 'custom_category_parents', None)
+        for sub, label, n in STORE_SUBS:
+            pie.custom_categories[PIE_CATEGORY + n] = label
+            pie.custom_category_icons[PIE_CATEGORY + n] = pie.VR_ICON_ID
+            if parents is not None:  # Single accessories sits inside Type, the others inside Store
+                parents[PIE_CATEGORY + n] = PIE_CATEGORY + 2 if sub == 'single' else PIE_CATEGORY
     except Exception as e:
         _log('Store pie category not made: {!r}'.format(e), 10)
 
