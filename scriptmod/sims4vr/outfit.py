@@ -55,6 +55,9 @@ WARDROBE_HEIGHT = 1.3  # m: a dresser's front taller than this is a wardrobe, op
 CONTROL = 8600000                         # controls.py sends 8600000..8699999 here (control)
 C_TAB, C_GROUP, C_PART, C_COLOUR = 0, 100, 1000, 70000
 C_UNDO, C_REDO, C_REMOVE, C_DONE, C_CANCEL = 80000, 80001, 80002, 80003, 80004
+C_SAVE_AS, C_SAVE_HERE, C_DELETE, C_BACK = 80005, 80006, 80007, 80008   # Save As (user 2026-11-04 mix)
+C_SAVE_CAT, C_SLOT = 81000, 82000         # + outfit category / + slot index (the slot count: a new one)
+MAX_SLOTS = 5        # outfits per category, as CAS allows [believed: CasGetPlannedOutfits max_outfits]
 C_PROBE = 90000
 PIE_CATEGORY = 0x5653435453544F52         # our pie sub menu "Store" (pie.custom_categories)
 GUID = 0x5653344F55544649                 # our appearance modifiers' id (no persistent data under it)
@@ -718,6 +721,11 @@ class _Session(object):
         self.opened = time.monotonic()
         self.changes = 0
         self.record = _read_record()  # the persistence check's last change, put back on Cancel
+        self.start_parts = _parts_of(sim_info, self.outfit)  # the worn outfit as it was (Save As puts it back)
+        self.saving = False   # the Save As screen is up
+        self.save_cat = 0     # its outfit category
+        self.save_slot = -1   # the slot picked (-1 none; the slot count: a new outfit)
+        self.pending = set()  # (category, index) to delete when Save here is pressed
 
 
 def showing():
@@ -854,12 +862,15 @@ def _send():
     if s is None:
         content(b'')
         return
+    if s.saving:
+        content(_save_records(s).encode('utf-8'))
+        return
     key = _key(s)
     name, _icon, _sel, body_types, removable = CATEGORIES[key]
     worn = _worn(s.sim_info)
     worn_here = set(p for bt in body_types for p in worn.get(bt, ()))
     flags = (1 if s.undo else 0) | (2 if s.redo else 0) | (4 if removable and worn_here else 0) | \
-            (8 if _all_variants() else 0) | (16 if s.kind == DRAWER else 0)
+            (8 if _all_variants() else 0) | (16 if s.kind == DRAWER else 0) | _glass(s)
     hint = next((i for i, (p, _) in enumerate(s.parts) if p in worn_here), -1)
     gender = _gender_letter(s.sim_info)
     records = ['outfit\x1f{}\x1f{}\x1f{}\x1f{{"hash": {}}}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}'.format(
@@ -877,6 +888,212 @@ def _send():
     for part, argb in s.colours:
         records.append('colour\x1f{}\x1f{}\x1f{}'.format(part, argb, 1 if part in worn_here else 0))
     content('\x1e'.join(records).encode('utf-8'))
+
+
+def _glass(s):
+    """32: no panel background, on a mirror's glass only (user 2026-11-04: the reflection stays visible)."""
+    return 32 if s.kind == MIRROR else 0
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Save As (user 2026-11-04): the outfit as planned into a slot of an outfit category (replace, new), slots deleted,
+# and the outfit you started from put back as it was. Nothing changes until Save here; Back and Cancel leave all.
+
+SAVING = 64   # header flag: the Save As screen
+
+
+def _count(si, cat):
+    """How many outfits the Sim has in that category."""
+    try:
+        return len(si.get_outfits_in_category(cat))
+    except Exception:
+        n = 0
+        while n < 20 and si.has_outfit((cat, n)):
+            n += 1
+        return n
+
+
+def _cat_name(cat):
+    return dict(zip(PLANNABLE, (n for _k, n, _t in OCCASIONS))).get(cat, 'Outfit')
+
+
+def _slot_words(cat, index):
+    return '{} {}'.format(_cat_name(cat), index + 1)
+
+
+def _save_records(s):
+    si = s.sim_info
+    cat = s.save_cat
+    count = _count(si, cat)
+    deleted = sum(1 << i for c, i in s.pending if c == cat)
+    worn = s.outfit[1] if s.outfit[0] == cat else -1
+    flags = SAVING | (16 if s.kind == DRAWER else 0) | _glass(s)
+    records = ['outfit\x1f{}\x1f{}\x1f{}\x1f{}\x1f0\x1f{}\x1f-1\x1f-1\x1f{}'.format(
+        MIRROR if s.kind in (RACK, WARDROBE) else s.kind, _gender_letter(si), flags, _raw('Save As'), s.serial,
+        _raw(s.message or 'Pick where this outfit goes'))]
+    for c in PLANNABLE:
+        records.append('savecat\x1f{}\x1f{}\x1f{}'.format(c, _raw(_cat_name(c)), 1 if c == cat else 0))
+    records.append('save\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}'.format(
+        cat, s.save_slot, count, MAX_SLOTS, worn, deleted))
+    return '\x1e'.join(records)
+
+
+def _can_delete(s, cat, index):
+    """The slot may go: one of the category's outfits stays."""
+    count = _count(s.sim_info, cat)
+    if not 0 <= index < count:
+        return False
+    if (cat, index) in s.pending:
+        return True
+    return count - sum(1 for c, _i in s.pending if c == cat) > 1
+
+
+def _save_control(s, code):
+    """A Save As screen button. True when the panel closed (saved)."""
+    si = s.sim_info
+    if code == C_BACK:
+        s.saving, s.pending, s.save_slot, s.message = False, set(), -1, ''
+    elif C_SAVE_CAT <= code < C_SAVE_CAT + 100:
+        cat = code - C_SAVE_CAT
+        if cat in PLANNABLE and cat != s.save_cat:
+            s.save_cat, s.save_slot, s.message = cat, -1, ''
+    elif C_SLOT <= code < C_SLOT + 100:
+        i, cat = code - C_SLOT, s.save_cat
+        count = _count(si, cat)
+        if 0 <= i < count or (i == count and count < MAX_SLOTS):
+            s.save_slot = i
+            if i == count:
+                s.message = 'Saves it as a new {} outfit'.format(_cat_name(cat))
+            elif (cat, i) in s.pending:
+                s.message = '{} is deleted when you save. Keep brings it back'.format(_slot_words(cat, i))
+            elif (cat, i) == tuple(s.outfit):
+                s.message = 'Keeps the changes in {}, the outfit you have on'.format(_slot_words(cat, i))
+            else:
+                s.message = 'Replaces {}. {} stays as it was'.format(_slot_words(cat, i), _slot_words(*s.outfit))
+    elif code == C_DELETE:
+        cat, i = s.save_cat, s.save_slot
+        key = (cat, i)
+        if key in s.pending:
+            s.pending.discard(key)
+            s.message = '{} stays'.format(_slot_words(cat, i))
+        elif _can_delete(s, cat, i):
+            s.pending.add(key)
+            s.save_slot = -1
+            s.message = '{} is deleted when you press Save here'.format(_slot_words(cat, i))
+        else:
+            s.message = 'One {} outfit has to stay'.format(_cat_name(cat))
+    elif code == C_SAVE_HERE:
+        cat, i = s.save_cat, s.save_slot
+        if i < 0 or (cat, i) in s.pending:
+            return False
+        if _save_as(s, (cat, i)):
+            close(True, 'Save As {}'.format(_slot_words(cat, i)))
+            return True
+        s.message = "Couldn't save it there"
+    s.serial += 1
+    _send()
+    return False
+
+
+def _entries(msg):
+    """The outfit list's entries (OutfitList's repeated field) and each entry's category field name."""
+    for f in msg.DESCRIPTOR.fields:
+        if f.label == f.LABEL_REPEATED and f.message_type is not None:
+            entries = getattr(msg, f.name)
+            names = [g.name for g in f.message_type.fields]
+            cat = 'category' if 'category' in names else next((n for n in names if 'category' in n), None)
+            ident = 'outfit_id' if 'outfit_id' in names else None
+            return entries, cat, ident
+    raise ValueError('no outfit list in {}'.format(msg.DESCRIPTOR.name))
+
+
+def _entry(entries, cat_field, outfit):
+    """The entry of (category, index): the index-th of that category, in list order."""
+    n = 0
+    for e in entries:
+        if int(getattr(e, cat_field)) == int(outfit[0]):
+            if n == outfit[1]:
+                return e
+            n += 1
+    return None
+
+
+def _same(a, b):
+    return {k: sorted(v) for k, v in a.items() if v} == {k: sorted(v) for k, v in b.items() if v}
+
+
+def _save_as(s, target):
+    """Writes the planned outfit into `target` (category, index; index = count: a new one), puts the outfit you
+    started from back as it was, deletes the slots marked, and has you wear the saved one. Checked against what the
+    game reads back; on any miss everything goes back to how it was before (the planned look kept on)."""
+    si = s.sim_info
+    edited = tuple(s.outfit)
+    target = (int(target[0]), int(target[1]))
+    planned = _parts_of(si, edited)
+    before = _snapshot(si)
+    try:
+        if target != edited:
+            if target[1] >= _count(si, target[0]):  # new: the game's own copy (outfits.copy_outfit)
+                target = tuple(si.add_outfit(target[0], si.get_outfit(*edited)))
+                target = (int(target[0]), int(target[1]))
+                try:
+                    si.on_outfit_generated(*target)
+                except Exception as e:
+                    _log('save as: on_outfit_generated: {!r}'.format(e), 20)
+            msg = si.save_outfits()
+            start = type(msg)()
+            start.ParseFromString(s.start[0])
+            entries, cat_field, ident = _entries(msg)
+            start_entries = _entries(start)[0]
+            mine, old = _entry(entries, cat_field, edited), _entry(start_entries, cat_field, edited)
+            if mine is None or old is None:
+                raise ValueError('outfit {} not in the list'.format(edited))
+            there = _entry(entries, cat_field, target)
+            if there is None:
+                raise ValueError('outfit {} not in the list'.format(target))
+            keep = getattr(there, ident) if ident else None
+            there.CopyFrom(mine)
+            setattr(there, cat_field, target[0])
+            if ident:
+                setattr(there, ident, keep)
+            keep = getattr(mine, ident) if ident else None
+            mine.CopyFrom(old)
+            if ident:
+                setattr(mine, ident, keep)
+            si.load_outfits(msg)
+        current = target
+        for cat, index in sorted(s.pending, key=lambda o: (o[0], -o[1])):  # as the outfit picker's delete
+            si.remove_outfit(cat, index)
+            if current[0] == cat and current[1] > index:
+                current = (cat, current[1] - 1)
+            if edited[0] == cat and edited[1] > index:
+                edited = (cat, edited[1] - 1)
+            elif edited == (cat, index):
+                edited = None
+        got = _parts_of(si, current)
+        ok = _same(got, planned)
+        if ok and edited is not None and edited != current:
+            ok = _same(_parts_of(si, edited), s.start_parts)
+        if not ok:
+            raise ValueError('read back {} (planned {}); {} as {} (was {})'.format(
+                _short(got), _short(planned), edited, _short(_parts_of(si, edited)) if edited else '-',
+                _short(s.start_parts)))
+        try:
+            si.appearance_tracker.evaluate_appearance_modifiers()
+        except Exception:
+            pass
+        si.resend_outfits()
+        si.set_current_outfit(current)
+        _log('saved as {} (from {}; {} deleted)'.format(current, tuple(s.outfit), sorted(s.pending)), ALWAYS)
+        return True
+    except Exception as e:
+        _log('save as {} failed: {!r}'.format(target, e), ALWAYS)
+        try:
+            _restore(si, before)
+            si.set_current_outfit(tuple(s.outfit))
+        except Exception as e2:
+            _log('save as: not put back: {!r}'.format(e2), ALWAYS)
+        return False
 
 
 def _gender_letter(sim_info):
@@ -912,6 +1129,13 @@ def control(code):
         si = s.sim_info
         if code == C_CANCEL:
             close(False, 'Cancel')
+        elif s.saving and code != C_DONE:
+            _save_control(s, code)
+        elif code == C_SAVE_AS:
+            s.saving, s.save_cat, s.save_slot, s.pending = True, int(s.outfit[0]), -1, set()
+            s.message = ''
+            s.serial += 1
+            _send()
         elif code == C_DONE:
             close(True, 'Done')
         elif code == C_UNDO and s.undo:

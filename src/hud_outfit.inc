@@ -24,6 +24,11 @@ struct OutfitColour {
     uint32_t argb = 0;
     bool worn = false;
 };
+struct OutfitSaveCat {  // Save As: an outfit category (Everyday, Formal...)
+    int cat = 0;
+    std::string nameJson;
+    bool on = false;
+};
 struct OutfitContent {
     bool valid = false;
     int opened = 0;  // which opening of the panel (a new one starts at the worn part's page)
@@ -32,12 +37,16 @@ struct OutfitContent {
     std::vector<OutfitButton> groups, tabs;
     std::vector<OutfitPart> parts;
     std::vector<OutfitColour> colours;
+    std::vector<OutfitSaveCat> saveCats;  // Save As
+    int saveCat = 0, saveSlot = -1, saveCount = 0, saveMax = 5, saveWorn = -1, saveDeleted = 0;
 };
 // The header's flags (outfit.py _send).
-constexpr int kOutfitCanUndo = 1, kOutfitCanRedo = 2, kOutfitCanRemove = 4, kOutfitDrawer = 16;
+constexpr int kOutfitCanUndo = 1, kOutfitCanRedo = 2, kOutfitCanRemove = 4, kOutfitDrawer = 16, kOutfitGlass = 32,
+              kOutfitSaving = 64;  // glass: on a mirror, no background (user 2026-11-04); saving: the Save As screen
 // outfit.py's control codes (C_*).
 constexpr int kOcTab = 0, kOcGroup = 100, kOcPart = 1000, kOcColour = 70000, kOcUndo = 80000, kOcRedo = 80001,
-              kOcRemove = 80002, kOcDone = 80003, kOcCancel = 80004;
+              kOcRemove = 80002, kOcDone = 80003, kOcCancel = 80004, kOcSaveAs = 80005, kOcSaveHere = 80006,
+              kOcDelete = 80007, kOcBack = 80008, kOcSaveCat = 81000, kOcSlot = 82000;
 std::mutex g_outfitMutex;
 OutfitContent g_outfitIn;  // set by Python (g_outfitMutex)
 bool g_outfitNew = false;  // g_outfitMutex
@@ -141,6 +150,87 @@ bool outfitArrow(ImDrawList* d, int id, ImVec2 c, float size, bool right, bool o
     return pressed;
 }
 
+// A button's chosen look: the selection green round it (as a worn catalog cell).
+void outfitChosen(ImDrawList* d, ImVec2 a, ImVec2 b) {
+    d->AddRect({a.x - 3, a.y - 3}, {b.x + 3, b.y + 3}, IM_COL32(110, 200, 60, 255), 14.0f, 0, 6.0f);
+}
+
+// The Save As screen (outfit.py _save_records): the outfit categories, the chosen one's slots (1..n and New) and
+// Save here / Delete (Keep on a slot marked) / Back, where the panel's buttons are.
+// The code of the button pressed, or -1.
+int drawOutfitSave(ImDrawList* d, const OutfitContent& c, bool drawer, float x0, float y0, float x1, float y1, float H) {
+    int pressed = -1;
+    auto send = [&](int code) { pressed = code; };
+    const float gap = 12;
+    const bool picked = c.saveSlot >= 0, existing = picked && c.saveSlot < c.saveCount;
+    const bool marked = existing && (c.saveDeleted >> c.saveSlot & 1) != 0;
+    const char* labels[3] = {"Save here", marked ? "Keep" : "Delete", "Back"};
+    const int codes[3] = {kOcSaveHere, kOcDelete, kOcBack};
+    const bool on[3] = {picked && !marked, existing, true};
+    float ax0 = x0, ax1 = x1, ay0 = y0, ay1 = y1;
+    if (drawer) {
+        const float bw = 196, bh = std::min(88.0f, (y1 - y0 - 5 * gap) / 6);
+        for (int k = 0; k < 3; ++k) {
+            const ImVec2 a{x1 - bw, y0 + k * (bh + gap)}, b{x1, y0 + k * (bh + gap) + bh};
+            if (outfitButton(d, 30 + k, labels[k], a, b, on[k])) send(codes[k]);
+        }
+        ax1 = x1 - bw - 2 * gap;
+    } else {
+        const float bh = std::max(64.0f, std::min(96.0f, H * 0.07f)), bw = (x1 - x0 - 2 * gap) / 3;
+        for (int k = 0; k < 3; ++k) {
+            const ImVec2 a{x0 + k * (bw + gap), y1 - bh}, b{x0 + k * (bw + gap) + bw, y1};
+            if (outfitButton(d, 30 + k, labels[k], a, b, on[k])) send(codes[k]);
+        }
+        ay1 = y1 - bh - gap;
+    }
+    const float titleSize = g_title->FontSize * (drawer ? 0.9f : 1.05f);
+    d->AddText(g_title, titleSize, {ax0 + 4, ay0}, kTitleBlue, found(c.titleJson).c_str());
+    ay0 += titleSize + gap;
+    // The message line at the bottom.
+    const float lineH = g_text->FontSize * 0.85f;
+    ay1 -= lineH + 6;
+    const std::string message = found(c.messageJson);
+    if (!message.empty()) {
+        d->PushClipRect({ax0, ay1 + 2}, {ax1, ay1 + lineH + 10}, true);
+        d->AddText(g_text, g_text->FontSize * 0.8f, {ax0 + 4, ay1 + 4}, kBodyDark, message.c_str());
+        d->PopClipRect();
+    }
+    // The categories: four to a row.
+    const int n = static_cast<int>(c.saveCats.size()), perRow = 4;
+    const int rows = (n + perRow - 1) / perRow;
+    const float room = ay1 - ay0;
+    const float ch = std::max(48.0f, std::min(drawer ? 72.0f : 88.0f, room / (rows + 2.6f) - gap));
+    const float cw = (ax1 - ax0 - (perRow - 1) * gap) / perRow;
+    for (int i = 0; i < n; ++i) {
+        const ImVec2 a{ax0 + (i % perRow) * (cw + gap), ay0 + (i / perRow) * (ch + gap)};
+        const ImVec2 b{a.x + cw, a.y + ch};
+        if (outfitButton(d, 400 + i, found(c.saveCats[i].nameJson).c_str(), a, b, true) && !c.saveCats[i].on)
+            send(kOcSaveCat + c.saveCats[i].cat);
+        if (c.saveCats[i].on) outfitChosen(d, a, b);
+    }
+    ay0 += rows * (ch + gap) + gap;
+    // The chosen category's slots, and New while it has room.
+    const int slots = c.saveCount + (c.saveCount < c.saveMax ? 1 : 0);
+    const int columns = std::max(c.saveMax + 1, slots);
+    const float sw = (ax1 - ax0 - (columns - 1) * gap) / columns;
+    const float sh = std::max(56.0f, std::min(ch * 1.6f, ay1 - ay0 - gap));
+    for (int i = 0; i < slots; ++i) {
+        char label[32];
+        if (i == c.saveCount)
+            std::snprintf(label, sizeof label, "+ New");
+        else if (c.saveDeleted >> i & 1)
+            std::snprintf(label, sizeof label, "%d (deleted)", i + 1);
+        else if (i == c.saveWorn)
+            std::snprintf(label, sizeof label, "%d (wearing)", i + 1);
+        else
+            std::snprintf(label, sizeof label, "%d", i + 1);
+        const ImVec2 a{ax0 + i * (sw + gap), ay0}, b{a.x + sw, ay0 + sh};
+        if (outfitButton(d, 500 + i, label, a, b, true) && i != c.saveSlot) send(kOcSlot + i);
+        if (i == c.saveSlot) outfitChosen(d, a, b);
+    }
+    return pressed;
+}
+
 void resolveOutfit() {
     std::lock_guard<std::mutex> lock(g_outfitMutex);
     if (!g_outfitNew) return;
@@ -164,7 +254,7 @@ Action drawOutfit(float aspect, int* index) {
     const Rect r = kOutfitArea;
     const float W = r.w, H = std::floor(W * std::max(0.375f, std::min(1.5f, aspect)));
     ImDrawList* d = ImGui::GetBackgroundDrawList();
-    uikit::dialogPanel(d, {r.x + 4, r.y + 4}, {r.x + W - 4, r.y + H - 4});
+    if (!(c.flags & kOutfitGlass)) uikit::dialogPanel(d, {r.x + 4, r.y + 4}, {r.x + W - 4, r.y + H - 4});
     Action action = kNone;
     auto send = [&](int code) {
         action = kOutfitButton;
@@ -173,24 +263,30 @@ Action drawOutfit(float aspect, int* index) {
     const bool drawer = (c.flags & kOutfitDrawer) != 0;
     const float pad = 26, gap = 12;
     const float x0 = r.x + pad, x1 = r.x + W - pad, y0 = r.y + pad, y1 = r.y + H - pad;
+    if (c.flags & kOutfitSaving) {
+        const int code = drawOutfitSave(d, c, drawer, x0, y0, x1, y1, H);
+        if (code >= 0) send(code);
+        g_outfitDrawn = H;
+        return action;
+    }
     std::string message = found(c.messageJson);
 
     // The buttons: along the bottom (mirror, in front) or down the right (drawer).
-    static const char* const kLabels[5] = {"Undo", "Redo", "Remove", "Cancel", "Done"};
-    static const int kCodes[5] = {kOcUndo, kOcRedo, kOcRemove, kOcCancel, kOcDone};
-    const bool on[5] = {(c.flags & kOutfitCanUndo) != 0, (c.flags & kOutfitCanRedo) != 0, (c.flags & kOutfitCanRemove) != 0,
-                        true, true};
+    static const char* const kLabels[6] = {"Undo", "Redo", "Remove", "Save As", "Cancel", "Done"};
+    static const int kCodes[6] = {kOcUndo, kOcRedo, kOcRemove, kOcSaveAs, kOcCancel, kOcDone};
+    const bool on[6] = {(c.flags & kOutfitCanUndo) != 0, (c.flags & kOutfitCanRedo) != 0, (c.flags & kOutfitCanRemove) != 0,
+                        true, true, true};
     float ax0 = x0, ax1 = x1, ay0 = y0, ay1 = y1;  // what is left for the rest
     if (drawer) {
-        const float bw = 196, bh = std::min(88.0f, (y1 - y0 - 4 * gap) / 5);
-        for (int k = 0; k < 5; ++k) {
+        const float bw = 196, bh = std::min(88.0f, (y1 - y0 - 5 * gap) / 6);
+        for (int k = 0; k < 6; ++k) {
             const ImVec2 a{x1 - bw, y0 + k * (bh + gap)}, b{x1, y0 + k * (bh + gap) + bh};
             if (outfitButton(d, 10 + k, kLabels[k], a, b, on[k])) send(kCodes[k]);
         }
         ax1 = x1 - bw - 2 * gap;
     } else {
-        const float bh = std::max(64.0f, std::min(96.0f, H * 0.07f)), bw = (x1 - x0 - 4 * gap) / 5;
-        for (int k = 0; k < 5; ++k) {
+        const float bh = std::max(64.0f, std::min(96.0f, H * 0.07f)), bw = (x1 - x0 - 5 * gap) / 6;
+        for (int k = 0; k < 6; ++k) {
             const ImVec2 a{x0 + k * (bw + gap), y1 - bh}, b{x0 + k * (bw + gap) + bw, y1};
             if (outfitButton(d, 10 + k, kLabels[k], a, b, on[k])) send(kCodes[k]);
         }
@@ -378,6 +474,19 @@ void setOutfitContent(const char* data, size_t size) {
             p.locked = (bits & 2) != 0;
             if (f.size() >= 4) p.tipJson = f[3];
             c.parts.push_back(p);
+        } else if (f[0] == "savecat" && f.size() >= 4) {
+            OutfitSaveCat k;
+            k.cat = std::atoi(f[1].c_str());
+            k.nameJson = f[2];
+            k.on = f[3] == "1";
+            c.saveCats.push_back(k);
+        } else if (f[0] == "save" && f.size() >= 7) {
+            c.saveCat = std::atoi(f[1].c_str());
+            c.saveSlot = std::atoi(f[2].c_str());
+            c.saveCount = std::atoi(f[3].c_str());
+            c.saveMax = std::max(1, std::min(8, std::atoi(f[4].c_str())));
+            c.saveWorn = std::atoi(f[5].c_str());
+            c.saveDeleted = std::atoi(f[6].c_str());
         } else if (f[0] == "colour" && f.size() >= 4) {
             OutfitColour k;
             k.id = std::strtoull(f[1].c_str(), nullptr, 10);
