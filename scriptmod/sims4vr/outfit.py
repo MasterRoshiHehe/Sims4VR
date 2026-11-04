@@ -136,7 +136,7 @@ SORTS = (('game', 'Game order'), ('newest', 'Newest first'), ('colour', 'By colo
 TAG_GROUPS = (('gender', GENDERS), ('style', STYLES), ('colour', COLOURS), ('fabric', FABRICS))  # beside occasions
 # Store's submenus: pie categories under PIE_CATEGORY (pie.custom_category_parents).
 STORE_SUBS = (('owner', 'Owner', 1), ('type', 'Type', 2), ('single', 'Single accessories', 3), ('occ', 'Occasion', 4),
-              ('gender', 'Gender', 5), ('style', 'Style', 6), ('colour', 'Colour', 7), ('fabric', 'Fabric', 8),
+              ('gender', 'Clothing preference', 5), ('style', 'Style', 6), ('colour', 'Colour', 7), ('fabric', 'Fabric', 8),
               ('sort', 'Sort', 9))
 NO_FILTER = ((), (), False, 'game')   # (occasion tag ids, ((tag ids), ...) all must match, gender set, sort)
 # Plannable outfit categories (sims.outfits.outfit_enums REGULAR_OUTFIT_CATEGORIES): Everyday, Formal, Athletic,
@@ -1799,7 +1799,7 @@ def _sub_key(sub):
 
 def pie_extras(target):
     """pie.py (our own pie in first person): this object's Store options, [(label json, what, pie category)]:
-    Store > Owner / Type (> Single accessories) / Occasion / Gender / Style / Colour / Fabric / Sort, and Clear."""
+    Store > Owner / Type (> Single accessories) / Occasion / Clothing preference / Style / Colour / Fabric / Sort, and Clear."""
     try:
         if not _on() or not native.setting_flag('outfit', 'tags', True) or _kind_of(target) not in (DRAWER, RACK):
             return []
