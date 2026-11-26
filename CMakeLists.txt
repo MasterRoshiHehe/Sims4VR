@@ -89,6 +89,8 @@ add_library(sims4vr SHARED
     src/dance.cpp
     src/d3d9_hook.cpp
     src/d3d11_hook.cpp
+    src/beampatch.cpp
+    src/beamlight.cpp
     src/log.cpp
     src/modelbox.cpp
     src/strings.cpp

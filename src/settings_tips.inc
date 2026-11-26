@@ -408,6 +408,7 @@ const TipText kTips[] = {
     {"phone.notes_overhead", L"Notices about one Sim show over their head. Off: only on the phone."},
     {"phone.pass", L"Hold the other hand next to the phone hand and close its grip: the phone moves to that hand, the old hand lets go."},
     {"phone.pass_reach", L"How close the two hands must be for the other hand to take the phone."},
+    {"phone.flash_in_shader", L"On: the flashlight is a real light inside the game's own shaders, so colours stay true (needs a restart). Off: the older screen effect."},
     {"phone.flash_brightness", L"How strongly the phone's flashlight brightens what it points at (surfaces keep their colour)."},
     {"phone.flash_fill", L"Plain light the flashlight adds on top, so very dark surfaces still show."},
     {"phone.flash_range", L"How far the flashlight reaches, in metres."},

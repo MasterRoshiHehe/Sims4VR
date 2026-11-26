@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "armik.h"
+#include "beamlight.h"
 #include "camera.h"
 #include "claudescreen.h"
 #include "simsforever.h"
@@ -1466,7 +1467,28 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
                 flashDir[1] = dot(back, view.up);
                 flashDir[2] = -dot(back, forward);
                 flashReady = true;
+                // The same beam for the game's own shaders (beamlight.h): world space, absolute.
+                beamlight::Beam beam;
+                beam.on = true;
+                beam.pos[0] = o.x + view.position.x;
+                beam.pos[1] = o.y + view.position.y;
+                beam.pos[2] = o.z + view.position.z;
+                beam.dir[0] = back.x;
+                beam.dir[1] = back.y;
+                beam.dir[2] = back.z;
+                beam.range = std::max(0.1f, flash.range) * view.scale;
+                beam.cone = std::max(5.0f, std::min(170.0f, flash.cone)) * 3.14159265f / 180;
+                beam.r0 = view.scale;
+                const float gain = std::max(0.0f, flash.brightness) * 0.1f;
+                beam.rgb[0] = 1.0f * gain;
+                beam.rgb[1] = 0.95f * gain;
+                beam.rgb[2] = 0.85f * gain;
+                beamlight::set(beam);
             }
+        }
+        if (!flashReady) {
+            beamlight::Beam off;
+            beamlight::set(off);
         }
         std::memcpy(k.screen, p.screen, sizeof(k.screen));
         std::memcpy(k.menu, p.menu, sizeof(k.menu));
@@ -1597,7 +1619,7 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
     ID3D11DepthStencilView* overDepth = writeDepth ? depth : nullptr;
     context->OMSetDepthStencilState(tested, 0);
     context->OMSetRenderTargets(1, &target, depth);
-    if (flashReady && g_flashVs && g_flashCb && g_flashBlend) {
+    if (flashReady && !beamlight::active() && g_flashVs && g_flashCb && g_flashBlend) {
         UINT flashSamples = 0;
         ID3D11ShaderResourceView* flashDepth = nearplane::sceneDepth(flashSamples);
         ID3D11PixelShader* flashPs = g_flashPs[flashSamples > 1 ? 1 : 0];

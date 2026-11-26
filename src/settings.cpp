@@ -1382,6 +1382,7 @@ std::vector<Row> makeRows() {
                   L"%+.0f\u00b0"),
         component(L"Phone sf right", L"Hand roll", "simsforever", "phone_hand_turn_right", &Config::sfHandTurnR, 2, -180, 180, 5, 1,
                   L"%+.0f\u00b0"),
+        toggle(phoneFlash, L"Beam inside the game's shaders (true colours; restart)", "phone", "flash_in_shader", &Config::flashInShader, kNextStart),
         number(phoneFlash, L"Brightness", "phone", "flash_brightness", &Config::flashBrightness, 0, 100, 1, 1, L"x%.0f"),
         number(phoneFlash, L"Fill light (black surfaces)", "phone", "flash_fill", &Config::flashFill, 0, 0.3f, 0.01f, 100,
                L"%.0f %%"),

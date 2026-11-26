@@ -62,6 +62,7 @@
 #include "worldscenery.h"
 #include "modelparse.h"
 #include "foleyaudio.h"
+#include "beamlight.h"
 #include "foliagepush.h"
 #include "nodim.h"
 #include "pointer.h"
@@ -175,6 +176,7 @@ S4VR_API int s4vr_init() {
              static_cast<int>(g_config.mode), g_config.autostart, g_config.armIk ? 1 : 0, g_config.playInBody ? 1 : 0);
     }
     s4vr::foliagepush::installEarly(g_config, g_moduleDir);  // before the game makes its shaders, if it hasn't yet
+    if (!s4vr::gameaddr::dx9()) s4vr::beamlight::install(g_config.flashInShader);  // the phone flashlight inside the game's shaders
     {
         // A game build the address table is not for: try it (rows found by signature only), unless the last such
         // run died early. Then resolve the table and write the first patch report.
