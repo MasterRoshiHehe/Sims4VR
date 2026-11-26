@@ -260,8 +260,13 @@ PO psLight(VO i) {
     for (int dy = -1; dy <= 1; ++dy)
         for (int dx = -1; dx <= 1; ++dx) avg += colorTex.Load(int3(int2(i.pos.xy) + int2(dx, dy) * 2, 0)).rgb;
     avg /= 9;
-    float3 hue = clamp(avg / max(dot(avg, float3(0.2126, 0.7152, 0.0722)), 1e-4), 0.15, 4.0);
+    // Mark 19:49:03 (v0.13.910): pixels of 0 to 3 levels turned pure blue / red / pink, because a ratio of such
+    // levels is rounding, not colour. The hue is trusted only as far as the neighbourhood is bright enough to
+    // carry one (full at luma ~0.06, none below ~0.01), and never stronger than x2 / x0.5 per channel.
+    const float avgLuma = dot(avg, float3(0.2126, 0.7152, 0.0722));
+    float3 hue = clamp(avg / max(avgLuma, 1e-4), 0.5, 2.0);
     hue /= max(dot(hue, float3(0.2126, 0.7152, 0.0722)), 1e-4);
+    hue = lerp(float3(1, 1, 1), hue, saturate((avgLuma - 0.01) * 20));
     float3 refl = hue * (0.2 + 0.8 * saturate(luma * 12));
     o.mul = float4((1 + params.y * 0.3 * a).xxx, 1);
     o.add = float4(refl * (params.y * 0.04 * a) + float3(1.0, 0.95, 0.85) * (params.z * a), 0);
