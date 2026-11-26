@@ -624,6 +624,7 @@ const TipText kLabelTips[] = {
     {"Testing cheats", L"Turns the game's testing cheats on or off for this game session. Starts Off each time the game starts."},
     {"Cheat pie menus (every pie menu is the cheat menu)", L"Every pie menu opens as the game's cheat menu (like Shift+click). Needs testing cheats; turning this on turns them on too."},
     {"Fill needs", L"Fills all of your Sim's needs at once."},
+    {"Set needs to 50%", L"Sets all of your Sim's needs to half, to test things that depend on needs."},
     {"Fill nearby Sims' needs", L"Fills all needs of every other Sim within the radius below of where you stand."},
     {"Motherlode (+50,000 simoleons)", L"Adds 50,000 simoleons to the household funds."},
     {"Move objects on", L"Lets you move any object in live mode."},
