@@ -333,6 +333,7 @@ Config loadConfig(const std::wstring& ini) {
     c.flashBrightness = std::max(0.0f, std::min(100.0f, readFloat(ini, "phone", "flash_brightness", c.flashBrightness)));
     c.flashFill = std::max(0.0f, std::min(0.3f, readFloat(ini, "phone", "flash_fill", c.flashFill)));
     c.flashRange = std::max(1.0f, std::min(40.0f, readFloat(ini, "phone", "flash_range", c.flashRange)));
+    c.flashInShader = readBool(ini, "phone", "flash_in_shader", c.flashInShader);
     c.flashCone = std::max(10.0f, std::min(120.0f, readFloat(ini, "phone", "flash_cone", c.flashCone)));
     c.phonePass = readBool(ini, "phone", "pass", c.phonePass);
     c.phonePassReach = std::max(0.08f, std::min(0.5f, readFloat(ini, "phone", "pass_reach", c.phonePassReach)));

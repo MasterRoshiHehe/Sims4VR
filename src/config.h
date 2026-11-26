@@ -414,6 +414,7 @@ struct Config {
     float flashFill = 0.0f;        // plain light added, so black surfaces still show (0..1)
     float flashRange = 15.0f;      // metres
     float flashCone = 50.0f;       // full angle, degrees
+    bool flashInShader = true;     // the beam inside the game's shaders (true colours, applies after a restart); false: the screen pass
     bool phonePass = true;        // pass the phone to the other hand: it closes its grip next to the holding hand
     float phonePassReach = 0.20f; // metres between the two hands for a pass
     int phoneSoundMode = 0;       // the phone: 0 sound (tones + buzz), 1 vibrate (buzz), 2 mute
