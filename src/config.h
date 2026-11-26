@@ -425,6 +425,8 @@ struct Config {
     float phoneSwipeSpeed = 1;        // the list follows the swipe this many times as far
     int phoneTextSize = 1;        // the phone's texts: 0 small (as before v0.13.380), 1 medium, 2 large
     bool phonePopupBuzz = true;   // the controllers buzz like a phone when the game shows a popup
+    bool phoneLock = true;        // the phone wakes on its lock screen (swipe up to unlock)
+    float phoneLockGrace = 10;    // seconds after the screen went off in which waking skips the lock screen
     float phoneWidth = 0.102f;    // our phone's size, metres
     float phoneHeight = 0.190f;
     float phoneBezel = 0.004f;    // the dark border around its screen, metres

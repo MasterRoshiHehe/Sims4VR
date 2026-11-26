@@ -438,6 +438,7 @@ ULONGLONG g_mySimAsked = 0;
 int g_mySimMoodlet = -1;   // My Sim shows this moodlet's page
 bool g_aspChange = false;   // Aspirations shows the tracks to change to
 std::atomic<bool> g_phoneAsleep{false};  // the phone's screen is off (setPhoneAsleep)
+std::atomic<bool> g_phoneLocked{false};  // the lock screen shows (setPhoneLocked; the swipe up clears it)
 // A phone call of your Sim (phonecall.py): its screen replaces the phone's (drawPhone), whatever theme the player chose.
 struct CallInfo {
     int mode = 0;  // 0 none, 1 incoming, 2 in call, 3 texting (a placeholder chat)
@@ -4396,6 +4397,108 @@ Action drawPhone(ImDrawList* d, int* index) {
         std::lock_guard<std::mutex> lock(g_callMutex);
         call = g_call;
     }
+    if (g_phoneLocked.load() && call.mode == 0) {
+        // The lock screen (user 2026-11-26 20:02Z, as a real phone's): over the phone's own wallpaper (its theme), the
+        // game's time large at the top and the day under it, the newest notifications as a preview feed, and a lock
+        // with "Swipe up to unlock" at the bottom. Everything follows a swipe up; let go past a quarter of the screen
+        // and it unlocks (a shorter one springs back). Presses do nothing here.
+        const float lift = swiping && !drag.horizontal ? std::max(0.0f, -rawDy) : 0.0f;
+        if (swipeEnded && !drag.horizontal && -rawDy > 90) {
+            g_phoneLocked = false;
+            ++g_phoneTaps;  // the phone's beep (phonesound.click)
+        }
+        const float fade = std::max(0.0f, 1.0f - lift / 220.0f);
+        const auto alpha = [&](int a) { return static_cast<int>(a * fade); };
+        auto lat = [&](float x, float y) { return at(x, y - lift); };
+        // A soft shade top and bottom, so the white texts read on any wallpaper.
+        d->AddRectFilledMultiColor(at(0, 0), at(230, 120), IM_COL32(0, 0, 0, alpha(110)), IM_COL32(0, 0, 0, alpha(110)),
+                                   IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 0));
+        d->AddRectFilledMultiColor(at(0, 300), at(230, 400), IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 0),
+                                   IM_COL32(0, 0, 0, alpha(120)), IM_COL32(0, 0, 0, alpha(120)));
+        const ImU32 kText = IM_COL32(255, 255, 255, alpha(255)), kSoft = IM_COL32(255, 255, 255, alpha(215));
+        auto centred = [&](ImFont* f, float size, float y, ImU32 col, const char* t) {
+            ImVec2 ts = f->CalcTextSizeA(size, FLT_MAX, 0, t);
+            const ImVec2 c = lat(115, y);
+            d->AddText(f, size, {c.x - ts.x / 2 + 2, c.y - ts.y / 2 + 2}, IM_COL32(0, 0, 0, alpha(110)), t);
+            d->AddText(f, size, {c.x - ts.x / 2, c.y - ts.y / 2}, col, t);
+        };
+        const int hour = g_hour.load(), minute = g_minute.load();
+        if (hour >= 0) {
+            // The game's time (the phone's clock, controls.py _report_clock): live, as it runs.
+            char time[16];
+            std::snprintf(time, sizeof time, "%d:%02d", hour % 12 == 0 ? 12 : hour % 12, minute);
+            centred(g_title, 150, 46, kText, time);
+            static const char* const kDays[7] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
+            static const char* const kSeasons[4] = {"Summer", "Fall", "Winter", "Spring"};
+            char date[64];
+            const SimWeather& w = g_sim.weather;
+            const char* day = kDays[(g_day.load() % 7 + 7) % 7];
+            if (w.sent && w.season >= 0 && w.season < 4 && w.day > 0)
+                std::snprintf(date, sizeof date, "%s %s  \xc2\xb7  %s, day %d", day, hour < 12 ? "AM" : "PM", kSeasons[w.season], w.day);
+            else
+                std::snprintf(date, sizeof date, "%s %s", day, hour < 12 ? "AM" : "PM");
+            centred(g_text, 30, 82, kSoft, date);
+        }
+        // The notification preview: the newest few, unread first, each a frosted card with its picture and title.
+        {
+            std::vector<const Note*> feed;
+            for (const Note& n : g_notes.notes)
+                if (!n.read) feed.push_back(&n);
+            for (const Note& n : g_notes.notes)
+                if (n.read && feed.size() < 3) feed.push_back(&n);
+            if (feed.size() > 3) feed.resize(3);
+            float y = 108;
+            const float left = 10, right = 220, pic = 24, pad = 5, wrap = (right - left - pic - 3 * pad) * S;
+            for (const Note* n : feed) {
+                bool cutT = false, cutX = false;
+                const std::string title = fitText(g_title, 24, found(n->titleJson), wrap, 26.0f, &cutT);
+                const std::string text = fitText(g_text, 22, found(n->textJson), wrap, 48.0f, &cutX);
+                const float th = title.empty() ? 0 : g_title->CalcTextSizeA(24, FLT_MAX, wrap, title.c_str()).y / S;
+                const float xh = text.empty() ? 0 : g_text->CalcTextSizeA(22, FLT_MAX, wrap, text.c_str()).y / S;
+                const float h = std::max(pic + 2 * pad, th + xh + 2 * pad + 2);
+                if (y + h > 292) break;
+                d->AddRectFilled(lat(left, y), lat(right, y + h), IM_COL32(255, 255, 255, alpha(60)), 8 * S);
+                d->AddRect(lat(left, y), lat(right, y + h), IM_COL32(255, 255, 255, alpha(70)), 8 * S, 0, 0.8f * S);
+                if (n->picture) {
+                    shown.push_back(n->picture);
+                    if (fade > 0.05f) icon(d, n->picture, lat(left + pad + pic / 2, y + pad + pic / 2), pic * S);
+                }
+                const float tx = left + 2 * pad + pic;
+                if (!title.empty()) d->AddText(g_title, 24, lat(tx, y + pad), kText, title.c_str(), nullptr, wrap);
+                if (!text.empty()) d->AddText(g_text, 22, lat(tx, y + pad + th + 1), kSoft, text.c_str(), nullptr, wrap);
+                if (!n->time.empty()) {
+                    ImVec2 ms = g_text->CalcTextSizeA(18, FLT_MAX, 0, n->time.c_str());
+                    const ImVec2 tr = lat(right - pad, y + pad);
+                    d->AddText(g_text, 18, {tr.x - ms.x, tr.y}, IM_COL32(255, 255, 255, alpha(170)), n->time.c_str());
+                }
+                y += h + 5;
+            }
+            if (g_notes.unread > 3) {
+                char more[32];
+                std::snprintf(more, sizeof more, "+%d more", g_notes.unread - 3);
+                centred(g_text, 22, y + 6, kSoft, more);
+            }
+        }
+        // The lock and "Swipe up to unlock", gently rising and falling as a hint.
+        {
+            const float bob = 1.5f * std::sin(static_cast<float>(GetTickCount64() % 2000) / 2000.0f * 6.2831853f);
+            const ImVec2 c = lat(115, 340 + bob);
+            const float u = S;
+            d->AddRectFilled({c.x - 7 * u, c.y - 2 * u}, {c.x + 7 * u, c.y + 9 * u}, kText, 2 * u);
+            d->PathArcTo({c.x, c.y - 2 * u}, 4.6f * u, 3.14159265f, 2 * 3.14159265f, 16);
+            d->PathStroke(kText, 0, 2 * u);
+            d->AddLine({c.x - 4.6f * u, c.y - 2 * u}, {c.x - 4.6f * u, c.y - 1 * u}, kText, 2 * u);
+            d->AddLine({c.x + 4.6f * u, c.y - 2 * u}, {c.x + 4.6f * u, c.y - 1 * u}, kText, 2 * u);
+            d->AddCircleFilled({c.x, c.y + 3 * u}, 1.4f * u, IM_COL32(40, 40, 40, alpha(255)));
+            centred(g_text, 26, 362 + bob, kSoft, "Swipe up to unlock");
+        }
+        {
+            std::lock_guard<std::mutex> lock(g_itemMutex);
+            g_phoneIcons.swap(shown);
+        }
+        if (drag.on && !io.MouseDown[0]) drag.on = false;
+        return action;
+    }
     if (call.mode == 3) {
         // Texting (user 2026-10-28): a placeholder chat between your Sim and the one you text, nothing is sent. Messages
         // come in one by one, each after the three dots of the typing Sim, the newest pushes the rest up, and it
@@ -5479,7 +5582,7 @@ bool phonePicturesIn() {
 int phoneScreenKey() {
     const int opts = static_cast<int>(std::hash<std::wstring>()(g_phoneOptsGroup) & 0xffff);
     return (((g_phoneApp + 2) * 8 + (g_phoneNotesOpen ? 1 : 0) + (g_phoneCalOpen ? 2 : 0) + (g_phoneSettingsOpen ? 4 : 0)) *
-                65537 + opts) * 31 + g_phoneSerial + (g_mySim + 1) * 7919 + (g_aspChange ? 104729 : 0) + (g_mySimMoodlet + 1) * 1299709 + (g_hhSim + 1) * 7907 + (g_contacts + 1) * 6151 + (g_gameMenuPhone ? 49157 : 0) + (g_weatherOpen ? 98317 : 0) + (g_photosOpen ? 611953 + (g_photoSel + 1) * 31 : 0) + (g_cheatsOpen ? 196613 + settings::testingCheats() * 7 + g_cheatsRel * 31 : 0) + (g_bpOpen ? 393241 + (g_bpPoses ? 5 : 0) + (g_bpOutfits ? 11 : 0) + (g_bpHer ? 23 : 0) + (g_bpGroup + 1) * 17 : 0) + (g_contacts >= 1 ? g_contactSel * 104723 : 0) + (g_phoneSoundsOpen ? 15485863 : 0) + g_callMode.load() * 32452843;
+                65537 + opts) * 31 + g_phoneSerial + (g_mySim + 1) * 7919 + (g_aspChange ? 104729 : 0) + (g_mySimMoodlet + 1) * 1299709 + (g_hhSim + 1) * 7907 + (g_contacts + 1) * 6151 + (g_gameMenuPhone ? 49157 : 0) + (g_weatherOpen ? 98317 : 0) + (g_photosOpen ? 611953 + (g_photoSel + 1) * 31 : 0) + (g_cheatsOpen ? 196613 + settings::testingCheats() * 7 + g_cheatsRel * 31 : 0) + (g_bpOpen ? 393241 + (g_bpPoses ? 5 : 0) + (g_bpOutfits ? 11 : 0) + (g_bpHer ? 23 : 0) + (g_bpGroup + 1) * 17 : 0) + (g_contacts >= 1 ? g_contactSel * 104723 : 0) + (g_phoneSoundsOpen ? 15485863 : 0) + g_callMode.load() * 32452843 + (g_phoneLocked.load() ? 999983 : 0);
 }
 
 // The still and the cover's blend: premultiplied colours (the atlas's), drawn with ImGui's straight blend otherwise.
@@ -6287,6 +6390,8 @@ void setPhoneCalendar(const char* data, size_t size) {
 }
 
 void setPhoneAsleep(bool asleep) { g_phoneAsleep = asleep; }
+void setPhoneLocked(bool locked) { g_phoneLocked = locked; }
+bool phoneLocked() { return g_phoneLocked.load(); }
 
 void setPhoneCall(const char* data, size_t size) {
     CallInfo c;

@@ -337,6 +337,8 @@ Config loadConfig(const std::wstring& ini) {
     c.phonePass = readBool(ini, "phone", "pass", c.phonePass);
     c.phonePassReach = std::max(0.08f, std::min(0.5f, readFloat(ini, "phone", "pass_reach", c.phonePassReach)));
     c.phonePopupBuzz = readBool(ini, "phone", "popup_buzz", c.phonePopupBuzz);
+    c.phoneLock = readBool(ini, "phone", "lock", c.phoneLock);
+    c.phoneLockGrace = std::max(0.0f, std::min(300.0f, readFloat(ini, "phone", "lock_grace", c.phoneLockGrace)));
     c.phoneStickScroll = std::clamp(readFloat(ini, "phone", "stick_scroll", c.phoneStickScroll), 0.f, 1500.f);
     c.phoneStickDeadzone = std::clamp(readFloat(ini, "phone", "stick_deadzone", c.phoneStickDeadzone), 0.05f, 0.9f);
     c.phoneSwipeStart = std::clamp(readFloat(ini, "phone", "swipe_start", c.phoneSwipeStart), 1.f, 20.f);

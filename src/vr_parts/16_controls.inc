@@ -281,13 +281,20 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
             if (g_phoneOut && !g_tablet) {
                 buzz(g_phoneHand, 0.35f, 0.04f);
                 grab::pushControl(7100200);  // phonesound.click: the phone's beep
-                LOG("Phone: screen on (grip of the hand holding it)");
+                // The lock screen (user 2026-11-26 20:02Z), unless the screen went dark only a moment ago (the grace
+                // period: back straight to where you were) or a call is on (its own screen).
+                const ULONGLONG now = GetTickCount64();
+                const bool grace = g_phoneOffAt && now - g_phoneOffAt < static_cast<ULONGLONG>(g_config.phoneLockGrace * 1000);
+                const bool lock = g_config.phoneLock && !grace && hud::phoneCallMode() == 0;
+                if (lock) hud::setPhoneLocked(true);
+                else if (!g_config.phoneLock) hud::setPhoneLocked(false);
+                LOG("Phone: screen on (grip of the hand holding it)%s", lock ? ", lock screen" : grace && g_config.phoneLock ? ", within the grace period: no lock screen" : "");
             }
         } else if (!g_phoneAsleep && g_phoneOut && !g_tablet && !g_sims1Phone.on && phoneWasOut && !passedNow && closed[g_phoneHand] &&
                    !closedWas[g_phoneHand] && g_phoneWokeAt && GetTickCount64() - g_phoneWokeAt > 300) {
             // Shut off (user 2026-10-24 12:36Z): the same grip again, the reverse of waking it.
             g_phoneAsleep = true;
-            g_phoneSleptAt = GetTickCount64();
+            g_phoneSleptAt = g_phoneOffAt = GetTickCount64();
             hud::setPhoneAsleep(true);
             buzz(g_phoneHand, 0.35f, 0.04f);
             grab::pushControl(7100200);

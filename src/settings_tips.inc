@@ -446,6 +446,8 @@ const TipText kTips[] = {
     {"phone.text_screen", L"Picking Text for a Sim shows an animated chat on your phone between your Sim and theirs for as long as the Text interaction runs: messages appear one by one after typing dots. It is only a visual placeholder, nothing is sent."},
     {"phone.call_screen", L"An incoming call shows on the phone with a green pick-up and a red hang-up button, and a call in progress shows the caller's portrait with a hang-up button. Only your phone rings: the game's own ring is left out (first person only). Turn the phone's screen off with the holding hand's grip while it rings and the rest of the ring is vibration only."},
     {"phone.popup_buzz", L"The phone buzzes when the game shows a popup (first person only)."},
+    {"phone.lock", L"The phone wakes on its lock screen: the time, the day, your newest notifications; swipe up to unlock."},
+    {"phone.lock_grace", L"Turn the screen back on this soon after turning it off (or putting the phone away) and it opens straight to where you were, no lock screen. 0: always the lock screen."},
     {"phone.tilt", L"Tilts the phone sideways in your hand."},
     {"phone.yaw", L"Turns the phone flat in your hand."},
     {"phone.pitch", L"Tips the phone back or forward."},

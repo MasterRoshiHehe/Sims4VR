@@ -184,6 +184,7 @@ const Page kFixedPages[] = {
     {L"Phone size", L"Size and screen", L"Phone"},
     {L"Phone model", L"Game's phone model", L"Phone"},
     {L"Phone sounds", L"Sounds", L"Phone"},
+    {L"Phone lock screen", L"Lock screen", L"Phone"},
     {L"Phone notes", L"Notifications", L"Phone"},
     {L"Phone flashlight", L"Flashlight", L"Phone"},
     {L"Phone sf", L"Sims Forever", L"Phone"},
@@ -358,6 +359,7 @@ std::vector<Row> makeRows() {
     const wchar_t* phoneSize = L"Phone size";
     const wchar_t* phoneModel = L"Phone model";
     const wchar_t* phoneSounds = L"Phone sounds";
+    const wchar_t* phoneLock = L"Phone lock screen";
     const wchar_t* phoneNotes = L"Phone notes";
     const wchar_t* phoneFlash = L"Phone flashlight";
     const wchar_t* tablet = L"Tablet";
@@ -1336,6 +1338,7 @@ std::vector<Row> makeRows() {
         number(phone, L"Swipe starts after", "phone", "swipe_start", &Config::phoneSwipeStart, 1, 20, 1, 1, L"%.0f px"),
         number(phone, L"Swipe scroll speed", "phone", "swipe_speed", &Config::phoneSwipeSpeed, 0.3f, 3, 0.1f, 100, L"%.0f %%"),
         link(phone, L"Position", phonePosition),
+        link(phone, L"Lock screen", phoneLock),
         link(phone, L"Hand", phoneHand),
         link(phone, L"Size and screen", phoneSize),
         link(phone, L"Game's phone model", phoneModel),
@@ -1390,6 +1393,9 @@ std::vector<Row> makeRows() {
                {L"None", L"Click", L"Promo", L"Slap", L"Success", L"Upgrade"}),
         scriptNumber(phoneSounds, L"Phone speaker: high-pass (0 = off)", "foley", "phone_highpass", 600, 0, 2000, 50, L"%.0f Hz"),
         toggle(phoneSounds, L"Buzz when the game shows a popup", "phone", "popup_buzz", &Config::phonePopupBuzz),
+        toggle(phoneLock, L"Lock screen", "phone", "lock", &Config::phoneLock),
+        number(phoneLock, L"Skip it when woken again within", "phone", "lock_grace", &Config::phoneLockGrace, 0, 120, 5, 1,
+               L"%.0f s"),
         // Calls (phonecall.py): the phone's own incoming call and in-call screens; the game's ring is left out.
         flag(phoneSounds, L"Calls on the phone (own screens, no game ring)", "phone", "call_screen", true, kLive),
         flag(phoneSounds, L"Animated text message screen", "phone", "text_screen", true, kLive),

@@ -65,6 +65,7 @@ static void phoneOpen(int hand) {
 static void phoneClose(const char* why) {
     if (!g_phoneOut) return;
     g_phoneOut = false;
+    if (!g_tablet && !g_phoneAsleep) g_phoneOffAt = GetTickCount64();  // put away awake: as turning the screen off
     g_phoneMenuAt = 0;
     if (g_tablet) {
         g_tablet = false;
