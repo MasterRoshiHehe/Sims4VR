@@ -232,6 +232,12 @@ PO psLight(VO i) {
     float d = SCENE(int2(i.pos.xy));
     float n = size.z, f = size.w;
     bool rev = mode.x > 0.5;
+#ifdef MS
+    // Mark 21:53:01 (v0.13.916): a dark outline along the Sim's silhouette. Edge pixels are lit once, by sample 0;
+    // when that sample was the unlit background the whole pixel stayed dark. The nearer of the two samples wins.
+    float d1 = sceneDepth.Load(int2(i.pos.xy), 1);
+    d = rev ? max(d, d1) : min(d, d1);
+#endif
     bool sky = rev ? d <= 0 : d >= 1;
     float z = rev ? n * f / (n + d * (f - n)) : n * f / (f - d * (f - n));
     float2 ndc = float2(i.pos.x / size.x * 2 - 1, 1 - i.pos.y / size.y * 2);
@@ -267,9 +273,12 @@ PO psLight(VO i) {
     float3 hue = clamp(avg / max(avgLuma, 1e-4), 0.5, 2.0);
     hue /= max(dot(hue, float3(0.2126, 0.7152, 0.0722)), 1e-4);
     hue = lerp(float3(1, 1, 1), hue, saturate((avgLuma - 0.01) * 20));
-    float3 refl = hue * (0.2 + 0.8 * saturate(luma * 12));
-    o.mul = float4((1 + params.y * 0.3 * a).xxx, 1);
-    o.add = float4(refl * (params.y * 0.04 * a) + float3(1.0, 0.95, 0.85) * (params.z * a), 0);
+    float3 refl = hue * (0.1 + 0.9 * saturate(luma * 12));
+    // Mark 21:53:01: the Sim next to the phone burnt out to white (x13 and more added on top), losing every
+    // colour. Both terms now level off: the multiply at x3, the added surface colour at the surface's own.
+    float push = params.y * a;
+    o.mul = float4((1 + 2.0 * (1 - exp(-0.15 * push))).xxx, 1);
+    o.add = float4(refl * (1 - exp(-0.04 * push)) + float3(1.0, 0.95, 0.85) * (params.z * a), 0);
     return o;
 }
 )";
