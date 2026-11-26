@@ -46,7 +46,7 @@ struct Config {
     // The head pose the game draws from is predicted for the Present that shows the picture
     // (measured from the pose ring), not for the Present that asked for it (vr.cpp renderStereo).
     bool latePose = false;  // [stereo] late_pose: off until tested on its own (one change at a time)
-    bool gpuWait = false;  // [stereo] gpu_wait: Present waits for the previous frame's GPU work (GLA-118), off until measured
+    bool gpuWait = true;  // [stereo] gpu_wait: Present waits for the previous frame's GPU work (GLA-118), on by default (user 2026-11-26)
     bool capLead = false;  // [stereo] cap_lead: game thread waits for Present (GLA-21); off until measured
     // Stick turns step by the headset's display clock (each shown frame turns
     // by the same amount) instead of when the game happened to hand over a frame.
