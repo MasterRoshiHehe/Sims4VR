@@ -135,6 +135,7 @@ const TipText kTips[] = {
     {"body.collision", L"Your body stops at walls and furniture, also when you walk or lean in your room. Off: the older stick-only check. Needs the map row above on."},
     {"body.body_radius", L"How far your body stays from walls. Smaller gets you closer; larger clips less."},
     {"body.furniture_radius", L"How far your body stays from furniture. Small lets you squeeze between pieces placed close together (Sims keep 12 cm); larger keeps you further off."},
+    {"body.navmesh_edges", L"Walls and edges the game stops Sims at but the collision map does not know (some half walls, ledges) stop you too. Needs the collision map. Off: you can walk through those."},
     {"body.collision_scene", L"Keeps a map of the walls and furniture around you for collisions (your body, your hands, touch sounds). Off: none of those, and a little time saved on the game's thread."},
     {"body.hand_object_gap", L"How close your hand comes to furniture. 0 = it touches the shape the game draws; plus keeps it that far off, minus lets it sink in. Move it while touching something to find what looks right."},
     {"body.hand_wall_gap", L"How close your hand comes to walls. 0 = it touches the wall's surface; plus keeps it that far off, minus lets it sink in."},
