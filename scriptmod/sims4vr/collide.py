@@ -208,6 +208,8 @@ def _send_occlusion():
         for w in walls:
             if len(w) > 6 and w[6]:
                 continue  # a fence or railing: sound passes
+            if len(w) > 7 and w[7]:
+                continue  # a half wall piece: counted from its object below
             data.extend((w[0], w[1], w[2], w[3], w[4], w[5], face))
             count += 1
         for o in objects:
@@ -1114,6 +1116,10 @@ def _build(sim, x, y, z, surface):
             polygons = piece  # its footprint is a 1 cm point; the piece itself is a 1 m wall (see _half_wall_polygons)
             span = (obj.position.y, obj.position.y + _HALF_WALL_HEIGHT)
             lowwall = True
+            # Also as a wall side: bodies keep body_radius from walls but only furniture_radius (0.12 m) from an object, and
+            # against a 0.2 m thick piece that is a keep-out band you can step through; 8th field marks it (muffling counts it once).
+            (ax, az), (bx, bz) = _centre_line([(v.x, v.z) for v in piece[0]])
+            new_walls.append((ax, az, bx, bz, obj.position.y - DROP, obj.position.y + _HALF_WALL_HEIGHT, 0.0, 1))
         if lowwall and (span is None or span[1] - span[0] < MIN_HEIGHT):
             span = (obj.position.y, obj.position.y + _WALL_HEIGHT)
         if span is None:
