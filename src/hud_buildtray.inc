@@ -170,18 +170,32 @@ Action drawCameraTray(const Frame& f, int* index) {
         label(c, text, std::min(g_text->FontSize * 0.62f, radius * 0.8f), on ? IM_COL32(255, 214, 60, 255) : kWhite);
         if (pressed) press(tool);
     };
-    // Top: back (leaves the camera) left, home right.
-    circle(kCamClose, "<", 48, 48, 30, false);
-    circle(kCamHome, "Home", w - 48, 48, 30, false);
+    // The phone's own footer (hud.cpp: Back at the left, Home in the middle, 33 x 31 on a 225-wide page), along the bottom.
+    {
+        const float u = w / 225.0f, fy = h - 34 * u;
+        auto footer = [&](int tool, const char* text, float x0) {
+            const ImVec2 a{o.x + x0 * u, o.y + fy - 15.5f * u}, b{o.x + (x0 + 33) * u, o.y + fy + 15.5f * u};
+            ImGui::SetCursorScreenPos(a);
+            ImGui::PushID(9380 + tool);
+            if (ImGui::InvisibleButton("foot", {b.x - a.x, b.y - a.y})) press(tool);
+            const bool hover = ImGui::IsItemHovered() || ImGui::IsItemActive();
+            ImGui::PopID();
+            d->AddRectFilled(a, b, hover ? IM_COL32(60, 140, 230, 255) : IM_COL32(9, 73, 171, 235), 8 * u);
+            d->AddRect(a, b, IM_COL32(255, 255, 255, 200), 8 * u, 0, 1.2f * u);
+            label({(a.x + b.x) / 2, (a.y + b.y) / 2}, text, std::min(g_text->FontSize * 0.5f, 11.0f * u), kWhite);
+        };
+        footer(kCamClose, "Back", 22);
+        footer(kCamHome, "Home", 96);
+    }
     // Zoom chips just above the footer; the front camera has none.
-    const float stripY = h - 84;
+    const float stripY = h - 130;
     if (!f.camSelfie) {
         static const char* kChips[3] = {"1x", "2x", "3x"};
-        for (int k = 0; k < 3; ++k) circle(kCamZoom1 + k, kChips[k], w / 2 + (k - 1) * 70.0f, stripY - 124, 24, f.camZoom == k);
+        for (int k = 0; k < 3; ++k) circle(kCamZoom1 + k, kChips[k], w / 2 + (k - 1) * 62.0f, stripY - 90, 20, f.camZoom == k);
     }
     // Footer: last photo bottom left, flip bottom right.
     {
-        const ImVec2 a{o.x + 30, o.y + stripY - 28}, b{o.x + 86, o.y + stripY + 28};
+        const ImVec2 a{o.x + 14, o.y + stripY - 22}, b{o.x + 58, o.y + stripY + 22};
         ImGui::SetCursorScreenPos(a);
         ImGui::PushID(9390);
         if (ImGui::InvisibleButton("last", {b.x - a.x, b.y - a.y})) press(kCamLastPhoto);
@@ -191,14 +205,14 @@ Action drawCameraTray(const Frame& f, int* index) {
         d->AddRect(a, b, kWhite, 10, 0, 2.5f);
         label({(a.x + b.x) / 2, (a.y + b.y) / 2}, "Last", g_text->FontSize * 0.5f, kWhite);
     }
-    circle(kCamFlip, "Flip", w - 58, stripY, 30, f.camSelfie);
+    circle(kCamFlip, "Flip", w - 36, stripY, 22, f.camSelfie);
     // The strip: the chosen filter is the shutter; the others sit either side and slide as you swipe (left = next),
     // like Snapchat. Tap a neighbour to pick it, tap the shutter to take the photo.
     static const char* kNames[kCamFilters] = {"Normal", "Gray", "Sepia", "Vivid", "Muted", "Vignette",
                                               "Glow",   "Invert", "Warm", "Cool", "Bright", "Dark"};
     {
-        const float cx = w / 2, spacing = 96;
-        const ImVec2 a{o.x + 100, o.y + stripY - 62}, b{o.x + w - 100, o.y + stripY + 62};
+        const float cx = w / 2, spacing = 74;
+        const ImVec2 a{o.x + 66, o.y + stripY - 58}, b{o.x + w - 66, o.y + stripY + 58};
         ImGui::SetCursorScreenPos(a);
         ImGui::PushID(9399);
         ImGui::InvisibleButton("strip", {b.x - a.x, b.y - a.y});
@@ -225,22 +239,22 @@ Action drawCameraTray(const Frame& f, int* index) {
             else if (f.camFilter + k >= 0 && f.camFilter + k < kCamFilters) press(kCamFilter0 + f.camFilter + k);
         }
         ImGui::PopID();
-        for (int k = -2; k <= 2; ++k) {
+        for (int k = -1; k <= 1; ++k) {
             const int fi = f.camFilter + k;
             if (fi < 0 || fi >= kCamFilters) continue;
             const ImVec2 c{o.x + cx + k * spacing, o.y + stripY};
             if (k == 0) {
                 const bool down = active && !dragged;
-                d->AddCircle(c, 54, kWhite, 40, 6);
-                d->AddCircleFilled(c, down ? 40.0f : 44.0f, kWhite, 40);
+                d->AddCircle(c, 44, kWhite, 40, 5);
+                d->AddCircleFilled(c, down ? 32.0f : 36.0f, kWhite, 40);
             } else {
-                const float r = k == 1 || k == -1 ? 28.0f : 20.0f;
+                const float r = 22.0f;
                 d->AddCircleFilled(c, r, IM_COL32(0, 0, 0, 110), 32);
                 d->AddCircle(c, r, IM_COL32(255, 255, 255, 200), 32, 2.5f);
-                if (r > 25) label(c, std::string(kNames[fi]).substr(0, 3).c_str(), g_text->FontSize * 0.5f, kWhite);
+                label(c, std::string(kNames[fi]).substr(0, 3).c_str(), g_text->FontSize * 0.5f, kWhite);
             }
         }
-        label({o.x + cx, o.y + stripY - 66}, kNames[std::clamp(f.camFilter, 0, kCamFilters - 1)], g_text->FontSize * 0.6f, kWhite);
+        label({o.x + cx, o.y + stripY - 54}, kNames[std::clamp(f.camFilter, 0, kCamFilters - 1)], g_text->FontSize * 0.6f, kWhite);
     }
     return action;
 }

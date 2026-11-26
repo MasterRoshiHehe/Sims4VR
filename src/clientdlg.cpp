@@ -311,6 +311,43 @@ bool jsonStringify(Value& value, std::string& out) {
     return false;
 }
 
+// An answer object JSON.stringify can't be reached for (916 test: GetPhotographyStateData / PhotographyTakePhoto answered an
+// object, 0 bytes): the members the camera app reads, one by one, as a small JSON object. Booleans, numbers, strings.
+std::string summarizeObject(const Value& obj) {
+    static const char* const kKeys[] = {"tookPhoto", "aspect_ratio_x", "aspect_ratio_y", "camera_mode", "photos_left",
+                                        "filter", "zoom", "flash_on", "orientation", "mood_category"};
+    std::string out = "{";
+    for (const char* key : kKeys) {
+        Held h;
+        if (!member(obj, key, h)) continue;
+        std::string value;
+        switch (kind(h.v)) {
+            case kBool: value = (reinterpret_cast<uintptr_t>(h.v.data) & 0xff) ? "true" : "false"; break;
+            case kNumber:
+            case kInt:
+            case kUInt: {
+                char buffer[40];
+                std::snprintf(buffer, sizeof buffer, "%.17g", number(h.v));
+                value = buffer;
+                break;
+            }
+            case kString: break;  // quoted below
+            default: continue;
+        }
+        if (kind(h.v) == kString) {
+            std::string t = text(h.v), q = "\"";
+            for (char c : t) {
+                if (c == '"' || c == '\\') q += '\\';
+                q += c < 0x20 ? ' ' : c;
+            }
+            value = q + "\"";
+        }
+        if (out.size() > 1) out += ", ";
+        out += std::string("\"") + key + "\": " + value;
+    }
+    return out + "}";
+}
+
 void sendServices() {
     std::vector<ServiceCall> calls;
     {
@@ -366,7 +403,7 @@ void sendQueries() {
             if (sent && got == kString) {
                 answer = text(result.v);
             } else if (sent && (got == kObject || got == kArray)) {
-                if (!jsonStringify(result.v, answer)) answer.clear();
+                if (!jsonStringify(result.v, answer)) answer = got == kObject ? summarizeObject(result.v) : std::string();
             } else if (sent && (got == kNumber || got == kInt || got == kUInt)) {
                 char buffer[40];
                 std::snprintf(buffer, sizeof buffer, "%.17g", number(result.v));
