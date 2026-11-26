@@ -1,0 +1,14 @@
+name: ci-test
+on:
+  workflow_dispatch:
+  push:
+    branches: [ci-test]
+jobs:
+  hello:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hello-from-ci > hello.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hello
+          path: hello.txt
