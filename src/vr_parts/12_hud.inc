@@ -23,6 +23,7 @@ static HudSheet g_outfitSheet;        // the outfit panel on a mirror, in a draw
 static bool g_outfitWanted = false;   // the HUD draws it (its content and place are in)
 static float g_outfitAspect = 1.5f;   // its height / width (hud::Frame.outfitAspect)
 static void updateOutfitHud(const camera::View* view, bool firstPerson, bool headOk, const XrPosef& head);  // 14c_outfit.inc
+static int g_camFilter = 0, g_camZoom = 0;  // the camera app: the chosen filter, zoom chip (x1 x2 x3)
 static uint32_t g_trayLit = 0;  // the tray's tools that are on, a bit per hud::TrayTool
 static void trayTool(int tool);  // 13b_build_tray.inc
 static bool g_fullUi = false;  // the full UI over your palm, shown with the watch's button
@@ -1153,6 +1154,10 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
     f.cameraTray = g_traySheet.m.active && camera::photoSession();
     hud::setCameraTrayWanted(f.cameraTray);
     f.trayLit = g_trayLit;
+    if (!camera::photoSession()) g_camFilter = g_camZoom = 0;  // each photo session starts on Normal, x1 (photowatch.py too)
+    f.camFilter = g_camFilter;
+    f.camZoom = g_camZoom;
+    f.camSelfie = camera::photoSelfie();
     f.stickScroll = g_stickScrollNow;
     f.swipeStart = g_config.phoneSwipeStart;
     f.swipeSpeed = g_config.phoneSwipeSpeed;

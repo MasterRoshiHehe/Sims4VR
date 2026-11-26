@@ -95,7 +95,10 @@ bool keyboardManual();
 // The camera app (a photo session, Frame.cameraTray) uses the same tray area and sheet; Frame.trayLit bit (tool - 100)
 // lights Flash and the chosen photo size.
 enum CameraTool { kCamShutter = 100, kCamZoomIn, kCamZoomOut, kCamFilterNext, kCamFilterPrev, kCamFlash, kCamOrient,
-                  kCamClose, kCamSmall, kCamMedium, kCamLarge };
+                  kCamClose, kCamSmall, kCamMedium, kCamLarge,
+                  // The full-glass camera (2026-11-26): zoom chips, flip, last photo, home, and the filter strip (kCamFilter0 + n).
+                  kCamZoom1, kCamZoom2, kCamZoom3, kCamFlip, kCamLastPhoto, kCamHome, kCamFilter0 };
+constexpr int kCamFilters = 12;
 // kInventorySell: the inventory's multiselect, inventoryPicked() its rows; index 0 sell, 1 favorite, 2 unfavorite.
 std::vector<int> inventoryPicked();
 // Presses on the phone screen (buttons, not swipes) since the last call.
@@ -333,6 +336,9 @@ struct Frame {
     bool buildTray = false;  // the build tablet's tool tray (kBuildTray)
     uint32_t trayLit = 0;    // its tools that are on, a bit per TrayTool
     bool cameraTray = false; // the phone camera app's buttons in the same place (kBuildTray), a photo session
+    int camFilter = 0;       // the camera app: the chosen filter, zoom chip (0..2) and whether the front camera is on
+    int camZoom = 0;
+    bool camSelfie = false;
     bool bars = false;       // the skill bars over Sims' heads   // the balloons over Sims' heads (addBalloon)
     uint64_t note = 0;       // the notification drawn as a card in kNote (notify.py), 0: none
     bool keyboard = false;   // the VR keyboard (kKeyboard)
@@ -358,5 +364,6 @@ void release();
 float buildTrayLeft();
 // Any thread: the camera app (not the build tray) is what kBuildTray shows (its panel is always open).
 void setCameraTrayWanted(bool on);
+void setCameraAspect(float glassWidthOverHeight);  // the camera app's glass shape (its controls are laid out on it)
 
 }  // namespace s4vr::hud
