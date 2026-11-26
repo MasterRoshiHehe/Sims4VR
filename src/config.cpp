@@ -98,6 +98,7 @@ Config loadConfig(const std::wstring& ini) {
     if (!(c.fsrOutputScale >= 0.3f && c.fsrOutputScale <= 2.0f)) c.fsrOutputScale = 1.0f;
     c.turnReprojection = readBool(ini, "stereo", "turn_reprojection", c.turnReprojection);
     c.latePose = readBool(ini, "stereo", "late_pose", c.latePose);
+    c.gpuWait = readBool(ini, "stereo", "gpu_wait", c.gpuWait);
     c.capLead = readBool(ini, "stereo", "cap_lead", c.capLead);
     c.turnDisplayClock = readBool(ini, "stereo", "turn_display_clock", c.turnDisplayClock);
     c.walkDisplayClock = readBool(ini, "stereo", "walk_display_clock", c.walkDisplayClock);

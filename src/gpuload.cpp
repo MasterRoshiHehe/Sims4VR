@@ -29,6 +29,9 @@ LARGE_INTEGER g_frequency{};
 
 double g_total = 0, g_worst = 0, g_latest = -1;
 int g_count = 0;
+bool g_waitPrev = false;  // GLA-118: Present waits for the previous frame's GPU work
+unsigned g_waits = 0, g_waitTimeouts = 0;
+double g_waitTotalMs = 0, g_waitWorstMs = 0;
 
 IDXGIAdapter3* g_adapter = nullptr;
 
@@ -200,8 +203,48 @@ void onFrame(ID3D11Device* device, ID3D11DeviceContext* context) {
         g_issued[g_next] = now;
         g_pending[g_next] = true;
     }
+    const int current = g_next;
     g_next = (g_next + 1) % kQueries;
+    if (!g_waitPrev) return;
+    // At most one frame queued: wait (flushing) until the card finished the frame before this one, 12 ms at most.
+    const int prev = (current + kQueries - 1) % kQueries;
+    if (!g_pending[prev] || !g_queries[prev]) return;
+    LARGE_INTEGER t0, t1;
+    QueryPerformanceCounter(&t0);
+    bool done = false;
+    for (;;) {
+        BOOL d = FALSE;
+        if (context->GetData(g_queries[prev], &d, sizeof(d), 0) == S_OK) {
+            done = true;
+            break;
+        }
+        QueryPerformanceCounter(&t1);
+        if (1000.0 * (t1.QuadPart - t0.QuadPart) / static_cast<double>(g_frequency.QuadPart) > 12.0) break;
+        YieldProcessor();
+    }
+    QueryPerformanceCounter(&t1);
+    const double ms = 1000.0 * (t1.QuadPart - t0.QuadPart) / static_cast<double>(g_frequency.QuadPart);
+    if (done) {  // recorded as a normal lag sample too
+        g_pending[prev] = false;
+        const double lag = 1000.0 * (t1.QuadPart - g_issued[prev].QuadPart) / static_cast<double>(g_frequency.QuadPart);
+        g_latest = lag;
+        g_total += lag;
+        if (lag > g_worst) g_worst = lag;
+        ++g_count;
+    } else {
+        ++g_waitTimeouts;
+    }
+    g_waitTotalMs += ms;
+    if (ms > g_waitWorstMs) g_waitWorstMs = ms;
+    if (++g_waits == 500) {
+        LOG("GPU wait ON: Present waited %.2f ms on average for the previous frame (worst %.1f), %u of 500 timed out",
+            g_waitTotalMs / g_waits, g_waitWorstMs, g_waitTimeouts);
+        g_waits = g_waitTimeouts = 0;
+        g_waitTotalMs = g_waitWorstMs = 0;
+    }
 }
+
+void setWait(bool on) { g_waitPrev = on; }
 
 Lag take() {
     Lag lag;

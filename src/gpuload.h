@@ -20,6 +20,9 @@ struct Lag {
     int frames = 0;
 };
 Lag take();
+// GLA-118 (Config::gpuWait): onFrame waits until the card finished the previous frame (12 ms at most), so at most
+// one frame is queued on it.
+void setWait(bool on);
 // The last frame's lag (ms), or -1 if unknown.
 double latestMs();
 

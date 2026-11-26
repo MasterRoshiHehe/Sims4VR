@@ -41,6 +41,7 @@ const TipText kTips[] = {
     {"stereo.walk_display_clock", L"Times stick walking by the headset's refresh instead of the game's, so walking stays even."},
     {"stereo.turn_lead_scale", L"How much of the draw-ahead is used. 100% is the measured amount; lower it if turning overshoots or wobbles, raise it if the picture lags behind your turn."},
     {"body.turn_ease", L"Smooth stick turning starts and stops gradually instead of at full speed at once. Higher is gentler; 0 is off."},
+    {"stereo.gpu_wait", L"Before drawing the next frame, waits (at most 12 ms) until the graphics card has finished the one before, so frames do not pile up on the card. Aims to cut the delay between moving your head and seeing it; can lower fps a little. Off by default; the log lines 'GPU wait' and 'graphics card done' show the result."},
     {"stereo.cap_lead", L"Makes the game wait (at most 11 ms) until the headset frame before has been taken, so it never works a frame ahead. Aims to cut the delay between moving your head and seeing it. Off by default; the log line 'Lead cap' shows the delay either way."},
     {"stereo.turn_lead", L"Draws the picture slightly ahead of where you are turning, which hides lag while turning."},
     {"photo.lens", L"While the game's photo camera runs, draws a third picture from the phone's back for its screen. Off (default): the phone shows your own left-eye picture, which is also what the photo captures. On: can leave the eyes crossed (830)."},
