@@ -445,10 +445,9 @@ bool inYourView() {
 // godhands.cpp); -1 otherwise.
 thread_local int t_handSide = -1;
 // Create a Sim (casbody.cpp): true while the CAS Sim's scene model is drawn a second time as your body; the meshes
-// that draw get counted. t_needCas: this pass into the scene's depth has not drawn the body yet (see targets()).
+// that draw get counted.
 thread_local bool t_casBody = false;
 thread_local uint32_t t_casMeshes = 0;
-thread_local bool t_needCas = false;
 
 void hookedPalette(uint8_t* mesh, uint8_t* out, uint8_t* pose, void* inverseBinds, uint64_t rows) {
     g_palette(mesh, out, pose, inverseBinds, rows);
@@ -578,9 +577,8 @@ bool nearHands(const void* model, float radius) {
 // Create a Sim: the CAS Sim's scene model drawn once more as your body (casbody.cpp works out every bone). Its meshes
 // go through hookedMeshDraw / hookedPalette with t_casBody set.
 constexpr size_t kViewBatch = 0x58;  // the view's batch sink: slot 5 queues meshes there for a later draw when set
-thread_local bool t_casInjected = false;  // this pass drew the body without the CAS Sim's own draw
 
-void drawCasBody(void* model, uint32_t lod, uint8_t* view, bool injected) {
+void drawCasBody(void* model, uint32_t lod, uint8_t* view) {
     if (!casbody::prepare(static_cast<const uint8_t*>(model))) return;
     t_casBody = true;
     t_casMeshes = 0;
@@ -594,7 +592,7 @@ void drawCasBody(void* model, uint32_t lod, uint8_t* view, bool injected) {
     g_sceneDraw(model, lod, view);
     if (clear) std::memcpy(view + kViewBatch, &sink, sizeof(sink));
     t_casBody = false;
-    casbody::drawn(t_casMeshes, injected);
+    casbody::drawn(t_casMeshes, false);
 }
 
 // A Sim's scene model, not a prop, building part or other object (the far-Sim cull touched reflections of
@@ -638,21 +636,14 @@ void hookedSceneDraw(void* model, uint32_t lod, uint8_t* view) {
             }
         }
     }
-    // Create a Sim: your body in every pass from your eyes. Drawn right after the CAS Sim's own draw; in a pass that
-    // leaves the CAS Sim out (you look away from it) it is put in at the first other Sim model drawn there.
+    // Create a Sim: your body in every pass from your eyes that draws the CAS Sim, right after the CAS Sim's own
+    // draw, so in that pass's space. Never put into a pass without the CAS Sim (v0.13.816-918 did, at the first other
+    // model): every picture has one, the CAS room's, in another space, and the body drawn there was a see-through
+    // ghost that hid the room where it stood and moved when you turned the Sim (user marks 2026-11-26 22:00-22:01).
     bool casSim = false;
     if (t_eyePass == 1 && view && model && !t_casBody && !t_handsOnly && casbody::enabled() && camera::casActive()) {
         casSim = casbody::isCasSim(static_cast<const uint8_t*>(model));
-        if (casSim) {
-            casbody::setLodHint(static_cast<int>(lod));
-        } else if (t_needCas && !t_casInjected) {
-            if (const uint8_t* cas = casbody::model()) {
-                t_needCas = false;
-                t_casInjected = true;
-                const int hint = casbody::lodHint();
-                drawCasBody(const_cast<uint8_t*>(cas), hint >= 0 ? static_cast<uint32_t>(hint) : 0u, view, true);
-            }
-        }
+        if (casSim) casbody::setLodHint(static_cast<int>(lod));
     }
     if (t_eyePass == 1 && model && model == g_ourModel.load(std::memory_order_relaxed)) {
         float pin[7];
@@ -726,10 +717,7 @@ void hookedSceneDraw(void* model, uint32_t lod, uint8_t* view) {
     t_model = model;
     g_sceneDraw(model, lod, view);
     t_model = outer;
-    if (casSim && !t_casInjected) {
-        t_needCas = false;
-        drawCasBody(model, lod, view, false);
-    }
+    if (casSim) drawCasBody(model, lod, view);
     t_eyePass = previous;
 }
 
@@ -1006,8 +994,6 @@ void targets(ID3D11DeviceContext* context, bool sceneDepth) {
         t_sceneContext = context;
         t_needHands = true;
         t_passHands = false;
-        t_needCas = true;
-        t_casInjected = false;
     }
     else if (t_sceneContext == context)
         t_sceneContext = nullptr;
