@@ -10,7 +10,7 @@ Retrospective pass: the mod already exists (v0.13.x). This records what is known
 ## 2. Loading, graphics API, publisher guidance
 - Game: TS4_x64.exe, DX11 only, Python 3.7 embedded (no _ctypes; native module loaded as extension).
 - Mods load from the user's Mods folder (MO2 profile "VR test"). DLL injection is a grey area in the EA user agreement; the mod is free, single player, ships no game files.
-- Publisher policy to read and record (not yet read line by line, user decides scope): https://help.ea.com/en/articles/the-sims/the-sims-4/mods-policy/ (found 2026-11-26). Unresolved: whether DLL-based mods are covered.
+- Publisher policy to read and record (not yet read line by line, user decides scope): https://help.ea.com/en/articles/the-sims/the-sims-4/mods-policy/ (found 2026-11-26). User decision 2026-11-26: not pursuing the publisher policy; scope is a free, single-player mod, and the user accepts the risk.
 - Anti-cheat: none known for single player.
 
 ## 3. Camera, projection, frame boundary
