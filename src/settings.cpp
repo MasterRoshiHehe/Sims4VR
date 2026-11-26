@@ -771,6 +771,7 @@ std::vector<Row> makeRows() {
                kRenderScale),
         toggle(L"View motion", L"Smooth stick turning", "stereo", "turn_reprojection", &Config::turnReprojection),
         toggle(L"View motion", L"Head pose for the shown moment", "stereo", "late_pose", &Config::latePose),
+        toggle(L"View motion", L"Wait for the graphics card (less delay)", "stereo", "gpu_wait", &Config::gpuWait),
         toggle(L"View motion", L"Game waits for the headset frame (less delay)", "stereo", "cap_lead", &Config::capLead),
         toggle(L"View motion", L"Stick turn on the headset's clock", "stereo", "turn_display_clock", &Config::turnDisplayClock),
         toggle(L"View motion", L"Stick walk on the headset's clock", "stereo", "walk_display_clock", &Config::walkDisplayClock),

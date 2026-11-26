@@ -61,6 +61,7 @@ int onFrame(ID3D11Texture2D* backbuffer, HWND window, bool ownMirror) {
     {
         ID3D11DeviceContext* context = nullptr;
         device->GetImmediateContext(&context);
+        gpuload::setWait(g_config.gpuWait);
         gpuload::onFrame(device, context);
         texbias::install(device, g_config.textureBias);
         shadowreuse::install(device);
