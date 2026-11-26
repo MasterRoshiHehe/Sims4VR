@@ -17,3 +17,34 @@ tools/toolchain/
 build-release/
 # The user's own sound files (licensed packs): shipped in builds, never in the public repo
 sounds/
+
+# --- VR modding kit (Joe975/vr-modding-with-agents 07424c2) ---
+sessions/
+CURRENT_SESSION.txt
+*.wav
+*.flac
+*.mp3
+runs/
+*.rgb
+*.times
+*.ppm
+*.preview.png
+*.jsonl
+*.log
+*.dmp
+*.mdmp
+*.gpr
+*.rep/
+*.idb
+*.i64
+*.id0
+*.id1
+*.nam
+*.til
+ghidra/
+decompiled/
+signatures/
+*.pak
+*.exe.bak
+out/
+.venv/

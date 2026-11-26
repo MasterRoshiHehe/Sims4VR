@@ -1,0 +1,93 @@
+# The Sims 4 VR mod
+
+Adds 6DoF VR to The Sims 4 (EA Sims 3/4 engine, DirectX 11 only, TS4_x64.exe; Python 3.7 scripting) for Quest 3 via Virtual Desktop (VDXR/OpenXR).
+Project scope: first-person free-controller VR, single player, free mod; no game files shipped. See RESEARCH.md.
+
+## Before you change anything
+
+- Read `STATUS.md` (the shared scratch pad; add a dated entry before you stop), `RESEARCH.md` and
+  `CONTROLS.md` if they exist. Build on what's there; don't redo or undo another agent's work.
+  Old handoff notes are historical: check the latest status before acting on them.
+- Decisions, measurements and open issues go in versioned files with dates and run or commit IDs.
+  Nothing should depend on chat history or private memory.
+
+## Project rules that win over the kit
+
+Where the kit and these differ, these win: the Linear board (team GLA) is the work list and STATUS.md only mirrors it; feature work goes on a branch named after its Linear issue and a PR into `dev`; only the build thread builds; the user installs and tests in the headset, so "ask the human for headset tests" is the normal loop here, and never install into the user's Sims 4 folder from the cloud. Standalone mods stay separate. Never delete project files without approval.
+
+## Rules
+
+- **Don't ask the human to check what you can check.** You can see the headset through SteamVR's
+  VR View (or the mod's own eye snapshots), drive the controllers with the test driver, and read
+  the trace and logs. Ask for the headset only for feel and comfort.
+- **But get a first headset look early.** Once stereo and the camera pass their checks, ask for
+  five minutes in the headset before performance work, soak runs or new features. Scale, held
+  objects and the HUD are seen at once by a person and missed by automated checks.
+- **Never wave off a failing check.** Fix the check with a test, or write why the FAIL doesn't
+  apply in the run log, before building on the result.
+- **Soak before "ready", and log every crash.** Several minutes of the heaviest gameplay over
+  several fresh launches before calling a build playtest-ready; every crash goes in the crash
+  ledger in `STATUS.md` with its signature and run.
+- **Look, don't count.** A submission counter going up isn't proof an image reached the headset.
+  Check both eyes with `frame_check.py` (test-harness skill) and a known-bad `--reject` or golden
+  `--ref`; only VERDICT PASS confirms. INCONCLUSIVE means it couldn't tell, not that it worked.
+- **Verdicts before evidence.** Every image and log you read is re-sent with every later request.
+  Read check verdicts and summaries first; open an image (the failure preview) or query the
+  trace only when a check fails. Hand checks and per-issue work to fresh sub-agents or worktree
+  sessions that report back verdicts and file paths.
+- **Reproduce before you fix.** Every reported issue gets a failing reproduction (test driver
+  script, eye snapshot comparison, trace check or unit test) before the fix, and the same check
+  passing after. If you can't reproduce it, say what you'd need.
+- **One run owns the game install.** Whoever has the game running owns its files and the headset;
+  other sessions don't launch the game or install or replace the mod's files until that run ends.
+- **Always clean up.** The launcher removes the mod after every run, even on failure.
+- **Publisher guidance and user responsibility.** The user is responsible for checking what the
+  game's publisher supports and permits for mods, anti-cheat and online play, and deciding the
+  project's scope. Help by finding dated official sources, describing relevant requirements
+  and flagging uncertainty. Record their decision in `RESEARCH.md` and `STATUS.md`; don't impose
+  a blanket offline-only rule or treat technical feasibility as publisher approval.
+- Every tunable value (thresholds, offsets, angles) is a live setting, not a constant.
+- **Pin the game build and fail closed.** Every hard-coded address goes through the per-build
+  lookup table; an unknown build or mismatched bytes means no hook. If the headset suddenly shows
+  nothing, check the exe's build first. Porting to a new build: the `vr-mod-game-patches` skill.
+- **Nothing of the game's in the repo.** No decompiler output, disassembly, crash dumps or game
+  data fixtures; byte patterns from game code are digests, never literals. Shipping to players:
+  the `vr-mod-release` skill.
+- **Discover capabilities before choosing interactions.** Camera mode and input mode are separate
+  decisions. Use only the game's actual actions and available hooks; combat, physical grabbing,
+  skeletal IK and virtual gamepad output are optional. Record action semantics, contexts,
+  integration routes and observable success conditions in `CONTROLS.md`.
+- **Requested input isn't a game outcome.** Verify the game accepted/performed the action.
+  Release/neutralise outgoing controls on context changes and focus/tracking loss, and prevent
+  held inputs from becoming unrelated actions on return.
+- **Keep a vendor-neutral rendering baseline.** Frame tracking, stereo delivery and essential
+  diagnostics must work without an optional vendor SDK or upscaler. Separate required graphics
+  capabilities from tested GPU/driver/runtime combinations; missing hardware stays untested.
+  A flat fallback or a submission counter is not proof of stereo.
+- **Record broad workarounds when adding them.** In `STATUS.md`, register disabled optimisations,
+  forced refreshes, duplicated work, extra waits and widened bounds with their reason, scope,
+  A/B switch, scene costs and revisit criterion. Revisit them on new scene types and before release.
+- **Measure beyond the test room.** Rendering changes need both-eye correctness checks and
+  repeated, matched performance comparisons in representative real gameplay. Keep temporal
+  histories per eye and preserve visibility needed by either eye. Use the test-harness skill's
+  compatibility and performance references; unresolved measurements remain explicit release gaps.
+
+## Commands
+
+Fill these in as the tooling gets built.
+
+- Build: only the build thread builds; see README.md / CMakeLists.txt (MinGW cross-build)
+- Tests: in-game headset tests by the user; logs copied to the project drive
+- Launch a test run: user launches via MO2 profile 'VR test' (TS4_x64.exe)
+- Test driver: none yet (see RESEARCH.md)
+- Voice playtest: see the vr-playtest-loop skill
+
+## Skills
+
+- `vr-mod-research`: the research pass. Run it before writing mod code.
+- `vr-mod-test-harness`: see, play and measure without the human.
+- `vr-playtest-loop`: voice-recorded playtests and the reproduce-before-fix loop.
+- `vr-mod-game-patches`: build pinning, the address table, and porting the mod after a game update.
+- `vr-mod-release`: the player package and the public-repo cleanup, once the human decides to share.
+- `vr-controls-design`: capability discovery, camera/input choices, context-specific actions,
+  optional combat/body interactions and applicable defaults.
