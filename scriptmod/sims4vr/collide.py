@@ -1246,16 +1246,106 @@ def _build(sim, x, y, z, surface):
             _log('scenery failed: {!r}'.format(e))
         started = time.perf_counter()
         hand_shapes = hand_shapes + scenery
+    nav_added = 0
+    try:
+        polys = [o[0] for o in new_objects if o[3]] + [h[0] for h in hand_shapes if h[3] is not None and h[3] & 1 and not h[3] & (16 | 64)]
+        polys += [p[0] for p in panels.values()]  # a closed door's panel: the navmesh may stop at it
+        nav_added = yield from _navmesh_edges(sim, x, y, z, surface, floor, new_walls, polys)
+    except Exception as e:
+        _log('navmesh edges failed: {!r}'.format(e))
     _door_panels.clear()
     _door_panels.update(panels)
     _apply_doors()
     body = sum(1 for o in new_objects if o[3])
     high = sum(1 for o in new_objects if o[1] >= floor + HIP)
-    _log('built at {:.2f} {:.2f} level {} (floor {:.2f}): {} wall sides, {} doorways cut, {} object shapes '
+    _log('built at {:.2f} {:.2f} level {} (floor {:.2f}): {} wall sides ({} from the navmesh), {} doorways cut, {} object shapes '
          '({} stop your body, {} above your hips, {} you walk through); {:.1f} ms of work over the ticks, '
          '{} objects on the lot'.format(
-             x, z, level, floor, len(new_walls), len(gaps), len(new_objects), body, high,
+             x, z, level, floor, len(new_walls), nav_added, len(gaps), len(new_objects), body, high,
              len(new_objects) - body - high, spent * 1000, len(everything)))
+
+
+NAV_RAYS = 48  # [body] navmesh_edges: rays round you
+NAV_REACH = 3.0  # metres the rays look out; a scene rebuild happens every ~3 m, so the edge is there before you reach it
+NAV_EXPLAINED = 0.6  # metres: a navmesh edge this close to a scene wall or object is that (its margin), not a hole in the scene
+
+
+def _seg_dist(px, pz, ax, az, bx, bz):
+    dx, dz = bx - ax, bz - az
+    l = dx * dx + dz * dz
+    t = 0.0 if l < 1e-9 else min(max(((px - ax) * dx + (pz - az) * dz) / l, 0.0), 1.0)
+    return math.hypot(px - (ax + dx * t), pz - (az + dz * t))
+
+
+def _explained(px, pz, scene_walls, polys):
+    """True when a wall side or a footprint in the scene lies within NAV_EXPLAINED of the point."""
+    for w in scene_walls:
+        if _seg_dist(px, pz, w[0], w[1], w[2], w[3]) < NAV_EXPLAINED:
+            return True
+    for pts in polys:
+        n = len(pts)
+        for i in range(n):
+            if _seg_dist(px, pz, pts[i][0], pts[i][1], pts[(i + 1) % n][0], pts[(i + 1) % n][1]) < NAV_EXPLAINED:
+                return True
+    return False
+
+
+def _navmesh_edges(sim, x, y, z, surface, floor, new_walls, polys):
+    """Generator. What the game's navmesh stops Sims at but the scene doesn't know (user 2026-11-26, marks of half walls
+    that are not object_Half_Wall pieces: the navmesh blocked 22 of 24 directions where the scene blocked none): rays all
+    round you find the first spot the navmesh blocks; where nothing in the scene stands within NAV_EXPLAINED of it, the
+    points joined up become wall sides (fence kind: your body keeps furniture_radius from them; the navmesh edge already
+    lies a Sim's radius off the surface). Not in a pool, not at stairs. [body] navmesh_edges. 8th field 2: muffling skips it."""
+    from sims4vr import stairs, walk
+    if not native.setting_flag('body', 'navmesh_edges', True):
+        return 0
+    if surface.type == routing.SurfaceType.SURFACETYPE_POOL:
+        return 0
+    context = sim.routing_context
+    origin = walk._location(x, y, z, surface)
+    scene = list(new_walls)
+    points = []
+    for i in range(NAV_RAYS):
+        if i and i % 8 == 0:
+            yield
+        a = i * 2 * math.pi / NAV_RAYS
+        dx, dz = math.sin(a), math.cos(a)
+        if routing.ray_test(origin, walk._location(x + dx * NAV_REACH, y, z + dz * NAV_REACH, surface), context):
+            points.append(None)  # clear all the way
+            continue
+        lo, hi = 0.0, NAV_REACH
+        for _ in range(6):
+            mid = (lo + hi) / 2
+            if routing.ray_test(origin, walk._location(x + dx * mid, y, z + dz * mid, surface), context):
+                lo = mid
+            else:
+                hi = mid
+        if hi < 0.1:
+            points.append(None)  # you stand in it already: nothing to hold you back from
+            continue
+        px, pz = x + dx * hi, z + dz * hi
+        level = surface.secondary_id
+        if (_explained(px, pz, scene, polys) or stairs.near(px, y, pz, 0.8)
+                or walk._water_depth(px + dx * 0.6, pz + dz * 0.6, level) > 0.05):  # water's edge: swim.py's, not a wall
+            points.append(None)
+        else:
+            points.append((px, pz))
+    added = 0
+    for i, p in enumerate(points):
+        if p is None:
+            continue
+        q = points[(i + 1) % NAV_RAYS]
+        if q is not None and math.hypot(q[0] - p[0], q[1] - p[1]) < 1.2:
+            new_walls.append((p[0], p[1], q[0], q[1], floor - DROP, floor + 2.0, 1.0, 2))
+            added += 1
+        elif points[i - 1] is None and (q is None or math.hypot(q[0] - p[0], q[1] - p[1]) >= 1.2):
+            # a lone point: a short piece across the ray
+            a = i * 2 * math.pi / NAV_RAYS
+            tx, tz = math.cos(a), -math.sin(a)
+            new_walls.append((p[0] - tx * 0.25, p[1] - tz * 0.25, p[0] + tx * 0.25, p[1] + tz * 0.25,
+                              floor - DROP, floor + 2.0, 1.0, 2))
+            added += 1
+    return added
 
 
 def _cross(px, pz, qx, qz, ax, az, bx, bz):

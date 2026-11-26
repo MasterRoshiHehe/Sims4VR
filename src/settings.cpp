@@ -905,6 +905,7 @@ std::vector<Row> makeRows() {
         toggle(moving, L"Body drawn at your height (stairs)", "body", "keep_height", &Config::bodyKeepHeight, kWalk),
         toggle(moving, L"Slide smoothly along walls", "body", "smooth_slide", &Config::bodySmoothSlide, kWalk),
         flag(L"Collision", L"Map walls and furniture around you", "body", "collision_scene", true, kLive),  // collide.py
+        flag(L"Collision", L"Stop at what the game stops Sims at (half walls, edges)", "body", "navmesh_edges", true, kLive),  // collide.py
         toggle(L"Collision", L"Walls and furniture stop you", "body", "collision", &Config::bodyCollision, kWalk),
         number(L"Collision", L"Body keeps clear of walls by", "body", "body_radius", &Config::bodyRadius, 0.1f, 0.5f, 0.025f, 100,
                L"%.1f cm", kWalk),
