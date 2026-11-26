@@ -315,11 +315,13 @@ bool jsonStringify(Value& value, std::string& out) {
 // object, 0 bytes): the members the camera app reads, one by one, as a small JSON object. Booleans, numbers, strings.
 std::string summarizeObject(const Value& obj) {
     static const char* const kKeys[] = {"tookPhoto", "aspect_ratio_x", "aspect_ratio_y", "camera_mode", "photos_left",
-                                        "filter", "zoom", "flash_on", "orientation", "mood_category"};
+                                        "picturesLeft", "filters_disabled", "zoom_capability", "camera_quality", "orientation"};
     std::string out = "{";
     for (const char* key : kKeys) {
+        // Not member(): a bool or a number carries no object interface (oi null), which Held::ok() takes as missing
+        // (920 test: both answers came out "{}" although the keys exist).
         Held h;
-        if (!member(obj, key, h)) continue;
+        if (!obj.oi || !g_getMember(obj.oi, obj.data, key, &h.v, kind(obj) == kDisplay)) continue;
         std::string value;
         switch (kind(h.v)) {
             case kBool: value = (reinterpret_cast<uintptr_t>(h.v.data) & 0xff) ? "true" : "false"; break;
