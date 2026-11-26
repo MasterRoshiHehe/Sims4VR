@@ -879,6 +879,8 @@ std::vector<Row> makeRows() {
                kLive),
         toggle(L"View mirrors", L"Pool reflection clipped at the water (nothing below it)", "stereo", "water_clip", &Config::waterClip,
                kLive),
+        toggle(L"View mirrors", L"Your own body in the pool reflection (off = no smeared arm)", "stereo", "water_show_body",
+               &Config::waterShowBody, kLive),
         toggle(L"View mirrors", L"Pool reflection in the main pool's plane (not a mean of all)", "stereo", "water_one_plane",
                &Config::waterOnePlane, kLive),
         toggle(L"View mirrors", L"No mirror or water reflections", "stereo", "reflections_off", &Config::reflectionsOff,

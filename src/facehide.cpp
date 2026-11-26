@@ -616,6 +616,13 @@ void hookedSceneDraw(void* model, uint32_t lod, uint8_t* view) {
         bool eyes = camera::yourEyeCamera(*reinterpret_cast<void**>(view + kViewCamera)) &&
                     !(camera::inLensPass() && camera::photoSelfie());
         t_eyePass = eyes ? 1 : 0;
+        // GLA-120: in the pool reflection your own Sim (arms) came out as a smeared copy hugging the arm edges
+        // (920 marks); leave it out of the water cameras' draws unless [stereo] water_show_body is on.
+        if (!eyes && model && model == g_ourModel.load(std::memory_order_relaxed) &&
+            camera::skipOwnBodyInWater(*reinterpret_cast<void**>(view + kViewCamera))) {
+            t_eyePass = previous;
+            return;
+        }
         (eyes ? g_passEyes : g_passOther).fetch_add(1, std::memory_order_relaxed);
         framecost::simDraw(eyes);
         framemap::mark(framemap::SceneDraw, eyes ? 1 : 0);

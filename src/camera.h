@@ -250,6 +250,9 @@ using CopyObserver = void (*)(void* dst, const void* src, void* caller);
 // Whether a game camera object is the one the headset's eyes render from
 // (pointer or eye position), not a mirror's, water's or shadow's.
 bool yourEyeCamera(const void* camera);
+// First person: whether your own Sim is left out of this camera's draw because it is a pool/water reflection
+// camera ([stereo] water_show_body = 0). Render thread.
+bool skipOwnBodyInWater(const void* camera);
 // Where your left eye was last drawn from (world); false before the first picture.
 bool eyeAt(float out[3]);
 bool installCopyHook();

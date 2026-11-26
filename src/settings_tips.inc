@@ -30,6 +30,7 @@ const TipText kTips[] = {
     // Graphics > Mirrors
     {"stereo.mirror_far_inside", L"How far mirrors show things indoors. Shorter is faster. 0 uses the game's value. Takes effect next start."},
     {"stereo.mirror_far_outside", L"How far mirrors and water show things outdoors. Shorter is faster. 0 uses the game's value. Takes effect next start."},
+    {"stereo.water_show_body", L"First person: whether your own Sim is drawn in the pool/water reflection. On, the reflection of your arms came out as a blurred copy hugging the arm edges (not a true mirror image). Off (default) = your body is left out of the water reflection; mirrors still show you."},
     {"stereo.water_clip", L"The pool reflection must leave out everything below the water surface (pool floor, terrain, lower floors). On = the game's own clip at the water plane, kept for both eyes (it was switched off in v0.13.860-875, which put pool floors, columns and black underground into the reflection). Off = the old behaviour."},
     {"stereo.water_one_plane", L"The game reflects all pools in view in one plane, the average of their heights. With a roof pool and a ground pool that is far off for both, and each eye sees the reflection at the wrong depth. On = the plane of the biggest pool in view."},
     {"stereo.mirror_clip", L"Cuts the mirror picture at the glass so nothing behind it shows. Objects can sometimes pop in and out."},
