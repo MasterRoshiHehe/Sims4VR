@@ -282,6 +282,35 @@ void gameTray(int which) {
 
 // The build tablet's tray: CommunicationManager.CallGameService(name[, arg]) as the game's controller build mode
 // sends them (BuildBuyCenterAdapterBase.as), or SendUIMessage(name[, arg]); the argument made by AS3's JSON.parse.
+// AS3 JSON for the service calls. The JSON class is often not found by getDefinitionByName (see uiMessage), so the
+// movie's own "JSON.parse" / "JSON.stringify" by path are the fallback. 910 test: every service call's argument was
+// dropped (PhotographyTakePhoto got no rectangle) and every answer object came back empty for this reason.
+bool jsonParse(const std::string& json, Held& out) {
+    Held parser;
+    Value arg;
+    arg.type = kString;
+    arg.data = const_cast<char*>(json.c_str());
+    if (definition("JSON", parser) && callMember(parser.v, "parse", &arg, 1, &out) && out.ok()) return true;
+    release(out.v);
+    void* m = movie();
+    return m && g_movieInvoke(m, "JSON.parse", &out.v, &arg, 1) && out.ok();
+}
+
+bool jsonStringify(Value& value, std::string& out) {
+    Held parser, json;
+    if (definition("JSON", parser) && callMember(parser.v, "stringify", &value, 1, &json) && json.ok()) {
+        out = text(json.v);
+        return true;
+    }
+    release(json.v);
+    void* m = movie();
+    if (m && g_movieInvoke(m, "JSON.stringify", &json.v, &value, 1) && json.ok()) {
+        out = text(json.v);
+        return true;
+    }
+    return false;
+}
+
 void sendServices() {
     std::vector<ServiceCall> calls;
     {
@@ -289,21 +318,14 @@ void sendServices() {
         calls.swap(g_services);
     }
     if (calls.empty()) return;
-    Held comms, parser;
+    Held comms;
     if (!definition("olympus.io.CommunicationManager", comms)) {
         LOG("Build tray: %zu calls not sent (CommunicationManager not found)", calls.size());
         return;
     }
-    const bool canParse = definition("JSON", parser);
     for (const ServiceCall& call : calls) {
         Held payload;
-        bool parsed = false;
-        if (!call.json.empty() && canParse) {
-            Value arg;
-            arg.type = kString;
-            arg.data = const_cast<char*>(call.json.c_str());
-            parsed = callMember(parser.v, "parse", &arg, 1, &payload);
-        }
+        const bool parsed = !call.json.empty() && jsonParse(call.json, payload);
         Value args[2];
         args[0].type = kString;
         args[0].data = const_cast<char*>(call.name.c_str());
@@ -325,23 +347,16 @@ void sendQueries() {
         queries.swap(g_queries);
     }
     if (queries.empty()) return;
-    Held comms, parser;
+    Held comms;
     const bool found = definition("olympus.io.CommunicationManager", comms);
-    const bool canParse = found && definition("JSON", parser);
     std::vector<std::pair<int, std::string>> answers;
     for (const ServiceQuery& q : queries) {
         std::string answer;
         bool sent = false;
         uint32_t got = kUndefined;
         if (found) {
-            Held payload, result, json;
-            bool parsed = false;
-            if (!q.json.empty() && canParse) {
-                Value arg;
-                arg.type = kString;
-                arg.data = const_cast<char*>(q.json.c_str());
-                parsed = callMember(parser.v, "parse", &arg, 1, &payload) && payload.ok();
-            }
+            Held payload, result;
+            const bool parsed = !q.json.empty() && jsonParse(q.json, payload);
             Value args[2];
             args[0].type = kString;
             args[0].data = const_cast<char*>(q.name.c_str());
@@ -350,9 +365,8 @@ void sendQueries() {
             got = kind(result.v);
             if (sent && got == kString) {
                 answer = text(result.v);
-            } else if (sent && (got == kObject || got == kArray) && canParse &&
-                       callMember(parser.v, "stringify", &result.v, 1, &json)) {
-                answer = text(json.v);
+            } else if (sent && (got == kObject || got == kArray)) {
+                if (!jsonStringify(result.v, answer)) answer.clear();
             } else if (sent && (got == kNumber || got == kInt || got == kUInt)) {
                 char buffer[40];
                 std::snprintf(buffer, sizeof buffer, "%.17g", number(result.v));

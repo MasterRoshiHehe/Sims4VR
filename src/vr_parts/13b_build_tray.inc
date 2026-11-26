@@ -39,16 +39,19 @@ static bool pokeTray(const armik::Hand hands[2], const bool use[2]) {
 
 // Every frame the tablet is drawn: the tray on its glass (p3's overlay) and its sheet for pokes and the laser.
 static void placeTray(phone3d::Phone& p3, const XrVector3f& centre, const XrVector3f& x, const XrVector3f& y,
-                      const XrVector3f& z, float menuW, float menuH) {
-    const float h = std::min(0.96f, kTrayHeight * g_config.tabletTrayScale);
-    const float top = std::max(0.02f, std::min(0.98f - h, kTrayMiddle - h / 2)), bottom = top + h;
-    const float w = h * menuH / menuW * hud::kBuildTray.w / hud::kBuildTray.h;
+                      const XrVector3f& z, float menuW, float menuH, bool camera = false) {
+    // The phone camera (GLA-52/122/123): across the whole glass like a phone's camera app, shutter at the bottom
+    // centre, close / flash / turn at the top; the strip at the right edge is for the build tray only.
+    const float trayAspect = hud::kBuildTray.w / hud::kBuildTray.h;
+    const float h = camera ? std::min(0.98f, 0.96f * menuW / menuH / trayAspect) : std::min(0.96f, kTrayHeight * g_config.tabletTrayScale);
+    const float top = camera ? 0.99f - h : std::max(0.02f, std::min(0.98f - h, kTrayMiddle - h / 2)), bottom = top + h;
+    const float w = h * menuH / menuW * trayAspect;
     // Closed, the tabs alone: the overlay and the sheet only that wide, so the UI left of them takes the laser.
-    const float left = hud::buildTrayLeft();
+    const float left = camera ? 0.0f : hud::buildTrayLeft();
     hud::Rect area = hud::kBuildTray;
     area.x += left * area.w;
     area.w -= left * area.w;
-    const float x0 = kTrayRight - w * (1 - left), x1 = kTrayRight;
+    const float x1 = camera ? 0.5f + w / 2 : kTrayRight, x0 = x1 - w * (1 - left);
     g_trayAt[0] = x0, g_trayAt[1] = top, g_trayAt[2] = x1, g_trayAt[3] = bottom;
     g_trayArea = area;
     p3.overlay = true;
