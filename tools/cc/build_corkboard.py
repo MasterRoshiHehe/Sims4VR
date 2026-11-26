@@ -1,4 +1,4 @@
-"""Build the "Linear Scrumboard" CC object (GLA-125): an empty cork board in an oak frame on a two-legged stand,
+"""Build the "SCRUM Board" CC object (GLA-125): an empty cork board in an oak frame on a two-legged stand,
 a 1-tile floor object cloned from the base-game etagere (sculptFloorQAEtagere_01, tuning object_sculpture) with
 our own mesh, texture, catalog strings and thumbnails. In first person, linearboard.py offers "Open Linear
 scrumboard" on it (definition id = OBJD below).
@@ -45,10 +45,16 @@ TEX_SHADOW = cc_id('LinearScrumboard:shadowmap')
 STBL = fnv64('glarthon:sims4vr:LinearScrumboard:strings') & 0x00FFFFFFFFFFFFFF  # top byte 00 = English
 NAME_KEY = fnv32('glarthon_LinearScrumboard_Name')
 DESC_KEY = fnv32('glarthon_LinearScrumboard_Description')
-NAME = 'Linear Scrumboard'
+NAME = 'SCRUM Board'  # user 2026-11-26: renamed from "Linear Scrumboard"
 DESC = ('A cork board on an oak stand. In first person VR, pick "Open Linear scrumboard" on it to pin your '
         'Linear board on the cork, and move the notes by hand.')
 PRICE = 150
+# Placement test (GLA-125, 2026-11-26: the user could not place the board, and no game log names it). A second
+# catalog object that is the same clone but keeps the etagere's own base-game model. If this one places and the
+# SCRUM Board does not, the fault is in our model resources; if neither places, it is in the OBJD/COBJ clone.
+TEST_OBJ = cc_id('ScrumBoardPlacementTest')
+TEST_NAME_KEY = fnv32('glarthon_ScrumBoardPlacementTest_Name')
+TEST_NAME = 'SCRUM Board placement test (etagere look)'
 
 T_OBJD, T_COBJ, T_MODL, T_MLOD, T_IMG, T_STBL, T_THUMB = (0xC0DB5AE7, 0x319E4F1D, 0x01661233, 0x01D10F34,
                                                           0x00B2D882, 0x220557DA, 0x3C2A8647)
@@ -468,15 +474,16 @@ def okey(inst, typ, grp=0):
     return struct.pack('<IIIII', 4, inst >> 32, inst & 0xFFFFFFFF, typ, grp)
 
 
-def build_objd():
+def build_objd(name='linearScrumboard_GLAsims4vr_01_set1', model=None):
     t = H(T['objd'])
     tp = struct.unpack_from('<I', t, 2)[0]
     cnt = struct.unpack_from('<H', t, tp)[0]
     ents = [struct.unpack_from('<II', t, tp + 2 + 8 * k) for k in range(cnt)]
     offs = sorted(o for _, o in ents) + [tp]
     raw = {tg: t[o:min(x for x in offs if x > o)] for tg, o in ents}
-    raw[0xE7F07786] = lstr('linearScrumboard_GLAsims4vr_01_set1')
-    raw[0x8D20ACC6] = okey(MODEL, T_MODL)
+    raw[0xE7F07786] = lstr(name)
+    if model is not None:  # None keeps the etagere's own model (the placement test object)
+        raw[0x8D20ACC6] = okey(model, T_MODL)
     raw[0xE4F4FAA4] = struct.pack('<I', PRICE)
     body, table = bytearray(), []
     pos = 6
@@ -489,10 +496,10 @@ def build_objd():
     return out
 
 
-def build_cobj():
+def build_cobj(name_key=None, desc_key=None):
     c = bytearray(H(T['cobj']))
     assert struct.unpack_from('<II', c, 0) == (0x1A, 0x0B)
-    struct.pack_into('<III', c, 8, NAME_KEY, DESC_KEY, PRICE)
+    struct.pack_into('<III', c, 8, name_key or NAME_KEY, desc_key or DESC_KEY, PRICE)
     return bytes(c)
 
 
@@ -589,18 +596,21 @@ def main():
     modl, shadow, box = build_model(mesh)
     shadowmap = dds_dxt1(np.zeros((32, 32, 3), np.uint8))
     res = [
-        (T_OBJD, 0, OBJ, build_objd()),
+        (T_OBJD, 0, OBJ, build_objd(model=MODEL)),
         (T_COBJ, 0, OBJ, build_cobj()),
+        (T_OBJD, 0, TEST_OBJ, build_objd('scrumBoardPlacementTest_GLAsims4vr_01_set1')),
+        (T_COBJ, 0, TEST_OBJ, build_cobj(TEST_NAME_KEY, DESC_KEY)),
         (T_MODL, 0, MODEL, modl),
         (T_MLOD, 0x10000, MODEL, shadow),
         (T_IMG, 0, TEX_DIFFUSE, dds_dxt1(tex)),
         (T_IMG, 0, TEX_SHADOW, shadowmap),
-        (T_STBL, 0x80000000, STBL, build_stbl([(NAME_KEY, NAME), (DESC_KEY, DESC)])),
+        (T_STBL, 0x80000000, STBL, build_stbl([(NAME_KEY, NAME), (DESC_KEY, DESC), (TEST_NAME_KEY, TEST_NAME)])),
     ]
     big = render(mesh, 232, tex)
-    for n, size in ((1, 64), (2, 78), (3, 116)):
-        grp = (((OBJ & 0x0FFFFFFF) << 4) | n) & 0xFFFFFFFF
-        res.append((T_THUMB, grp, OBJ, thumb_bytes(big.resize((size, size), Image.LANCZOS))))
+    for inst in (OBJ, TEST_OBJ):
+        for n, size in ((1, 64), (2, 78), (3, 116)):
+            grp = (((inst & 0x0FFFFFFF) << 4) | n) & 0xFFFFFFFF
+            res.append((T_THUMB, grp, inst, thumb_bytes(big.resize((size, size), Image.LANCZOS))))
     data = dbpf(res)
     open(out, 'wb').write(data)
     if len(sys.argv) > 2:
