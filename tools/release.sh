@@ -57,7 +57,7 @@ PKG="$OUT/sims4vr"; mkdir -p "$PKG"
 
 # 3. DLL + extras.
 if [ $NODLL = 1 ]; then
-  for f in openxr_loader.dll sf_hook.dll sf_launch.exe sims4vr.dll sims4vr_nofade.package; do
+  for f in openxr_loader.dll sf_hook.dll sf_launch.exe sims4vr.dll sims4vr_nofade.package sims4vr_linearscrumboard.package; do
     cp "$REL/$PREV/sims4vr/$f" "$PKG/" 2>/dev/null || echo "warn: $f not in $PREV"; done
   cp "$REL/$PREV/sims4vr.map" "$OUT/" 2>/dev/null || true
 else
