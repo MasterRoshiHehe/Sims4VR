@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <memory>
 #include <mutex>
 #include <vector>
 
@@ -19,6 +20,7 @@ constexpr int kPasses = 3;         // push-out passes (a corner pushes twice)
 
 struct Wall {
     float ax, az, bx, bz, y0, y1;
+    bool fence;  // a fence or railing: your body keeps clear of it by the furniture radius
 };
 struct Shape {
     int first, count;  // into g_points
@@ -39,7 +41,16 @@ std::atomic<bool> g_softPlants{true};
 std::atomic<float> g_plantSlow{0.5f};
 constexpr uint32_t kPlant = 16;  // shape flag: a plant (soft)
 constexpr uint32_t kSlows = 32;  // shape flag: a bush's footprint (walking in it slows you)
-bool solid(uint32_t flags) { return !(flags & kPlant) || !g_softPlants.load(std::memory_order_relaxed); }
+constexpr uint32_t kStepOver = 64;  // shape flag: a low object you walk over (user 2026-10-28: garden rocks)
+std::atomic<bool> g_stepOn{true};
+std::atomic<float> g_stepMax{0.5f};
+std::atomic<bool> g_onStep{false};  // you stand on one: your hands go through it too
+bool solid(uint32_t flags) {
+    if ((flags & kStepOver) && g_stepOn.load(std::memory_order_relaxed)) return false;
+    return !(flags & kPlant) || !g_softPlants.load(std::memory_order_relaxed);
+}
+// Hands: the stepped-on object does not stop them while you stand on it.
+bool handSolid(uint32_t flags) { return solid(flags) && !((flags & kStepOver) && g_onStep.load(std::memory_order_relaxed)); }
 
 // The game thread's copy.
 std::vector<Wall> t_walls;
@@ -92,7 +103,9 @@ void setScene(const float* data, int count) {
     bool ok = take(n) && n >= 0 && n < 100000;
     for (int k = 0; ok && k < static_cast<int>(n); ++k) {
         Wall w;
-        ok = take(w.ax) && take(w.az) && take(w.bx) && take(w.bz) && take(w.y0) && take(w.y1);
+        float fence = 0;
+        ok = take(w.ax) && take(w.az) && take(w.bx) && take(w.bz) && take(w.y0) && take(w.y1) && take(fence);
+        w.fence = fence > 0.5f;
         if (ok) walls.push_back(w);
     }
     float m = 0;
@@ -136,6 +149,86 @@ void setScene(const float* data, int count) {
     }
 }
 
+
+// ---- Muffling: what stands between a listener and a sound ----
+namespace {
+struct OccSeg {
+    float ax, az, bx, bz, y0, y1, w;
+};
+struct OccScene {
+    std::vector<OccSeg> segs;
+    std::vector<std::pair<float, float>> floors;  // slab height, weight
+};
+std::mutex g_occMutex;
+std::shared_ptr<const OccScene> g_occ;
+std::atomic<bool> g_occOn{false};
+int g_occLogs = 0;
+}  // namespace
+
+void setOcclusion(const float* data, int count) {
+    auto scene = std::make_shared<OccScene>();
+    int i = 0;
+    auto take = [&](float& out) {
+        if (i >= count) return false;
+        out = data[i++];
+        return std::isfinite(out);
+    };
+    float n = 0;
+    bool ok = count > 0 && take(n) && n >= 0 && n < 20000;
+    for (int k = 0; ok && k < static_cast<int>(n); ++k) {
+        OccSeg s;
+        ok = take(s.ax) && take(s.az) && take(s.bx) && take(s.bz) && take(s.y0) && take(s.y1) && take(s.w);
+        if (ok) scene->segs.push_back(s);
+    }
+    float m = 0;
+    ok = ok && take(m) && m >= 0 && m < 64;
+    for (int k = 0; ok && k < static_cast<int>(m); ++k) {
+        float y = 0, w = 0;
+        ok = take(y) && take(w);
+        if (ok) scene->floors.emplace_back(y, w);
+    }
+    if (!ok) scene = std::make_shared<OccScene>();
+    const bool on = ok && (!scene->segs.empty() || !scene->floors.empty());
+    if (g_occLogs < 12 && on != g_occOn.load(std::memory_order_relaxed)) {
+        ++g_occLogs;
+        LOG("Muffle: %s (%d wall, door and half wall pieces, %d floors)", on ? "on" : "off",
+            static_cast<int>(scene->segs.size()), static_cast<int>(scene->floors.size()));
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_occMutex);
+        g_occ = std::move(scene);
+    }
+    g_occOn.store(on, std::memory_order_release);
+}
+
+bool occlusionActive() { return g_occOn.load(std::memory_order_acquire); }
+
+float occlusion(const float* a, const float* b) {
+    std::shared_ptr<const OccScene> scene;
+    {
+        std::lock_guard<std::mutex> lock(g_occMutex);
+        scene = g_occ;
+    }
+    if (!scene) return 0.0f;
+    float keep = 1.0f;
+    const float rx = b[0] - a[0], rz = b[2] - a[2];
+    for (const OccSeg& s : scene->segs) {
+        const float sx = s.bx - s.ax, sz = s.bz - s.az;
+        const float den = rx * sz - rz * sx;
+        if (std::fabs(den) < 1e-9f) continue;
+        const float qx = s.ax - a[0], qz = s.az - a[2];
+        const float t = (qx * sz - qz * sx) / den;  // along the sound's way
+        const float u = (qx * rz - qz * rx) / den;  // along the piece
+        if (t < 0.0f || t > 1.0f || u < 0.0f || u > 1.0f) continue;
+        const float y = a[1] + (b[1] - a[1]) * t;
+        if (y < s.y0 || y > s.y1) continue;
+        keep *= 1.0f - s.w;
+    }
+    for (const auto& f : scene->floors)
+        if ((a[1] - f.first) * (b[1] - f.first) < 0.0f) keep *= 1.0f - f.second;
+    return std::clamp(1.0f - keep, 0.0f, 0.95f);
+}
+
 void configure(bool on, float bodyRadius) {
     if (!(bodyRadius > 0.05f && bodyRadius < 1.0f)) bodyRadius = 0.3f;
     bool was = g_on.exchange(on);
@@ -168,8 +261,11 @@ float pushOut(float& x, float& z, float radius, float objectRadius, float feetY,
             if (w.y1 <= lo || w.y0 >= hi) continue;  // another level, or a wall piece above you
             float cx, cz;
             closest(x, z, w.ax, w.az, w.bx, w.bz, cx, cz);
+            // Fences and railings are kept clear of like furniture,
+            // so a gap between a wall and a fence you could walk through stays open.
+            const float wr = w.fence ? std::min(radius, objectRadius) : radius;
             float dx = x - cx, dz = z - cz, d2 = dx * dx + dz * dz;
-            if (d2 >= radius * radius) continue;
+            if (d2 >= wr * wr) continue;
             float d = std::sqrt(d2);
             float nx, nz;
             if (d > 1e-4f) {
@@ -180,8 +276,8 @@ float pushOut(float& x, float& z, float radius, float objectRadius, float feetY,
                 nx = -sz / l, nz = sx / l;
                 if ((x0 - cx) * nx + (z0 - cz) * nz < 0) nx = -nx, nz = -nz;
             }
-            x = cx + nx * radius;
-            z = cz + nz * radius;
+            x = cx + nx * wr;
+            z = cz + nz * wr;
             what = 0;
             moved = true;
         }
@@ -253,7 +349,7 @@ bool handContact(float x, float y, float z, float radius, float normal[3], int& 
     }
     for (const Shape& s : shapes) {
         if (y < s.y0 || y > s.y1 + radius || x < s.minX - radius || x > s.maxX + radius || z < s.minZ - radius ||
-            z > s.maxZ + radius || !solid(s.flags))
+            z > s.maxZ + radius || !handSolid(s.flags))
             continue;
         // The nearest edge, and whether (x, z) is inside the footprint.
         const float* p = &points[s.first * 2];
@@ -397,6 +493,42 @@ void configurePlants(bool soft, float maxSlow) {
         LOG("Collision: plants %s (slowing you up to %.0f%%)", soft ? "let you through" : "stop you", maxSlow * 100);
 }
 
+void configureStep(bool on, float maxHeight) {
+    maxHeight = std::clamp(std::isfinite(maxHeight) ? maxHeight : 0.5f, 0.0f, 1.0f);
+    if (g_stepOn.exchange(on) != on || g_stepMax.exchange(maxHeight) != maxHeight)
+        LOG("Collision: low objects %s (up to %.2f m)", on ? "are stepped over" : "stop you", maxHeight);
+}
+
+float stepHeight(float x, float z, float ground) {
+    if (!g_stepOn.load(std::memory_order_relaxed) || !g_on.load(std::memory_order_relaxed)) {
+        g_onStep.store(false, std::memory_order_relaxed);
+        return 0;
+    }
+    takeScene();
+    const float maxUp = g_stepMax.load(std::memory_order_relaxed) + 0.1f;
+    const float r = 0.08f;  // the sole reaches a little past the point under your head
+    float top = ground;
+    for (const Shape& s : t_shapes) {
+        // Flag 4: a footprint whose finer shapes (also flag 64) are the ones you stand on.
+        if (!(s.flags & kStepOver) || (s.flags & 4) || s.y1 <= top || s.y0 > ground + 0.25f || s.y1 > ground + maxUp) continue;
+        if (x < s.minX - r || x > s.maxX + r || z < s.minZ - r || z > s.maxZ + r) continue;
+        bool in = inside(s, x, z);
+        if (!in) {
+            const float* p = &t_points[s.first * 2];
+            float best = 1e30f;
+            for (int i = 0, j = s.count - 1; i < s.count; j = i++) {
+                float cx, cz;
+                closest(x, z, p[j * 2], p[j * 2 + 1], p[i * 2], p[i * 2 + 1], cx, cz);
+                best = std::min(best, (x - cx) * (x - cx) + (z - cz) * (z - cz));
+            }
+            if (best > r * r) continue;
+        }
+        top = s.y1;
+    }
+    g_onStep.store(top > ground + 0.03f, std::memory_order_relaxed);
+    return top - ground;
+}
+
 float plantSpeed(float x, float z, float feetY) {
     if (!g_softPlants.load(std::memory_order_relaxed) || !g_on.load(std::memory_order_relaxed)) return 1;
     takeScene();
@@ -488,7 +620,7 @@ float stopHand(int side, const float target[3], const float* offsets, const floa
             std::max(w.az, w.bz) >= z0 && std::min(w.az, w.bz) <= z1)
             around.walls.push_back(&w);
     for (const Shape& s : shapes)  // flag 4: a footprint whose model's box (flag 2) is what hands meet
-        if (!(s.flags & 4) && solid(s.flags) && s.y1 >= y0 && s.y0 <= y1 && s.maxX >= x0 && s.minX <= x1 && s.maxZ >= z0 &&
+        if (!(s.flags & 4) && handSolid(s.flags) && s.y1 >= y0 && s.y0 <= y1 && s.maxX >= x0 && s.minX <= x1 && s.maxZ >= z0 &&
             s.minZ <= z1)
             around.shapes.push_back(&s);
     if (around.walls.empty() && around.shapes.empty()) {

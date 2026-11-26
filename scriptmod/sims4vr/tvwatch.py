@@ -15,6 +15,15 @@ your level, gives a small fun trickle while you are not watching it:
 watch of at least MEASURE_MINUTES game minutes), at first DEFAULT_WATCH_RATE.
 No moodlets, no skill. Game time: nothing while paused, faster at speed 3.
 
+Engine ([tv] engine, default on; docs/PASSIVE-ACTIONS.md): no watch
+interaction at all. Looking gives what the channel's watch interaction gives
+(passive_gain.py reads its tuning: fun, skill, moodlet commodities, stressed
+moodlets fading faster, its loot), at full strength; a TV on you only hear
+gives the same rates at [tv] passive_share x how well you hear it
+(passive_gain.hearing: its volume, the distance against [tv] nearby, walls and
+floors between; no skill unless [passive] nearby_skill).
+Nothing is queued, no remote, no seat. Off = the old way above.
+
 Only your Sim, only in first person (body.py starts and stops it); other
 Sims and god view keep the game's way. Switch: [tv] gaze in sims4vr.ini.
 """
@@ -80,8 +89,9 @@ def _read_settings():
         'on': native.setting_flag('tv', 'gaze', True),
         'angle': number('look_angle', 20.0),
         'grace': number('look_away', 3.0),
-        'nearby': number('nearby', 4.0),
+        'nearby': number('nearby', 10.0),
         'share': number('passive_share', 0.3),
+        'engine': native.setting_flag('tv', 'engine', True),
     }
 
 
@@ -112,6 +122,7 @@ def stop():
     if alarm is not None:
         alarms.cancel_alarm(alarm)
     _end_watch('first person ended')
+    _engine_stop('first person ended')
     _tvs[:] = []
     _screens.clear()
     _sight.clear()
@@ -192,17 +203,46 @@ def _clear_sight(sim, tv, head, screen, now):
     try:
         import routing
         import sims4.math
-        centre, normal = screen[0], screen[1]
+        centre = screen[0]
         surface = sim.routing_surface
         y = sim.position.y
-        aim = (centre[0] + normal[0] * SCREEN_CLEARANCE, centre[2] + normal[2] * SCREEN_CLEARANCE)
         origin = routing.Location(sims4.math.Vector3(head[0], y, head[2]), sims4.math.Quaternion.ZERO(), surface)
-        end = routing.Location(sims4.math.Vector3(aim[0], y, aim[1]), sims4.math.Quaternion.ZERO(), surface)
-        clear = bool(routing.ray_test(origin, end, sim.routing_context))
+        clear = False
+        for normal in (screen[1], _object_forward(tv)):  # the screen mesh's normal can point into a wall-mounted screen's wall
+            if normal is None:
+                continue
+            aim = (centre[0] + normal[0] * SCREEN_CLEARANCE, centre[2] + normal[2] * SCREEN_CLEARANCE)
+            end = routing.Location(sims4.math.Vector3(aim[0], y, aim[1]), sims4.math.Quaternion.ZERO(), surface)
+            if routing.ray_test(origin, end, sim.routing_context):
+                clear = True
+                break
     except Exception as e:
         _log('wall check failed: {!r}'.format(e))
     _sight[tv.id] = (now, clear)
     return clear
+
+
+_why_said = {}  # TV id -> (reason, time) last logged why looking at it did not count
+
+
+def _why(tv, reason):
+    """Logs (on a change, at most every 5 s per TV) why looking at a TV that is on does not count."""
+    now = time.monotonic()
+    said = _why_said.get(tv.id)
+    if said is not None and (said[0] == reason or now - said[1] < 5.0):
+        return
+    _why_said[tv.id] = (reason, now)
+    _log('{}: not watching: {}'.format(tv, reason))
+
+
+def _object_forward(obj):
+    """The object's own front (its local +Z) in the world, or None."""
+    try:
+        from sims4vr import objmenu
+        o = obj.transform.orientation
+        return objmenu._rotate((o.x, o.y, o.z, o.w), (0.0, 0.0, 1.0))
+    except Exception:
+        return None
 
 
 def _looking_at(sim, snap, now):
@@ -214,7 +254,10 @@ def _looking_at(sim, snap, now):
     best = None
     for tv in _tvs:
         try:
-            if tv.level != sim.level or _channel(tv) is None:
+            if _channel(tv) is None:
+                continue
+            if tv.level != sim.level:
+                _why(tv, 'on another level')
                 continue
             screen = _screen(tv, now)
             centre, normal = screen[0], screen[1]
@@ -222,17 +265,23 @@ def _looking_at(sim, snap, now):
             dist = math.sqrt(sum(v * v for v in d))
             if dist < 0.1 or dist > FULL_RANGE:
                 continue
-            if sum(normal[i] * d[i] for i in range(3)) > 0:
-                continue  # behind the screen
+            forward = _object_forward(tv)
+            if sum(normal[i] * d[i] for i in range(3)) > 0 and (forward is None or sum(forward[i] * d[i] for i in range(3)) > 0):
+                _why(tv, 'behind the screen')
+                continue  # behind the screen (its mesh normal and the object's own front both say so)
             cos = sum(forward[i] * d[i] for i in range(3)) / (flen * dist)
             angle = math.degrees(math.acos(max(-1.0, min(1.0, cos))))
             allowed = _settings['angle'] + math.degrees(math.atan(0.5 * max(screen[2], screen[3]) / dist))
             if angle > allowed:
+                if angle < 45:
+                    _why(tv, 'looking {:.0f} degrees off (allowed {:.0f})'.format(angle, allowed))
                 continue
             if best is not None and angle >= best[0]:
                 continue
             if _clear_sight(sim, tv, head, screen, now):
                 best = (angle, tv)
+            else:
+                _why(tv, 'a wall in the way (navmesh)')
         except Exception as e:
             _note_error('looking at {}'.format(tv), e)
     return best[1] if best else None
@@ -420,6 +469,7 @@ def _tick(_handle):
         sim = services.get_active_sim()
         if not _first_person(sim):
             _end_watch('not in first person')
+            _engine_stop('not in first person')
             return
         now = time.monotonic()
         if now - _scanned >= SCAN_EVERY:
@@ -427,12 +477,17 @@ def _tick(_handle):
             _scan()
         if not _tvs:
             _trickle(sim, None)
+            _engine_stop('no TV on the lot')
             return
         snap = native.hands()
         tv = _looking_at(sim, snap, now) if snap is not None else None
         if tv is not None:
             _looked_at = (tv, now)
         moving = _moving()
+        if _settings['engine']:
+            _end_watch('the engine watches instead')
+            _engine(sim, now, moving)
+            return
         watch = _watch
         if watch is not None:
             if watch.interaction.is_finishing or watch.interaction.has_been_canceled:
@@ -448,3 +503,63 @@ def _tick(_handle):
         _trickle(sim, None if _watch is not None else _nearby(sim))
     except Exception as e:
         _note_error('tick', e)
+
+
+# --- engine (passive_gain.py): the watch interaction's gains, no interaction ------------------
+
+ENGINE_KEY = 'tv'
+HEAR_STEP = 0.02  # strength steps for a TV you only hear (the modifier is re-placed only on a step)
+
+
+def _heard(sim, passive_gain):
+    """The TV that is on you hear best: (tv, hearing 0..1) or (None, 0); [tv] nearby = its reach at High volume."""
+    best, heard = None, 0.0
+    for tv in _tvs:
+        try:
+            if _channel(tv) is None:
+                continue
+            h = passive_gain.hearing(sim, tv, _settings['nearby'])
+            if h > heard:
+                best, heard = tv, h
+        except Exception as e:
+            _note_error('hearing {}'.format(tv), e)
+    return (best, heard) if heard >= HEAR_STEP else (None, 0.0)
+_engine_on = None  # (tv, channel, strength) last given to the engine
+
+
+def _engine(sim, now, moving):
+    """Looking (within the grace, standing still): full; else a TV on nearby: passive_share."""
+    global _engine_on
+    from sims4vr import passive_gain
+    tv = strength = None
+    looked = _looked_at
+    if looked is not None and now - looked[1] <= _settings['grace'] and not moving and _channel(looked[0]) is not None:
+        tv, strength = looked[0], 1.0
+    else:
+        tv, heard = _heard(sim, passive_gain)
+        strength = round(_settings['share'] * heard / HEAR_STEP) * HEAR_STEP if tv is not None else None
+    channel = _channel(tv) if tv is not None else None
+    if channel is None or not strength:
+        _engine_stop('no TV on near you' if tv is None else 'nothing to give')
+        return
+    state = (tv, channel, strength)
+    if state == _engine_on:
+        return
+    if _engine_on is not None and (_engine_on[0] is not tv or _engine_on[1] is not channel):
+        passive_gain.stop(ENGINE_KEY, 'other TV or channel')
+    _engine_on = state
+    passive_gain.start(ENGINE_KEY, sim, channel.affordance, tv, strength)
+    _log('{} {} ({}), strength {:.2f}'.format('watching' if strength >= 1.0 else 'TV nearby:', tv,
+                                              channel.affordance.__name__, strength))
+
+
+def _engine_stop(why):
+    global _engine_on
+    if _engine_on is None:
+        return
+    _engine_on = None
+    try:
+        from sims4vr import passive_gain
+        passive_gain.stop(ENGINE_KEY, why)
+    except Exception as e:
+        _note_error('engine stop', e)

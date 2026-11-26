@@ -202,7 +202,9 @@ static void stopFrameClock() {
 
 // Start or stop the clock with the setting (Present thread, frame lock held, session running).
 static void followFrameClock(ID3D11Device* device) {
-    const bool wanted = g_config.frameClock && !g_exitRequested;
+    // Not in Create a Sim: the clock re-sends the last pair every refresh (the game draws 28-36 a second there), turned
+    // by a stick turn CAS doesn't have; the headset showed each eye from a different send (793: right eye flicker).
+    const bool wanted = g_config.frameClock && !g_exitRequested && !camera::casActive();
     if (wanted == g_clockRunning) return;
     if (!wanted) {
         stopFrameClock();

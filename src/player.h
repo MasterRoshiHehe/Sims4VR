@@ -57,6 +57,11 @@ void configure(float walkSpeed, float runSpeed, float eyeForward, float eyeHeigh
 // First person: the game draws your body at your own height instead of snapping
 // it to the floor of the level your Sim is on ([body] keep_height).
 void setKeepHeight(bool on);
+// [body] turn_body_lazy / the right stick turned the view just now (any thread).
+void setLazyTurn(bool on);
+void noteStickTurn();
+// [body] turn_body_rate: placements a second for a standing body that turns (0 = every picture).
+void setStandRate(float perSecond);
 
 // First person: your head can't go into other Sims ([physical] head): leaning
 // into one pushes you (the player, not any Sim) back out sideways, keeping
@@ -125,6 +130,9 @@ bool pinPlace(float out[7]);
 // Any thread: where this actor is pinned right now (position, rotation xyzw);
 // false if it isn't pinned.
 bool pinnedAt(const void* actor, float out[7]);
+// Any thread (teleport.cpp): move the player so the head is over (x, z) in the world, standing on the floor at
+// height y, at the next update. The speed drops to nothing; Python moves the simulation's Sim to you as for any step.
+void teleportTo(float x, float y, float z);
 // Game thread: a body pinned somewhere it isn't yet (deferPlace) is put there
 // now. True if it had to be moved.
 bool settle(uint8_t* actor);

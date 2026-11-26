@@ -10,6 +10,8 @@
 #include "MinHook.h"
 #include "addrs.h"
 #include "camera.h"
+#include "casbody.h"
+#include "passtime.h"
 #include "log.h"
 #include "uihook.h"
 
@@ -61,8 +63,56 @@ uint64_t runStep(int part, void* a, uint64_t b, uint64_t c, uint64_t d, float se
     return r;
 }
 // Leaving FrameBegin out of the second pass crashed the game in the next job submit (v0.13.317).
-uint64_t hookedBegin(void* renderer, float seconds) { return runStep(kBegin, renderer, 0, 0, 0, seconds); }
-uint64_t hookedViews(void* a, uint64_t b, uint64_t c, uint64_t d) { return runStep(kViews, a, b, c, d); }
+// The right eye's FrameBegin rebuilds the water reflection state (0x11cefe0: which waters are active, their cameras at
+// renderer+0x68/+0x70) while the left eye's draw-lists job (SceneLists -> ListMirrors 0x11c99f0, which draws the water
+// reflections from that state) can still be running on a job thread: the left eye's lot water (the pool) was drawn
+// with the right eye's flags and camera, or not at all, so the pool differed per eye (user 2026-11-01; the mirror pass
+// copies its camera into its own stack camera and was spared). SceneViews submits that job and the game only waits
+// for it at the next SceneViews. Count the jobs submitted and finished and, in the second pass, wait for the left eye's
+// water stage before FrameBegin. Bounded: a missed count costs the time-out once, not every frame.
+double msPerTick();
+std::atomic<uint32_t> g_listsSubmitted{0};
+std::atomic<int32_t> g_listsSkew{0};
+std::atomic<uint32_t> g_waterWaits{0}, g_waterTimeouts{0};
+std::atomic<void*> g_mainScene{nullptr};
+uint64_t hookedBegin(void* renderer, float seconds) {
+    if (g_inSecond.load(std::memory_order_acquire) && g_mainScene.load(std::memory_order_relaxed) != renderer) {
+        g_mainScene.store(renderer, std::memory_order_relaxed);  // only the main view is drawn twice
+        passtime::setMainScene(renderer);
+        g_listsSkew.store(1);  // the first left pass's lists job was not counted (a time-out corrects a wrong guess)
+    }
+    if (renderer && renderer == g_mainScene.load(std::memory_order_relaxed)) {
+        // Every main-view FrameBegin: the right eye's (left eye's job) and the next frame's left eye (right eye's job).
+        const uint32_t want = g_listsSubmitted.load(std::memory_order_acquire) + static_cast<uint32_t>(g_listsSkew.load());
+        const int64_t start = ticks();
+        if (static_cast<int32_t>(passtime::waterDone() - want) < 0) {
+            g_waterWaits.fetch_add(1, std::memory_order_relaxed);
+            while (static_cast<int32_t>(passtime::waterDone() - want) < 0) {
+                if ((ticks() - start) * msPerTick() > 8.0) {
+                    g_waterTimeouts.fetch_add(1, std::memory_order_relaxed);
+                    g_listsSkew.fetch_add(static_cast<int32_t>(passtime::waterDone() - want));
+                    break;
+                }
+                YieldProcessor();
+            }
+        }
+        static bool logged = false;
+        if (!logged) {
+            logged = true;
+            LOG("Single view: the main view waits for the previous water reflection stage before rebuilding it");
+        }
+    }
+    const uint64_t r = runStep(kBegin, renderer, 0, 0, 0, seconds);
+    passtime::noteFrameBegin(renderer, g_inSecond.load(std::memory_order_acquire) ? 1 : 0);
+    return r;
+}
+uint64_t hookedViews(void* a, uint64_t b, uint64_t c, uint64_t d) {
+    // SceneViews returns early (no draw lists) when its third argument is 0 and renderer+0x6d6 is not 0xff.
+    const bool lists = (c & 0xff) != 0 || (a && *(reinterpret_cast<uint8_t*>(a) + 0x6d6) == 0xff);
+    const uint64_t r = runStep(kViews, a, b, c, d);
+    if (lists && a == g_mainScene.load(std::memory_order_relaxed)) g_listsSubmitted.fetch_add(1, std::memory_order_release);
+    return r;
+}
 uint64_t hookedLists(void* a, uint64_t b, uint64_t c, uint64_t d) { return runStep(kLists, a, b, c, d); }
 
 std::atomic<bool> g_probe{false};
@@ -81,6 +131,8 @@ const double g_msPerTick = [] {
     QueryPerformanceFrequency(&f);
     return 1000.0 / static_cast<double>(f.QuadPart);
 }();
+
+double msPerTick() { return g_msPerTick; }
 
 // Main thread only.
 struct Sums {
@@ -120,6 +172,9 @@ void log(const Sums& s, double seconds) {
             "out part %d %u times; in second passes %u shadow fits, %u culls",
             seconds, n ? parts : "none", g_secondSkip.load(), g_skipped.exchange(0), secondFits, secondCulls);
     }
+    LOG("Single view: the water state was put back %u times (last %.0f s)", passtime::stateRestores(), seconds);
+    LOG("Single view: the right eye waited for the water stage %u times, %u timed out (last %.0f s)",
+        g_waterWaits.exchange(0), g_waterTimeouts.exchange(0), seconds);
     LOG("Single view (last %.0f s, %d frames, %.1f a second): scene render %.2f ms on the main thread (worst %.1f); "
         "second pass %d frames, %.2f ms (worst %.1f); main frame every %.1f ms (worst %.0f); %.2f pictures, room "
         "culls %.2f main / %.2f other views a frame; UI drawn %u times (%u in second passes)",
@@ -151,15 +206,31 @@ void hookedScene(void* renderer, const void* viewport, float seconds) {
     const int64_t start = ticks();
     // Both real eyes every frame (camera::setBothEyes): the left eye, then the right eye from the
     // same place with no time step, so both pictures show the same moment.
+    camera::casFeedScene(renderer);
     const bool both = camera::beginBoth();
+    if (camera::casActive()) casbody::newFrame();  // the CAS body: one for this frame's passes, both eyes (casbody.h)
     g_scene(renderer, viewport, seconds);
+    if (camera::casActive()) camera::notePass(0);
     const int64_t mid = ticks();
     if (both && camera::secondEye()) {
         uihook::beginSecondPass();
         g_inSecond.store(true, std::memory_order_release);
         g_scene(renderer, viewport, 0.0f);
         g_inSecond.store(false, std::memory_order_release);
+        if (camera::casActive()) camera::notePass(1);
         uihook::endSecondPass();
+        // A photo session: a third pass from the phone's lens (the picture for the phone's glass).
+        if (camera::photoSession() && camera::thirdEye()) {
+            uihook::beginSecondPass();
+            uihook::setLensPass(true);
+            camera::setInLensPass(true);
+            g_inSecond.store(true, std::memory_order_release);
+            g_scene(renderer, viewport, 0.0f);
+            g_inSecond.store(false, std::memory_order_release);
+            camera::setInLensPass(false);
+            uihook::setLensPass(false);
+            uihook::endSecondPass();
+        }
         const double ms = (ticks() - mid) * g_msPerTick;
         ++g_sums.doubled;
         g_sums.second += ms;

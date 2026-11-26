@@ -200,11 +200,17 @@ void write(const Job& job) {
         HRESULT menuError = S_OK;
         menu = writeJpeg(factory, g_dir + L"\\" + name + L"_menu.jpg", bgr, m.width / 2, m.height / 2, menuError);
     }
-    if (saved)
-        LOG("Screenshot: saved %ls\\%ls.jpg (%dx%d, %s)%s | local %04u-%02u-%02u %02u:%02u:%02u | %s", g_dir.c_str(),
+    if (saved) {
+        // The mark carries the numbers behind the picture: the last decision lines, and the flight recorder's last
+        // seconds go to sims4vr_trace_<n>.log (docs/LOGGING-PROPOSAL.md).
+        const std::string why = s4vr::log::recentWhy(5);
+        LOG("Screenshot: saved %ls\\%ls.jpg (%dx%d, %s)%s | local %04u-%02u-%02u %02u:%02u:%02u | %s%s%s", g_dir.c_str(),
             name.c_str(), width, height, eyes ? "left and right eye" : "the screen",
             menu ? ", the menu layer in _menu.jpg" : "", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond,
-            job.state.c_str());
+            job.state.c_str(), why.empty() ? "" : " | why: ", why.c_str());
+        s4vr::camera::logWaterSnapshot();
+        s4vr::log::dumpTrace("mark", true);
+    }
     else
         LOG("Screenshot: couldn't write %ls\\%ls.jpg (0x%08lx)", g_dir.c_str(), name.c_str(),
             static_cast<unsigned long>(error));

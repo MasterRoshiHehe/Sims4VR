@@ -546,6 +546,33 @@ def _unwelcome(interaction, source):
     return hint.leaves_you_alone(other, you)
 
 
+VIOLENT_WORDS = ('kick', 'punch', 'groin', 'crotch', 'slap', 'fight', 'assault', 'violen', 'stab', 'shoot',
+                 'strangle', 'choke', 'murder', 'headbutt', 'tackle', 'pummel', 'brawl', 'smack', 'wrestl', 'bully',
+                 'shove')  # not 'attack' (heart attack), 'knee' (kneel), 'rob', 'beat', 'harm' (charm)
+
+
+def _violent(interaction, source):
+    """Your Sim, in first person, made to hit or hurt someone by anything but you (user 2026-10-29: it kicked
+    someone in the groin on its own through a violence mod). Only your own picks (pie menu, or a script
+    push that carries your intent) may be violent; autonomy, reactions and other mods' script pushes may not.
+    Judged by the interaction's names (tuning, class, module), so another mod's interactions are caught too."""
+    from interactions.context import InteractionSource
+    if source in (InteractionSource.PIE_MENU, InteractionSource.SCRIPT_WITH_USER_INTENT):
+        return False
+    aff = getattr(interaction, 'affordance', None)
+    names = []
+    for obj in (interaction, aff):
+        if obj is None:
+            continue
+        for t in (type(obj), obj):
+            for attr in ('__name__', '__qualname__', '__module__'):
+                value = getattr(t, attr, None)
+                if isinstance(value, str):
+                    names.append(value)
+    text = ' '.join(names).lower()
+    return any(word in text for word in VIOLENT_WORDS)
+
+
 def _errand(interaction, source):
     """A script push that would send your Sim to something (see the module text)."""
     from interactions.context import InteractionSource
@@ -584,11 +611,17 @@ def _wrap_queue_append():
     def append(original, self, interaction, *args, **kwargs):
         why = None
         unwelcome = False
+        blocked_violence = False
         try:
             context = getattr(interaction, 'context', None)
             source = getattr(context, 'source', None)
             _picked_on_sim(interaction, source)
-            if native.setting_flag('body', 'socials_in_place', True) and _unwelcome(interaction, source):
+            if _first_person(getattr(interaction, 'sim', None)) and native.setting_flag('body', 'no_auto_violence', True) \
+                    and _violent(interaction, source):
+                unwelcome = False
+                why = 'violent (source {}), only you may choose that'.format(getattr(source, 'name', source))
+                blocked_violence = True
+            elif native.setting_flag('body', 'socials_in_place', True) and _unwelcome(interaction, source):
                 unwelcome = True
             elif _first_person(getattr(interaction, 'sim', None)) and _emote(interaction, source) and \
                     native.setting_flag('body', 'reactions_in_place', True):
@@ -606,7 +639,7 @@ def _wrap_queue_append():
                 if why is None and _first_person(getattr(interaction, 'sim', None)) and \
                         _errand(interaction, source) and native.setting_flag('body', 'no_errands', True):
                     why = 'that the game sent it to'
-            if why is not None and (not getattr(interaction, 'is_super', False) or _is_social(interaction)
+            if why is not None and not blocked_violence and (not getattr(interaction, 'is_super', False) or _is_social(interaction)
                                     or not _first_person(getattr(interaction, 'sim', None))):
                 why = None  # mixers, someone else's social with you, other Sims
         except Exception as e:

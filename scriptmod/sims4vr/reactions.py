@@ -87,6 +87,11 @@ RESET_SETTLE = 0.3  # seconds after a reset before the reaction is pushed
 SETTLE = 0.75
 _stopped_at = {}  # sim id -> time of its last hard stop
 _later = []  # {'npc', 'run', 'why', 'until'}: pushes held until the Sim settles
+_timers = []  # (when, fn): bodygrab's follow-ups after a head hit's first reaction
+
+
+def after(seconds, fn):
+    _timers.append((time.monotonic() + max(0.0, seconds), fn))
 _logs = 0
 _errors = 0
 _why_not = ''
@@ -467,7 +472,7 @@ def _moodlets(you, npc, c, hit, hits):
         return
     traits, mood = c['traits'], c['mood']
     you_name = you.sim_info.first_name
-    what = 'Yanked' if c['how'] == 'pull' and hit else 'Hit' if c['hard'] else 'Slapped' if hit else \
+    what = 'Shoved' if c['how'] == 'shove' and hit else 'Yanked' if c['how'] == 'pull' and hit else 'Hit' if c['hard'] else 'Slapped' if hit else \
         'Groped' if c['intimate'] else 'Touched'
     reason = '{} by {}'.format(what, you_name)
     close = c['friend'] >= 0.4 or c['love'] >= 0.4 or c['family']
@@ -648,6 +653,13 @@ def tick(you):
             _run_stops()
         except Exception as e:
             _error('stops', e)
+    if _timers:
+        for entry in [e for e in _timers if e[0] <= now]:
+            _timers.remove(entry)
+            try:
+                entry[1]()
+            except Exception as e:
+                _error('follow-up', e)
     if _later:
         try:
             _run_later()

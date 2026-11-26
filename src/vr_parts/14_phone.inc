@@ -23,6 +23,11 @@ static void phoneOpen(int hand) {
     g_phoneHand = hand;
     g_phoneAsleep = true, g_phoneWokeAt = 0, g_phoneSleptAt = 0;
     hud::setPhoneAsleep(true);
+    if (hud::phoneCallMode() != 0 && hand >= 0) {
+        // A call is on: the phone comes out with its screen on, showing it (user 2026-10-28).
+        g_phoneAsleep = false, g_phoneWokeAt = GetTickCount64();
+        hud::setPhoneAsleep(false);
+    }
     g_phoneAwayAt = 0;
     g_tablet = g_buildBuy && g_config.tablet;
     g_phone.solid = g_tablet;
@@ -204,6 +209,8 @@ static void updatePhone(const armik::Hand& hand, int side) {
     }
     if (g_optionsReadyAt && now - g_optionsReadyAt >= kScreenDim) g_optionsShown = true;
     const bool app = g_phoneOut && !g_tablet && (!g_phoneOptions || !g_optionsShown || g_optionsFront);
+    phone3d::setFlashlight(g_phoneOut && !g_tablet && !g_sims1Phone.on, g_config.flashBrightness, g_config.flashFill,
+                           g_config.flashRange, g_config.flashCone);
     float dim = 0;  // phone3d: black over the glass
     if (g_optionsReadyAt) {
         const float t = static_cast<float>(now - g_optionsReadyAt);
@@ -220,6 +227,14 @@ static void updatePhone(const armik::Hand& hand, int side) {
     }
     // A photo session with the phone out: its screen is the viewfinder, the picture from the phone's back (18_stereo.inc).
     const bool photoView = app && camera::photoSession() && viewfinderReady();
+    {
+        static int lastView = -1, viewLogs = 0;
+        if (lastView != (photoView ? 1 : 0) && camera::photoSession() && viewLogs++ < 40) {
+            LOG("Photo: phone screen %s (app %d, viewfinder %s, last picture %llu ms ago)", photoView ? "shows the viewfinder" : "back to the menu",
+                app, g_viewfinder ? "yes" : "none", g_viewfinderAt ? static_cast<unsigned long long>(GetTickCount64() - g_viewfinderAt) : 0ULL);
+        }
+        lastView = photoView ? 1 : 0;
+    }
     D3D11_TEXTURE2D_DESC ui{};
     if (photoView) {
         ui = g_viewfinderDesc;
@@ -312,6 +327,36 @@ static void updatePhone(const armik::Hand& hand, int side) {
         x = f.up;
         y2 = {-f.right.x, -f.right.y, -f.right.z};
         z2 = {-f.ahead.x, -f.ahead.y, -f.ahead.z};
+    }
+    if (g_tablet && g_config.tabletSteady > 0) {
+        // Weight: the tablet's pose is filtered, the more the slower it moves (a shaky hand is smoothed, a quick
+        // move follows), so build mode doesn't feel floaty (user 2026-10-29).
+        static XrVector3f fc{};
+        static XrQuaternionf fq{0, 0, 0, 1};
+        static ULONGLONG fAt = 0;
+        const XrQuaternionf raw = fromAxes(x, y2, z2);
+        const float dt = fAt ? static_cast<float>(now - fAt) / 1000.0f : 1.0f;
+        if (!fAt || dt > 0.25f) {
+            fc = centre, fq = raw;
+        } else if (dt > 0) {
+            XrVector3f d = sub3(centre, fc);
+            const float speed = std::sqrt(dot3(d, d)) / dt;  // m/s
+            float dotq = raw.x * fq.x + raw.y * fq.y + raw.z * fq.z + raw.w * fq.w;
+            const float turn = 2 * std::acos(std::min(1.0f, std::fabs(dotq))) / dt;  // rad/s
+            const float tau = g_config.tabletSteady * 0.3f / (1 + speed / 0.15f + turn / 1.2f);
+            const float a = tau > 1e-4f ? 1 - std::exp(-dt / tau) : 1.0f;
+            fc = {fc.x + d.x * a, fc.y + d.y * a, fc.z + d.z * a};
+            const float sg = dotq < 0 ? -1.0f : 1.0f;
+            XrQuaternionf n{fq.x + (raw.x * sg - fq.x) * a, fq.y + (raw.y * sg - fq.y) * a, fq.z + (raw.z * sg - fq.z) * a,
+                            fq.w + (raw.w * sg - fq.w) * a};
+            const float l = std::sqrt(n.x * n.x + n.y * n.y + n.z * n.z + n.w * n.w);
+            if (l > 1e-6f) fq = {n.x / l, n.y / l, n.z / l, n.w / l};
+        }
+        fAt = now;
+        centre = fc;
+        x = rotate3(fq, {1, 0, 0});
+        y2 = rotate3(fq, {0, 1, 0});
+        z2 = rotate3(fq, {0, 0, 1});
     }
     XrQuaternionf facing = fromAxes(x, y2, z2);
     g_phoneBodyPose = {facing, centre};
@@ -411,10 +456,10 @@ static void updatePhone(const armik::Hand& hand, int side) {
         }
     }
     if (photoView) {
-        hideTray();
+        placeTray(p3, menuCentre, x, y2, z2, menuW, menuH);  // the camera app's buttons over the picture (hud_buildtray.inc)
         p3.wallpaper = false;
         p3.edges = false;
-        phone3d::setPhone(p3, g_viewfinder);
+        phone3d::setPhone(p3, g_viewfinder, hud::texture());
         g_phone.active = false;
         g_phone.armed[0] = g_phone.armed[1] = false;
         g_phone.pressing = -1;

@@ -10,16 +10,24 @@ This module (docs/PASSIVE-OBJECTS.md):
   (the objects that score on you, the leading mood, positive/negative score)
   whenever it changes, so every case can be checked in sims4vr_python.log
   ("passive: ..."). Switch [passive] log.
-- Music: a stereo that plays (its StereoChannel state is not off) in your room
-  or within [passive] music_range metres on your level gives a little fun,
+- Music: a stereo that plays (its StereoChannel state is not off) that
+  you can hear gives a little fun, scaled by how well you hear it
+  (passive_gain.hearing: volume state, distance against [passive] music_range, walls, floors),
   [passive] music_rate per game minute, the way the TV trickle in tvwatch.py
   does for a TV. The game gives nothing for only being near a playing stereo.
   Switch [passive] music.
+- Engine ([passive] music_engine, default on; docs/PASSIVE-ACTIONS.md): instead
+  of that flat fun, what the stereo's own listen interaction gives
+  (passive_gain.py: fun, the music moodlet commodity, Music Lover need...) at
+  strength = how well you hear it. Dancing in real life to it (native.dance,
+  dance.cpp: head bob + hands moving to a beat, not walking; [dance] energy,
+  full_energy, rhythm, hearing) gives the stereo's dance interaction instead
+  (fun, Dancing skill, Dance Fever...) at strength = how well you dance.
+  Nothing is queued or animated.
 
 Only your Sim, only in first person (body.py starts and stops it). Nothing is
 pushed onto your Sim: no interaction, no walking. Switch: [passive] on.
 """
-import math
 
 import alarms
 import clock
@@ -90,6 +98,9 @@ def stop():
         alarms.cancel_alarm(alarm)
     _stereos[:] = []
     _last_probe = _music_at = _music_obj = None
+    _engine_stop('first person ended')
+    _listen_cache.clear()
+    _failed.clear()
 
 
 # --- the game's own effects (probe) ---------------------------------------------------
@@ -161,24 +172,18 @@ def _room(position, level):
         return 0
 
 
-def _music_near(sim, state, reach):
-    p = sim.position
-    room = None
+def _loudest(sim, state):
+    """The playing stereo you hear best: (obj, hearing 0..1) or (None, 0)."""
+    best, heard = None, 0.0
     for obj in _stereos:
         try:
-            if obj.level != sim.level or not _playing(obj, state):
-                continue
-            t = obj.position
-            if math.hypot(t.x - p.x, t.z - p.z) <= reach:
-                return obj
-            if room is None:
-                room = _room(p, sim.level)
-            if room and _room(t, obj.level) == room:
-                return obj
+            if _playing(obj, state):
+                h = _heard(sim, obj)
+                if h > heard:
+                    best, heard = obj, h
         except Exception as e:
             _note_error('music near {}'.format(obj), e)
-    return None
-
+    return (best, heard) if heard >= 0.02 else (None, 0.0)
 
 def _fun():
     global _fun_type
@@ -199,15 +204,19 @@ def _fun():
 def _music(sim):
     global _music_at, _music_obj
     state = _stereo_state()
-    obj = _music_near(sim, state, _number('music_range', 6.0)) if state is not None and _stereos else None
+    obj, heard = _loudest(sim, state) if state is not None and _stereos else (None, 0.0)
     if obj is None:
         if _music_obj is not None:
             _log('no music playing nearby: it stops')
         _music_at = _music_obj = None
+        _engine_stop('no music you can hear')
         return
     if obj is not _music_obj:
-        _log('music from {} ({:.2f} fun a game minute)'.format(obj, _number('music_rate', 0.15)))
+        _log('music from {} (heard {:.0%})'.format(obj, heard))
         _music_obj = obj
+    if native.setting_flag('passive', 'music_engine', True) and _engine_music(sim, obj, state, heard):
+        _music_at = None
+        return
     now = services.time_service().sim_now.absolute_minutes()
     if _music_at is None or now < _music_at:
         _music_at = now
@@ -218,7 +227,144 @@ def _music(sim):
     _music_at = now
     fun = _fun()
     if fun is not None:
-        sim.commodity_tracker.add_value(fun, _number('music_rate', 0.15) * min(minutes, 60.0))
+        sim.commodity_tracker.add_value(fun, _number('music_rate', 0.15) * heard * min(minutes, 60.0))
+
+
+# --- engine (passive_gain.py): the stereo's own listen / dance interaction, no interaction --------
+
+HEAR_STEP = 0.02
+_listen_cache = {}  # (object id, channel) -> (listen affordance, dance affordance) or None
+_engine_keys = set()
+_failed = set()  # (object id, affordance) the engine could not use
+_dance_ticks = 0  # + consecutive ticks that look like dancing, - that don't
+_dancing = False
+
+
+def _choices(sim, obj, channel):
+    """(listen affordance, dance affordance) of the stereo on this channel, as the game offers them."""
+    key = (obj.id, getattr(channel, 'guid64', id(channel)))
+    if key in _listen_cache:
+        return _listen_cache[key]
+    listen = dance = None
+    try:
+        from interactions.context import InteractionContext
+        from interactions.priority import Priority
+        from objects.components.types import STEREO_COMPONENT
+        from objects.electronics.stereo import CancelOnStateChangeInteraction
+        context = InteractionContext(sim, InteractionContext.SOURCE_PIE_MENU, Priority.Low)
+        component = obj.get_component(STEREO_COMPONENT)
+        if component is not None:
+            for aop in component.component_potential_interactions_gen(context):
+                if aop.test(context):
+                    listen = (aop.affordance, dict(aop._kwargs))
+                    break
+        for affordance in obj.super_affordances(context):
+            if not (isinstance(affordance, type) and issubclass(affordance, CancelOnStateChangeInteraction)):
+                continue
+            if 'dance' not in affordance.__name__.lower():
+                continue
+            for aop in affordance.potential_interactions(obj, context, required_station=channel):
+                if aop.test(context):
+                    dance = (aop.affordance, dict(aop._kwargs))
+                    break
+            if dance:
+                break
+        _log('{} on {}: listen {}, dance {}'.format(obj, getattr(channel, '__name__', channel),
+             listen[0].__name__ if listen else None, dance[0].__name__ if dance else None))
+    except Exception as e:
+        _note_error('choices of {}'.format(obj), e)
+    _listen_cache[key] = (listen, dance)
+    return listen, dance
+
+
+def _dance_level():
+    """0..1 from your real body (native.dance: dance.cpp), with [dance] energy / rhythm; 0 when walking."""
+    d = native.dance()
+    if not d or d[3]:
+        return 0.0
+    energy, rhythm = d[0], d[1]
+    start = max(0.01, _dnumber('energy', 0.25))
+    full = max(start + 0.05, _dnumber('full_energy', 0.7))
+    min_rhythm = _dnumber('rhythm', 0.35)
+    if energy < start or rhythm < min_rhythm:
+        return 0.0
+    e = min(1.0, (energy - start) / (full - start))
+    r = min(1.0, (rhythm - min_rhythm) / max(0.05, 1.0 - min_rhythm) * 2.0)
+    return max(0.1, e * r)
+
+
+def _dnumber(key, default):
+    try:
+        return float(native.setting('dance', key, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _engine_music(sim, obj, state, heard):
+    """Listening (strength = how well you hear it), or dancing to it (strength = how you dance). True if handled."""
+    global _dance_ticks, _dancing
+    from sims4vr import passive_gain
+    try:
+        channel = obj.get_state(state)
+    except Exception:
+        return False
+    listen, dance = _choices(sim, obj, channel)
+    level = _dance_level() if dance and native.setting_flag('dance', 'on', True) and heard >= _dnumber('hearing', 0.3) else 0.0
+    _dance_ticks = (max(_dance_ticks, 0) + 1) if level > 0 else (min(_dance_ticks, 0) - 1)
+    if not _dancing and _dance_ticks >= 2:
+        _dancing = True
+        _log('you dance to {} (level {:.2f}, {})'.format(obj, level, native.dance()))
+    elif _dancing and _dance_ticks <= -2:
+        _dancing = False
+        _log('you stopped dancing')
+    if _dancing and dance:
+        _engine_stop('dancing instead', only='music')
+        strength = max(0.1, round(level / 0.1) * 0.1) if level > 0 else 0.1
+        if passive_gain.start('dance', sim, dance[0], obj, min(1.0, strength), **dance[1]):
+            _engine_keys.add('dance')
+        return True
+    _engine_stop('not dancing', only='dance')
+    if not listen:
+        return False
+    strength = round(heard / HEAR_STEP) * HEAR_STEP
+    if strength <= 0:
+        _engine_stop('too quiet', only='music')
+        return True
+    failed = (obj.id, listen[0])
+    if failed in _failed:
+        return False
+    if passive_gain.start('music', sim, listen[0], obj, min(1.0, strength), **listen[1]):
+        _engine_keys.add('music')
+        return True
+    if 'music' in _engine_keys:
+        return True  # it ended on its own (fun full): no trickle either, as the game's listen would have stopped
+    _failed.add(failed)  # the engine could not read it: the old trickle for this stereo
+    return False
+
+
+def _engine_stop(why, only=None):
+    global _dancing, _dance_ticks
+    keys = [only] if only else list(_engine_keys)
+    for key in keys:
+        if key in _engine_keys:
+            _engine_keys.discard(key)
+            try:
+                from sims4vr import passive_gain
+                passive_gain.stop(key, why)
+            except Exception as e:
+                _note_error('engine stop', e)
+    if only is None:
+        _dancing, _dance_ticks = False, 0
+
+
+def _heard(sim, obj):
+    """How well you hear the stereo (passive_gain.hearing: volume, distance against music_range, walls)."""
+    try:
+        from sims4vr import passive_gain
+        return passive_gain.hearing(sim, obj, _number('music_range', 12.0))
+    except Exception as e:
+        _note_error('hearing', e)
+        return 1.0
 
 
 @native.timed('passive tick', 0.006)
@@ -227,6 +373,8 @@ def _tick(_handle):
     try:
         sim = services.get_active_sim()
         if not _first_person(sim):
+            if _engine_keys:
+                _engine_stop('not in first person')
             return
         _ticks += 1
         if native.setting_flag('passive', 'log', True):
@@ -236,5 +384,7 @@ def _tick(_handle):
             if state is not None and (_ticks % SCAN_EVERY == 1 or not _stereos and _ticks < 3):
                 _scan(state)
             _music(sim)
+        elif _engine_keys:
+            _engine_stop('music switched off')
     except Exception as e:
         _note_error('tick', e)

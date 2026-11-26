@@ -129,6 +129,11 @@ def _arb_seen(obj, op):
 def _tell():
     global _covered
     covered = _faded or _switch is not None or _stick is not None
+    try:
+        from sims4vr import trail
+        covered = covered or trail.riding()  # the ride in an elevator keeps the eyes shut
+    except Exception:
+        pass
     if covered != _covered:
         _covered = covered
         native.set_eyes_covered(covered)

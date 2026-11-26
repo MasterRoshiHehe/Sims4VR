@@ -246,6 +246,7 @@ def _waved_at(you, head, forward, palm, near=0.3, far=MAX_DISTANCE, limit=MAX_AN
 
 
 def _wave_back(you, npc):
+    _unfreeze(npc, 'act')
     from event_testing.resolver import DoubleSimResolver
     from interactions.utils.loot import LootOperationList
     loot = services.get_instance_manager(sims4.resources.Types.ACTION).get(WAVE_LOOT)
@@ -352,7 +353,17 @@ def _expire_nods(now):
                 _drop_nod(npc, 'no walk played it within {:.0f} s'.format(NOD_WAIT))
 
 
+def _unfreeze(npc, kind):
+    """A Sim frozen in the Body Physics app: let the gesture's action through (physapp.thaw freezes her again after)."""
+    try:
+        from sims4vr import physapp
+        physapp.thaw(npc, kind)
+    except Exception as e:
+        _error('thaw', e)
+
+
 def _call_over(you, npc, now):
+    _unfreeze(npc, 'act')
     from interactions.context import InteractionContext, InteractionSource, QueueInsertStrategy
     from interactions.priority import Priority
     affordance = services.get_instance_manager(sims4.resources.Types.INTERACTION).get(GO_NEAR)
@@ -540,6 +551,7 @@ def _follow_react(you, npc, anim):
 
 def _start_follow(npc, side, distance, angle, what):
     from sims4vr import follow
+    _unfreeze(npc, 'follow')
     name = npc.sim_info.first_name
     try:
         _nod_on_walk(npc, time.monotonic(), 'as they start following you')

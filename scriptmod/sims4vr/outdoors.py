@@ -284,7 +284,7 @@ def update(px, py, pz, surface):
             return
         heard, way = _through(zone, block, level, px, pz, fade, _number('open_door', 1.0, 0, 1),
                               _number('closed_door', 0.35, 0, 1))
-        native.outdoors(heard, walls)
+        native.outdoors(heard, walls, 1 if level < 0 else 0)  # a basement hears less of the outdoors
         if now - _last_log > 10.0:
             _last_log = now
             _log('in room {} on level {}: {:.2f} of the outdoors comes in{}'.format(

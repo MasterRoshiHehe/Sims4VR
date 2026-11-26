@@ -62,6 +62,7 @@ struct LaserEnd {
     int pickType = 0;  // what it ends on (0: nothing, as far as it goes)
     uint64_t objectId = 0;
     uint64_t tick = 0;  // GetTickCount64 of the answer
+    float point[3] = {};  // where it ends, world units (influence.py: the Sim looks there)
 };
 LaserEnd laserEnd();
 

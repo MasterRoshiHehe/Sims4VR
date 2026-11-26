@@ -3,15 +3,16 @@
 #   tools/release.sh [--thread NAME] [--dry-run] [--no-dll] [--allow-dirty]
 #   --dry-run     checks + packaging into release/.dry/ (no version claimed, no tag, no commit needed)
 #   --no-dll      skip the CMake build, reuse the DLL/exe files of the newest release
+#   --public      public release: debug menu "Developer options" default off (dev builds: on)
 #   --allow-dirty build even with uncommitted changes (the version line then says "+dirty")
 # Env: PY37 (Python 3.7 for the .ts4script; default python3.7 / python3), BUILD_DIR (default build-release).
 # Fresh container: bash tools/setup-toolchain.sh first (restores Python 3.7, mingw, cached deps; release.sh sources tools/toolchain/env.sh).
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
-THREAD=""; DRY=0; NODLL=0; DIRTY=0
+THREAD=""; DRY=0; NODLL=0; DIRTY=0; PUBLIC=OFF
 while [ $# -gt 0 ]; do case "$1" in
-  --thread) THREAD="$2"; shift;; --dry-run) DRY=1;; --no-dll) NODLL=1;; --allow-dirty) DIRTY=1;;
+  --thread) THREAD="$2"; shift;; --dry-run) DRY=1;; --no-dll) NODLL=1;; --allow-dirty) DIRTY=1;; --public) PUBLIC=ON;;
   *) echo "unknown option $1" >&2; exit 2;; esac; shift; done
 
 REL="$ROOT/release"; mkdir -p "$REL"
@@ -66,7 +67,7 @@ else
     [ -d "$B/openxr_loader" ] || { mkdir -p "$B"; cp -r "$S4VR_DEPS/openxr_loader" "$B/"; cp "$S4VR_DEPS"/openxr_loader_windows-*.zip "$B/"; }
   fi
   cmake -S . -B "$B" $DEPS -DCMAKE_TOOLCHAIN_FILE="$ROOT/tools/mingw-toolchain.cmake" -DCMAKE_BUILD_TYPE=Release \
-        -DS4VR_BUILD_VERSION="$VER" -DS4VR_BUILD_COMMIT="$COMMIT" >/dev/null
+        -DS4VR_BUILD_VERSION="$VER" -DS4VR_BUILD_COMMIT="$COMMIT" -DS4VR_PUBLIC="$PUBLIC" >/dev/null
   cmake --build "$B" -j"$(nproc)" --target sims4vr
   cp "$B"/package/sims4vr/*.dll "$B"/package/sims4vr/*.exe "$B"/package/sims4vr/*.package "$PKG/" 2>/dev/null || true
   cp "$B/sims4vr.map" "$OUT/"
@@ -81,6 +82,8 @@ fi
 cp config/sims4vr.ini "$PKG/sims4vr.ini"
 # The user's own touch sounds (foleyaudio.cpp), local only (sounds/ is not in git).
 [ -d sounds ] && cp -r sounds "$PKG/sounds"
+# Ringtones ship as the converted WAVs only (the DLL reads sounds\ringtones\*.wav, name order: bustin, outin).
+[ -d "$PKG/sounds/ringtones" ] && rm -f "$PKG/sounds/ringtones/"*.mp3
 
 # 5. CHANGES.txt from the commits since the previous build, then tag.
 { echo "sims4vr v$VER  commit $COMMIT  thread: ${THREAD:-?}  $(date -u +%FT%TZ)"

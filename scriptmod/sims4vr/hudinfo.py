@@ -38,6 +38,7 @@ _sent = [None] * 5
 _queue_ids = []  # interaction ids, in the order the DLL shows them
 _badge_ids = []  # per queue button, its side action's interaction id (0 none)
 _want_whims = []  # the whims of the wants shown, in order
+need_commodities = []  # the commodities of the needs shown, in order (needclick.py)
 _icon_types = {}  # icon instance -> resource type
 _waiting = {}  # icon instance -> when first asked (still being looked up)
 _found_log = []  # the first icons found (logged)
@@ -92,12 +93,14 @@ def _needs(sim_info, texts):
     if not order:
         order = sorted(commodities, key=operator.attrgetter('ui_sort_order'))
     items = []
+    del need_commodities[:]
     for commodity in order:
         if not commodity.visible:
             continue
         stat = sim_info.commodity_tracker.get_statistic(commodity)
         if not stat or not stat.is_visible_commodity():
             continue
+        need_commodities.append(commodity)
         value = stat.get_value()
         low, high = stat.min_value, stat.max_value
         fraction = (value - low) / (high - low) if high > low else 0
@@ -457,15 +460,37 @@ def _send(kind, items):
             native._log('hudinfo: {} {}'.format(('needs', 'moodlets', 'queue', 'wants', 'queue badges')[kind], len(items)))
 
 
-def _icons():
+_burst_until = 0.0
+
+
+def icons_now(seconds=1.5):
+    """pie.py, a pie menu just sent: its icons read now (up to 16 at once, and 8 a tick for a moment) instead of
+    two a tick, so they are there when the pie shows (user 2026-11-01: slower than the vanilla pie)."""
+    global _burst_until
+    _burst_until = time.monotonic() + seconds
+    try:
+        _icons(16)
+    except Exception as e:
+        native._log('hudinfo: icons_now failed: {!r}'.format(e))
+
+
+def _icons(limit=2):
     """Reads the icons the DLL still needs (a couple a tick) and hands them over."""
     from sims4vr import objmenu
     wanted = native.hud_missing_icons()
     if not wanted:
         return
     now = time.monotonic()
-    for k in range(min(2, len(wanted) // 8)):
+    if limit == 2 and now < _burst_until:
+        limit = 8
+    for k in range(min(limit, len(wanted) // 8)):
         instance = struct.unpack_from('<Q', wanted, 8 * k)[0]
+        try:
+            from sims4vr import photowatch
+            if instance in photowatch._owned:  # the Photos app's pictures (photowatch.py reads those itself)
+                continue
+        except Exception:
+            pass
         found = native.resource_bytes(_icon_types.get(instance, 0), instance)
         if found is None:
             return

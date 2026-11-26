@@ -615,6 +615,24 @@ def sims_forever():
     finish(img, inner, 'sims_forever')
 
 
+def sound_control():
+    """Home > Extended Sound Control: a speaker with sound waves and level bars on a blue tile."""
+    img, inner = tile((165, 225, 255), (45, 105, 205), (25, 60, 130, 255))
+    for k, h in enumerate((40, 70, 52)):  # level bars in the lower right corner
+        x = 330 + k * 40
+        tinted(img, mask_of(lambda d, x=x, h=h: d.rounded_rectangle((x, 440 - h, x + 24, 440), radius=10, fill=255)), (25, 65, 140))
+    for k, r in enumerate((95, 150, 205)):  # waves
+        w = mask_of(lambda d, r=r: d.arc((250 - r, 245 - r, 250 + r, 245 + r), -42, 42, fill=255, width=26))
+        shadow(img, w, alpha=50)
+        fill(img, w, (255, 255, 255), (210, 232, 250), 90, shade=False)
+    spk = mask_of(lambda d: (d.rounded_rectangle((70, 195, 150, 295), radius=18, fill=255),
+                             d.polygon([(130, 190), (235, 105), (235, 385), (130, 300)], fill=255)))
+    shadow(img, spk)
+    fill(img, spk, (250, 252, 255), (150, 170, 200), 90, outline=(25, 50, 100, 255), width=7)
+    gloss(img, spk, (80, 120, 230, 230), 150)
+    finish(img, inner, 'sound_control')
+
+
 # The Needs app's own need icons (user 2026-10-24 01:58Z: HD, not the game's small ones): one glossy object each,
 # no tile, in the game's need colours.
 def plain(name, img):
@@ -698,6 +716,6 @@ if __name__ == '__main__':
     os.makedirs(OUT, exist_ok=True)
     for f in (settings, calendar, build, game_options, phone_options, vr_options, my_sim, aspirations, career, skills,
               relationships, inventory, needs, social_groups, owned_businesses, household, weather, wants,
-              need_hunger, need_hygiene, need_bladder, need_energy, need_fun, need_social, god_view, sims_forever, simology, souls_journey, cheats, gallery):
+              need_hunger, need_hygiene, need_bladder, need_energy, need_fun, need_social, god_view, sims_forever, simology, souls_journey, cheats, gallery, sound_control):
         f()
     print('phone icons in', OUT)

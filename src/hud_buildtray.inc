@@ -19,7 +19,7 @@ struct TrayCategory {
 };
 const TrayCategory kTrayCategories[] = {
     {"Objects", &art::kTrayCatObjects,
-     {{kTrayAlt, "Free place", false, &art::kTrayFreePlace},
+     {{kTrayFreePlace, "Free place", false, &art::kTrayFreePlace},
       {kTrayShift, "Place copies", false, &art::kTrayCopies},
       {kTraySnap, "Snap size", false, &art::kTraySnap},
       {kTrayGrid, "Grid", false, &art::kTrayGrid},
@@ -49,7 +49,7 @@ const TrayCategory kTrayCategories[] = {
      3},
 };
 constexpr int kTrayCategoryCount = sizeof(kTrayCategories) / sizeof(kTrayCategories[0]);
-int g_trayCategory = -1;  // the open category, -1 = closed (the tabs alone)
+int g_trayCategory = 0;  // the open category (starts on Objects: the laser trigger is a click there), -1 = closed (the tabs alone)
 int g_trayHeld = -1;            // the repeating button held down
 ULONGLONG g_trayRepeatAt = 0;   // its next repeat
 
@@ -134,7 +134,83 @@ Action drawBuildTray(const Frame& f, int* index) {
     return action;
 }
 
+// The phone camera app (a photo session): shutter, zoom, filter, flash, orientation, photo size and Close in the
+// tray's place. Every button is a CameraTool; zoom repeats while held.
+Action drawCameraTray(const Frame& f, int* index) {
+    // No panel: small see-through round buttons over the picture (user 2026-11-02: the big white menu hid it).
+    ImDrawList* d = ImGui::GetBackgroundDrawList();
+    const Rect r = kBuildTray;
+    Action action = kNone;
+    auto lit = [&](int tool) { return ((f.trayLit >> (20 + tool - kCamShutter)) & 1) != 0; };
+    // One round button at the centre (cx, cy) in tray pixels; true on the frames it acts (zoom repeats while held).
+    auto circleButton = [&](int tool, const char* label, float cx, float cy, float radius, bool on, bool repeat) {
+        const ImVec2 c{r.x + cx, r.y + cy};
+        ImGui::SetCursorScreenPos({c.x - radius, c.y - radius});
+        ImGui::PushID(9300 + tool);
+        const bool pressed = ImGui::InvisibleButton("cam", {radius * 2, radius * 2});
+        const bool hover = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
+        ImGui::PopID();
+        const ImU32 fill = on ? IM_COL32(120, 214, 82, 200) : hover || held ? IM_COL32(255, 255, 255, 120) : IM_COL32(0, 0, 0, 120);
+        d->AddCircleFilled(c, radius, fill, 32);
+        d->AddCircle(c, radius, IM_COL32(255, 255, 255, 230), 32, 3);
+        const float size = std::min(g_text->FontSize * 0.62f, radius * 0.9f);
+        const ImVec2 ts = g_text->CalcTextSizeA(size, FLT_MAX, 0, label);
+        d->AddText(g_text, size, {c.x - ts.x / 2, c.y - ts.y / 2}, kWhite, label);
+        bool act = pressed;
+        if (repeat) {
+            act = false;
+            const ULONGLONG now = GetTickCount64();
+            if (held && ImGui::IsMouseClicked(0)) {
+                g_trayHeld = tool;
+                g_trayRepeatAt = now + 350;
+                act = true;
+            } else if (held && g_trayHeld == tool && now >= g_trayRepeatAt) {
+                g_trayRepeatAt = now + 120;
+                act = true;
+            }
+            if (!held && g_trayHeld == tool) g_trayHeld = -1;
+        }
+        if (act) {
+            action = kBuildTool;
+            if (index) *index = tool;
+        }
+    };
+    const float w = r.w, h = r.h;
+    circleButton(kCamClose, "X", 50, 50, 34, false, false);
+    circleButton(kCamFlash, "Fl", w / 2, 50, 34, lit(kCamFlash), false);
+    circleButton(kCamOrient, "Rot", w - 50, 50, 34, false, false);
+    circleButton(kCamFilterPrev, "<", 46, h * 0.40f, 34, false, false);
+    circleButton(kCamFilterNext, ">", 46, h * 0.40f + 90, 34, false, false);
+    circleButton(kCamZoomIn, "+", w - 46, h * 0.40f, 34, false, true);
+    circleButton(kCamZoomOut, "-", w - 46, h * 0.40f + 90, 34, false, true);
+    circleButton(kCamSmall, "S", w / 2 - 80, h - 150, 26, lit(kCamSmall), false);
+    circleButton(kCamMedium, "M", w / 2, h - 150, 26, lit(kCamMedium), false);
+    circleButton(kCamLarge, "L", w / 2 + 80, h - 150, 26, lit(kCamLarge), false);
+    // The shutter: a big white ring.
+    {
+        const ImVec2 c{r.x + w / 2, r.y + h - 62};
+        ImGui::SetCursorScreenPos({c.x - 56, c.y - 56});
+        ImGui::PushID(9399);
+        const bool pressed = ImGui::InvisibleButton("shutter", {112, 112});
+        const bool down = ImGui::IsItemHovered() || ImGui::IsItemActive();
+        ImGui::PopID();
+        d->AddCircle(c, 54, kWhite, 40, 6);
+        d->AddCircleFilled(c, down ? 40.0f : 44.0f, kWhite, 40);
+        if (pressed) {
+            action = kBuildTool;
+            if (index) *index = kCamShutter;
+        }
+    }
+    return action;
+}
+
 }  // namespace
 
-// The tray closed (the tabs alone): their part of kBuildTray, 0..1 from its left.
-float buildTrayLeft() { return g_trayCategory < 0 ? (kBuildTray.w - 14 - 136 - 14) / kBuildTray.w : 0; }
+std::atomic<bool> g_cameraTrayWanted{false};
+void setCameraTrayWanted(bool on) { g_cameraTrayWanted.store(on); }
+
+// The tray closed (the tabs alone): their part of kBuildTray, 0..1 from its left. The camera app's is always open.
+float buildTrayLeft() {
+    if (g_cameraTrayWanted.load()) return 0;
+    return g_trayCategory < 0 ? (kBuildTray.w - 14 - 136 - 14) / kBuildTray.w : 0;
+}

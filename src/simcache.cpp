@@ -100,7 +100,7 @@ int32_t intValue(const char* name, int32_t value) {
 void install(bool boost, int cacheMb, float lodScale) {
     g_boost = boost;
     g_cacheMb = std::clamp(cacheMb, 16, 2048);
-    g_lodScale = std::isfinite(lodScale) ? std::clamp(lodScale, 1.f, 4.f) : 1.f;
+    g_lodScale = std::isfinite(lodScale) ? std::clamp(lodScale, 0.25f, 4.f) : 1.f;
     uint8_t* u = gameaddr::dx9() ? nullptr : addrs::fn("OptGetUInt");
     uint8_t* v = gameaddr::dx9() ? nullptr : addrs::fn("OptGetVec4");
     if (!u || !v) {

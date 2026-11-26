@@ -24,6 +24,9 @@ namespace s4vr::bubbles {
 // Hooks the game. Call once at start; false in the DX9 game or another game version.
 bool install();
 
+// Render thread: UI stage pixels per screen pixel (the game's UI scale), 0 while unknown.
+float stageScale();
+
 // Any thread: whether the cards are wanted (the setting, and the UI on its own layer).
 void setWanted(bool wanted);
 bool wanted();

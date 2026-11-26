@@ -51,6 +51,13 @@ def _setting(key, default):
         return default
 
 
+def _rag_setting(key, default):
+    try:
+        return float(native.setting('ragdoll', key, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
 def _refresh_settings(now):
     """[knockout] values, read again every 2 s (the debug menu changes them live)."""
     global _settings_at
@@ -63,6 +70,8 @@ def _refresh_settings(now):
     _settings['recover'] = max(0.5, _setting('recover', 8.0))
     _settings['unconscious'] = native.setting_flag('knockout', 'unconscious', True)
     _settings['minutes'] = max(1.0, _setting('minutes', 20.0))
+    _settings['ragdoll'] = native.setting_flag('ragdoll', 'on_knockout', True)
+    _settings['ragdoll_limp'] = max(0.5, _rag_setting('knockout_limp', 3.0))
 
 
 def _collapse(npc):
@@ -90,6 +99,11 @@ def _collapse(npc):
             continue
         wake = services.time_service().sim_now + clock.interval_in_sim_minutes(_settings['minutes'])
         _down[npc.id] = (aff_id, wake, time.monotonic())
+        if _settings.get('ragdoll', True):
+            # The fall is the ragdoll's (along your blow); the game's collapse plays underneath and takes over
+            # when it ends, then its own get-up wakes the Sim (docs/RAGDOLL.md).
+            started = native.ragdoll_start(npc.id, 0.0, 0.0, 0.0, _settings['ragdoll_limp'])
+            _log('ragdoll {}'.format('starts' if started else 'not started'))
         _log('{} is knocked out ({}, {:.0f} Sim minutes)'.format(npc.full_name, affordance.__name__,
                                                                 _settings['minutes']))
         return True

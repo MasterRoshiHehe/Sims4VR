@@ -43,6 +43,10 @@ struct Config {
     // Stick turns reach the headset like head turns: each eye's pose is turned
     // by how far the world turned since it was rendered (vr.cpp renderStereo).
     bool turnReprojection = true;
+    // The head pose the game draws from is predicted for the Present that shows the picture
+    // (measured from the pose ring), not for the Present that asked for it (vr.cpp renderStereo).
+    bool latePose = false;  // [stereo] late_pose: off until tested on its own (one change at a time)
+    bool capLead = false;  // [stereo] cap_lead: game thread waits for Present (GLA-21); off until measured
     // Stick turns step by the headset's display clock (each shown frame turns
     // by the same amount) instead of when the game happened to hand over a frame.
     bool turnDisplayClock = true;
@@ -51,6 +55,8 @@ struct Config {
     // the stick turn will have reached when the headset shows it, so the turn
     // correction stays small and near things (Sims) don't wobble.
     bool turnLead = true;
+    float turnLeadScale = 1;     // [stereo] turn_lead_scale: how much of the learned lead is used (1 = all)
+    float turnEase = 0.4f;         // [body] turn_ease: seconds-ish the smooth stick turn takes to get up to speed (0 = instantly)
     // While the headset is on: the game's graphics work goes below normal
     // priority on the card, so Virtual Desktop's streamer (which needs the 3D
     // engine to prepare each frame for the video encoder) is never starved by
@@ -59,6 +65,9 @@ struct Config {
     // First person: the right eye is drawn from the place the left eye of its
     // pair was drawn from, and the headset only gets whole pairs, so moving
     // doesn't put the eyes centimetres apart (vr.cpp renderStereo, camera.cpp applyEye).
+    bool photoLens = true;      // [photo] lens: a photo session draws the phone lens as a third frame (off: the phone shows your own left-eye picture)
+    bool eyeWaitDrawn = true;   // [stereo] eye_wait_drawn: the next eye is set once the game has drawn the last one
+    float eyeWaitMs = 150;      // [stereo] eye_wait_ms: longest wait for that (a game that stopped drawing)
     bool pairedEyes = true;
     // Paired eyes while you move freely: the body and the arms are posed from
     // the place the next pair is drawn from, so your hands match in both eyes
@@ -90,8 +99,16 @@ struct Config {
     // [stereo] both_eyes_skip: the right eye's pass leaves out a scene part (1 = mode 3, 2 = mode 4, 3 = mode 8;
     // 0 = none) and reuses the left eye's: a test of which part is the shadows (v0.13.307).
     int bothEyesSkip = 0;
+    // [stereo] monitor_eye: which eye the desktop window shows (0 left, 1 right); the other eye's frames show
+    // the kept picture so streamed viewers see a steady image. vr_parts/17_render.inc steadyMirror.
+    int monitorEye = 0;
+    // [stereo] monitor_fit: the desktop window's picture shape (screen sharing): 0 stretched headset picture,
+    // 1 cropped to the window's shape, 2 whole picture with bars. monitorfit.h.
+    int monitorFit = 1;
+    float monitorZoom = 1.4f;  // [stereo] monitor_zoom: crop mode narrows the field of view by this much
     // [stereo] reuse_shadows: both real eyes, the right eye's pass uses the sun shadow map the left
     // eye's pass drew this frame instead of drawing it again (shadowreuse.h, v0.13.318).
+    bool pairShadows = true;     // [stereo] pair_shadows: the right eye of a pair uses the left eye's sun shadow map (paired eyes)
     bool reuseShadows = true;
     // [stereo] skip_shadow_prep: with reuse_shadows, the right eye's pass leaves out the game's
     // shadow lists altogether (CPU, ~0.8 ms a pass; tested in 320: no visible difference, ~+4 fps).
@@ -125,11 +142,22 @@ struct Config {
 
     // Controllers: 1 = feed the sticks to the game as a virtual Xbox controller
     bool gamepad = false;
+    int moveMode = 0;       // [controls] move_mode: 0 smooth walking with the left stick, 1 point to teleport
+    int teleStick = 0;      // [teleport] stick: the stick pushed forward that aims: 0 left, 1 right
+    int teleStyle = 0;      // [teleport] style: 0 arc, 1 straight laser
+    float teleDistance = 8; // [teleport] max_distance: metres you can jump
+    bool teleBlink = true;  // [teleport] blink: the eyes shut for a moment around the jump
+    float teleBlinkTime = 0.25f;  // [teleport] blink_seconds
+    float teleMaxRise = 1.0f;  // [teleport] max_rise: metres a spot's floor may be higher or lower than your feet
+    bool teleMarker = true; // [teleport] marker: footprints at the spot
     bool snapTurn = true;   // [controls] snap_turn: right stick turns in fixed steps instead of smoothly (first person)
     float snapAngle = 30;   // [controls] snap_angle: degrees per snap
     bool recenterTurnsBody = true;  // [controls] recenter_turns_body: recentring while walking freely turns your body
                                     // (and what hangs on it) to where you look; in an action the view goes to it
-    float doorPushSpeed = 0.9f;       // [body] door_push_speed: m/s a hand must move into a door to push it open
+    float doorSlide = 0.15f;          // [body] door_slide: metres a hand slides along a sliding door to open it
+    float fridgeDoorPull = 0.25f;     // [body] fridge_door_pull: metres you pull a fridge's handle to open it (recipe picker waits)
+    float doorHandleReach = 0.5f;     // [body] door_handle_reach: metres from either edge of a door where its handle is grabbed
+    float doorPushSpeed = 0.7f;       // [body] door_push_speed: m/s a hand must move into a door to push it open
     float trailArrive = 0.8f;         // [body] trail_arrive: metres from the trail's end that start the action
     float trailStopDist = 3.0f;       // [body] trail_stop_dist: metres from the Sim you walk to at which they stop and face you
     float trailArriveContact = 0.35f; // [body] trail_arrive_contact: the same for a social with hand contact
@@ -155,6 +183,9 @@ struct Config {
     float scandalPos[3] = {0, 0, 0};  // [bubbles] scandal_position: right / up / ahead offset of the aura from the head joint (m)
     int pieMode = 0;            // [ui] pie_mode: 0 in front, 1 on your other palm, 2 dynamic (front; palm for the laser on it)
     float piePalmSize = 0.45f;  // [ui] pie_palm_size: the pie on a palm against its size in front
+    bool pieTvFront = true;     // [ui] pie_tv: a TV's pie hovers in front of its screen
+    float pieTvSize = 3.0f;     // [ui] pie_tv_size: that pie against its size in front of you
+    float pieTvOffset = 0.30f;  // [ui] pie_tv_offset: metres in front of the screen
     float piePalmLift = 0.10f;  // [ui] pie_palm_lift: metres above the palm
     float pieCrop = 0.75f;      // width of the UI cut out around the click, as a fraction of the UI's height
     // First person: a game picker shows on the object it is for (fridge door, TV screen)
@@ -223,6 +254,10 @@ struct Config {
     float wristSleepPos[3] = {0, -0.22f, 0.6f}, wristSleepTurn[3] = {}, wristSleepSize = 0.16f;
     bool wristLotIntro = true;     // the lot's name and traits in front of you while a load keeps your eyes shut (lotintro.py)
     float wristLotPos[3] = {0, 0.02f, 1.2f}, wristLotTurn[3] = {}, wristLotSize = 1.0f;
+    bool wristWork = true;         // the card over closed eyes while your Sim is at work (work.py)
+    float wristWorkPos[3] = {0, 0, 0.9f}, wristWorkTurn[3] = {}, wristWorkSize = 0.65f;
+    bool wristLotCropAuto = true;  // [wrist] lot_intro_crop_auto: cut the banner out where the game puts it (stage pixels, screen centre)
+    float wristLotBannerW = 1000, wristLotBannerY = 0;  // [wrist] lot_intro_banner_w / _y: the banner's width and shift down, in the game's UI pixels
     float wristLotCropW = 0.42f, wristLotCropH = 0.26f, wristLotCropY = 0.03f;  // the part of the UI shown: fractions of its width / height, centre's shift down (fraction of height)
 
     // Body mode (stereo at the active Sim's eyes)
@@ -239,6 +274,10 @@ struct Config {
     // it sits, its spine leans with your real head, and the view never leaves
     // its head (camera.cpp seatView, armik.cpp solveLean).
     bool bodySeatFollow = true;
+    // Seated, debug menu: where you sit is yours. Metres, along the way you face: the view moved back (+) from
+    // the Sim's eyes and up; the view may leave the Sim's eyes by this much; the Sim's idle sway under this
+    // size is ignored.
+    float bodySeatBack = 0, bodySeatUp = 0, bodySeatHold = 0.08f, bodySeatStill = 0.03f;
     bool bodySeatTorso = true;  // seated: your head moves the upper body, not the animation's sway
     float bodyTurnSmoothing = 0.1f;  // 0..1 per frame; how quickly the view turns with the Sim (0 = never)
     float bodyNearClip = 0.08f;      // metres, the lowest near limit (first person)
@@ -286,7 +325,9 @@ struct Config {
     bool touch = true;           // point with your index finger and touch things to click them
     float touchPast = 0.015f;    // metres past the Sim's fingertip that count as the finger's end
     float walkSpeed = 1.5f;      // metres per second, left stick fully pushed
-    float runSpeed = 3.0f;       // the same while running (left stick tapped)
+    float runSpeed = 2.5f;       // the same while running (left stick tapped)
+    bool bodyLazyTurn = true;    // [body] turn_body_lazy: a standing body stays put while the stick turns (turns after)
+    float bodyStandRate = 10;    // [body] turn_body_rate: body placements a second while a standing body turns (0 = every picture)
     bool bodyKeepHeight = true;  // first person: the game draws your body at your height, not on its level's floor
     bool bodyWalkClips = true;  // first person: the game's own start and stop walk clips
     bool crouch = true;           // first person: push the right stick down to crouch (free walking only)
@@ -304,6 +345,18 @@ struct Config {
     float handObjectGap = 0.0f;  // the same for furniture
     bool softPlants = true;      // bushes and flowers don't stop you; they slow you
     float plantSlowdown = 0.5f;  // at most this much slower, deep in a tall one
+    // [foliage] (foliagepush.h): plants, bushes, grass and leaves give way to your head, hands and body.
+    bool foliagePatch = true;         // next start: patch the game's wind shaders as it makes them (needed for the push)
+    bool foliagePush = true;          // live: use them (off: the game's own shaders)
+    float foliagePushCm = 30;         // how far a leaf at a sphere's centre is pushed
+    float foliageHeadRadius = 0.25f;  // metres: how far from your head leaves start to move
+    float foliageHandRadius = 0.14f;
+    float foliageBodyRadius = 0.30f;
+    bool foliageHead = true, foliageHands = true, foliageBody = true, foliageSims = true;
+    float foliageLiftCm = 20;         // TEMPORARY TEST DEFAULT 20 (revert to 0): every leaf rises this much (0 = off)
+    bool stepOver = true;        // low objects (garden rocks, borders) are walked over, not walls
+    bool stepAll = false;        // step over every low object, not only rocks
+    float stepHeight = 0.5f;     // metres: the tallest object you step over
 
     // Hands (first person): close a hand near an object to pick it up, open it to put it down
     bool grab = true;
@@ -315,13 +368,22 @@ struct Config {
     bool audioPanAnyDistance = true;
     // Audio (first person): voices the game would play flat (WickedWhims) are made 3D; they are full
     // volume within voice_near metres and fade out by voice_far (0 = the voice sound's own radii)
+    // Audio (first person): game sounds that play flat (phone jingles: ui / bumper / sting configs) are made 3D at
+    // the object or joint they are played on. 0 off, 1 the ids in flat_to_3d_ids, 2 also all flat UI-graph sounds
+    int audioFlatTo3D = 1;
+    std::string audioFlatIds;
+    uint64_t audioFlatGraph = 0xe29d705fca6cd456ULL;  // the game's stereo 3D graph (lot speakers); 0 = default graph
     float audioVoiceNear = 1.5f;
     float audioVoiceFar = 12.0f;
     // Audio (first person): the outdoor ambience fades in over this many metres either side
     // of the outside walls instead of switching at the doorway; 0 = the game's own switch
     float outdoorFade = 4.0f;
+    float outdoorBasement = 0.4f;  // first person: the outdoors heard in a basement, as a share of upstairs (1 = same)
+    float outdoorFloor = 0.15f;  // first person: the least outdoor sound heard inside (0..1)
     float mirrorInterior = 10;  // max metres a mirror in a room renders (0: the game's 15)
     float mirrorExterior = 50;  // ... outdoors (0: the game's 100)
+    bool waterClip = true;  // pools: keep the game's clip at the water plane (nothing below the water is reflected)
+    bool waterOnePlane = true;  // pools: reflect in the heaviest lot water's plane, not the mean of all in view
     bool mirrorClip = true;   // first person lopsided eye: keep the game's clip at the mirror glass
     bool reflectionsOff = false;  // no mirror or water reflections at all
     bool ambientOcclusion = true;  // [stereo] ambient_occlusion: the game's SSAO; 0 = off for speed (GPU pack, perf item 4)
@@ -330,16 +392,36 @@ struct Config {
     bool simCacheBoost = false;   // [perf] sim_cache_boost: Sim body-shape caches x4 (simcache.cpp)
     int simCacheMb = 256;         // [perf] sim_cache_mb: SimCacheSizeLimit used when boosted and the game has none
     bool nearOncePerPair = true;  // [perf] near_once_per_pair: both eyes, near limit's depth copy in the left eye's pass only
+    float eyeSimCull = 0;         // [perf] far_sim_cull_eyes: Sims beyond this many metres are also not drawn in your own view (0 = off)
+    bool gpuTimeline = false;     // [perf] gpu_timeline: log GPU milliseconds per render pass type every 10 s (measurement only)
+    float farSimCull = 40;        // [perf] far_sim_cull: Sims beyond this many metres are left out of shadow and mirror cameras (0 = off)
     float simLodScale = 2;        // [perf] sim_lod_scale: stretch the Sim detail-change distances (1 = game's)
     bool hitchCatcher = true;     // [perf] hitch_catcher: log what the game's main thread does during stalls over 60 ms (hitch.cpp)
 
     // Phone (first person): close your right hand at your right hip and your
     // Sim holds its phone, with the game menu on its screen (game not paused)
     bool phone = true;
+    // Where each handheld comes out (slots: 0 right hip, 1 left hip, 2/3 right/left front pocket, 4/5 right/left back
+    // pocket, 6/7 right/left shoulder, 8/9 right/left bra, 10 center bra; user 2026-10-29). slotThis*: this Sim's own
+    // choice (0 = the global one, else slot + 1), kept per Sim in sims4vr_user.ini [slots_sim].
+    int phoneSlot = 0, tabletSlot = 0, bookSlot = 1;
+    int slotThisPhone = 0, slotThisTablet = 0, slotThisBook = 0;
+    float slotRadius = 0.16f;     // metres around a pocket, shoulder or bra your closed hand must be
     float phoneHipDrop = 0.40f;   // metres below your eyes your hand must be
+    // The phone's flashlight (user 2026-11-04): a spotlight from its back, lit from the scene depth.
+    float flashBrightness = 20.0f;  // surfaces' own colour x(1 + this) at the cone's centre
+    float flashFill = 0.0f;        // plain light added, so black surfaces still show (0..1)
+    float flashRange = 15.0f;      // metres
+    float flashCone = 50.0f;       // full angle, degrees
+    bool phonePass = true;        // pass the phone to the other hand: it closes its grip next to the holding hand
+    float phonePassReach = 0.20f; // metres between the two hands for a pass
     int phoneSoundMode = 0;       // the phone: 0 sound (tones + buzz), 1 vibrate (buzz), 2 mute
-    int phoneRingtone = 1;        // phonesound.py RINGTONES (0 none)
-    int phoneTextTone = 1;        // phonesound.py TEXT_TONES (0 none)
+    int phoneRingtone = 2;         // phonesound.py RINGTONES (0 none)
+    int phoneTextTone = 4;         // phonesound.py TEXT_TONES (0 none)
+    float phoneStickScroll = 320;     // right stick scrolls the phone's lists with the laser on it: game pixels a second at full push (0 off)
+    float phoneStickDeadzone = 0.25f; // the stick's dead zone for that
+    float phoneSwipeStart = 3;        // a press moved this many game pixels on the phone is a swipe (was 6)
+    float phoneSwipeSpeed = 1;        // the list follows the swipe this many times as far
     int phoneTextSize = 1;        // the phone's texts: 0 small (as before v0.13.380), 1 medium, 2 large
     bool phonePopupBuzz = true;   // the controllers buzz like a phone when the game shows a popup
     float phoneWidth = 0.102f;    // our phone's size, metres
@@ -385,6 +467,10 @@ struct Config {
     float tabletHeight = 0;       // 0 = the screen takes the palette layout's shape
     float tabletDepth = 0.008f;
     float tabletBezel = 0.010f;   // the dark border around its screen
+    float tabletSteady = 0.5f;    // weight of the tablet in your hand: 0 follows the hand exactly, 1 heavy (slow moves are smoothed most)
+    float tabletClickHover = 150;  // [tablet] click_hover: build mode (Objects tab) laser click waits this long over the spot (ms)
+    float tabletClickPress = 0;    // [tablet] click_press: then presses this long (ms); 0 = as long as the trigger is held
+    float tabletPointer = 0.5f;   // the same for the laser's point on the tablet (hand shake), 0 off
     float tabletHold = 0.035f;    // how far in from its side edge the hand holds it (metres)
     float tabletUiScale = 2.0f;   // [tablet] menu_size: the whole build UI on the tablet (1 = its height fills the screen's)
     float tabletTrayScale = 1.0f; // the tool tray's size (1 = two thirds of the screen's height)
@@ -399,6 +485,15 @@ struct Config {
     float voiceGateDb = -45;       // quieter than this keeps the mouth shut
     float voiceFullDb = -18;       // this loud opens it all the way
     float voiceMouthOpen = 14;     // degrees, the jaw's widest
+
+    // CAS (character creator) in the headset (camera.cpp)
+    bool casStereo = true;         // [cas] stereo: CAS drawn with your eyes in 3D, the Sim in front of you
+    float casDistance = 1.6f;      // [cas] distance: metres from you to the Sim
+    float casEyeHeight = 1.6f;     // [cas] eye_height: metres above the Sim's feet your eyes are
+    float casEyeSeparation = 1.0f; // [cas] eye_separation: 1 = your own eye distance, 0 = both eyes from one point
+    bool casBody = true;           // [cas] body: your first-person body in CAS, a double of the Sim you edit (casbody.h)
+    bool casBodyEyes = true;       // [cas] body_eyes: with the body, your eyes at its eye height (eye_height unused)
+    bool casBodyStill = true;      // [cas] body_still: the body stands still instead of playing the CAS Sim's idle
 
     // Developer: run sims4vr_probe.py from the mod folder whenever it changes
     bool devProbe = false;

@@ -34,6 +34,7 @@ DrawIndirectFn g_drawIndirect[2] = {};
 
 std::atomic<bool> g_on{false};
 std::atomic<bool> g_hooked{false};
+std::atomic<bool> g_pairOn{false}, g_pairSecond{false};  // paired eyes (alternate-eye mode): the right eye of a pair
 std::atomic<uint32_t> g_draws{0}, g_clears{0}, g_binds{0};
 std::atomic<ULONGLONG> g_lastLog{0};
 
@@ -218,9 +219,9 @@ void logLists() {
 }
 
 void hookedLists(void* renderer, uint64_t flag, uint64_t mask, uint64_t extra) {
-    const bool second = singleview::inSecond();
+    const bool second = shadowreuse::second();
     const bool sunJob = (flag & 0xff) == 1;
-    const bool skip = second && sunJob && g_skipLists.load(std::memory_order_relaxed) && on();
+    const bool skip = second && sunJob && g_skipLists.load(std::memory_order_relaxed);
     countKind(flag, mask, extra, second, skip);
     if (skip) {
         g_listSkips.fetch_add(1, std::memory_order_relaxed);
@@ -280,12 +281,23 @@ void setOn(bool on) {
             on ? "uses the left eye's sun shadow map" : "draws its own sun shadow map");
 }
 
+void setPairs(bool on) {
+    if (g_pairOn.exchange(on) != on)
+        LOG("Shadow reuse: paired eyes: the right eye of a pair %s", on ? "uses the left eye's sun shadow map" : "draws its own sun shadow map");
+}
+void pairSecond(bool second) { g_pairSecond.store(second, std::memory_order_relaxed); }
+bool second() {
+    if (!g_hooked.load(std::memory_order_relaxed)) return false;
+    return (g_on.load(std::memory_order_relaxed) && singleview::inSecond()) ||
+           (g_pairOn.load(std::memory_order_relaxed) && g_pairSecond.load(std::memory_order_relaxed));
+}
+
 bool on() { return g_on.load(std::memory_order_relaxed) && g_hooked.load(std::memory_order_relaxed); }
 
 void bound(ID3D11DeviceContext* context, UINT count, ID3D11RenderTargetView* const* views,
            ID3D11DepthStencilView* depth) {
     const bool depthOnly = depth && (!views || !count || !views[0]);
-    if (!depthOnly || !on() || !singleview::inSecond() || !isSunMap(depth)) {
+    if (!depthOnly || !second() || !isSunMap(depth)) {
         if (t_skip) t_skip = nullptr;
         return;
     }
@@ -295,7 +307,7 @@ void bound(ID3D11DeviceContext* context, UINT count, ID3D11RenderTargetView* con
 }
 
 bool skipClear(ID3D11DeviceContext*, ID3D11DepthStencilView* depth) {
-    if (!depth || !on() || !singleview::inSecond()) return false;
+    if (!depth || !second()) return false;
     if (!isSunMap(depth)) return false;
     g_clears.fetch_add(1, std::memory_order_relaxed);
     return true;

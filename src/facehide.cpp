@@ -9,7 +9,9 @@
 #include <vector>
 
 #include "MinHook.h"
+#include "armik.h"
 #include "camera.h"
+#include "casbody.h"
 #include "framecost.h"
 #include "framemap.h"
 #include "addrs.h"
@@ -395,6 +397,10 @@ thread_local ID3D11DeviceContext* t_sceneContext = nullptr;  // the context last
 // outside any Sim draw we saw (then the scene depth decides, as before).
 thread_local int t_eyePass = -1;
 std::atomic<uint32_t> g_passEyes{0}, g_passOther{0};
+std::atomic<float> g_farCull{0};          // [perf] far_sim_cull, metres (0 = off)
+std::atomic<float> g_eyeCull{0};          // [perf] far_sim_cull_eyes, metres (0 = off)
+std::atomic<uint32_t> g_eyeLeftOut{0};
+std::atomic<uint32_t> g_farLeftOut{0};    // Sim draws from shadow/mirror cameras left out for being far
 // Your Sim drawn away from you (user 2026-10-17 14:23Z: "my whole body" shows
 // in front of you for a frame): its scene model, learned from its pose in the
 // palette builder, is left out of your eyes' passes while its centre is
@@ -438,9 +444,18 @@ bool inYourView() {
 // 0 or 1 while a mesh is drawn again as the selected Sim's left or right hand at your controller (god mode,
 // godhands.cpp); -1 otherwise.
 thread_local int t_handSide = -1;
+// Create a Sim (casbody.cpp): true while the CAS Sim's scene model is drawn a second time as your body; the meshes
+// that draw get counted. t_needCas: this pass into the scene's depth has not drawn the body yet (see targets()).
+thread_local bool t_casBody = false;
+thread_local uint32_t t_casMeshes = 0;
+thread_local bool t_needCas = false;
 
 void hookedPalette(uint8_t* mesh, uint8_t* out, uint8_t* pose, void* inverseBinds, uint64_t rows) {
     g_palette(mesh, out, pose, inverseBinds, rows);
+    if (t_casBody) {  // Create a Sim: the second draw of the CAS Sim is your body (casbody.cpp)
+        casbody::palette(mesh, out, pose);
+        return;
+    }
     if (t_handSide >= 0) {
         godhands::palette(t_handSide, mesh, out, pose);
         return;
@@ -480,6 +495,13 @@ thread_local uint32_t t_handDraws = 0;
 std::atomic<uint32_t> g_statInjected{0}, g_statHandDraws{0};
 
 void hookedMeshDraw(uint8_t* mesh, uint8_t* params) {
+    if (t_casBody) {
+        if (mesh && params && casbody::drawMesh(mesh)) {
+            ++t_casMeshes;
+            g_meshDraw(mesh, params);
+        }
+        return;
+    }
     if (t_handsOnly) {
         if (mesh && params) {
             if (int sides = godhands::sidesFor(mesh, *reinterpret_cast<void**>(params + kDrawPose))) {
@@ -535,14 +557,102 @@ bool nearProp(void* model) {
     return std::isfinite(d2) && d2 < g_propRadius * g_propRadius;
 }
 
+// A model whose centre is within `radius` metres of either of your hands (the selfie's phone: an animation prop that
+// is not an object Python can see). Palms are controller grips in OpenXR space; the world scale applies to both.
+bool nearHands(const void* model, float radius) {
+    camera::Vec3 palm[2];
+    bool valid[2];
+    armik::palms(palm, valid);
+    const float* c = reinterpret_cast<const float*>(static_cast<const uint8_t*>(model) + kModelCentre);
+    const float limit = radius * camera::worldScale();
+    for (int h = 0; h < 2; ++h) {
+        camera::Vec3 w;
+        if (!valid[h] || !camera::xrToWorld(palm[h], w)) continue;
+        const float dx = c[0] - w.x, dy = c[1] - w.y, dz = c[2] - w.z;
+        const float d2 = dx * dx + dy * dy + dz * dz;
+        if (std::isfinite(d2) && d2 < limit * limit) return true;
+    }
+    return false;
+}
+
+// Create a Sim: the CAS Sim's scene model drawn once more as your body (casbody.cpp works out every bone). Its meshes
+// go through hookedMeshDraw / hookedPalette with t_casBody set.
+constexpr size_t kViewBatch = 0x58;  // the view's batch sink: slot 5 queues meshes there for a later draw when set
+thread_local bool t_casInjected = false;  // this pass drew the body without the CAS Sim's own draw
+
+void drawCasBody(void* model, uint32_t lod, uint8_t* view, bool injected) {
+    if (!casbody::prepare(static_cast<const uint8_t*>(model))) return;
+    t_casBody = true;
+    t_casMeshes = 0;
+    void* sink = nullptr;
+    const bool clear = casbody::skipBatch();
+    if (clear) {
+        std::memcpy(&sink, view + kViewBatch, sizeof(sink));
+        void* none = nullptr;
+        std::memcpy(view + kViewBatch, &none, sizeof(none));
+    }
+    g_sceneDraw(model, lod, view);
+    if (clear) std::memcpy(view + kViewBatch, &sink, sizeof(sink));
+    t_casBody = false;
+    casbody::drawn(t_casMeshes, injected);
+}
+
+// A Sim's scene model, not a prop, building part or other object (the far-Sim cull touched reflections of
+// everything, user 2026-11-03 15:21Z): its render state has an actor whose pose holds a Sim's skeleton (90+ joints;
+// rigged props have a handful).
+bool isSimModel(const uint8_t* model) {
+    if (!model) return false;
+    const uint8_t* state = *reinterpret_cast<uint8_t* const*>(model + kSceneRenderState);
+    if (!state) return false;
+    const uint8_t* actor = *reinterpret_cast<uint8_t* const*>(state + kRenderStateActor);
+    if (!actor) return false;
+    const uintptr_t begin = *reinterpret_cast<const uintptr_t*>(actor + kActorPoseBegin);
+    const uintptr_t end = *reinterpret_cast<const uintptr_t*>(actor + kActorPoseEnd);
+    return begin && end > begin && (end - begin) / kPoseJointSize >= 64;
+}
+
 void hookedSceneDraw(void* model, uint32_t lod, uint8_t* view) {
     int previous = t_eyePass;
     if (view) {
-        bool eyes = camera::yourEyeCamera(*reinterpret_cast<void**>(view + kViewCamera));
+        // The selfie lens looks at you: your head and body are drawn as any other camera sees them.
+        bool eyes = camera::yourEyeCamera(*reinterpret_cast<void**>(view + kViewCamera)) &&
+                    !(camera::inLensPass() && camera::photoSelfie());
         t_eyePass = eyes ? 1 : 0;
         (eyes ? g_passEyes : g_passOther).fetch_add(1, std::memory_order_relaxed);
         framecost::simDraw(eyes);
         framemap::mark(framemap::SceneDraw, eyes ? 1 : 0);
+        // A Sim far from your eyes is not worth a shadow or a mirror picture (perf, 2026-11-03: half of all Sim work
+        // went to cameras you never look at). Never your own Sim, never the injected body/hands draws.
+        const float cull = eyes ? g_eyeCull.load(std::memory_order_relaxed) : g_farCull.load(std::memory_order_relaxed);
+        if (cull > 0 && model && !t_casBody && !t_handsOnly && model != g_ourModel.load(std::memory_order_relaxed)) {
+            float at[3];
+            if (camera::eyeAt(at)) {
+                const float* c = reinterpret_cast<const float*>(static_cast<uint8_t*>(model) + kModelCentre);
+                float dx = c[0] - at[0], dy = c[1] - at[1], dz = c[2] - at[2];
+                float d2 = dx * dx + dy * dy + dz * dz;
+                if (std::isfinite(d2) && d2 > cull * cull && isSimModel(static_cast<uint8_t*>(model))) {
+                    (eyes ? g_eyeLeftOut : g_farLeftOut).fetch_add(1, std::memory_order_relaxed);
+                    t_eyePass = previous;
+                    return;
+                }
+            }
+        }
+    }
+    // Create a Sim: your body in every pass from your eyes. Drawn right after the CAS Sim's own draw; in a pass that
+    // leaves the CAS Sim out (you look away from it) it is put in at the first other Sim model drawn there.
+    bool casSim = false;
+    if (t_eyePass == 1 && view && model && !t_casBody && !t_handsOnly && casbody::enabled() && camera::casActive()) {
+        casSim = casbody::isCasSim(static_cast<const uint8_t*>(model));
+        if (casSim) {
+            casbody::setLodHint(static_cast<int>(lod));
+        } else if (t_needCas && !t_casInjected) {
+            if (const uint8_t* cas = casbody::model()) {
+                t_needCas = false;
+                t_casInjected = true;
+                const int hint = casbody::lodHint();
+                drawCasBody(const_cast<uint8_t*>(cas), hint >= 0 ? static_cast<uint32_t>(hint) : 0u, view, true);
+            }
+        }
     }
     if (t_eyePass == 1 && model && model == g_ourModel.load(std::memory_order_relaxed)) {
         float pin[7];
@@ -565,12 +675,20 @@ void hookedSceneDraw(void* model, uint32_t lod, uint8_t* view) {
         }
     }
     if (model && model != g_ourModel.load(std::memory_order_relaxed) && nearProp(model)) {
-        if (t_eyePass == 1) {
+        if (t_eyePass == 1 || camera::inLensPass()) {  // the phone lens' picture (selfie too) never shows the phone itself
             g_propHidden.fetch_add(1, std::memory_order_relaxed);
             t_eyePass = previous;
             return;
         }
         g_propOther.fetch_add(1, std::memory_order_relaxed);
+    }
+    // A photo session (901 mark: the grey game phone in the hand that holds no VR phone, in both eyes): what is in
+    // your hands is the game's camera phone, in every picture (your eyes' and the lens').
+    if (model && model != g_ourModel.load(std::memory_order_relaxed) && !t_casBody && !t_handsOnly &&
+        camera::photoSession() && !isSimModel(static_cast<uint8_t*>(model)) && nearHands(model, 0.22f)) {
+        g_propHidden.fetch_add(1, std::memory_order_relaxed);
+        t_eyePass = previous;
+        return;
     }
     // God mode: the selected Sim's hands, once per pass from your eyes (see t_needHands).
     if (t_eyePass == 1 && t_needHands && !t_handsOnly && view) {
@@ -608,6 +726,10 @@ void hookedSceneDraw(void* model, uint32_t lod, uint8_t* view) {
     t_model = model;
     g_sceneDraw(model, lod, view);
     t_model = outer;
+    if (casSim && !t_casInjected) {
+        t_needCas = false;
+        drawCasBody(model, lod, view, false);
+    }
     t_eyePass = previous;
 }
 
@@ -771,6 +893,17 @@ void setEnabled(bool on) {
     if (g_enabled.exchange(on) != on) LOG("Face hiding %s", on ? "on" : "off");
 }
 
+void setEyeSimCull(float metres) {
+    if (metres < 0) metres = 0;
+    if (g_eyeCull.exchange(metres) != metres) LOG("Far Sims in your own view: left out beyond %.0f m (0 = off)", metres);
+}
+
+void setFarSimCull(float metres) {
+    if (!std::isfinite(metres) || metres < 0) metres = 0;
+    float was = g_farCull.exchange(metres);
+    if (was != metres) LOG("Far Sims: %s", metres > 0 ? "left out of shadow and mirror cameras beyond the set distance" : "off");
+}
+
 void setBody(void* actor) {
     if (!actor || !g_skinUpdate) return;
     auto* a = static_cast<uint8_t*>(actor);
@@ -820,6 +953,8 @@ void setBody(void* actor) {
         g_allTick.store(now, std::memory_order_relaxed);
     } else if (now - lastAll >= 10000) {
         g_allTick.store(now, std::memory_order_relaxed);
+        if (uint32_t eyeOut = g_eyeLeftOut.exchange(0)) LOG("Far Sims: %u Sim draws from your own view left out in the last 10 s", eyeOut);
+        if (uint32_t farOut = g_farLeftOut.exchange(0)) LOG("Far Sims: %u Sim draws from shadow and mirror cameras left out in the last 10 s", farOut);
         LOG("Face hiding: in the last 10 s, your view's passes built %u bone palettes, %u for your Sim, %u with its "
             "face folded; %u of its mesh draws there, %u eye/teeth/lash meshes left out (CPU skinning: %u meshes, "
             "%u scene models); Sim draws from your eyes %u, from other cameras (mirrors, shadows) %u; your Sim's "
@@ -871,6 +1006,8 @@ void targets(ID3D11DeviceContext* context, bool sceneDepth) {
         t_sceneContext = context;
         t_needHands = true;
         t_passHands = false;
+        t_needCas = true;
+        t_casInjected = false;
     }
     else if (t_sceneContext == context)
         t_sceneContext = nullptr;

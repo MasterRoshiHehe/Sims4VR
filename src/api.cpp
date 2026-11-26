@@ -10,13 +10,16 @@
 #include <vector>
 
 #include "armik.h"
+#include "ragdoll.h"
 #include "phone3d.h"
+#include "teleport.h"
 #include "touch.h"
 #include "camera.h"
 #include "camfind.h"
 #include "config.h"
 #include "crashlog.h"
 #include "doorswing.h"
+#include "drone.h"
 #include "walkstop.h"
 #include "framemap.h"
 #include "hitch.h"
@@ -31,8 +34,11 @@
 #include "simcache.h"
 #include "eyelids.h"
 #include "facehide.h"
+#include "gputimeline.h"
 #include "godhands.h"
+#include "casbody.h"
 #include "gesture.h"
+#include "dance.h"
 #include "voice.h"
 #include "d3d9_hook.h"
 #include "addrs.h"
@@ -41,6 +47,7 @@
 #include "d3d11_hook.h"
 #include "gamepad.h"
 #include "collide.h"
+#include "knock.h"
 #include "grab.h"
 #include "othermods.h"
 #include "hud.h"
@@ -55,6 +62,7 @@
 #include "worldscenery.h"
 #include "modelparse.h"
 #include "foleyaudio.h"
+#include "foliagepush.h"
 #include "nodim.h"
 #include "pointer.h"
 #include "vr.h"
@@ -66,6 +74,7 @@
 #include "shadows.h"
 #include "simsforever.h"
 #include "claudescreen.h"
+#include "discordaudio.h"
 
 #include <MinHook.h>
 
@@ -120,6 +129,12 @@ static uintptr_t hookedScreenHidden(void* listener, void* args, void* r8, void* 
 // False if the listener isn't there (another game build, DX9): VR then starts at once.
 static bool startAtMainMenu() {
     uint8_t* target = s4vr::gameaddr::dx9() ? nullptr : s4vr::addrs::fn("ScreenHidden");
+    // Unrecognised-build safe mode (the last run was shorter than 120 s) switches table rows off, but this one
+    // is found by a unique signature and only delays VR: use it anyway, so VR still waits for the main menu.
+    if (!target && !s4vr::gameaddr::dx9()) {
+        target = s4vr::addrs::resolved("ScreenHidden");
+        if (target) LOG("Main menu: loading screen listener used in safe mode");
+    }
     if (!target) {
         LOG("Main menu: loading screen listener not recognised; VR starts now");
         return false;
@@ -152,10 +167,14 @@ S4VR_API int s4vr_init() {
     {
         std::wstring ini = g_moduleDir + L"\\sims4vr.ini";
         s4vr::log::setFilter(s4vr::readSetting(ini, "log", "tags", "all"), s4vr::readSetting(ini, "log", "mute", ""));
+        s4vr::log::configure(s4vr::readSetting(ini, "logging", "recorder", ""), s4vr::readSetting(ini, "logging", "ring_seconds", ""),
+                             s4vr::readSetting(ini, "logging", "why", ""), s4vr::readSetting(ini, "logging", "noisy", ""),
+                             s4vr::readSetting(ini, "logging", "keep_dumps", ""));
         LOGT("session", "ini: log tags=%s mute=%s | mode=%d autostart=%d arm_ik=%d play_in_body=%d",
              s4vr::readSetting(ini, "log", "tags", "all").c_str(), s4vr::readSetting(ini, "log", "mute", "").c_str(),
              static_cast<int>(g_config.mode), g_config.autostart, g_config.armIk ? 1 : 0, g_config.playInBody ? 1 : 0);
     }
+    s4vr::foliagepush::installEarly(g_config, g_moduleDir);  // before the game makes its shaders, if it hasn't yet
     {
         // A game build the address table is not for: try it (rows found by signature only), unless the last such
         // run died early. Then resolve the table and write the first patch report.
@@ -172,6 +191,8 @@ S4VR_API int s4vr_init() {
     s4vr::singleview::setProbe(g_config.probeDouble);
     s4vr::nodim::installSource(g_config.noDimming);
     s4vr::ambience::install(g_config.outdoorFade);
+    s4vr::ambience::setFloor(g_config.outdoorFloor);
+    s4vr::ambience::setBasement(g_config.outdoorBasement);
     s4vr::mirrorcap::install(g_config.mirrorInterior, g_config.mirrorExterior, g_config.reflectionsOff, !g_config.ambientOcclusion);
     s4vr::simcache::install(g_config.simCacheBoost, g_config.simCacheMb, g_config.simLodScale);
     s4vr::nearplane::setOncePerPair(g_config.nearOncePerPair);
@@ -185,7 +206,13 @@ S4VR_API int s4vr_init() {
     s4vr::armik::setSeatTorso(g_config.bodySeatTorso);
     s4vr::armik::setSteadyShoulders(g_config.bodySteadyShoulders);
     s4vr::facehide::install(g_config.bodyHideFace);
+    s4vr::facehide::setFarSimCull(g_config.farSimCull);
+    s4vr::facehide::setEyeSimCull(g_config.eyeSimCull);
+    s4vr::gputimeline::setEnabled(g_config.gpuTimeline);
     s4vr::godhands::setEnabled(g_config.bodyGodHands);
+    s4vr::casbody::setEnabled(g_config.casBody);
+    s4vr::casbody::setEyesAtBody(g_config.casBodyEyes);
+    s4vr::casbody::setStill(g_config.casBodyStill);
     s4vr::armik::configureTouch(g_config.touchBodies, g_config.holdHands, g_config.lookAtYou, g_config.grabBodies);
     s4vr::armik::setLookAtHand(g_config.lookAtHand, g_config.lookSpeed, g_config.lookEyesWithin, g_config.lookHeadFrom);
     s4vr::gesture::setHighFiveHold(g_config.highFiveHold);
@@ -280,6 +307,8 @@ S4VR_API int s4vr_on_gameplay(int playing) {
 }
 
 S4VR_API void s4vr_set_sim_level(int level) { s4vr::gamefix::setSimLevel(level); }
+// Out-of-bounds recovery (walk.py): puts your body back at a spot that was on the level's floor.
+S4VR_API void s4vr_player_teleport(float x, float y, float z) { s4vr::player::teleportTo(x, y, z); }
 S4VR_API void s4vr_set_scale(float scale) { s4vr::camera::setWorldScale(scale); }
 
 S4VR_API void s4vr_set_player_state(int freeAllowed, unsigned int blockedMask, const float* floor,
@@ -328,6 +357,10 @@ S4VR_API void s4vr_hud_balloon(unsigned long long sim, unsigned long long pictur
                                unsigned long long category, int type, int priority, int durationMs) {
     s4vr::hud::addBalloon(sim, picture, overlay, category, type, priority, durationMs);
 }
+// A speech bubble over a Sim with words in it (influence.py: the Sim answers in first person).
+S4VR_API void s4vr_hud_balloon_text(unsigned long long sim, const char* text, int type, int priority, int durationMs) {
+    s4vr::hud::addBalloon(sim, 0, 0, 0, type, priority, durationMs, text);
+}
 // A skill bar update (scripted.py SkillProgressUpdate; hud::setSkillBar).
 S4VR_API void s4vr_hud_skillbar(unsigned long long sim, unsigned long long icon, double start, double end, double current,
                                 double rate, int level, int maxLevel, int hide) {
@@ -335,6 +368,10 @@ S4VR_API void s4vr_hud_skillbar(unsigned long long sim, unsigned long long icon,
 }
 S4VR_API void s4vr_hud_icon(unsigned long long instance, const char* data, int size) {
     s4vr::hud::setIcon(instance, reinterpret_cast<const uint8_t*>(data), size > 0 ? static_cast<size_t>(size) : 0);
+}
+// The Photos app's large picture (hud::setPhotoView; photowatch.py).
+S4VR_API void s4vr_photo_view(unsigned long long id, const char* data, int size) {
+    s4vr::hud::setPhotoView(id, reinterpret_cast<const uint8_t*>(data), size > 0 ? static_cast<size_t>(size) : 0);
 }
 // The tooltips of the needs or moodlets (hud::setTexts).
 S4VR_API void s4vr_hud_texts(int kind, const char* data, int size) {
@@ -368,6 +405,35 @@ S4VR_API void s4vr_notebook_content(const char* data, int size) {
     s4vr::strings::start();
     s4vr::hud::setNotebookContent(data, size > 0 ? static_cast<size_t>(size) : 0);
 }
+// The outfit panel's content (hud::setOutfitContent; outfit.py); empty: gone.
+S4VR_API void s4vr_outfit_content(const char* data, int size) {
+    s4vr::strings::start();
+    s4vr::hud::setOutfitContent(data, size > 0 ? static_cast<size_t>(size) : 0);
+}
+// Where the outfit panel shows (vr::setOutfitPlace; outfit.py); kind 0: gone.
+S4VR_API void s4vr_outfit_place(int kind, const float* v) { s4vr::vr::setOutfitPlace(kind, v); }
+// A game UI service asked for its answer (clientdlg::serviceQuery; outfit.py's colours): the ticket, 0 not sent.
+S4VR_API int s4vr_service_query(const char* name, const char* json) {
+    return s4vr::clientdlg::serviceQuery(name ? name : "", json ? json : "");
+}
+// A game UI message (CommunicationManager.SendUIMessage(name, JSON.parse(json))) on the UI thread at the next poll
+// (camapp.py: TriggerScreenshotRequest after a photo, as the game's camera widget sends it). 1 sent, 0 not hooked.
+S4VR_API int s4vr_ui_message(const char* name, const char* json) {
+    return s4vr::clientdlg::gameService(name ? name : "", json ? json : "", true) ? 1 : 0;
+}
+// Its answer once it came (JSON text, "" none): 1 with *text set (kept until the next call; Python's thread), 0 while
+// waiting.
+S4VR_API int s4vr_service_result(int ticket, const char** text) {
+    static std::string answer;
+    if (!s4vr::clientdlg::serviceResult(ticket, answer)) return 0;
+    *text = answer.c_str();
+    return 1;
+}
+// The work card's content (hud::setWorkContent; work.py); empty: gone.
+S4VR_API void s4vr_work_card(const char* data, int size) {
+    s4vr::strings::start();
+    s4vr::hud::setWorkContent(data, size > 0 ? static_cast<size_t>(size) : 0);
+}
 // The lot you arrived at (hud::setLotIntro), shown while the eyes are shut for the load; empty: stop.
 S4VR_API void s4vr_lot_intro(const char* data, int size) {
     s4vr::strings::start();
@@ -384,6 +450,9 @@ S4VR_API void s4vr_phone_calendar(const char* data, int size) {
 S4VR_API void s4vr_phone_sim(const char* data, int size) {
     s4vr::strings::start();
     s4vr::hud::setPhoneSim(data, size > 0 ? static_cast<size_t>(size) : 0);
+}
+S4VR_API void s4vr_phone_call(const char* data, int size) {
+    s4vr::hud::setPhoneCall(data, size > 0 ? static_cast<size_t>(size) : 0);
 }
 S4VR_API void s4vr_note_over(unsigned long long id, float x, float y, float z, int front) {
     const float at[3] = {x, y, z};
@@ -409,6 +478,12 @@ S4VR_API void s4vr_sims_forever(int on, const float* v, const char* exe, const c
     s4vr::simsforever::setScreen(on, v, exe, args);
 }
 S4VR_API void s4vr_claude_screen(int on, const float* v, const char* exe) { s4vr::claudescreen::set(on, v, exe); }
+// Slot 1 is Discord on a TV (claudescreen.h); calling it again with on = 1 only changes fps / maxWidth / interactive.
+S4VR_API void s4vr_window_screen(int slot, int on, const float* v, const char* exe, const char* title, int fps, int maxWidth,
+                                 int interactive) {
+    s4vr::claudescreen::set(on, v, exe, slot, title, fps, maxWidth, interactive);
+}
+S4VR_API void s4vr_discord_audio(int mode) { s4vr::discordaudio::setMode(mode); }
 S4VR_API void s4vr_sims_forever_surface(int nx, int ny, const float* depths, int count) {
     s4vr::simsforever::setSurface(nx, ny, depths, count);
 }
@@ -494,6 +569,7 @@ S4VR_API void s4vr_pie_menu(int items) {
         s4vr::vr::pieClosed();
 }
 // The next pie (pie_menu) holds a popup's answers, on your palm (objmenu.py chat questions).
+S4VR_API void s4vr_pie_tv(const float* v) { s4vr::vr::setPieTv(v); }
 S4VR_API void s4vr_dialog_pie() { s4vr::vr::dialogPie(); }
 // A popup (picker: 1, a picker) answered on our card closes on the game's UI too (objmenu.py).
 S4VR_API void s4vr_close_game_dialog(int picker) { s4vr::clientdlg::closeGameDialog(picker != 0); }
@@ -507,6 +583,13 @@ S4VR_API void s4vr_set_grabbables(const unsigned long long* ids, const float* xy
 }
 // First-person collision scene (collide.py -> collide.cpp): packed floats, see collide.h.
 S4VR_API void s4vr_collision_scene(const float* data, int count) { s4vr::collide::setScene(data, count); }
+// collide.py: what blocks sound between you and a sound source (muffle for Extended Sound Control).
+S4VR_API void s4vr_occlusion_scene(const float* data, int count) { s4vr::collide::setOcclusion(data, count); }
+// knock.py: the doors and windows you can knock on (knock.h).
+S4VR_API void s4vr_knock_targets(const float* data, int count) { s4vr::knock::setTargets(data, count); }
+S4VR_API int s4vr_knock_event(unsigned long long* id, int* type, int* hand, float* into) {
+    return s4vr::knock::takeEvent(*id, *type, *hand, *into) ? 1 : 0;
+}
 // The oldest hand event: kind 1 grabbed, 2 let go. Returns 0 if none.
 S4VR_API int s4vr_hand_event(int* kind, int* hand, unsigned long long* id) {
     s4vr::grab::Event e;
@@ -521,6 +604,16 @@ S4VR_API void s4vr_grab_set(int hand, unsigned long long id) { s4vr::grab::setHe
 // 2 let go (value seconds), 3 pulled hard (value metres); actor = the Sim's
 // client object (compare s4vr_object_ptr). Returns 0 if none.
 // Sims whose body may only be held at the hand, arms, shoulders, back and hair (armik.cpp).
+S4VR_API void s4vr_influence_look(unsigned long long simId, float eyesWithin, float headFrom) {
+    s4vr::armik::setInfluenceLook(simId ? s4vr::camera::objectPointer(simId) : nullptr, eyesWithin, headFrom);
+}
+// Where the laser ends (world units) into out[3]; the age of that answer in ms, or -1 when none.
+S4VR_API int s4vr_laser_point(float* out) {
+    s4vr::touch::LaserEnd e = s4vr::touch::laserEnd();
+    if (!e.valid) return -1;
+    for (int i = 0; i < 3; ++i) out[i] = e.point[i];
+    return int(GetTickCount64() - e.tick);
+}
 S4VR_API void s4vr_high_five(unsigned long long simId, int side, float seconds) {
     s4vr::armik::offerHighFive(s4vr::camera::objectPointer(simId), side, seconds);
 }
@@ -570,11 +663,33 @@ S4VR_API int s4vr_gesture_event(int* kind, int* hand, float* out) {
     std::memcpy(out + 6, e.palm, 3 * sizeof(float));
     return 1;
 }
+// Dancing in real life (dance.cpp): out = energy (m/s), rhythm (0..1), bpm, walking (0/1).
+// Returns 0 when there is no full window yet (not first person, not tracked).
+S4VR_API int s4vr_dance(float* out) {
+    const s4vr::dance::State st = s4vr::dance::current();
+    if (!st.valid) return 0;
+    out[0] = st.energy;
+    out[1] = st.rhythm;
+    out[2] = st.bpm;
+    out[3] = st.walking ? 1.0f : 0.0f;
+    return 1;
+}
 // Can you and that Sim see each other (touch.cpp askSight): points = x, y, z
 // world (up to 4: head first). The answer comes through s4vr_sight.
 S4VR_API void s4vr_ask_sight(unsigned long long simId, const float* xyz, int count) {
     s4vr::touch::askSight(simId, xyz, count);
 }
+// The teleport spot to check (teleport.cpp): true with its sequence number and x, z in the world.
+S4VR_API int s4vr_tele_query(unsigned int* seq, float* xz) {
+    uint32_t s = 0;
+    float x = 0, z = 0;
+    if (!s4vr::teleport::query(s, x, z)) return 0;
+    *seq = s;
+    xz[0] = x;
+    xz[1] = z;
+    return 1;
+}
+S4VR_API void s4vr_tele_answer(unsigned int seq, int ok, float y) { s4vr::teleport::answer(seq, ok != 0, y); }
 // out: state (0 waiting, 1 seen, 2 in the way, 3 not in view), hit pick type;
 // ids: Sim, hit object; dist: hit, target (world units from your eye).
 S4VR_API void s4vr_sight(int* out, unsigned long long* ids, float* dist) {
@@ -617,6 +732,28 @@ S4VR_API int s4vr_control_event() {
     int what = 0;
     return s4vr::grab::takeControl(what) ? what : 0;
 }
+// lightswitch.py: your own light switch click (sounds\\objects\\lightswitch*.wav) at x right, y up, z behind metres from your eyes.
+S4VR_API int s4vr_switch_click(float x, float y, float z) {
+    const float at[3] = {x, y, z};
+    return s4vr::foleyaudio::play(s4vr::foleyaudio::kLightSwitch, at, 0.7f) ? 1 : 0;
+}
+// phonesound.py: the phone's own ringtone n (sounds\\ringtones, name order) at x right, y up, z behind metres; stop.
+S4VR_API int s4vr_ring_wav(int n, float x, float y, float z, int notification) {
+    const float at[3] = {x, y, z};
+    return s4vr::foleyaudio::playRing(n, at, notification != 0) ? 1 : 0;
+}
+// trail.py: the elevator ride's sound (sounds\\elevator), anchored at the car's ceiling above your head; stop.
+S4VR_API int s4vr_elevator_sound(int startMs) {
+    if (startMs < 0) {
+        s4vr::foleyaudio::stopElevator();
+        return 1;
+    }
+    const float at[3] = {0.0f, 0.9f, 0.0f};
+    if (!s4vr::foleyaudio::playElevator(at, startMs / 1000.0f)) return 0;
+    return 1;
+}
+S4VR_API void s4vr_ring_stop() { s4vr::foleyaudio::stopRing(); }
+S4VR_API int s4vr_ring_count() { return s4vr::foleyaudio::ringCount(); }
 S4VR_API void s4vr_haptic(int hand, float amplitude, float seconds) { s4vr::grab::haptic(hand, amplitude, seconds); }
 // Any sims4vr.ini value as text (the script mod's own switches live there too).
 S4VR_API int s4vr_setting(const char* section, const char* key, char* buffer, int size) {
@@ -653,7 +790,20 @@ S4VR_API int s4vr_walk_input(float* out) { return s4vr::vr::walkInput(out[0], ou
 // Height of the floor the game camera looks at, for the laser pointer.
 S4VR_API void s4vr_set_floor(float worldY) { s4vr::camera::setFloor(worldY); }
 S4VR_API void s4vr_photo_probe(int lines) { s4vr::camera::setPhotoProbe(lines); }
-S4VR_API void s4vr_photo_session(int on) { s4vr::camera::setPhotoSession(on != 0); }
+S4VR_API void s4vr_photo_session(int on) {  // 0 off, 1 a photo session, 2 a selfie session
+    s4vr::camera::setPhotoSelfie(on == 2);
+    s4vr::camera::setPhotoSession(on != 0);
+}
+S4VR_API void s4vr_photo_capture(int ms) { s4vr::camera::setPhotoCapture(ms); }
+
+// Flying the Streaming Drone (drone.h, scriptmod drone.py).
+S4VR_API void s4vr_drone_start(const float* position) { s4vr::drone::start(position); }
+S4VR_API void s4vr_drone_stop() { s4vr::drone::stop(); }
+S4VR_API void s4vr_drone_limits(float lowest, float highest) { s4vr::drone::setLimits(lowest, highest); }
+S4VR_API int s4vr_drone_pose(float* out) { return s4vr::drone::pose(out) ? 1 : 0; }
+S4VR_API void s4vr_drone_configure(float speed, float liftSpeed, float smoothing, float boost) {
+    s4vr::drone::configure(speed, liftSpeed, smoothing, boost);
+}
 
 // Writes a NUL-terminated status line into buffer; returns its full length.
 S4VR_API int s4vr_status(char* buffer, int size) {
@@ -682,6 +832,7 @@ S4VR_API int s4vr_find_camera(const float* position, const float* target, char* 
 // Must run before process exit; the script mod registers it with atexit.
 S4VR_API void s4vr_shutdown() {
     s4vr::patchreport::shutdown();
+    s4vr::discordaudio::shutdown();
     if (!g_initialized) return;
     s4vr::vr::shutdown();
     s4vr::voice::shutdown();
@@ -734,7 +885,9 @@ S4VR_API int s4vr_grip(int hand, float* out) {
 
 // First person: how much of the outdoors reaches you inside through doors and
 // arches (0..1, negative: not known) and through plain walls (ambience.h).
-S4VR_API void s4vr_outdoors(float through, float wallLeak) { s4vr::ambience::setOpenings(through, wallLeak); }
+S4VR_API void s4vr_outdoors(float through, float wallLeak, int basement) {
+    s4vr::ambience::setOpenings(through, wallLeak, basement != 0);
+}
 
 // The first-person Sim's hand joint: out = position xyz, orientation xyzw.
 S4VR_API int s4vr_hand_joint(int hand, unsigned long long* sim, float* out) {
@@ -742,6 +895,19 @@ S4VR_API int s4vr_hand_joint(int hand, unsigned long long* sim, float* out) {
     if (!s4vr::camera::handJoint(hand, id, out, out + 3)) return 0;
     *sim = id;
     return 1;
+}
+
+// A Sim falls as a ragdoll (docs/RAGDOLL.md): along (vx, vy, vz) m/s, or all zero for the last blow your
+// hand gave it; blends back after `limp` seconds (0: until s4vr_ragdoll_release). Returns 1 if it started.
+S4VR_API int s4vr_ragdoll_start(unsigned long long simId, float vx, float vy, float vz, float limp) {
+    float v[3] = {vx, vy, vz};
+    return s4vr::armik::ragdollStart(s4vr::camera::objectPointer(simId), v, limp) ? 1 : 0;
+}
+// For Integrated Body Physics: 1 while this actor (the pose hook's pointer) is posed as a ragdoll, so its
+// breast and cloth springs stand down and the bones follow the body.
+S4VR_API int s4vr_ragdoll_active(void* actor) { return s4vr::ragdoll::active(actor) ? 1 : 0; }
+S4VR_API void s4vr_ragdoll_release(unsigned long long simId) {
+    s4vr::ragdoll::release(s4vr::camera::objectPointer(simId));
 }
 
 S4VR_API unsigned long long s4vr_object_ptr(unsigned long long id) {

@@ -9,6 +9,7 @@
 #include <cwchar>
 
 #include "log.h"
+#include "patchreport.h"
 
 namespace s4vr::crashlog {
 
@@ -189,6 +190,7 @@ LONG CALLBACK onException(EXCEPTION_POINTERS* pointers) {
     int event = ++g_events;
     if (event > 8) return EXCEPTION_CONTINUE_SEARCH;
     t_inHandler = true;
+    s4vr::patchreport::markCrash();
     HANDLE text = CreateFileW(g_textPath, FILE_APPEND_DATA, FILE_SHARE_READ, nullptr, OPEN_ALWAYS,
                               FILE_ATTRIBUTE_NORMAL, nullptr);
     if (text != INVALID_HANDLE_VALUE) {

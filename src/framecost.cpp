@@ -33,8 +33,11 @@ struct Sums {
     int frames = 0, withCamera = 0, withShadows = 0, withEyes = 0, withDraws = 0, shadowsFirst = 0;
     double frame = 0, worst = 0, before = 0, shadows = 0, eyes = 0, after = 0, present = 0;
 };
-Sums g_sums;
+Sums g_sums[2];  // [0] at rest, [1] while the stick turns (turn profiler, user 2026-10-28)
 int64_t g_logStart = 0;
+std::atomic<ULONGLONG> g_turnTick{0};
+std::atomic<uint32_t> g_fits{0}, g_sets{0};
+uint64_t g_turnFits = 0, g_turnSets = 0, g_restFits = 0, g_restSets = 0;
 
 void first(std::atomic<int64_t>& at, int64_t now) {
     int64_t none = 0;
@@ -47,19 +50,24 @@ void latest(std::atomic<int64_t>& at, int64_t now) {
     }
 }
 
-void log(const Sums& s, double seconds) {
+void log(const Sums& s, double seconds, const char* what, uint64_t fits, uint64_t sets) {
     auto per = [](double total, int n) { return n ? total / n : 0.0; };
     auto share = [&s](int n) { return 100.0 * n / s.frames; };
-    LOG("Frame time (last %.0f s, %d pictures, %.1f a second): the game %.1f ms a picture (worst %.0f); its update "
+    LOG("Frame time %s (last %.0f s, %d pictures, %.1f a second, %.2f shadow fits and %.2f body placements a picture): the game %.1f ms a picture (worst %.0f); its update "
         "before drawing %.1f ms (%.0f%% of pictures); Sims for shadows and mirrors drawn over %.1f ms (%.0f%%), in "
         "your view over %.1f ms (%.0f%%), shadows first in %.0f%%; %.1f ms after the last Sim; Present with the VR "
         "work and its wait %.1f ms",
-        seconds, s.frames, s.frames / seconds, per(s.frame, s.frames), s.worst, per(s.before, s.withCamera),
+        what, seconds, s.frames, s.frames / seconds, static_cast<double>(fits) / s.frames,
+        static_cast<double>(sets) / s.frames, per(s.frame, s.frames), s.worst, per(s.before, s.withCamera),
         share(s.withCamera), per(s.shadows, s.withShadows), share(s.withShadows), per(s.eyes, s.withEyes),
         share(s.withEyes), share(s.shadowsFirst), per(s.after, s.withDraws), per(s.present, s.frames));
 }
 
 }  // namespace
+
+void turnNote() { g_turnTick.store(GetTickCount64(), std::memory_order_relaxed); }
+void shadowFit() { g_fits.fetch_add(1, std::memory_order_relaxed); }
+void bodyPlaced() { g_sets.fetch_add(1, std::memory_order_relaxed); }
 
 void renderCamera() {
     hitch::mainThreadSeen();
@@ -85,7 +93,11 @@ void presentEnd() {
     const int64_t shadowLast = g_shadowLast.exchange(0, std::memory_order_relaxed);
     const int64_t eyeFirst = g_eyeFirst.exchange(0, std::memory_order_relaxed);
     const int64_t eyeLast = g_eyeLast.exchange(0, std::memory_order_relaxed);
-    Sums& s = g_sums;
+    const ULONGLONG turnTick = g_turnTick.load(std::memory_order_relaxed);
+    const bool turning = turnTick && GetTickCount64() - turnTick < 200;
+    Sums& s = g_sums[turning ? 1 : 0];
+    (turning ? g_turnFits : g_restFits) += g_fits.exchange(0, std::memory_order_relaxed);
+    (turning ? g_turnSets : g_restSets) += g_sets.exchange(0, std::memory_order_relaxed);
     if (g_lastEnd && g_start > g_lastEnd) {
         const double frame = (g_start - g_lastEnd) * g_msPerTick;
         ++s.frames;
@@ -115,8 +127,11 @@ void presentEnd() {
     if (!g_logStart) g_logStart = end;
     const double seconds = (end - g_logStart) * g_msPerTick / 1000.0;
     if (seconds >= 10) {
-        if (s.frames) log(s, seconds);
-        s = Sums{};
+        if (g_sums[0].frames) log(g_sums[0], seconds, "at rest", g_restFits, g_restSets);
+        if (g_sums[1].frames >= 10) log(g_sums[1], seconds, "while the stick turns", g_turnFits, g_turnSets);
+        g_sums[0] = Sums{};
+        g_sums[1] = Sums{};
+        g_turnFits = g_turnSets = g_restFits = g_restSets = 0;
         g_logStart = end;
     }
 }

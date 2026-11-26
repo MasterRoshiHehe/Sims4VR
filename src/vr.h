@@ -44,6 +44,9 @@ void pieOpened(int items);
 // the palm and dynamic pie modes; closing it without an answer brings the popup's buttons back.
 void dialogPie();
 void pieClosed();
+// Any thread (pie.py): the pie about to open is for a click on a TV: its screen centre and outward normal in world
+// units (v: 6 floats); null: not a TV.
+void setPieTv(const float* v);
 // Any thread (remote.py): the hand of the last click into the world in first
 // person (0 left, 1 right; laser or fingertip), -1 if none in the last 5 s; and
 // whether the pie menu shows at your hand now.
@@ -66,6 +69,10 @@ void setBuildBuy(bool on);
 // screen (a TV: fitted inside it), 0 = off. v: centre xyz, outward normal xyz,
 // up xyz, width, height of the face (world units).
 void setObjectMenu(int kind, const float v[11]);
+// Any thread (outfit.py): where the outfit panel shows (vr_parts/14c_outfit.inc): kind 1 on a mirror's front,
+// 2 lying in a drawer, 3 in front of you, 0 gone. v: centre xyz (a drawer: the middle of its floor at the front),
+// outward normal xyz, up xyz, width, height (a drawer: its height), depth (a drawer's; world units).
+void setOutfitPlace(int kind, const float v[12]);
 // Any thread (notify.py): notification `id` as a card over a Sim's head at
 // `at` (world), or in front of you (front); id 0 = none.
 void setNoteOver(uint64_t id, const float at[3], bool front);

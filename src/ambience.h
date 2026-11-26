@@ -32,6 +32,12 @@ void setFirstPerson(bool on);
 // outdoors.py, a few times a second in first person: how much of the outdoors
 // reaches you inside through doors and arches, 0..1 (negative: not known, the
 // wall distance alone), and how much comes through plain walls, 0..1.
-void setOpenings(float through, float wallLeak);
+// basement: the Sim is on a level below ground (setBasement scales what it hears).
+void setOpenings(float through, float wallLeak, bool basement = false);
+// Basement: the outdoors reaches you at this share of the above-ground level, 0..1 (1 = no difference). Live.
+void setBasement(float scale);
+// The least share of the outdoors heard inside, 0..1 (v0.13.4xx: a faint
+// background instead of silence); open doors/windows rise from it. Live.
+void setFloor(float floor);
 
 }  // namespace s4vr::ambience

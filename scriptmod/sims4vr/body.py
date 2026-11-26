@@ -110,11 +110,36 @@ def _tv(what):
         getattr(passive, what)()
     except Exception as e:
         native._log('passive {} failed: {!r}'.format(what, e))
+    try:  # looking through a window / at Sims doing something = peeping / watching (gazewatch.py)
+        from sims4vr import gazewatch
+        getattr(gazewatch, what)()
+    except Exception as e:
+        native._log('gazewatch {} failed: {!r}'.format(what, e))
+    try:  # touching a light switch flips its room's lights (lightswitch.py)
+        from sims4vr import lightswitch
+        getattr(lightswitch, what)()
+    except Exception as e:
+        native._log('lightswitch {} failed: {!r}'.format(what, e))
+    try:  # knocking on doors and windows (knock.py)
+        from sims4vr import knock
+        getattr(knock, what)()
+    except Exception as e:
+        native._log('knock {} failed: {!r}'.format(what, e))
+    try:  # auto lights ignore you (autolight.py)
+        from sims4vr import autolight
+        getattr(autolight, what)()
+    except Exception as e:
+        native._log('autolight {} failed: {!r}'.format(what, e))
     try:  # Sims Forever on a computer (simsforever.py), started and stopped with it
         from sims4vr import simsforever
         getattr(simsforever, what)()
     except Exception as e:
         native._log('simsforever {} failed: {!r}'.format(what, e))
+    try:  # Influence to... on household Sims (influence.py)
+        from sims4vr import influence
+        getattr(influence, what)()
+    except Exception as e:
+        native._log('influence {} failed: {!r}'.format(what, e))
     try:  # Follow me / Dismiss on other Sims (follow.py): paused outside first person
         from sims4vr import follow
         getattr(follow, what)()
@@ -140,6 +165,11 @@ def enable():
         fades.install()
     except Exception as e:
         native._log('fades failed to start: {!r}'.format(e))
+    try:  # the work card: eyes closed while your Sim is at work (work.py)
+        from sims4vr import work
+        work.install()
+    except Exception as e:
+        native._log('work failed to start: {!r}'.format(e))
     sim = _active_sim()
     if sim is None:
         return None
@@ -182,10 +212,7 @@ def _follow(sim):
         native._log('body mode following Sim {}'.format(sim.id))
     _keep_still(sim)
     native.set_body_root(sim.position, sim.orientation)
-    try:
-        native.set_sim_level(getattr(sim.routing_surface, 'secondary_id', 0))
-    except Exception:
-        pass
+    # the level you walk on goes to the DLL from walk.py (set_sim_level): the Sim's own lags on basement stairs
 
 
 def tick():

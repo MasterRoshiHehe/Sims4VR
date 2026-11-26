@@ -540,6 +540,13 @@ static bool updatePopupCard(const ObjectMenuRequest& r, bool firstPerson, bool h
     if (r.kind == 5) {
         // Beside the Sim's head, to its right as you see it, like a speech
         // bubble; as wide as [ui] popup_size per metre away, so it reads the same.
+        // Steady (user 2026-10-29: a card swinging with your head and the Sim's animation was hard to use): the side
+        // and facing are fixed when it shows, as the pie's; the Sim's spot is fixed by Python (objmenu._popup_pos).
+        static HeldPlace placeSim;
+        XrVector3f aEye, aFlat;
+        holdPlace(placeSim, eye, flat, g_popupPlace, "Popup card beside a Sim", aEye, aFlat);
+        g_popupPlace = false;
+        eye = aEye;
         XrVector3f sim = worldToApp(view, r.v, false);
         XrVector3f to{sim.x - eye.x, 0, sim.z - eye.z};
         float away = std::sqrt(dot3(to, to));

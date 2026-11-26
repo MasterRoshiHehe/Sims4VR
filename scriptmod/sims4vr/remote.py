@@ -143,9 +143,9 @@ def from_afar(affordance, target=None):
         return True
     if getattr(affordance, 'vr_from_afar', False):  # other mods' options that need no walking (Claude Jiggle outfits)
         return True
-    try:  # Open Claude on a TV (claude.py, [claude] tvs)
+    try:  # Open Claude / Open Discord on a TV or other screen object (claude.py make_affordance)
         from sims4vr import claude
-        return affordance is claude._affordance and claude._is_tv(target)
+        return getattr(affordance, 'vr_spec', None) is not None and not claude._is_computer(claude._owner(target))
     except Exception:
         return False
 

@@ -40,6 +40,7 @@ _choices = None  # the game's own generate_choices
 _own_items = []
 _choices_signature = None
 _forced = 0
+_extra_items = 0  # entries of ours added after the game's (influence.py's Try...)
 
 
 def _log_error(where, e):
@@ -65,7 +66,11 @@ def _wrap_create():
                 else:
                     _last_reference = args[2] if len(args) > 2 else kwargs.get('reference_id')
                 _send_own(msg, frame.f_locals)
-                native.pie_menu(len(msg.items))
+                _tv_anchor(frame.f_locals.get('pick_target'))
+                native.pie_menu(len(msg.items) + (_extra_items if _own_items else 0))
+                if _own_items:
+                    from sims4vr import hudinfo
+                    hudinfo.icons_now()
                 if msg.items:
                     _opened_on(frame.f_locals.get('pick_target'), frame.f_locals.get('sim'))
         except Exception as e:
@@ -75,6 +80,10 @@ def _wrap_create():
     hooks.hook('pie', interaction_commands, 'create_pie_menu_message', create_pie_menu_message)
 
 
+VR_ICON_ID = 0x4C4F474F434C4402  # the VR headset (art/logos/vr_pie.png, hud.cpp kLogoVrId): the icon of every pie entry the mod adds
+custom_category_icons = {}  # ... and their icon ids (the logos, hud.cpp ownLogo)
+custom_categories = {}  # pie category id -> its name: sub menus of our own (claude.py make_affordance)
+custom_category_parents = {}  # ... and the category each sits in (0 / missing: the pie's root), e.g. Store > Owner
 _bad_categories = set()  # mod categories whose name couldn't be made (logged once)
 
 
@@ -83,8 +92,9 @@ def _send_own(msg, local):
     in other boxes): the game's own PieMenuCreate, plus what the PieMenu widget gets from the game service
     GetInteractionCategoryList (the categories the items name, up to the root). The DLL builds the tree as
     InteractionMenuData.GenerateTree does (re/liveui/components/PieMenu.md). b'': none (the game's pie cut out)."""
-    global _own_items
+    global _own_items, _extra_items
     _own_items = []
+    _extra_items = 0
     try:
         if not native.setting_flag('ui', 'own_pie', True) or not hooks.in_first_person() or not msg.items or \
                 msg.HasField('disabled_tooltip'):
@@ -111,7 +121,24 @@ def _send_own(msg, local):
         records = ['pie\x1f{}\x1f{}'.format(1 if front else 0, msg.server_reference_id)]
         sent = set()
 
+        def custom_category(key):
+            """A sub menu of our own (claude.py: a screen object's screens): named here, no tuned category behind it."""
+            from sims4.localization import LocalizationHelperTuning
+            sent.add(key)
+            parent = custom_category_parents.get(key, 0)
+            if parent and parent in custom_categories and parent not in sent:
+                custom_category(parent)
+            name_json = objmenu._loc(LocalizationHelperTuning.get_raw_text(custom_categories[key]))
+            records.append('cat\x1f{}\x1f{}\x1f0\x1f1\x1f0\x1f{}\x1f{}\x1f'.format(
+                key, parent if parent in custom_categories else 0, custom_category_icons.get(key, 0), name_json))
+
         def category(key):
+            if key in custom_categories and key not in sent:
+                try:
+                    custom_category(key)
+                except Exception as e:
+                    native._log('pie: own category {} not made ({!r})'.format(key, e))
+                return
             while key and key not in sent:
                 cat = categories.get(key)
                 if cat is None:
@@ -153,7 +180,7 @@ def _send_own(msg, local):
         for i, item in enumerate(msg.items):
             _own_items.append((item.id, msg.server_reference_id))
             key = int(getattr(item, 'category_key', 0) or 0)
-            if key and categories.get(key) is None:
+            if key and categories.get(key) is None and key not in custom_categories:
                 key = 0
             category(key)
             disabled = objmenu._loc(item.disabled_text) if item.HasField('disabled_text') and item.disabled_text.hash else ''
@@ -164,9 +191,29 @@ def _send_own(msg, local):
             records.append('item\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}'.format(
                 i, key, int(item.pie_menu_priority), max(0.0, float(item.score)), mood_index,
                 int(getattr(item, 'mood_intensity', 0) or 0), objmenu._loc(item.loc_string), disabled, icons))
+        from sims4vr import influence
+        if influence.opening():
+            # The influenced Sim's own pie: one more entry on top, "Try..." (influence.py).
+            from sims4.localization import LocalizationHelperTuning
+            _own_items.append(('influence_use', 0))
+            _extra_items = 1
+            records.append('item\x1f{}\x1f0\x1f{}\x1f0\x1f0\x1f0\x1f{}\x1f\x1f{}'.format(
+                len(msg.items), 1000000, objmenu._loc(LocalizationHelperTuning.get_raw_text('Try...')), VR_ICON_ID))
+        from sims4vr import outfit
+        stored = outfit.pie_extras(local.get('pick_target'))
+        if stored:
+            # A dresser's or wardrobe's Store menu (outfit.py: what its drawers hold).
+            for entry in stored:
+                label, what = entry[0], entry[1]
+                key = entry[2] if len(entry) > 2 else outfit.PIE_CATEGORY  # Store or one of its submenus
+                category(key)
+                records.append('item\x1f{}\x1f{}\x1f0\x1f0\x1f0\x1f0\x1f{}\x1f\x1f{}'.format(len(_own_items), key, label, VR_ICON_ID))
+                _own_items.append(('outfit', what))
+                _extra_items += 1
         native.pie_content('\x1e'.join(records).encode('utf-8'))
     except Exception as e:
         _own_items = []
+        _extra_items = 0
         native.pie_content(b'')
         _log_error('own pie content', e)
 
@@ -217,6 +264,14 @@ def select_own(index):
             from sims4vr import phonesim
             phonesim.contact_action(reference)
             return
+        if option == 'influence_use':
+            from sims4vr import influence
+            influence.use_chosen()
+            return
+        if option == 'outfit':
+            from sims4vr import outfit
+            outfit.pie_pick(reference)
+            return
         if option == 'dialog':
             from sims4vr import objmenu
             objmenu.answer_popup(reference)
@@ -229,6 +284,22 @@ def select_own(index):
         native._log('pie: own pie option {} picked (id {})'.format(index, option))
     except Exception as e:
         _log_error('own pie pick', e)
+
+
+def _tv_anchor(target):
+    """A click on a TV: the DLL puts the pie in front of its screen (before pie_menu opens it)."""
+    try:
+        if target is not None and not getattr(target, 'is_sim', False):
+            from sims4vr import objmenu, remote
+            if remote._is_tv(target):
+                centre, normal = objmenu._front(target, True)[:2]
+                native.pie_tv(centre, normal)
+                native._log('pie: TV {} at {}, facing {}'.format(
+                    target, tuple(round(v, 2) for v in centre), tuple(round(v, 2) for v in normal)))
+                return
+    except Exception as e:
+        _log_error('TV anchor', e)
+    native.pie_tv()
 
 
 def _opened_on(target, sim):
@@ -285,6 +356,34 @@ def open_self():
         _log_error('own pie menu', e)
 
 
+def open_for(sim):
+    """influence.py: the pie menu of a Sim you don't play, as if you had selected them: a click on
+    that Sim answered for that Sim (the caller makes _active_sim answer with it meanwhile). Like
+    open_self: no social front page. Returns the number of options."""
+    global _self_pie
+    try:
+        client = services.client_manager().get_first_client()
+        if client is None or sim is None:
+            return 0
+        if _last_reference is None:
+            native._log('pie: influence pie menu needs one click on anything first (the game\'s menu has no click to answer yet)')
+            return 0
+        from server.pick_info import PickType
+        position = sim.position
+        choices = _debug_choices if _choices is not None else interaction_commands.generate_choices
+        _self_pie = True
+        try:
+            items = choices(sim.id, PickType.PICK_SIM, position.x, position.y, position.z, services.active_lot_id() or 0,
+                            sim.level, 0, 0, 0, _last_reference, 0, 0, True, _connection=client.id)
+        finally:
+            _self_pie = False
+        return items
+    except Exception as e:
+        _self_pie = False
+        _log_error('influence pie menu', e)
+        return 0
+
+
 def open_on(obj, pick_sim=False):
     """A pie menu on an object (the phone's Inventory: what a click on it in the game's inventory panel asks,
     interactions.choices on the object), answered at your hand like any pie menu in first person."""
@@ -305,6 +404,27 @@ def open_on(obj, pick_sim=False):
         native._log('pie: pie menu on {} asked for ({} options)'.format(obj, items))
     except Exception as e:
         _log_error('object pie menu', e)
+
+
+def open_skewer(sim_info):
+    """The pie menu of a click on a Sim's skewer portrait (interactions.choices, PICK_SKEWER): for a household Sim off the
+    lot it holds Care for self, the away actions. Answered like any pie menu."""
+    try:
+        sim = services.get_active_sim()
+        client = services.client_manager().get_first_client()
+        if sim is None or client is None or sim_info is None:
+            return
+        if _last_reference is None:
+            native._log('pie: the skewer pie menu needs one click on anything first (the game\'s menu has no click to answer yet)')
+            return
+        from server.pick_info import PickType
+        position = sim.position
+        choices = _debug_choices if _choices is not None else interaction_commands.generate_choices
+        items = choices(sim_info.id, PickType.PICK_SKEWER, position.x, position.y, position.z,
+                        services.active_lot_id() or 0, sim.level, 0, 0, 0, _last_reference, 0, 0, True, _connection=client.id)
+        native._log('pie: skewer pie menu of {} asked for ({} options)'.format(sim_info.first_name, items))
+    except Exception as e:
+        _log_error('skewer pie menu', e)
 
 
 def cheats_enabled():

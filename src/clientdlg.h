@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+
 // The game's own dialogs that its Flash UI makes by itself (save before exit,
 // missing custom content on load, ...) as our popup card in first person.
 //
@@ -40,6 +42,12 @@ bool sendGameTray(int which);
 // mode sends it, or (uiMessage) SendUIMessage(name[, arg]); json the argument as JSON ("true", "-0.5",
 // "{\"value\":1}"; empty: none). Sent on the UI thread at the next poll. False when the game isn't hooked.
 bool gameService(const char* name, const char* json = "", bool uiMessage = false);
+// Any thread: a game UI service asked for its answer: CommunicationManager.CallGameService(name, JSON.parse(json)) on
+// the UI thread at the next poll, as the game's own UI calls it (outfit.py: GetCatalogColorFamilies, as
+// CASCatalogProduct asks it), the answer made JSON by AS3's JSON.stringify. The ticket; 0: not sent (not hooked).
+int serviceQuery(const char* name, const char* json);
+// Any thread: that answer once it came, taken (JSON text; "" when the call failed or gave nothing); false while waiting.
+bool serviceResult(int ticket, std::string& out);
 // Any thread: a server popup (picker: a picker) answered on our card closes on the game's UI too (UI thread).
 bool closeGameDialog(bool picker);
 

@@ -359,12 +359,20 @@ struct Prepared {
     Affine joint[kMaxJoints];  // every joint's model-space map (the CAS Sim's pose -> your body)
     Vec3 fold{0, 0, 0};
     ULONGLONG tick = 0;
-    bool usedSecond = false;
+    uint32_t frame = 0;  // the frame (g_frame) it was worked out for
     bool valid = false;
 };
 std::mutex g_cacheMutex;
 Prepared g_cache;
 thread_local Prepared t_prep;
+// Frames (newFrame: each scene render but the right eye's). The body is worked out once a frame and every pass of it,
+// both eyes, draws that same body. Before (v0.13.816-904) a body was kept 6 ms in the left eye's passes by
+// GetTickCount64, whose clock steps 10-16 ms: whenever a step fell between two passes of one eye's picture (depth,
+// colour ...) the later ones got a body worked out again, with your head and controllers a moment on, and the right eye
+// the last of them, so the arms and hands showed twice, one copy see-through (user 2026-11-04).
+std::atomic<uint32_t> g_frame{0};
+std::atomic<ULONGLONG> g_frameTick{0};
+constexpr ULONGLONG kFramesCounted = 500;  // no new frame in this long: frames are not counted, a body each clock step
 
 // Where the body faces (world yaw), turned toward your head's heading past a dead zone and eased.
 float g_bodyYaw = NAN;
@@ -376,7 +384,7 @@ constexpr float kHeadBelowEyes = 0.09f;   // metres: and below them; a taller Si
 constexpr float kMaxDrop = 0.30f;
 
 // Stats for the 10 s log.
-std::atomic<uint32_t> g_statPrepared{0}, g_statDraws{0}, g_statInjected{0}, g_statMeshes{0}, g_statPalettes{0},
+std::atomic<uint32_t> g_statFrames{0}, g_statPrepared{0}, g_statDraws{0}, g_statInjected{0}, g_statMeshes{0}, g_statPalettes{0},
     g_statSkipped{0}, g_statArms[2] = {{0}, {0}}, g_statNoPose{0};
 std::atomic<ULONGLONG> g_statTick{0};
 std::atomic<int> g_placeLogs{0};
@@ -415,10 +423,10 @@ void logStats(ULONGLONG now) {
         return;
     }
     if (now - last < 10000 || !g_statTick.compare_exchange_strong(last, now)) return;
-    LOG("CAS body: in the last 10 s, %u passes worked out, %u body draws (%u put in where the game left the Sim out), "
+    LOG("CAS body: in the last 10 s, %u frames, the body worked out %u times, %u body draws (%u put in where the game left the Sim out), "
         "%u meshes drawn, %u left out (one-bone pieces, eyes/teeth/lashes), %u palettes; arms on your controllers "
         "%u left / %u right; %u passes with no pose; body faces %.0f deg, lowered %.2f m; batch sink %s",
-        g_statPrepared.exchange(0), g_statDraws.exchange(0), g_statInjected.exchange(0), g_statMeshes.exchange(0),
+        g_statFrames.exchange(0), g_statPrepared.exchange(0), g_statDraws.exchange(0), g_statInjected.exchange(0), g_statMeshes.exchange(0),
         g_statSkipped.exchange(0), g_statPalettes.exchange(0), g_statArms[0].exchange(0), g_statArms[1].exchange(0),
         g_statNoPose.exchange(0), g_lastYaw * 57.2958f, g_lastDrop, g_skipBatch.load() ? "left out" : "kept");
 }
@@ -804,7 +812,6 @@ bool compute(const uint8_t* model, const uint8_t* pose, const std::shared_ptr<co
     out.pose = pose;
     out.rig = rig;
     out.tick = now;
-    out.usedSecond = false;
     out.valid = true;
     return true;
 }
@@ -865,13 +872,13 @@ bool prepare(const uint8_t* sceneModel) {
     }
     auto rig = rigFor(actor, count);
     if (!rig) return false;
-    const bool second = singleview::inSecond();
+    const uint32_t frame = g_frame.load(std::memory_order_acquire);
+    const bool counted = now - g_frameTick.load(std::memory_order_relaxed) < kFramesCounted;
     std::lock_guard<std::mutex> lock(g_cacheMutex);
-    // Both eyes of a frame (the right eye's pass runs after the left's) get the same body; several draws in one pass
-    // (depth first, then colour) too.
+    // One body a frame: every draw of it (depth, colour and the other passes, the left eye's and the right eye's, which
+    // the game draws after the left's) gets the same bones.
     const bool same = g_cache.valid && g_cache.model == sceneModel && g_cache.pose == pose && g_cache.rig == rig;
-    if (same && (second ? now - g_cache.tick < 60 : (!g_cache.usedSecond && now - g_cache.tick < 6))) {
-        if (second) g_cache.usedSecond = true;
+    if (same && (counted ? g_cache.frame == frame : now == g_cache.tick)) {
         t_prep = g_cache;
         return true;
     }
@@ -880,7 +887,7 @@ bool prepare(const uint8_t* sceneModel) {
         g_cache.valid = false;
         return false;
     }
-    fresh.usedSecond = second;
+    fresh.frame = frame;
     g_cache = fresh;
     t_prep = fresh;
     g_statPrepared.fetch_add(1, std::memory_order_relaxed);
@@ -953,6 +960,12 @@ void setEyesAtBody(bool on) {
 
 void setStill(bool on) {
     if (g_still.exchange(on) != on) LOG("CAS body: still pose %s", on ? "on" : "off");
+}
+
+void newFrame() {
+    g_frame.fetch_add(1, std::memory_order_acq_rel);
+    g_frameTick.store(GetTickCount64(), std::memory_order_relaxed);
+    g_statFrames.fetch_add(1, std::memory_order_relaxed);
 }
 
 bool skipBatch() { return g_skipBatch.load(std::memory_order_relaxed); }

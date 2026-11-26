@@ -13,9 +13,11 @@
 
 #include "armik.h"
 #include "camera.h"
+#include "claudescreen.h"
 #include "simsforever.h"
 #include "log.h"
 #include "nearplane.h"
+#include "teleport.h"
 #include "trail.h"
 #include "trail_art.h"
 
@@ -197,6 +199,76 @@ float4 psMain(Out i) : SV_Target {
 }
 )";
 
+// The flashlight: one triangle over the view, lit from the scene depth (see phone3d.h setFlashlight).
+const char kFlashShader[] = R"(
+cbuffer Flash : register(b0) {
+    float4 lightPos;   // view space (x right, y up, z toward the camera), w: range in world units
+    float4 lightDir;   // where it points; w: cos of the cone's outer half angle
+    float4 params;     // x: cos of the inner half angle, y: brightness, z: fill, w: world units per metre
+    float4 proj;       // tan x, tan y, centre x, centre y
+    float4 size;       // width, height, near, far
+    float4 mode;       // x: 1 reversed depth
+};
+#ifdef MS
+Texture2DMS<float> sceneDepth : register(t1);
+#define SCENE(p) sceneDepth.Load(p, 0)
+#else
+Texture2D<float> sceneDepth : register(t1);
+#define SCENE(p) sceneDepth.Load(int3(p, 0))
+#endif
+Texture2D<float4> colorTex : register(t2);  // the picture so far (a copy): its hue and texture tell what the surface is
+struct VO { float4 pos : SV_Position; };
+VO vsFull(uint id : SV_VertexID) {
+    float2 uv = float2((id << 1) & 2, id & 2);
+    VO o;
+    o.pos = float4(uv * float2(2, -2) + float2(-1, 1), 0, 1);
+    return o;
+}
+struct PO { float4 add : SV_Target0; float4 mul : SV_Target1; };
+PO psLight(VO i) {
+    PO o;
+    o.add = float4(0, 0, 0, 0);
+    o.mul = float4(1, 1, 1, 1);
+    float d = SCENE(int2(i.pos.xy));
+    float n = size.z, f = size.w;
+    bool rev = mode.x > 0.5;
+    bool sky = rev ? d <= 0 : d >= 1;
+    float z = rev ? n * f / (n + d * (f - n)) : n * f / (f - d * (f - n));
+    float2 ndc = float2(i.pos.x / size.x * 2 - 1, 1 - i.pos.y / size.y * 2);
+    float3 P = float3((ndc.x * proj.x + proj.z) * z, (ndc.y * proj.y + proj.w) * z, -z);
+    float3 N = cross(ddx(P), ddy(P));
+    N = N / max(length(N), 1e-12);
+    if (dot(N, -P) < 0) N = -N;
+    float3 v = P - lightPos.xyz;
+    float dist = max(length(v), 1e-4);
+    float3 dir = v / dist;
+    float cone = smoothstep(lightDir.w, params.x, dot(dir, lightDir.xyz));
+    float fall = saturate(1 - dist / lightPos.w);
+    fall *= fall;
+    float r0 = params.w;
+    float closeK = 1 / (1 + (dist / r0) * (dist / r0));
+    float lam = 0.3 + 0.7 * saturate(dot(N, -dir));
+    float a = sky ? 0 : cone * fall * closeK * 2 * lam;
+    // A dark room leaves almost nothing to multiply (x(1 + b) of 0.002 is still black), so the beam also adds
+    // the surface's own colour: its hue from the picture so far (normalised to its brightness, so even a nearly
+    // black pixel keeps its hue), its texture from that brightness. True colours, never a flat grey.
+    float3 c = colorTex.Load(int3(int2(i.pos.xy), 0)).rgb;
+    float luma = dot(c, float3(0.2126, 0.7152, 0.0722));
+    // The picture is 8 bits a channel: in the dark a pixel's hue is a few levels of rounding, so the hue is
+    // taken from the neighbours' average (3x3 taps, 2 px apart); the texture stays the pixel's own brightness.
+    float3 avg = float3(0, 0, 0);
+    for (int dy = -1; dy <= 1; ++dy)
+        for (int dx = -1; dx <= 1; ++dx) avg += colorTex.Load(int3(int2(i.pos.xy) + int2(dx, dy) * 2, 0)).rgb;
+    avg /= 9;
+    float3 hue = clamp(avg / max(dot(avg, float3(0.2126, 0.7152, 0.0722)), 1e-4), 0.15, 4.0);
+    hue /= max(dot(hue, float3(0.2126, 0.7152, 0.0722)), 1e-4);
+    float3 refl = hue * (0.2 + 0.8 * saturate(luma * 12));
+    o.mul = float4((1 + params.y * 0.3 * a).xxx, 1);
+    o.add = float4(refl * (params.y * 0.04 * a) + float3(1.0, 0.95, 0.85) * (params.z * a), 0);
+    return o;
+}
+)";
+
 struct Vertex {
     float pos[3];
     float normal[3];
@@ -280,6 +352,22 @@ ID3D11RasterizerState* g_raster = nullptr;
 ID3D11DepthStencilState* g_depthState[2] = {};  // normal, reversed
 ID3D11DepthStencilState* g_depthWrite[2] = {};  // the same, writing depth (the phone slab, for what is drawn after it)
 ID3D11BlendState* g_premultiplied = nullptr;    // clear panels over the world
+// The flashlight pass.
+struct FlashParams {
+    bool allowed = false;
+    float brightness = 0, fill = 0, range = 0, cone = 0;
+    ULONGLONG at = 0;
+};
+FlashParams g_flashParams;
+std::atomic<bool> g_flashOn{false};
+ID3D11VertexShader* g_flashVs = nullptr;
+ID3D11PixelShader* g_flashPs[2] = {};  // single sample, multisample scene depth
+ID3D11Buffer* g_flashCb = nullptr;
+ID3D11BlendState* g_flashBlend = nullptr;  // result = src0 + dst * src1
+ID3D11Texture2D* g_flashCopy = nullptr;  // the picture so far, single sample (the shader reads its colour)
+ID3D11ShaderResourceView* g_flashCopyView = nullptr;
+UINT g_flashCopyW = 0, g_flashCopyH = 0;
+DXGI_FORMAT g_flashCopyFormat = DXGI_FORMAT_UNKNOWN;
 bool g_failed = false;
 std::atomic<ULONGLONG> g_drawnAt{0};
 Panel g_panel;
@@ -288,6 +376,9 @@ std::atomic<ULONGLONG> g_panelDrawnAt{0};
 Panel g_pie;
 std::atomic<ULONGLONG> g_pieDrawnAt{0};
 Panel g_sims1;  // Sims Forever
+Panel g_tv;     // the second window on a screen (Discord)
+Panel g_tv2;    // the Linear board on a screen (linearboard.h), drawn the same way
+Panel g_tv3;    // a note off the Linear scrumboard in your hand: another part of the board's picture
 std::atomic<ULONGLONG> g_sims1DrawnAt{0};
 ID3D11Buffer* g_sims1Vertices = nullptr;  // the screen's shape (simsforever::surface), unit square across
 UINT g_sims1VertexCount = 0;
@@ -336,6 +427,14 @@ void releaseAll() {
     safeRelease(g_depthWrite[0]);
     safeRelease(g_depthWrite[1]);
     safeRelease(g_premultiplied);
+    safeRelease(g_flashVs);
+    safeRelease(g_flashPs[0]);
+    safeRelease(g_flashPs[1]);
+    safeRelease(g_flashCb);
+    safeRelease(g_flashBlend);
+    safeRelease(g_flashCopyView);
+    safeRelease(g_flashCopy);
+    g_flashCopyW = g_flashCopyH = 0;
     g_vertexCount = 0;
     g_device = nullptr;
 }
@@ -442,6 +541,48 @@ bool init(ID3D11Device* device) {
         rt.BlendOpAlpha = D3D11_BLEND_OP_ADD;
         rt.RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
         ok = SUCCEEDED(device->CreateBlendState(&bd, &g_premultiplied));
+    }
+    if (ok) {
+        // The flashlight (not needed by the phone: without it the pass is just skipped).
+        auto flashCompile = [&](const char* entry, const char* target, bool ms) -> ID3DBlob* {
+            ID3DBlob* code = nullptr;
+            ID3DBlob* errors = nullptr;
+            const D3D_SHADER_MACRO defines[] = {{"MS", "1"}, {nullptr, nullptr}};
+            HRESULT hr = fn(kFlashShader, sizeof(kFlashShader) - 1, "phoneflash", ms ? defines : nullptr, nullptr, entry,
+                            target, D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &code, &errors);
+            if (FAILED(hr)) {
+                LOG("Phone flashlight: %s failed to compile (0x%08lx): %s", entry, static_cast<unsigned long>(hr),
+                    errors ? static_cast<const char*>(errors->GetBufferPointer()) : "");
+                safeRelease(code);
+            }
+            safeRelease(errors);
+            return code;
+        };
+        ID3DBlob* fvs = flashCompile("vsFull", "vs_5_0", false);
+        if (fvs) device->CreateVertexShader(fvs->GetBufferPointer(), fvs->GetBufferSize(), nullptr, &g_flashVs);
+        safeRelease(fvs);
+        for (int ms = 0; ms < 2; ++ms) {
+            ID3DBlob* fps = flashCompile("psLight", "ps_5_0", ms != 0);
+            if (fps) device->CreatePixelShader(fps->GetBufferPointer(), fps->GetBufferSize(), nullptr, &g_flashPs[ms]);
+            safeRelease(fps);
+        }
+        D3D11_BUFFER_DESC fb{};
+        fb.ByteWidth = 6 * 16;
+        fb.Usage = D3D11_USAGE_DEFAULT;
+        fb.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+        device->CreateBuffer(&fb, nullptr, &g_flashCb);
+        D3D11_BLEND_DESC bd{};
+        auto& rt = bd.RenderTarget[0];
+        rt.BlendEnable = TRUE;
+        rt.SrcBlend = D3D11_BLEND_ONE;
+        rt.DestBlend = D3D11_BLEND_SRC1_COLOR;
+        rt.BlendOp = D3D11_BLEND_OP_ADD;
+        rt.SrcBlendAlpha = D3D11_BLEND_ZERO;
+        rt.DestBlendAlpha = D3D11_BLEND_ONE;
+        rt.BlendOpAlpha = D3D11_BLEND_OP_ADD;
+        rt.RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+        if (FAILED(device->CreateBlendState(&bd, &g_flashBlend))) g_flashBlend = nullptr;
+        LOG("Phone flashlight: %s", g_flashVs && g_flashPs[0] && g_flashCb && g_flashBlend ? "ready" : "unavailable");
     }
     if (!ok) {
         LOG("Phone 3D: could not make its shaders or states; the phone stays flat");
@@ -732,6 +873,17 @@ void setPanel(const Panel& panel, ID3D11Texture2D* ui) {
     if (panel.show) viewOf(ui, g_panelView, g_panelTexture);
 }
 
+void setFlashlight(bool allowed, float brightness, float fill, float rangeMetres, float coneDegrees) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    g_flashParams = {allowed, brightness, fill, rangeMetres, coneDegrees, GetTickCount64()};
+}
+bool flashlightOn() { return g_flashOn.load(); }
+void toggleFlashlight() {
+    const bool on = !g_flashOn.load();
+    g_flashOn = on;
+    LOG("Phone: flashlight %s", on ? "on" : "off");
+}
+
 bool panelDrawnRecently() { return GetTickCount64() - g_panelDrawnAt.load(std::memory_order_relaxed) < 200; }
 
 void setPie(const Panel& pie, ID3D11Texture2D* ui) {
@@ -794,6 +946,11 @@ void setHands(const HandCapsule* capsules, int count) {
     g_handCount = std::min(count, kHandCapsules);
     for (int i = 0; i < g_handCount; ++i) g_hands[i] = capsules[i];
     g_handsAt = GetTickCount64();
+}
+
+void setTvScreen(const Panel& screen, int index) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    (index == 2 ? g_tv3 : index == 1 ? g_tv2 : g_tv) = screen;
 }
 
 bool sims1ScreenDrawnRecently() { return GetTickCount64() - g_sims1DrawnAt.load(std::memory_order_relaxed) < 200; }
@@ -1114,30 +1271,36 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
     camera::View view;
     if (!camera::lastView(view)) return;
     std::unique_lock<std::mutex> lock(g_mutex);
-    bool showPhone = g_phone.show, showPanel = g_panel.show, showPie = g_pie.show, showSims1 = g_sims1.show;
+    bool showPhone = g_phone.show, showPanel = g_panel.show, showPie = g_pie.show, showSims1 = g_sims1.show, showTv = g_tv.show || g_tv2.show || g_tv3.show;
     int bubbleCount = g_bubbleCount, pieceCount = g_pieceCount, balloonCount = g_balloonCount, bookCount = g_bookCount;
     // The guiding trail (first person only): footprints from the route the game planned.
-    Panel prints[trail::kMaxPrints];
+    Panel prints[trail::kMaxPrints + teleport::kMaxPanels];
     int printCount = camera::bodyActive() && trail::active()
                          ? trail::build(prints, trail::kMaxPrints, view.position.x, view.position.z, view.scale)
                          : 0;
-    if (!showPhone && !showPanel && !showPie && !showSims1 && !bubbleCount && !balloonCount && !pieceCount && !bookCount && !printCount) return;
+    // The teleport pointer (first person, teleport movement): arc dots and the footprints at the spot.
+    if (camera::bodyActive() && teleport::active()) {
+        const float cam[3] = {view.position.x, view.position.y, view.position.z};
+        printCount += teleport::build(prints + printCount, teleport::kMaxPanels, cam, view.scale);
+    }
+    if (!showPhone && !showPanel && !showPie && !showSims1 && !showTv && !bubbleCount && !balloonCount && !pieceCount && !bookCount && !printCount) return;
     ID3D11Device* device = nullptr;
     context->GetDevice(&device);
     if (device) device->Release();  // only used here, while the context holds it
     if (!device || !init(device)) return;
     if (showPhone && !buildMesh(device, g_phone)) showPhone = false;
-    if ((showPanel || showPie || showSims1 || bubbleCount || balloonCount || pieceCount || bookCount || printCount) && !buildPanelMesh(device)) {
-        showPanel = showPie = showSims1 = false;
+    if ((showPanel || showPie || showSims1 || showTv || bubbleCount || balloonCount || pieceCount || bookCount || printCount) && !buildPanelMesh(device)) {
+        showPanel = showPie = showSims1 = showTv = false;
         bubbleCount = balloonCount = pieceCount = bookCount = printCount = 0;
     }
     ID3D11ShaderResourceView* trailView = printCount ? trailTexture(device) : nullptr;
     if (!trailView) printCount = 0;
-    if (!showPhone && !showPanel && !showPie && !showSims1 && !bubbleCount && !balloonCount && !pieceCount && !bookCount && !printCount) return;
+    if (!showPhone && !showPanel && !showPie && !showSims1 && !showTv && !bubbleCount && !balloonCount && !pieceCount && !bookCount && !printCount) return;
     if (showPhone && g_phone.wallpaper) makeWallpaper(device);
     const Phone p = g_phone;
+    const FlashParams flash = g_flashParams;
     Panel q = g_panel, pie = g_pie;
-    const Panel sims1 = g_sims1;
+    const Panel sims1 = g_sims1, tvScreen = g_tv, tvScreen2 = g_tv2, tvScreen3 = g_tv3;
     fromApp(q, view);
     fromApp(pie, view);
     ID3D11ShaderResourceView* uiView = g_uiView;
@@ -1229,6 +1392,8 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
         return rd[3];
     };
     Constants k{}, kPanel{};
+    float flashPos[3]{}, flashDir[3]{};  // the light in view space (from the phone's frame)
+    bool flashReady = false;
     if (showPhone) {
         // The phone's frame in the world (relative to the camera), then in the camera's.
         const float s = view.scale;
@@ -1273,6 +1438,22 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
         if (pinned != wasPinned && pinLogs++ < 10) LOG("Phone 3D: %s", pinned ? "on the Sim's hand" : "on the controller (no hand pose)");
         wasPinned = pinned;
         float ahead = project(c, axis, k);
+        if (!p.free && g_flashOn.load() && flash.allowed && GetTickCount64() - flash.at < 300) {
+            // The light sits at the phone's back face and points out of it (the glass's z is out of the screen).
+            const float zl = std::sqrt(dot(axis[2], axis[2]));
+            if (zl > 1e-6f) {
+                const camera::Vec3 back{-axis[2].x / zl, -axis[2].y / zl, -axis[2].z / zl};
+                const float off = 0.5f * p.depth * view.scale;
+                const camera::Vec3 o{c.x + back.x * off, c.y + back.y * off, c.z + back.z * off};
+                flashPos[0] = dot(o, view.right);
+                flashPos[1] = dot(o, view.up);
+                flashPos[2] = -dot(o, forward);
+                flashDir[0] = dot(back, view.right);
+                flashDir[1] = dot(back, view.up);
+                flashDir[2] = -dot(back, forward);
+                flashReady = true;
+            }
+        }
         std::memcpy(k.screen, p.screen, sizeof(k.screen));
         std::memcpy(k.menu, p.menu, sizeof(k.menu));
         std::memcpy(k.crop, p.crop, sizeof(k.crop));
@@ -1316,11 +1497,19 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
         kPanel.misc[3] = q.clear ? std::max(q.opacity, 0.001f) : 0.0f;
         if (q.clear) kPanel.misc[2] = q.round ? 1.0f : q.key > 0 ? 2.0f + std::min(q.key, 1.0f) : 0.0f;
     };
-    Constants kPie{}, kSims1{};
+    Constants kPie{}, kSims1{}, kTv{};
     // Sims 1's picture (on this thread: the upload uses the game's context).
     ID3D11ShaderResourceView* sims1View = showSims1 ? simsforever::frameView(context) : nullptr;
     if (showSims1) panelConstants(sims1, kSims1, sims1View);
     if (showSims1 && !buildSims1Mesh(device, sims1.width)) showSims1 = false;
+    ID3D11ShaderResourceView* tvView = showTv && tvScreen.show ? claudescreen::frameView(context, claudescreen::kDiscord) : nullptr;
+    ID3D11ShaderResourceView* tv2View = showTv && tvScreen2.show ? claudescreen::frameView(context, claudescreen::kLinear) : nullptr;
+    ID3D11ShaderResourceView* tv3View = tv2View && tvScreen3.show ? tv2View : nullptr;  // the same picture
+    showTv = tvView || tv2View;  // none without a picture yet
+    Constants kTv2{}, kTv3{};
+    if (tvView) panelConstants(tvScreen, kTv, tvView);
+    if (tv2View) panelConstants(tvScreen2, kTv2, tv2View);
+    if (tv3View) panelConstants(tvScreen3, kTv3, tv3View);
     if (showPanel) panelConstants(q, kPanel, panelView);
     if (showPie) panelConstants(pie, kPie, pieView);
     // The pie in front of the world, your arms and hands excepted (psPie): with
@@ -1394,6 +1583,100 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
     ID3D11DepthStencilView* overDepth = writeDepth ? depth : nullptr;
     context->OMSetDepthStencilState(tested, 0);
     context->OMSetRenderTargets(1, &target, depth);
+    if (flashReady && g_flashVs && g_flashCb && g_flashBlend) {
+        UINT flashSamples = 0;
+        ID3D11ShaderResourceView* flashDepth = nearplane::sceneDepth(flashSamples);
+        ID3D11PixelShader* flashPs = g_flashPs[flashSamples > 1 ? 1 : 0];
+        if (flashDepth && flashPs) {
+            const float rangeW = std::max(0.1f, flash.range) * view.scale;
+            const float cone = std::max(5.0f, std::min(170.0f, flash.cone)) * 0.5f * 3.14159265f / 180;
+            float fc[6][4] = {
+                {flashPos[0], flashPos[1], flashPos[2], rangeW},
+                {flashDir[0], flashDir[1], flashDir[2], std::cos(cone)},
+                {std::cos(cone * 0.6f), std::max(0.0f, flash.brightness), std::max(0.0f, flash.fill), view.scale},
+                {view.tanX, view.tanY, view.centreX, view.centreY},
+                {static_cast<float>(td.Width), static_cast<float>(td.Height), n, f},
+                {reversed ? 1.0f : 0.0f, 0, 0, 0}};
+            context->UpdateSubresource(g_flashCb, 0, nullptr, fc, 0, 0);
+            // The picture so far, copied (or resolved) so the shader can read it while it draws into it.
+            ID3D11ShaderResourceView* copyView = nullptr;
+            {
+                D3D11_RENDER_TARGET_VIEW_DESC rv{};
+                target->GetDesc(&rv);
+                ID3D11Resource* tr = nullptr;
+                target->GetResource(&tr);
+                if (tr && rv.Format != DXGI_FORMAT_UNKNOWN) {
+                    if (!g_flashCopy || g_flashCopyW != td.Width || g_flashCopyH != td.Height || g_flashCopyFormat != rv.Format) {
+                        safeRelease(g_flashCopyView);
+                        safeRelease(g_flashCopy);
+                        D3D11_TEXTURE2D_DESC cd = td;
+                        cd.Format = td.Format;  // the target's own (maybe typeless) format; views carry the typed one
+                        cd.MipLevels = 1;
+                        cd.ArraySize = 1;
+                        cd.SampleDesc = {1, 0};
+                        cd.Usage = D3D11_USAGE_DEFAULT;
+                        cd.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+                        cd.CPUAccessFlags = 0;
+                        cd.MiscFlags = 0;
+                        D3D11_SHADER_RESOURCE_VIEW_DESC sv{};
+                        sv.Format = rv.Format;
+                        sv.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+                        sv.Texture2D.MipLevels = 1;
+                        if (SUCCEEDED(device->CreateTexture2D(&cd, nullptr, &g_flashCopy)) &&
+                            SUCCEEDED(device->CreateShaderResourceView(g_flashCopy, &sv, &g_flashCopyView))) {
+                            g_flashCopyW = td.Width;
+                            g_flashCopyH = td.Height;
+                            g_flashCopyFormat = rv.Format;
+                        } else {
+                            safeRelease(g_flashCopyView);
+                            safeRelease(g_flashCopy);
+                            static int copyFailed = 0;
+                            if (copyFailed++ < 3) LOG("Phone flashlight: could not make the picture copy (format %d)", static_cast<int>(rv.Format));
+                        }
+                    }
+                    if (g_flashCopy && g_flashCopyView) {
+                        if (td.SampleDesc.Count > 1) context->ResolveSubresource(g_flashCopy, 0, tr, 0, rv.Format);
+                        else context->CopyResource(g_flashCopy, tr);
+                        copyView = g_flashCopyView;
+                    }
+                }
+                if (tr) tr->Release();
+            }
+            ID3D11ShaderResourceView* savedColorSlot = nullptr;
+            context->PSGetShaderResources(2, 1, &savedColorSlot);
+            context->PSSetShaderResources(2, 1, &copyView);
+            ID3D11ShaderResourceView* savedDepthSlot = nullptr;
+            context->PSGetShaderResources(1, 1, &savedDepthSlot);
+            context->IASetInputLayout(nullptr);
+            context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            context->VSSetShader(g_flashVs, nullptr, 0);
+            context->VSSetConstantBuffers(0, 1, &g_flashCb);
+            context->PSSetShader(flashPs, nullptr, 0);
+            context->PSSetConstantBuffers(0, 1, &g_flashCb);
+            context->PSSetShaderResources(1, 1, &flashDepth);
+            context->OMSetBlendState(g_flashBlend, nullptr, 0xffffffff);
+            context->OMSetDepthStencilState(g_noDepth, 0);
+            context->OMSetRenderTargets(1, &target, nullptr);  // the depth copy is read; the scene's isn't bound
+            context->Draw(3, 0);
+            ID3D11ShaderResourceView* none = nullptr;
+            context->PSSetShaderResources(1, 1, savedDepthSlot ? &savedDepthSlot : &none);
+            safeRelease(savedDepthSlot);
+            context->PSSetShaderResources(2, 1, savedColorSlot ? &savedColorSlot : &none);
+            safeRelease(savedColorSlot);
+            // Back to what the phone draws with.
+            context->IASetInputLayout(g_layout);
+            context->VSSetShader(g_vs, nullptr, 0);
+            context->VSSetConstantBuffers(0, 1, &g_constants);
+            context->PSSetShader(g_ps, nullptr, 0);
+            context->PSSetConstantBuffers(0, 1, &g_constants);
+            context->OMSetBlendState(nullptr, nullptr, 0xffffffff);
+            context->OMSetDepthStencilState(tested, 0);
+            context->OMSetRenderTargets(1, &target, depth);
+            static int flashLogged = 0;
+            if (flashLogged++ < 3) LOG("Phone flashlight: drawn (%u-sample depth)", flashSamples);
+        }
+        if (flashDepth) flashDepth->Release();
+    }
     if (showPhone) {
         // The phone is solid: it writes its depth when floor footprints or
         // bubbles come after it, so they don't show through it.
@@ -1410,6 +1693,20 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
         context->UpdateSubresource(g_constants, 0, nullptr, &kSims1, 0, 0);
         context->IASetVertexBuffers(0, 1, &g_sims1Vertices, &stride, &offset);
         context->Draw(g_sims1VertexCount, 0);
+        context->PSSetShaderResources(0, 1, &uiView);
+        context->PSSetSamplers(0, 1, &g_sampler);
+    }
+    if (showTv) {
+        ID3D11ShaderResourceView* const views[3] = {tvView, tv2View, tv3View};
+        const Constants* const consts[3] = {&kTv, &kTv2, &kTv3};
+        for (int t = 0; t < 3; ++t) {
+            if (!views[t]) continue;
+            context->PSSetShaderResources(0, 1, &views[t]);
+            if (g_screenSampler) context->PSSetSamplers(0, 1, &g_screenSampler);
+            context->UpdateSubresource(g_constants, 0, nullptr, consts[t], 0, 0);
+            context->IASetVertexBuffers(0, 1, &g_panelVertices, &stride, &offset);
+            context->Draw(6, 0);
+        }
         context->PSSetShaderResources(0, 1, &uiView);
         context->PSSetSamplers(0, 1, &g_sampler);
     }
@@ -1577,7 +1874,7 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
     if (showPhone) g_drawnAt.store(GetTickCount64(), std::memory_order_relaxed);
     if (showPanel) g_panelDrawnAt.store(GetTickCount64(), std::memory_order_relaxed);
     if (showPie) g_pieDrawnAt.store(GetTickCount64(), std::memory_order_relaxed);
-    if (showSims1) g_sims1DrawnAt.store(GetTickCount64(), std::memory_order_relaxed);
+    if (showSims1 || showTv) g_sims1DrawnAt.store(GetTickCount64(), std::memory_order_relaxed);
 }
 
 bool drawnRecently() { return GetTickCount64() - g_drawnAt.load(std::memory_order_relaxed) < 200; }

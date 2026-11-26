@@ -386,21 +386,32 @@ void drawNotebook(const Frame& f) {
     nbPageArt(d, kBookLeft, false);
     nbPageArt(d, kBookRight, true);
     const Rect lr = kBookLeft, rr = kBookRight;
-    for (int side = 0; side < 2; ++side) {
-        const NbPage& page = side ? right : left;
-        const Rect& r = side ? rr : lr;
+    // A spread's page in a rect: its art and its lines.
+    auto pageIn = [&](int sp, int side, const Rect& r) {
+        const NbPage& page = g_nbPages[sp * 2 + side];
         d->PushClipRect({r.x, r.y + 20}, {r.x + r.w, r.y + r.h - 20}, true);
         if (page.kind == 0) nbHome(d, r);
         else if (page.kind == 1) nbCategories(d, r);
         else nbBody(d, r, page, side == 1);
         d->PopClipRect();
         // The page's number, small, at the foot.
-        if (spread > 0 || side == 1) {
+        if (sp > 0 || side == 1) {
             char number[16];
-            std::snprintf(number, sizeof number, "%d", spread * 2 + side + 1);
+            std::snprintf(number, sizeof number, "%d", sp * 2 + side + 1);
             ImVec2 s = g_text->CalcTextSizeA(20, FLT_MAX, 0, number);
             d->AddText(g_text, 20, {r.x + r.w / 2 - s.x / 2, r.y + r.h - 50}, kNbGrey, number);
         }
+    };
+    pageIn(spread, 0, lr);
+    pageIn(spread, 1, rr);
+    // A page turning toward spread `to`: its page on the far side of the turning leaf, and the one it uncovers.
+    const int to = f.bookFlipTo;
+    if (to >= 0 && to != spread && to < static_cast<int>(g_nbPages.size() / 2)) {
+        const bool forward = to > spread;
+        nbPageArt(d, kBookFlipBack, !forward);
+        nbPageArt(d, kBookFlipUnder, forward);
+        pageIn(to, forward ? 0 : 1, kBookFlipBack);
+        pageIn(to, forward ? 1 : 0, kBookFlipUnder);
     }
     // The page's curled corner while there are more pages.
     if (spread + 1 < static_cast<int>(g_nbPages.size() / 2)) {

@@ -333,7 +333,7 @@ except Exception as e:
 
 # --- the game's popups ----------------------------------------------------------
 
-def _report_popup(service):
+def _report_popup(service, name=''):
     global _popup_open
     try:
         open_ = bool(service.has_active_modal_dialogs())
@@ -342,7 +342,12 @@ def _report_popup(service):
         return
     if open_ != _popup_open:
         _popup_open = open_
-        _log('a game popup is {}'.format('open' if open_ else 'gone'))
+        _log('a game popup is {}{}'.format('open' if open_ else 'gone', ' (after {})'.format(name) if name else ''))
+        if open_:
+            try:
+                _log('modal dialogs: {}'.format([(type(d).__name__, type(d).__module__) for d in service._active_dialogs.values()]))
+            except Exception:
+                pass
         native.set_popup(open_)
 
 
@@ -354,7 +359,7 @@ def _wrap_dialogs():
             try:
                 return original(self, *args, **kwargs)
             finally:
-                _report_popup(self)
+                _report_popup(self, name)
         hooks.hook('phone', UiDialogService, name, wrapped)
 
     for name in ('dialog_show', 'dialog_respond', 'dialog_cancel', '_dialog_cancel_internal',

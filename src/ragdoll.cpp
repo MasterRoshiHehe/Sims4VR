@@ -37,7 +37,12 @@ bool finite(V a) { return std::isfinite(a.x) && std::isfinite(a.y) && std::isfin
 // ---- settings ----------------------------------------------------------------
 
 std::atomic<bool> g_on{true}, g_test{false};
-std::atomic<float> g_strength{0.5f}, g_limp{4.0f}, g_gravity{1.0f}, g_damping{1.5f};
+std::atomic<float> g_strength{0.5f}, g_limp{4.0f}, g_gravity{1.0f}, g_damping{1.5f}, g_tether{1.2f}, g_blendOut{1.0f};
+std::atomic<float> g_soft{0.8f}, g_relaxed{0.5f}, g_spin{0.5f};
+std::atomic<bool> g_world{true}, g_flinch{true};
+std::atomic<float> g_fStrength{0.6f}, g_fRecover{0.4f}, g_fLocal{0.1f}, g_fBody{0.9f}, g_fSpread{0.45f};
+std::atomic<float> g_stOmega{5.0f}, g_stLean{0.7f}, g_stStep{0.08f}, g_stStepTime{0.22f};
+std::atomic<WorldQuery> g_query{nullptr};
 std::atomic<ULONGLONG> g_readAt{0};
 
 float number(const char* key, float def) {
@@ -59,6 +64,24 @@ void readSettings() {
     g_limp = number("limp_seconds", 4.0f);
     g_gravity = number("gravity", 1.0f);
     g_damping = number("damping", 1.5f);
+    g_tether = number("tether", 1.2f);
+    g_blendOut = number("blend_out", 1.0f);
+    g_world = number("world", 1) != 0;
+    // Showcase (default on): the test-relevant rows are forced to values that show the system.
+    const bool show = number("showcase", 1) != 0;
+    g_soft = show ? 0.8f : number("soft_limits", 0.8f);
+    g_relaxed = show ? 0.5f : number("relaxed", 0.5f);
+    g_spin = show ? 0.5f : number("hit_spin", 0.5f);
+    g_flinch = show || number("flinch", 1) != 0;
+    g_fStrength = show ? 0.6f : number("flinch_strength", 0.35f);
+    g_fRecover = number("flinch_recover", 0.4f);
+    g_fLocal = number("flinch_local", 0.1f);
+    g_fBody = number("flinch_body", 0.9f);
+    g_fSpread = number("flinch_spread", 0.45f);
+    g_stOmega = number("stagger_omega", 5.0f);
+    g_stLean = number("stagger_lean", 0.7f);
+    g_stStep = number("stagger_step", 0.08f);
+    g_stStepTime = number("stagger_step_time", 0.22f);
 }
 
 // ---- the body ------------------------------------------------------------------
@@ -71,7 +94,8 @@ void readSettings() {
 
 constexpr int kMaxCons = 48;
 constexpr float kRamp = 0.15f;      // seconds the animation's hold on the body fades out after the blow
-constexpr float kBlendOut = 0.7f;   // seconds from the ragdoll back to the game's pose
+constexpr ULONGLONG kStaleMs = 2000;   // a ragdoll nobody poses for this long is over (the Sim went out of range)
+constexpr ULONGLONG kMaxMs = 60000;    // and none lasts longer than this
 constexpr int kIterations = 8;
 constexpr float kSubstep = 1.0f / 120.0f;
 constexpr int kMaxSubsteps = 4;
@@ -97,11 +121,19 @@ struct Slot {
     float t = 0;          // seconds since the blow
     float releaseAt = 0;  // t at which the blend back begins
     float blend = 1;      // 1 the ragdoll, 0 the game's pose
+    float stiff[kPoints]; // reaction mode: each point's stiffness at t = 0
     V x[kSimPoints], v[kSimPoints];
     Con cons[kMaxCons];
     int consCount = 0;
     V legFwd{0, 0, 1}, armFwd{0, 0, 1};  // the way the body faces, in the pelvis' and the chest's own frame
     float size = 1;
+    ULONGLONG startedAt = 0, lastStep = 0;
+    float root[3] = {0, 0, 0};
+    // Stagger: the hips' offset from the pose (d, dv), each foot's offset (fo) and its step
+    // (from, to, progress 0..1, < 0: planted).
+    V d{0, 0, 0}, dv{0, 0, 0};
+    V fo[2]{{0, 0, 0}, {0, 0, 0}}, foFrom[2]{{0, 0, 0}, {0, 0, 0}}, foTo[2]{{0, 0, 0}, {0, 0, 0}};
+    float stepU[2] = {-1, -1};
 };
 constexpr int kSlots = 6;
 Slot g_slots[kSlots];
@@ -229,16 +261,42 @@ void begin(Slot& s, const V* in, V forward, float size) {
     // The blow.
     const Params& pr = s.params;
     V vel = load(pr.velocity);
+    const bool reaction = pr.recoverSeconds > 0;
     for (int i = 0; i < kSimPoints; ++i) {
         float w = 1;
         if (pr.hasPoint) {
             V d = s.x[i] - load(pr.point);
-            float r = 0.35f * size;
+            float r = (reaction ? pr.spread : 0.35f) * size;
             w = std::exp(-dot(d, d) / (r * r));
-            if (w < 0.25f) w = 0.25f;
+            if (!reaction && w < 0.25f) w = 0.25f;
+            if (i < kPoints) s.stiff[i] = pr.localStiffness + (pr.stiffness - pr.localStiffness) * (1 - w);
+        } else if (i < kPoints) {
+            s.stiff[i] = pr.stiffness;
         }
         s.v[i] = s.v[i] + vel * w;
     }
+    // Spin: the shoulders and hips take a turn from the blow, so the arms trail
+    // along it and the legs lag behind (feet resist), each limb a little
+    // different. Falls only; a flinch keeps its limbs on the pose.
+    const float spin = g_spin.load(std::memory_order_relaxed);
+    const float speed = len(vel);
+    if (!reaction && spin > 0 && speed > 0.2f) {
+        V dir = vel * (1 / speed);
+        ULONGLONG seed = GetTickCount64() * 2654435761u + reinterpret_cast<ULONGLONG>(&s);
+        auto rnd = [&seed]() {
+            seed ^= seed << 13, seed ^= seed >> 7, seed ^= seed << 17;
+            return 0.6f + 0.8f * static_cast<float>(seed & 1023) / 1023.0f;
+        };
+        const int limbs[4][3] = {{kShoulderL, kElbowL, kHandL}, {kShoulderR, kElbowR, kHandR},
+                                 {kHipL, kKneeL, kFootL}, {kHipR, kKneeR, kFootR}};
+        for (int l = 0; l < 4; ++l) {
+            float k = spin * speed * rnd() * (l < 2 ? 0.6f : -0.5f);
+            for (int j = 1; j < 3; ++j) s.v[limbs[l][j]] = s.v[limbs[l][j]] + dir * (k * j * 0.5f);
+        }
+    }
+    s.d = V{0, 0, 0};
+    s.dv = V{pr.staggerVelocity[0], 0, pr.staggerVelocity[2]};
+    for (int f = 0; f < 2; ++f) s.fo[f] = s.foFrom[f] = s.foTo[f] = V{0, 0, 0}, s.stepU[f] = -1;
     s.init = true;
 }
 
@@ -254,7 +312,136 @@ void hinge(V* x, int a, int k, int b, V fwd, float sign) {
     if (c < 0) x[k] = x[k] - fwd * (c * sign);
 }
 
+// Reaction mode: how much of the way to the game's pose each point goes per
+// second, as a share (1 - exp(-rate * stiffness * h) a step), rising to full
+// stiffness over recoverSeconds.
+constexpr float kPullRate = 60.0f;
+
+float ramp(float x) { return x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x); }
+
+// Soft limits: a limb slows as it nears full stretch or folded shut, and the
+// range cones of the spine as they near their edge, instead of stopping dead
+// (muscles and tendons taking up the motion). Relaxed pose: a weak pull of the
+// knees and elbows toward a slight bend, so a limp body settles like a person
+// and not like a rod. Both act on the speed the points will have after this step
+// (s.v is derived from x - old x, so they are applied to the old place).
+void softAndRelax(Slot& s, V* xp, V legF, V armF, float h) {
+    const float soft = g_soft.load(std::memory_order_relaxed);
+    const float relaxed = g_relaxed.load(std::memory_order_relaxed);
+    if (soft <= 0 && relaxed <= 0) return;
+    const int limb[4][3] = {{kHipL, kKneeL, kFootL}, {kHipR, kKneeR, kFootR},
+                            {kShoulderL, kElbowL, kHandL}, {kShoulderR, kElbowR, kHandR}};
+    for (int l = 0; l < 4; ++l) {
+        const int a = limb[l][0], k = limb[l][1], b = limb[l][2];
+        V fwd = l < 2 ? legF : armF;
+        float sign = l < 2 ? 1.0f : -1.0f;
+        V ab = xp[b] - xp[a];
+        float d = len(ab), sum = len(xp[k] - xp[a]) + len(xp[b] - xp[k]);
+        if (soft > 0 && d > 1e-4f && sum > 1e-4f) {
+            V u = ab * (1 / d);
+            float e = d / sum;
+            // Old distance along the bone: the speed this step is (xp - x); take the radial part off.
+            float f = ramp((e - 0.9f) / 0.1f) + ramp((0.5f - e) / 0.15f);
+            if (f > 0) {
+                V rel = (xp[b] - s.x[b]) - (xp[a] - s.x[a]);
+                float radial = dot(rel, u);
+                bool towardLimit = (e > 0.7f) ? radial > 0 : radial < 0;
+                if (towardLimit) xp[b] = xp[b] - u * (radial * f * soft * 0.5f);
+            }
+        }
+        if (relaxed > 0 && d > 1e-4f) {
+            V ab2 = xp[b] - xp[a];
+            float tk = dot(xp[k] - xp[a], ab2) / dot(ab2, ab2);
+            V off = xp[k] - (xp[a] + ab2 * tk);
+            float cur = dot(off, fwd) * sign;
+            float want = (l < 2 ? 0.07f : 0.05f) * s.size;
+            // A gentle spring (about 3 m/s^2 per 10 cm), never against the hinge side.
+            xp[k] = xp[k] + fwd * (sign * (want - cur) * relaxed * 30.0f * h * h);
+        }
+    }
+    // Spine: slow the pieces as the bend cones near their edge.
+    if (soft > 0) {
+        const int pairs[2][2] = {{kPelvisUp, kNeck}, {kChestUp, kPelvis}};
+        for (int c = 0; c < 2; ++c) {
+            for (int ci = 0; ci < s.consCount; ++ci) {
+                const Con& con = s.cons[ci];
+                if (!(con.a == pairs[c][0] && con.b == pairs[c][1])) continue;
+                V d = xp[con.b] - xp[con.a];
+                float l = len(d);
+                if (l < 1e-5f) break;
+                V u = d * (1 / l);
+                float f = c == 0 ? ramp((l / con.hi - 0.9f) / 0.1f) : ramp((1.1f - l / con.lo) / 0.1f);
+                if (f <= 0) break;
+                V rel = (xp[con.b] - s.x[con.b]) - (xp[con.a] - s.x[con.a]);
+                float radial = dot(rel, u);
+                if (c == 0 ? radial > 0 : radial < 0) {
+                    V cut = u * (radial * f * soft * 0.5f);
+                    xp[con.b] = xp[con.b] - cut;
+                    xp[con.a] = xp[con.a] + cut;
+                }
+                break;
+            }
+        }
+    }
+}
+
+// Stagger: the hips' offset d is a damped spring thrown by the blow; the feet stay planted until
+// they lag it by more than stagger_step, then one steps to where the body went (a lifted arc),
+// and when the body comes back they step back. Fills `tgt` (the pose to hold, kPoints) from `anim`.
+void staggerTargets(Slot& s, const V* anim, V* tgt, float h) {
+    const float omega = g_stOmega.load(std::memory_order_relaxed), lean = g_stLean.load(std::memory_order_relaxed);
+    float thr = g_stStep.load(std::memory_order_relaxed) * s.size;
+    if (s.t > s.params.recoverSeconds * 0.7f) thr = 0.01f * s.size;  // the last steps put the feet back exactly
+    const float stepTime = g_stStepTime.load(std::memory_order_relaxed) > 0.05f ? g_stStepTime.load(std::memory_order_relaxed) : 0.05f;
+    // The spring (about half damped).
+    s.dv = s.dv - (s.d * (omega * omega) + s.dv * (omega)) * h;
+    s.d = s.d + s.dv * h;
+    // Where the planted feet should be: under the body while it is away, the pose when it is back.
+    V want = len(s.d) > 0.04f * s.size ? s.d * 0.95f : V{0, 0, 0};
+    if (s.stepU[0] < 0 && s.stepU[1] < 0) {
+        int pick = -1;
+        float worst = thr;
+        for (int f = 0; f < 2; ++f) {
+            float miss = len(want - s.fo[f]);
+            if (miss > worst) worst = miss, pick = f;
+        }
+        if (pick >= 0) s.foFrom[pick] = s.fo[pick], s.foTo[pick] = want, s.stepU[pick] = 0;
+    }
+    float lift[2] = {0, 0};
+    for (int f = 0; f < 2; ++f) {
+        if (s.stepU[f] < 0) continue;
+        s.stepU[f] += h / stepTime;
+        float u = s.stepU[f] >= 1 ? 1 : s.stepU[f];
+        s.fo[f] = s.foFrom[f] + (s.foTo[f] - s.foFrom[f]) * ramp(u);
+        lift[f] = 0.07f * s.size * std::sin(3.14159265f * u);
+        if (s.stepU[f] >= 1) s.stepU[f] = -1;
+    }
+    const V up{0, 1, 0};
+    V arms = s.d * (0.6f + lean * 1.2f) + up * (0.25f * len(s.d));
+    V hands = s.d * (0.6f + lean * 1.6f) + up * (0.3f * len(s.d));
+    for (int i = 0; i < kPoints; ++i) tgt[i] = anim[i];
+    tgt[kPelvis] = anim[kPelvis] + s.d * 0.6f;
+    tgt[kHipL] = anim[kHipL] + s.d * 0.6f;
+    tgt[kHipR] = anim[kHipR] + s.d * 0.6f;
+    tgt[kNeck] = anim[kNeck] + s.d * (0.6f + lean);
+    tgt[kShoulderL] = anim[kShoulderL] + s.d * (0.6f + lean);
+    tgt[kShoulderR] = anim[kShoulderR] + s.d * (0.6f + lean);
+    tgt[kHead] = anim[kHead] + s.d * (0.6f + lean * 1.3f);
+    tgt[kElbowL] = anim[kElbowL] + arms;
+    tgt[kElbowR] = anim[kElbowR] + arms;
+    tgt[kHandL] = anim[kHandL] + hands;
+    tgt[kHandR] = anim[kHandR] + hands;
+    tgt[kFootL] = anim[kFootL] + s.fo[0] + up * lift[0];
+    tgt[kFootR] = anim[kFootR] + s.fo[1] + up * lift[1];
+    tgt[kKneeL] = anim[kKneeL] + (s.d * 0.6f + s.fo[0]) * 0.5f + up * (lift[0] * 0.8f);
+    tgt[kKneeR] = anim[kKneeR] + (s.d * 0.6f + s.fo[1]) * 0.5f + up * (lift[1] * 0.8f);
+}
+
 void substep(Slot& s, const V* anim, float animWeight, float floorY, float h) {
+    const bool reaction = s.params.recoverSeconds > 0;
+    const float rise = reaction ? (s.t / s.params.recoverSeconds > 1 ? 1 : s.t / s.params.recoverSeconds) : 0;
+    const float tether = g_tether.load(std::memory_order_relaxed);
+    const WorldQuery query = g_world.load(std::memory_order_relaxed) ? g_query.load(std::memory_order_relaxed) : nullptr;
     const float g = 9.81f * g_gravity.load(std::memory_order_relaxed);
     const float damp = std::exp(-g_damping.load(std::memory_order_relaxed) * h);
     V xp[kSimPoints];
@@ -262,7 +449,10 @@ void substep(Slot& s, const V* anim, float animWeight, float floorY, float h) {
         s.v[i].y -= g * h;
         s.v[i] = s.v[i] * damp;
         xp[i] = s.x[i] + s.v[i] * h;
-        if (animWeight > 0 && i < kPoints) {  // held toward the animation without giving it speed
+        if (reaction && i < kPoints) {  // a spring toward the animation: the speed it gives is kept
+            float k = s.stiff[i] + (1 - s.stiff[i]) * rise;
+            xp[i] = xp[i] + (anim[i] - xp[i]) * (1 - std::exp(-kPullRate * k * h));
+        } else if (animWeight > 0 && i < kPoints) {  // held toward the animation without giving it speed
             V pull = (anim[i] - xp[i]) * (animWeight > 1 ? 1 : animWeight);
             xp[i] = xp[i] + pull;
             s.x[i] = s.x[i] + pull;
@@ -291,12 +481,13 @@ void substep(Slot& s, const V* anim, float animWeight, float floorY, float h) {
     // The joints' bend limits move the knee or elbow without giving it speed
     // (the next step's bone lengths take up the slack).
     V side, up, fwd;
-    V before[kSimPoints];
-    for (int i = 0; i < kSimPoints; ++i) before[i] = xp[i];
     basis(xp[kHipL] - xp[kHipR], xp[kPelvisUp] - xp[kPelvis], side, up, fwd);
     V legF = side * s.legFwd.x + up * s.legFwd.y + fwd * s.legFwd.z;
     basis(xp[kShoulderL] - xp[kShoulderR], xp[kChestUp] - xp[kNeck], side, up, fwd);
     V armF = side * s.armFwd.x + up * s.armFwd.y + fwd * s.armFwd.z;
+    softAndRelax(s, xp, legF, armF, h);  // these change the speed (before the hinge limits, which do not)
+    V before[kSimPoints];
+    for (int i = 0; i < kSimPoints; ++i) before[i] = xp[i];
     hinge(xp, kHipL, kKneeL, kFootL, legF, 1);
     hinge(xp, kHipR, kKneeR, kFootR, legF, 1);
     hinge(xp, kShoulderL, kElbowL, kHandL, armF, -1);
@@ -304,6 +495,31 @@ void substep(Slot& s, const V* anim, float animWeight, float floorY, float h) {
     for (int i = 0; i < kPoints; ++i) {
         float floor = floorY + kRadius[i] * s.size;
         if (xp[i].y < floor) xp[i].y = floor;
+    }
+    // The world: points inside a wall or a piece of furniture are pushed out
+    // along its surface (a few small steps, the way out unknown), and lose
+    // the speed they had into it. The body also stays near where the Sim is.
+    for (int i = 0; i < kPoints; ++i) {
+        if (query) {
+            for (int k = 0; k < 3; ++k) {
+                float n[3];
+                if (!query(xp[i].x, xp[i].y, xp[i].z, kRadius[i] * s.size, n)) break;
+                V normal{n[0], n[1], n[2]};
+                xp[i] = xp[i] + normal * (0.25f * kRadius[i] * s.size + 0.005f);
+                float into = dot(s.v[i], normal);
+                if (into < 0) s.v[i] = s.v[i] - normal * into;
+            }
+        }
+        if (tether > 0) {
+            V d{xp[i].x - s.root[0], 0, xp[i].z - s.root[2]};
+            float l = len(d);
+            if (l > tether) {
+                V out = d * (1 / l);
+                xp[i] = xp[i] - out * (l - tether);
+                float into = dot(s.v[i], out);
+                if (into > 0) s.v[i] = s.v[i] - out * into;
+            }
+        }
     }
     for (int i = 0; i < kSimPoints; ++i) {
         // The limits moved the point; its old place moves with it, so that gives it no speed.
@@ -336,12 +552,40 @@ float limpSeconds() {
     return g_limp.load(std::memory_order_relaxed);
 }
 
+bool reactionOn() {
+    readSettings();
+    return g_flinch.load(std::memory_order_relaxed);
+}
+float reactionStrength() {
+    readSettings();
+    return g_fStrength.load(std::memory_order_relaxed);
+}
+void reactionDefaults(Params& p) {
+    readSettings();
+    p.recoverSeconds = g_fRecover.load(std::memory_order_relaxed);
+    if (!(p.recoverSeconds > 0.05f)) p.recoverSeconds = 0.05f;
+    p.localStiffness = g_fLocal.load(std::memory_order_relaxed);
+    p.stiffness = g_fBody.load(std::memory_order_relaxed);
+    p.spread = g_fSpread.load(std::memory_order_relaxed);
+    p.limpSeconds = 0;
+}
+
+void setWorldQuery(WorldQuery query) { g_query.store(query, std::memory_order_relaxed); }
+
 bool start(const void* actor, const Params& params) {
     if (!actor || !enabled()) return false;
     Lock lock;
-    if (find(actor)) return false;
+    ULONGLONG now = GetTickCount64();
+    if (Slot* have = find(actor)) {
+        // A reaction gives way to a fall or a newer reaction; a fall is never replaced.
+        if (now - have->lastStep < kStaleMs && have->params.recoverSeconds <= 0) return false;
+        have->actor.store(nullptr, std::memory_order_release);  // left over, or a reaction being replaced
+    }
     for (Slot& s : g_slots) {
-        if (s.actor.load(std::memory_order_relaxed)) continue;
+        const void* a = s.actor.load(std::memory_order_relaxed);
+        if (a && now - s.lastStep < kStaleMs && now - s.startedAt < kMaxMs) continue;
+        s.startedAt = now;
+        s.lastStep = now;
         s.params = params;
         s.init = false;
         s.releasing = false;
@@ -386,11 +630,19 @@ void frames(const float pts[kSimPoints][3], bool sim, float pelvis[4], float che
     toQuat(side, up, fwd, chest);
 }
 
-bool step(const void* actor, const float in[kPoints][3], const float forward[3], float floorY, float size, float dt,
-          float out[kSimPoints][3]) {
+bool step(const void* actor, const float in[kPoints][3], const float forward[3], const float root[3], float size,
+          float dt, float out[kSimPoints][3]) {
     Lock lock;
     Slot* s = find(actor);
     if (!s) return false;
+    ULONGLONG now = GetTickCount64();
+    if (now - s->startedAt > kMaxMs) {
+        s->actor.store(nullptr, std::memory_order_release);
+        return false;
+    }
+    s->lastStep = now;
+    s->root[0] = root[0], s->root[1] = root[1], s->root[2] = root[2];
+    const float floorY = root[1];
     V anim[kSimPoints];
     for (int i = 0; i < kPoints; ++i) {
         anim[i] = load(in[i]);
@@ -406,12 +658,22 @@ bool step(const void* actor, const float in[kPoints][3], const float forward[3],
     if (!(dt > 0)) dt = 0;
     if (dt > 0.05f) dt = 0.05f;
     // Past the limp time: blend back.
-    if (!s->releasing && s->params.limpSeconds > 0 && s->t >= s->params.limpSeconds) {
+    const bool stagger = s->params.recoverSeconds > 0 && (s->params.staggerVelocity[0] != 0 || s->params.staggerVelocity[2] != 0);
+    if (s->params.recoverSeconds > 0) {  // a reaction ends when the pose holds again
+        // A stagger also waits for the feet to be back in place (at most a second more).
+        bool feet = !stagger || (s->t >= s->params.recoverSeconds + 1.0f) ||
+                    (s->stepU[0] < 0 && s->stepU[1] < 0 && len(s->fo[0]) < 0.01f && len(s->fo[1]) < 0.01f);
+        if (s->t >= s->params.recoverSeconds && feet) {
+            LOG("Ragdoll: reaction ends on %p after %.2f s", actor, s->t);
+            s->actor.store(nullptr, std::memory_order_release);
+            return false;
+        }
+    } else if (!s->releasing && s->params.limpSeconds > 0 && s->t >= s->params.limpSeconds) {
         s->releasing = true;
         s->releaseAt = s->t;
     }
     if (s->releasing) {
-        s->blend = 1 - (s->t - s->releaseAt) / kBlendOut;
+        s->blend = 1 - (s->t - s->releaseAt) / (g_blendOut.load(std::memory_order_relaxed) > 0.05f ? g_blendOut.load(std::memory_order_relaxed) : 0.05f);
         if (s->blend <= 0) {
             LOG("Ragdoll: ends on %p", actor);
             s->actor.store(nullptr, std::memory_order_release);
@@ -423,8 +685,14 @@ bool step(const void* actor, const float in[kPoints][3], const float forward[3],
     if (dt > 0 && n < 1) n = 1;
     for (int k = 0; k < n; ++k) {
         float h = dt / n;
-        float animWeight = 0.5f * (1 - s->t / kRamp);
-        substep(*s, anim, animWeight > 0 ? animWeight : 0, floorY, h);
+        float animWeight = s->params.recoverSeconds > 0 ? 0 : 0.5f * (1 - s->t / kRamp);
+        if (stagger) {
+            V tgt[kSimPoints];
+            staggerTargets(*s, anim, tgt, h);
+            substep(*s, tgt, 0, floorY, h);
+        } else {
+            substep(*s, anim, animWeight > 0 ? animWeight : 0, floorY, h);
+        }
         s->t += h;
     }
     float b = s->releasing ? s->blend : 1;

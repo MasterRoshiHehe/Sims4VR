@@ -10,8 +10,23 @@ import zone
 from sims4vr import hooks, native
 
 
+def _log_sim_mods():
+    """One log line: which simulation-timing mods are loaded (they share TimeService.update, the
+    autonomy queue and InteractionQueue.append with this mod). Read-only."""
+    import sys
+    found = [label for key, label in (
+        ('sim_overhaul', 'Lucien Simulation Overhaul'), ('SimulationFlowUnleashed', 'Simulation Flow Unleashed'),
+        ('New_SLF_injector', 'SFU injector'), ('tyjokr_QueueGuard', 'QueueGuard')) if key in sys.modules]
+    native._log('sim mods loaded: {}'.format(', '.join(found) if found else 'none'))
+
+
 def _wrap(name, playing):
     def wrapper(original, self, *args, **kwargs):
+        if playing:
+            try:
+                _log_sim_mods()
+            except Exception:
+                pass
         if not playing:
             steps = [('body', 'disable'), ('controls', 'stop')]
         else:

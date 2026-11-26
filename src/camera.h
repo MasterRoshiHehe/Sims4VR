@@ -1,6 +1,7 @@
 #pragma once
 #include <cmath>
 #include <cstdint>
+#include <string>
 #include "config.h"
 
 // Drives the game's render camera from the headset.
@@ -44,6 +45,12 @@ void configureView(float smoothing, float turnSmoothing, float eyeInset, float n
                    float nearMax);
 // Settings menu: [body] head_x/head_y/head_z (view offset in the head frame, metres), live.
 void setHeadOffset(float x, float y, float z);
+// [cas] stereo / distance: Create a Sim drawn with your eyes (camera.cpp casCopy).
+void setCas(bool on, float distance, float separation, float height);
+// The game copied its CAS camera into a render camera in the last moments ([cas] stereo on).
+bool casActive();
+// Called by the scene renderer hook before it draws: the CAS eye goes into the camera it draws from.
+void casFeedScene(void* renderer);
 // Settings menu: [body] seat_follow, live.
 void setSeatFollow(bool on);
 // Settings menu: [audio] pan_any_distance, live: in first person every sound 1 m or more
@@ -51,11 +58,16 @@ void setSeatFollow(bool on);
 void setPanAnyDistance(bool on);
 // Settings menu: [audio] voice_near / voice_far, live (fall-off of voices made 3D).
 void setVoiceRadii(float nearMeters, float farMeters);
+// Settings menu: [audio] flat_to_3d / flat_to_3d_ids / flat_to_3d_graph, live: flat game sounds (phone jingles) made 3D.
+// mode 0 off, 1 the listed sound ids (hex, FNV-1-64 of the sound name), 2 also every sound on the flat UI graph.
+void setFlatTo3D(int mode, const std::string& ids, uint64_t graph);
 // True once the live camera has been found.
 bool available();
 
 // Use this eye pose for the frames the game renders from now on. Pose is in
 // OpenXR space (metres, Y up, -Z forward), relative to the recentered origin.
+// Id of the Present whose pose the next apply / applyRight calls carry (vr.cpp pose ring).
+void setPoseSeq(uint64_t seq);
 void apply(int eye, const Vec3& eyePosition, const Quat& eyeOrientation, const Fov& fov);
 // The headset itself (between the eyes), same space; body mode places the Sim under it.
 void setHead(const Vec3& centre, const Quat& orientation);
@@ -100,14 +112,22 @@ struct Rendered {
     Quat worldOrientation{0, 0, 0, 1};
     float worldScale = 0;
     BodyParts body;
+    long long copiedQpc = 0;  // QueryPerformanceCounter when the game thread wrote this eye (pose age at Present)
+    // The Present pose request this picture was drawn from (setPoseSeq); 0: none. Present reads the age.
+    uint64_t poseSeq = 0;
 };
 bool takeRendered(Rendered& out);
+// CAS: the eye the scene pass about to run draws (singleview), in pass order; takeRendered pairs pictures by it.
+void notePass(int eye);
 // App space's heading in the world now: the newest rendered frame's, plus the
 // stick turn not rendered yet (NAN if unknown). Present thread.
 float viewYaw();
 // Turn lead: how far ahead of the stick turn the next pair's heading is drawn
 // (radians of yaw, free movement only), so it shows where the turn is by then.
 void setTurnLead(float radians);
+// Lead cap (Config::capLead, GLA-21): the game thread's camera copy waits for Present to take the
+// previous picture (event, at most ~11 ms) so it can't run a frame ahead of Present.
+void setLeadCap(bool on);
 // Paired eyes (first person): each right eye drawn from where its left eye
 // was drawn (Config::pairedEyes); Present switches it off under SteamVR's eye align.
 void setPairedEyes(bool on);
@@ -120,6 +140,15 @@ void applyRight(const Vec3& eyePosition, const Quat& eyeOrientation, const Fov& 
 // the render camera (false: no second pass).
 bool beginBoth();
 bool secondEye();
+// Both eyes + a photo session: the phone lens' pose (set each Present), and the third pass drawn from it after the right
+// eye's (singleview.cpp). thirdEye false: none this frame.
+void setLens(const Vec3& position, const Quat& orientation, const Fov& fov);
+void clearLens();
+bool thirdEye();
+void setPhotoSelfie(bool on);  // the photo session is a selfie (the lens looks out the front)
+bool photoSelfie();
+void setInLensPass(bool on);  // the phone lens' own scene pass runs (singleview.cpp)
+bool inLensPass();
 // Present thread: the oldest picture not shown yet is the first of such a pair.
 bool frontIsBothFirst();
 // Each eye drawn with its own lopsided field of view (Config::exactFov), live.
@@ -169,6 +198,13 @@ bool floorInXr(float& y);
 void setFloor(float worldY);
 void setPhotoSession(bool on);  // the game's photo session runs (photowatch.py): the phone lens is drawn as a third frame
 bool photoSession();
+// The phone camera app's shutter (camapp.py): every frame is the lens' picture for `ms` milliseconds, so the game's capture of
+// the rendered frame reads it, not an eye. photoCapturing() while that lasts.
+void setPhotoCapture(int ms);
+bool photoCapturing();
+// Frames the game has copied a camera into since start (applyEye ran): Present holds the next eye back until the one it
+// set has been drawn, so a game drawing fewer frames than Present runs (photo mode) can't only ever draw one eye.
+uint64_t appliedCount();
 void setPhotoProbe(int lines);  // log that many applyEye lines (photo session probe)
 // Projects a world point through the game's own (unmodified) camera, the one
 // it uses for mouse picking. x right, y up, -1..1 across the window.
@@ -214,7 +250,16 @@ using CopyObserver = void (*)(void* dst, const void* src, void* caller);
 // Whether a game camera object is the one the headset's eyes render from
 // (pointer or eye position), not a mirror's, water's or shadow's.
 bool yourEyeCamera(const void* camera);
+// Where your left eye was last drawn from (world); false before the first picture.
+bool eyeAt(float out[3]);
 bool installCopyHook();
 void setCopyObserver(CopyObserver observer);
+
+// Diagnostic: the water reflection pass (0x11c99f0) with the scene object it runs on; logs the cameras it draws with.
+void logWaterPass(void* scene, int eyePass);
+// The latest main-view water state per eye, logged with each screenshot mark.
+void logWaterSnapshot();
+// After the main view's FrameBegin: one reflection plane for the lot waters, the heaviest one's (waterOnePlane).
+void fixLotWater(void* scene);
 
 }  // namespace s4vr::camera

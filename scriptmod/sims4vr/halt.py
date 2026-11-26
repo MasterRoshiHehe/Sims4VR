@@ -100,6 +100,15 @@ def _error(what, e):
         native._log('halt: {} failed: {!r}'.format(what, e))
 
 
+def _riding():
+    """The elevator ride (trail.py) cannot be cancelled."""
+    try:
+        from sims4vr import trail
+        return trail.riding()
+    except Exception:
+        return False
+
+
 def first_person(sim):
     try:
         from sims4vr import body
@@ -250,6 +259,9 @@ def everything(sim, why, full=False):
     in the game's action queue 3 s later gets the reset."""
     if not first_person(sim):
         return []
+    if _riding():
+        _log('{}: not cancelled, you are in the elevator'.format(why))
+        return []
     try:
         from sims4vr import trail
         trail.drop_walk_to(why)
@@ -313,6 +325,8 @@ def walking(sim, why):
     """Hard cancel of only what walks your Sim (the rest goes on)."""
     if not first_person(sim):
         return []
+    if _riding():
+        return []
     cancelled = []
     try:
         _stop_walk(sim, why, cancelled)
@@ -328,6 +342,9 @@ def one(sim, interaction, why):
     not first person (the caller cancels it the usual way)."""
     if not first_person(sim) or interaction is None:
         return False
+    if _riding():
+        _log('{}: not cancelled, you are in the elevator'.format(why))
+        return True
     si = interaction
     if not getattr(si, 'is_super', True) and getattr(si, 'super_interaction', None) is not None:
         si = si.super_interaction
@@ -473,6 +490,8 @@ def _picked(interaction):
     try:
         from interactions.context import InteractionSource
         context = interaction.context
+        if getattr(interaction, '_sims4vr_work', False):
+            return True  # the game's walk to the street when your Sim goes to work (work.py), eyes shut
         if context.source in (InteractionSource.PIE_MENU, InteractionSource.SCRIPT_WITH_USER_INTENT):
             return True
         return getattr(context, 'continuation_id', None) is not None

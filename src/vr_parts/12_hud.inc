@@ -9,7 +9,7 @@ static void requestPhonePie(int control, bool ours = false);  // 14_phone.inc
 // the eye images). Poke with your right index finger or point the laser.
 
 enum { kHudWatch, kHudPause, kHudSleep, kHudBuild, kHudNeeds, kHudMoodlets, kHudQueue, kHudWants, kHudPopup, kHudTip, kHudMoney,
-       kHudPicker, kHudNote, kHudKeyboard, kHudPie, kHudLotIntro, kHudCount };
+       kHudPicker, kHudNote, kHudKeyboard, kHudPie, kHudLotIntro, kHudWork, kHudCount };
 struct HudSheet {
     float opacity = 1;  // blended over the world (the keyboard fades)
     PieMenu m;  // x0, y0, cw, ch: its part of the atlas; uiW, uiH: the atlas
@@ -19,15 +19,23 @@ static HudSheet g_hud[kHudCount];
 static HudSheet g_bookSheet[2];  // the notebook's left and right page, while it lies open in your hand (14b_notebook.inc)
 static HudSheet g_phoneSheet;  // the phone's screen with the game's phone menu (hud::kPhone), while it shows
 static HudSheet g_traySheet;  // the build tablet's tool tray (13b_build_tray.inc), coplanar with its glass
+static HudSheet g_outfitSheet;        // the outfit panel on a mirror, in a drawer or in front of you (14c_outfit.inc)
+static bool g_outfitWanted = false;   // the HUD draws it (its content and place are in)
+static float g_outfitAspect = 1.5f;   // its height / width (hud::Frame.outfitAspect)
+static void updateOutfitHud(const camera::View* view, bool firstPerson, bool headOk, const XrPosef& head);  // 14c_outfit.inc
 static uint32_t g_trayLit = 0;  // the tray's tools that are on, a bit per hud::TrayTool
 static void trayTool(int tool);  // 13b_build_tray.inc
 static bool g_fullUi = false;  // the full UI over your palm, shown with the watch's button
 static std::atomic<bool> g_paused{false};
 static hud::Frame g_hudInput;  // this frame's pointer on the atlas (a poke or the laser)
 static bool g_laserPhoneHold = false;     // the laser's trigger was pulled on the phone and is still held
+static ULONGLONG g_laserPhoneSeenAt = 0;  // the laser last pointed at the phone's screen
+static ULONGLONG g_laserTabletSeenAt = 0;  // the laser last pointed at the build tablet's UI
+static float g_stickScrollNow = 0;       // the right stick's scroll of the phone this frame (Frame.stickScroll)
 static float g_laserPhoneAt[2] = {0, 0};  // where on the atlas the laser last was on the phone
 static Swapchain g_hudSwapchain;  // the asleep watch's layer
 static Swapchain g_lotSwapchain;  // the lot intro's layer (a copy of the UI)
+static Swapchain g_workSwapchain;  // the work card's layer
 static constexpr hud::Rect kLotArea{0, 0, 1024, 384};
 
 void setPaused(bool paused) {
@@ -50,7 +58,7 @@ static int previewSheet() {
         int sheet;
     } kPages[] = {{L"HUD watch", kHudWatch}, {L"HUD needs", kHudNeeds}, {L"HUD moodlets", kHudMoodlets},
                   {L"HUD queue", kHudQueue}, {L"HUD build", kHudBuild},     {L"HUD wants", kHudWants},
-                  {L"HUD pause", kHudPause}, {L"HUD lot intro", kHudLotIntro}};
+                  {L"HUD pause", kHudPause}, {L"HUD lot intro", kHudLotIntro}, {L"HUD work card", kHudWork}};
     for (const auto& k : kPages)
         if (!wcscmp(page, k.page)) return k.sheet;
     return -1;
@@ -650,6 +658,16 @@ static void updateKeyboard(bool headOk, const XrPosef& head) {
 // sheet takes its size, so shoving and clicking off it work as on the cut.
 static void updatePieHud() {
     HudSheet& s = g_hud[kHudPie];
+    if (g_pie.active && g_pieAtTv) {  // held in the world
+        camera::View tv;
+        XrVector3f at, tx, ty, tz;
+        if (camera::lastView(tv) && placeTvPie(tv, g_pieTvWorld, g_pieTvFlip, at, tx, ty, tz)) {
+            g_pie.x = tx;
+            g_pie.y = ty;
+            g_pie.z = tz;
+            g_pie.pose = {fromAxes(tx, ty, tz), at};
+        }
+    }
     if (g_pie.active && g_pie.own && hud::pieState() == 3) {
         g_pie.own = false;  // its texts weren't found: the game's cut after all
         LOG("Pie menu at hand: not drawable, the game's pie cut out instead");
@@ -659,7 +677,7 @@ static void updatePieHud() {
         return;
     }
     const float perStage = g_config.pieWidth / 1100.0f, scale = std::max(0.2f, hud::pieScale());
-    const float w = hud::kPie.w / scale * perStage * (g_piePalm >= 0 || g_piePhone ? g_config.piePalmSize : 1.0f);
+    const float w = hud::kPie.w / scale * perStage * (g_piePalm >= 0 || g_piePhone ? g_config.piePalmSize : g_pieAtTv ? g_config.pieTvSize : 1.0f);
     placeHud(s, g_pie.pose.position, g_pie.x, g_pie.y, w, {hud::kPie.x, hud::kPie.y, hud::kPie.w, hud::kPie.h});
     g_pie.width = s.m.width;
     g_pie.height = s.m.height;
@@ -725,6 +743,7 @@ static void updateHud(const armik::Hand hands[2], bool firstPerson, bool headOk,
     }
     updatePieHud();
     updateKeyboard(headOk, head);
+    updateOutfitHud(viewOk ? &view : nullptr, firstPerson, headOk, head);
     if (viewOk)
         updateNoteCard(view, firstPerson, headOk, head);
     else
@@ -734,7 +753,7 @@ static void updateHud(const armik::Hand hands[2], bool firstPerson, bool headOk,
         // The popup, picker and notification cards alone (taken away again once they are gone).
         static bool alone = false;
         ID3D11Texture2D* atlas = hud::texture();
-        phone3d::Panel panels[5];
+        phone3d::Panel panels[6];
         int count = 0;
         updateTip();
         for (int i : {kHudPicker, kHudNote, kHudKeyboard, kHudTip})  // the pie: pieInWorld; the popup: updatePopupCard's panel
@@ -742,6 +761,7 @@ static void updateHud(const armik::Hand hands[2], bool firstPerson, bool headOk,
                 panels[count] = hudPanel(g_hud[i], view);
                 panels[count++].tag = i;
             }
+        if (viewOk && atlas && g_outfitSheet.m.active) panels[count++] = hudPanel(g_outfitSheet, view);
         if (count || alone) phone3d::setPieces(panels, count, count ? atlas : nullptr);
         alone = count > 0;
         return;
@@ -881,15 +901,31 @@ static void updateHud(const armik::Hand hands[2], bool firstPerson, bool headOk,
         }
     }
 
+    // The work card (hud_work.inc, work.py): in front of you while your Sim is at work, a headset layer over the closed
+    // eyes (hudWorkLayer), kept in place where you looked when it opened, like the pie.
+    {
+        HudSheet& work = g_hud[kHudWork];
+        work.onTop = true;
+        static HeldPlace anchor;
+        if ((c.wristWork && hud::workPending()) || previewSheet() == kHudWork) {
+            XrVector3f aEye, dir;
+            holdPlace(anchor, eye, flat, !work.m.active, "Work card", aEye, dir);
+            aroundYou(work, aEye, dir, aEye, c.wristWorkPos, c.wristWorkTurn, c.wristWorkSize, hud::kWorkArea);
+        } else {
+            hideHud(work);
+        }
+    }
+
     phone3d::Panel panels[kHudCount];
     int count = 0;
     ID3D11Texture2D* atlas = hud::texture();
     if (atlas)
         for (int i = 0; i < kHudCount; ++i)
-            if (i != kHudSleep && i != kHudLotIntro && i != kHudPie && i != kHudPopup && g_hud[i].m.active) {  // the popup: updatePopupCard's panel  // the pie: pieInWorld (app space, hands in front)
+            if (i != kHudSleep && i != kHudLotIntro && i != kHudWork && i != kHudPie && i != kHudPopup && g_hud[i].m.active) {  // the popup: updatePopupCard's panel  // the pie: pieInWorld (app space, hands in front)
                 panels[count] = hudPanel(g_hud[i], view);
                 panels[count++].tag = i;
             }
+    if (atlas && g_outfitSheet.m.active && count < kHudCount) panels[count++] = hudPanel(g_outfitSheet, view);
     {
         std::lock_guard<std::mutex> lock(g_armPlaceMutex);
         for (int i : {kHudWants, kHudPause, kHudTip, kHudMoney}) {
@@ -1008,10 +1044,12 @@ static bool pokeHuds(const armik::Hand hands[2]) {
     // The hand holding the book doesn't poke it; the other one only with its grip held (a plain sweep turns pages).
     const bool other[2] = {g_bookHand != 0 && hands[0].grip > 0.5f, g_bookHand != 1 && hands[1].grip > 0.5f};
     return pokeHud(g_bookSheet[0], hands, other) || pokeHud(g_bookSheet[1], hands, other) || pokeHud(g_hud[kHudPopup], hands, both) || pokeHud(g_hud[kHudPicker], hands, both) ||
+           pokeHud(g_outfitSheet, hands, both) ||
            pokeHud(g_hud[kHudKeyboard], hands, both) || pokeHud(g_hud[kHudNote], hands, both) ||
            pokeHud(g_hud[kHudWatch], hands, right, true) ||
            pokeHud(g_hud[kHudBuild], hands, right, true) ||
-           pokeHud(g_hud[kHudQueue], hands, right, true) || pokeHud(g_hud[kHudSleep], hands, both);
+           pokeHud(g_hud[kHudQueue], hands, right, true) || pokeHud(g_hud[kHudSleep], hands, both) ||
+           pokeHud(g_hud[kHudWork], hands, both);
 }
 
 // The laser on the watch, the asleep watch, the build button, the queue or
@@ -1021,9 +1059,28 @@ static bool laserPhone(const XrVector3f& o, const XrVector3f& d, bool trigger, X
     const PieMenu& m = g_phoneSheet.m;
     float u, v;
     if (!m.active || !hitSheet(m, o, d, hit, u, v)) return false;
-    g_hudInput.px = u * hud::kWidth;
-    g_hudInput.py = v * hud::kHeight;
+    float px = u * hud::kWidth, py = v * hud::kHeight;
+    const ULONGLONG now = GetTickCount64();
+    if (g_tablet && g_config.tabletPointer > 0) {
+        // A shaky hand: the point on the tablet is filtered, the more the slower it moves (a deliberate move follows).
+        static float fx = 0, fy = 0;
+        static ULONGLONG at = 0;
+        const float dt = at ? static_cast<float>(now - at) / 1000.0f : 1.0f;
+        if (!at || dt > 0.25f) {
+            fx = px, fy = py;
+        } else if (dt > 0) {
+            const float speed = std::hypot(px - fx, py - fy) / dt;  // game pixels a second
+            const float tau = g_config.tabletPointer * 0.15f / (1 + speed / 500.0f);
+            const float a = tau > 1e-4f ? 1 - std::exp(-dt / tau) : 1.0f;
+            fx += (px - fx) * a, fy += (py - fy) * a;
+        }
+        at = now;
+        px = fx, py = fy;
+    }
+    g_hudInput.px = px;
+    g_hudInput.py = py;
     g_hudInput.down = trigger;
+    g_laserPhoneSeenAt = now;
     return true;
 }
 
@@ -1044,7 +1101,13 @@ static bool laserBook(const XrVector3f& o, const XrVector3f& d, bool trigger, Xr
 static bool laserHud(const XrVector3f& o, const XrVector3f& d, bool trigger, XrVector3f& hit) {
     if (laserBook(o, d, trigger, hit)) return true;
     if (laserPhone(o, d, trigger, hit)) return true;  // the phone's screen first (in your hand, in front of the rest)
-    for (int i : {kHudKeyboard, kHudPopup, kHudPicker, kHudNote, kHudSleep, kHudWatch, kHudBuild, kHudQueue, kHudWants, kHudNeeds,
+    if (float u, v; g_outfitSheet.m.active && hitSheet(g_outfitSheet.m, o, d, hit, u, v)) {
+        g_hudInput.px = u * hud::kWidth;
+        g_hudInput.py = v * hud::kHeight;
+        g_hudInput.down = trigger;
+        return true;
+    }
+    for (int i : {kHudWork, kHudKeyboard, kHudPopup, kHudPicker, kHudNote, kHudSleep, kHudWatch, kHudBuild, kHudQueue, kHudWants, kHudNeeds,
                   kHudMoodlets}) {
         const PieMenu& m = g_hud[i].m;
         float u, v;
@@ -1071,6 +1134,7 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
         bubbles::setPreview(!page ? 0 : !wcscmp(page, L"Bubbles yours") ? 1 : !wcscmp(page, L"Bubbles skill") ? 3 : !wcscmp(page, L"Bubbles pops") ? 2 : !wcscmp(page, L"Bubbles scandal") ? 4 : 0);
     }
     hud::Frame f = g_hudInput;
+    f.work = g_hud[kHudWork].m.active;
     f.watch = g_hud[kHudWatch].m.active || g_hud[kHudSleep].m.active;
     f.pause = g_hud[kHudPause].m.active;
     f.build = g_hud[kHudBuild].m.active;
@@ -1086,7 +1150,12 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
     f.picker = hud::pickerPending();
     f.phone = g_phoneSheet.m.active;
     f.buildTray = g_traySheet.m.active;
+    f.cameraTray = g_traySheet.m.active && camera::photoSession();
+    hud::setCameraTrayWanted(f.cameraTray);
     f.trayLit = g_trayLit;
+    f.stickScroll = g_stickScrollNow;
+    f.swipeStart = g_config.phoneSwipeStart;
+    f.swipeSpeed = g_config.phoneSwipeSpeed;
     f.phoneText = g_config.phoneTextSize <= 0 ? 1.0f : g_config.phoneTextSize == 1 ? 1.2f : 1.4f;
     // The phone's screen waits covered for Options' menu, and just after it comes out for its wallpaper.
     f.phoneWait = (g_phoneOptions && !g_optionsShown) ||
@@ -1094,9 +1163,12 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
     f.note = noteShown();
     f.keyboard = g_hud[kHudKeyboard].m.active;
     f.pie = g_hud[kHudPie].m.active;
+    f.outfit = g_outfitWanted;
+    f.outfitAspect = g_outfitAspect;
     f.book = g_bookOut;
     bookApplyPick();
     f.bookSpread = g_bookSpread;
+    f.bookFlipTo = g_bookFlipTo;
     f.bookCrop[0] = g_config.bookCropOuter;
     f.bookCrop[1] = g_config.bookCropSpine;
     f.bookCrop[2] = g_config.bookCropTop;
@@ -1126,7 +1198,7 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
     }
     f.preview = previewArea();
     if (!f.watch && !f.pause && !f.build && !f.needs && !f.moodlets && !f.queue && !f.wants && !f.popup && !f.money &&
-        !f.picker && !f.phone && !f.buildTray && !f.note && !f.keyboard && !f.balloons && !f.bars && !f.pie && !f.book && !f.previewCard && !(f.preview.w > 0))
+        !f.picker && !f.phone && !f.buildTray && !f.note && !f.keyboard && !f.balloons && !f.bars && !f.pie && !f.book && !f.previewCard && !(f.preview.w > 0) && !f.outfit && !f.work)
         return;
     ID3D11Device* device = nullptr;
     ID3D11DeviceContext* context = nullptr;
@@ -1231,6 +1303,24 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
         case hud::kPieClose:
             dismissPie("closed on the pie");
             break;
+        case hud::kWorkButton:
+            // controls.py 8700000 + code: work.control (the work card's buttons).
+            if (index >= 0) grab::pushControl(8700000 + index);
+            buzz(1, 0.12f, 0.012f);
+            {
+                static int logged = 0;
+                if (logged++ < 200) LOG("Work card: button %d", index);
+            }
+            break;
+        case hud::kOutfitButton:
+            // controls.py 8600000 + code: outfit.control (the outfit panel's buttons, cells and colours).
+            if (index >= 0) grab::pushControl(8600000 + index);
+            buzz(1, 0.12f, 0.012f);
+            {
+                static int logged = 0;
+                if (logged++ < 200) LOG("Outfit panel: button %d", index);
+            }
+            break;
         case hud::kPick:
             // controls.py: 1000 + row * 4 + the ingredient boxes picks the picker's row.
             if (index >= 0) grab::pushControl(1000 + index);
@@ -1284,9 +1374,15 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
         case hud::kCheat:
             if (index > 0 && index < 20) grab::pushControl(index);  // controls.py: the debug menu's testing cheats
             break;
+        case hud::kPhysics:
+            if (index >= 0 && index < 100000) grab::pushControl(8400000 + index);  // physapp.control
+            break;
         case hud::kGodView:
             grab::pushControl(1);  // controls.py _switch_view: first person off, the game's camera on your Sim
             LOG("Phone: God View");
+            break;
+        case hud::kPhotoView:
+            if (index >= 0 && index < 100000) grab::pushControl(8810000 + index);  // photowatch.view
             break;
         case hud::kInventoryPie:
             if (index >= 0 && index < 100000) grab::pushControl(7500000 + index);  // phonesim.inventory_pie
@@ -1304,7 +1400,7 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
             LOG("Phone: contact %d's pie menu", index);
             break;
         case hud::kContactCall:
-            if (index == 0 || index == 1) requestPhonePie(8300000 + index, true);  // phonesim.contact_menu: our options
+            if (index >= 0 && index <= 2) requestPhonePie(8300000 + index, index == 2 ? false : true);  // 2: Care for self, the game's own skewer pie  // phonesim.contact_menu: our options
             break;
         case hud::kContactPlayAs:
             if (index >= 0 && index < 100000) grab::pushControl(8200000 + index);  // phonesim.contact_play_as
@@ -1327,6 +1423,12 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
         case hud::kCalendarOpened:
             grab::pushControl(81);  // phonecal.send
             LOG("Phone: calendar opened");
+            break;
+        case hud::kCallAnswer:
+            grab::pushControl(88);  // phonecall.answer
+            break;
+        case hud::kCallHangup:
+            grab::pushControl(89);  // phonecall.hang_up
             break;
         case hud::kNotesClear:
             grab::pushControl(79);
@@ -1387,6 +1489,11 @@ static void drawHud(ID3D11Texture2D* backbuffer) {
                 LOG("Phone: Options (the game menu)%s", g_popupOpen ? ", a popup is up: no Escape" : "");
             }
             break;
+        case hud::kNeedSolve:
+            // controls.py: 62 + n asks the game for a way to fulfil the n-th need it sent (needclick.py).
+            if (index >= 0 && index < 8) grab::pushControl(62 + index);
+            LOG("HUD: need %d pressed", index);
+            break;
         case hud::kDismissWant:
             // controls.py: 40 + n dismisses the n-th want it sent.
             if (index >= 0 && index < 4) grab::pushControl(40 + index);
@@ -1418,6 +1525,11 @@ static bool hudSheetLayer(int sheet, Swapchain& chain, ID3D11Texture2D* atlas, X
     return true;
 }
 
+// The work card's headset layer (over the closed eyes while your Sim is at work).
+static bool hudWorkLayer(ID3D11Texture2D* atlas, XrCompositionLayerQuad& layer) {
+    return hudSheetLayer(kHudWork, g_workSwapchain, atlas, layer);
+}
+
 // The asleep watch's headset layer.
 static bool hudSleepLayer(ID3D11Texture2D* atlas, XrCompositionLayerQuad& layer) {
     return hudSheetLayer(kHudSleep, g_hudSwapchain, atlas, layer);
@@ -1433,11 +1545,20 @@ static bool hudLotIntroLayer(XrCompositionLayerQuad& layer) {
     if (!ensureSwapchain(g_lotSwapchain, desc, recreated) || !copyIntoSwapchain(g_lotSwapchain, g_uiFrame, desc))
         return false;
     const Config& c = g_config;
-    const int32_t w = std::max<int32_t>(16, std::min<int32_t>(desc.Width, static_cast<int32_t>(desc.Width * c.wristLotCropW))),
-                  h = std::max<int32_t>(16, std::min<int32_t>(desc.Height, static_cast<int32_t>(desc.Height * c.wristLotCropH)));
+    // The game anchors ScreenSlam at the screen centre (Layout.md: position/origin 0.5, 0.5), so the cut-out is
+    // centred there in the game's UI pixels (frame pixels * UI scale) instead of fixed shares of the frame.
+    float fw = desc.Width * c.wristLotCropW, fh = desc.Height * c.wristLotCropH, fy = desc.Height * c.wristLotCropY;
+    if (c.wristLotCropAuto) {
+        const float scale = bubbles::stageScale() > 0 ? bubbles::stageScale() : 1.0f;  // UI pixels per frame pixel
+        fw = c.wristLotBannerW / scale;
+        fh = fw * 3.0f / 8.0f;
+        fy = c.wristLotBannerY / scale;
+    }
+    const int32_t w = std::max<int32_t>(16, std::min<int32_t>(desc.Width, static_cast<int32_t>(fw))),
+                  h = std::max<int32_t>(16, std::min<int32_t>(desc.Height, static_cast<int32_t>(fh)));
     const int32_t cx = static_cast<int32_t>(desc.Width) / 2 - w / 2,
                   cy = std::max<int32_t>(0, std::min<int32_t>(desc.Height - h, static_cast<int32_t>(desc.Height) / 2 - h / 2 +
-                                                                    static_cast<int32_t>(desc.Height * c.wristLotCropY)));
+                                                                    static_cast<int32_t>(fy)));
     layer = {XR_TYPE_COMPOSITION_LAYER_QUAD};
     layer.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;  // premultiplied, as Scaleform blends
     layer.space = g_appSpace;

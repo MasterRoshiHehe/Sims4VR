@@ -27,6 +27,9 @@ namespace s4vr::facehide {
 void install(bool on);
 // [body] hide_face, the B menu.
 void setEnabled(bool on);
+// [perf] far_sim_cull: Sims further than this many metres from your eyes are not drawn by shadow and mirror cameras (0 = off).
+void setFarSimCull(float metres);
+void setEyeSimCull(float metres);  // Sims further than this from your eyes are also left out of your own view (0 = off)
 
 // Game thread (camera), every frame in first person: the Sim you are in
 // (its client Actor). Stops by itself when this isn't called for a moment.

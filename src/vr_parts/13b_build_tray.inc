@@ -69,6 +69,7 @@ static void placeTray(phone3d::Phone& p3, const XrVector3f& centre, const XrVect
     g_tabletGlass = {true, GetTickCount64(), {centre.x + z.x * 0.0005f, centre.y + z.y * 0.0005f, centre.z + z.z * 0.0005f}, x, y, z, menuW, menuH};
 }
 
+// (Keys, not services: the 803 log shows every service "sent" with no effect in game.)
 // Raise / lower / bigger / smaller work with bb.moveobjects on (the game's controller build mode only sends them
 // with cheats on): turned on with them.
 static void trayNeedsMoveObjects() {
@@ -77,20 +78,67 @@ static void trayNeedsMoveObjects() {
     grab::pushControl(7700000);
 }
 
+// The game's placement snap (BBCycleSnapSize, as the controller's build mode): 0 full grid, 1 half grid, 2 free
+// placement, then round again (BuildBuyGameStateAdapter.SNAP_*). Counted here; the build starts on full grid.
+static int g_snapSize = 0;
+static void cycleSnap(int until = -1) {
+    do {
+        pointer::tapKey(0x3F);  // F5
+        g_snapSize = (g_snapSize + 1) % 3;
+    } while (until >= 0 && g_snapSize != until);
+}
+
+// The phone camera app (camapp.py, controls 8800000 + n): n 0 shutter, 1 shutter with flash, 2 zoom in, 3 zoom out,
+// 4 next filter, 5 previous filter, 6 turn the frame, 7 close, 8..10 photo size small..large. Flash and the size are
+// kept here (lit buttons) and go with the shutter.
+static int g_camSize = 1;
+static void cameraTool(int tool) {
+    using namespace hud;
+    int code = -1;
+    switch (tool) {
+        case kCamShutter: code = trayOn(20 + kCamFlash - kCamShutter) ? 1 : 0; break;
+        case kCamZoomIn: code = 2; break;
+        case kCamZoomOut: code = 3; break;
+        case kCamFilterNext: code = 4; break;
+        case kCamFilterPrev: code = 5; break;
+        case kCamOrient: code = 6; break;
+        case kCamClose: code = 7; break;
+        case kCamFlash: setTrayLit(20 + kCamFlash - kCamShutter, !trayOn(20 + kCamFlash - kCamShutter)); break;
+        case kCamSmall:
+        case kCamMedium:
+        case kCamLarge:
+            g_camSize = tool - kCamSmall;
+            for (int k = 0; k < 3; ++k) setTrayLit(20 + kCamSmall - kCamShutter + k, k == g_camSize);
+            code = 8 + g_camSize;
+            break;
+        default: return;
+    }
+    if (code >= 0) grab::pushControl(8800000 + code);
+    static int logged = 0;
+    if (logged++ < 200) LOG("Camera app: button %d (control %d)", tool, 8800000 + code);
+}
+
 static void trayTool(int tool) {
     using namespace hud;
+    if (tool >= kCamShutter) {
+        cameraTool(tool);
+        return;
+    }
     switch (tool) {
         case kTrayAlt: setTrayLit(tool, !trayOn(tool)); break;
-        case kTrayShift: setTrayLit(tool, !trayOn(tool)); break;
-        case kTraySnap: clientdlg::gameService("BBCycleSnapSize"); break;
-        case kTrayGrid: clientdlg::gameService("ToggleBuildBuyGrid"); break;
-        case kTrayRotateLeft: clientdlg::gameService("BBRotateSelectedObject", "{\"value\":-1}"); break;
-        case kTrayRotateRight: clientdlg::gameService("BBRotateSelectedObject", "{\"value\":1}"); break;
-        case kTrayRaise: trayNeedsMoveObjects(); clientdlg::gameService("BBMoveObjectVerticallyUp"); break;
-        case kTrayLower: trayNeedsMoveObjects(); clientdlg::gameService("BBMoveObjectVerticallyDown"); break;
-        case kTrayBigger: trayNeedsMoveObjects(); clientdlg::gameService("BBIncreaseObjectScale"); break;
-        case kTraySmaller: trayNeedsMoveObjects(); clientdlg::gameService("BBDecreaseObjectScale"); break;
-        case kTraySwatch: clientdlg::gameService("BBCycleVariant"); break;
+        case kTrayShift:  // Place copies: the game's gamepad route keeps the item cloning (BuildBuyCenterAdapterBase.PlaceClonedObject)
+            setTrayLit(tool, !trayOn(tool));
+            break;
+        case kTrayFreePlace: setTrayLit(tool, !trayOn(tool)); break;  // Alt held while placing, as Shift for copies (works, 806)
+        case kTraySnap: cycleSnap(); break;
+        case kTrayGrid: pointer::tapKey(0x22); break;  // G
+        case kTrayRotateLeft: pointer::tapKey(0x33); break;
+        case kTrayRotateRight: pointer::tapKey(0x34); break;
+        case kTrayRaise: trayNeedsMoveObjects(); pointer::tapKey(0x0A); break;
+        case kTrayLower: trayNeedsMoveObjects(); pointer::tapKey(0x0B); break;
+        case kTrayBigger: trayNeedsMoveObjects(); pointer::tapKey(0x1B); break;
+        case kTraySmaller: trayNeedsMoveObjects(); pointer::tapKey(0x1A); break;
+        case kTraySwatch: pointer::tapKey(0x4E); break;
         case kTraySlot: pointer::tapKey(0x32); break;  // M
         case kTrayQuarter:
             clientdlg::gameService("BBToggleQuarterTile");
@@ -125,6 +173,7 @@ static void hideTray() {
     if (!g_traySheet.m.active) return;
     hideHud(g_traySheet);
     setTrayLit(hud::kTrayAlt, false);
+    setTrayLit(hud::kTrayFreePlace, false);
     setTrayLit(hud::kTrayShift, false);
     LOG("Build tray: away");
 }
@@ -149,7 +198,7 @@ static bool trayStick(XrVector2f stick, float dt) {
     static ULONGLONG nextTurn = 0, nextLift = 0;
     const ULONGLONG now = GetTickCount64();
     const float ax = std::fabs(stick.x), ay = std::fabs(stick.y);
-    if (ax > 0.2f && trayOn(hud::kTrayAlt)) {
+    if (ax > 0.2f && (trayOn(hud::kTrayAlt) || trayOn(hud::kTrayFreePlace))) {
         // BuildBuyCenterAdapterBase.Tick: -stick.x * deltaTime (ms) * CONTROLLER_FREE_ROTATE_SPEED (0.01).
         char value[32];
         std::snprintf(value, sizeof value, "%.4f", -stick.x * dt * 1000.0f * 0.01f);

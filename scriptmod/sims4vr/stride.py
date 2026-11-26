@@ -30,8 +30,7 @@ right before them: the body goes up and down them in its standing pose, which
 the DLL holds at the steps' height.
 
 Running (a tap of the left stick; the DLL moves you at the run speed): the
-route gets the Sim's own run walkstyle, the one the game gives long outdoor
-routes, everywhere. Switching mid-walk ends the route and starts a new one.
+route gets the game's Jog walkstyle (run walkstyle if the posture refuses it). Switching mid-walk ends the route and starts a new one.
 """
 import math
 import time
@@ -45,6 +44,8 @@ from protocolbuffers import DistributorOps_pb2, Routing_pb2
 
 from sims4vr import native
 
+JOG_INSTANCE = 0x208631a7  # InGame/Locomotion/Jog.walkstyle
+_jog_style = None
 UPDATE_EVERY = 0.2  # route seconds between path updates while walking
 TURN_UPDATE = math.radians(20)  # update at once when the direction turns this much
 LOOKAHEAD = 2.0  # route seconds of path ahead of the player
@@ -222,6 +223,28 @@ def _ahead(t, x, y, z, vx, vz, yaw, lookahead=LOOKAHEAD):
     return points
 
 
+def _jog(behavior, sim):
+    """The game's own InGame/Locomotion/Jog walkstyle (what jogging Sims and
+    dog walkers use), if the Sim's posture allows it. None: use the run."""
+    global _jog_style
+    if _jog_style is False:
+        return None
+    try:
+        if _jog_style is None:
+            import routing
+            import sims4.resources
+            key = sims4.resources.Key(sims4.resources.Types.WALKSTYLE, JOG_INSTANCE, 0)
+            # Same class the game's own TunableWalkstyle builds (no module import).
+            _jog_style = type(sim.get_walkstyle())(routing.get_walkstyle_name_from_resource(key),
+                                                   routing.get_walkstyle_hash_from_resource(key))
+        if behavior._is_walkstyle_compatible_with_potential_posture(_jog_style, sim):
+            return _jog_style
+    except Exception as e:
+        native._log('stride: no jog walkstyle: {!r}'.format(e))
+        _jog_style = False
+    return None
+
+
 def _walkstyle(sim):
     """The Sim's walk, or its run while the player runs (the game's own choice
     of run for its posture and what it carries; the walk if it has none)."""
@@ -229,7 +252,9 @@ def _walkstyle(sim):
     if native.running():
         try:
             behavior = sim.get_walkstyle_behavior()
-            run = behavior._try_get_posture_compatible_run_walkstyle(sim)
+            run = _jog(behavior, sim)
+            if run is None:
+                run = behavior._try_get_posture_compatible_run_walkstyle(sim)
             if run is not None:
                 carried = behavior._try_get_carry_compatible_walkstyle_override(run, sim)
                 return carried if carried is not None else run

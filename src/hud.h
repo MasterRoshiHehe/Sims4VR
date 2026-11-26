@@ -16,7 +16,7 @@
 // eyelids). Pointer input comes back in atlas pixels; buttons return actions.
 namespace s4vr::hud {
 
-constexpr int kWidth = 1024, kHeight = 7952;  // the atlas
+constexpr int kWidth = 1024, kHeight = 10176;  // the atlas
 struct Rect {
     float x, y, w, h;
 };
@@ -45,7 +45,7 @@ constexpr Rect kBuildTray{576, 3944, 448, 664};
 // Its tools (kBuildTool's index; Frame.trayLit has a bit per tool that is on). docs/BUILD-TRAY.md.
 enum TrayTool { kTrayAlt, kTrayShift, kTraySnap, kTrayGrid, kTrayRotateLeft, kTrayRotateRight, kTrayRaise, kTrayLower,
                 kTrayBigger, kTraySmaller, kTraySwatch, kTraySlot, kTrayQuarter, kTrayRoofCurve, kTrayEraser,
-                kTrayMoveObjects, kTrayHidden, kTrayLiveEdit, kTrayExitFirstPerson, kTrayTools };
+                kTrayMoveObjects, kTrayHidden, kTrayLiveEdit, kTrayExitFirstPerson, kTrayFreePlace, kTrayTools };
 // The pie menu drawn by us (first person), centred in it; pieScale() atlas pixels per game stage pixel.
 constexpr Rect kPie{0, 5360, 1024, 640};
 // The notebook in your hand (notebook pages, hud.cpp): the left and right page of the open spread, and the leather
@@ -57,8 +57,15 @@ constexpr Rect kBookLeatherAll{0, 6688, 512, 688};     // the cover, as the fron
 constexpr Rect kBookLeatherPlain{150, 7108, 100, 100};  // plain leather of it: the boards' edges and back
 constexpr Rect kBookEdge{0, 7376, 128, 128};           // the pages' edges
 constexpr Rect kBookPaper{256, 7376, 128, 128};        // the boards' endpapers
+constexpr Rect kBookFlipBack{0, 9488, 512, 688};   // while a page turns: the page it lands as (its other side)
+constexpr Rect kBookFlipUnder{512, 9488, 512, 688};  // ... and the page it uncovers
 // The VR keyboard (typing into the game's text fields): a preview line, four rows of keys.
 constexpr Rect kKeyboard{0, 7504, 1024, 448};
+// The outfit panel (outfit.py, hud_outfit.inc): on a mirror's glass, lying in a pulled-out drawer or in front of
+// you, as tall as its place's shape needs (Frame.outfitAspect: up to 1.5 times its width).
+constexpr Rect kOutfitArea{0, 7952, 1024, 1536};
+// The work card (work.py, hud_work.inc): over closed eyes while your Sim is at work. Shares the outfit panel's area.
+constexpr Rect kWorkArea{0, 7952, 1024, 1000};
 
 // What the buttons ask for. kCancel: the queue item `index` (render's out);
 // kDismissWant: the want `index` (the game's X on a want: a new one comes).
@@ -68,8 +75,14 @@ constexpr Rect kKeyboard{0, 7504, 1024, 448};
 // `index` (phoneapp.py's node); kPhoneSilence: the phone's silence button;
 // kPhoneOptions: the Options app (the game menu); kPhoneColor: wallpaper colour `index`.
 enum Action { kNone = 0, kPausePressed = 1, kSpeed1, kSpeed2, kSpeed3, kFullUi, kBuildPressed, kCancel, kDismissWant, kAnswer,
-              kPick, kPickerClose, kPhonePick, kPhoneSilence, kPhoneOptions, kPhoneColor, kNotesOpened, kNotesClear, kNoteDelete, kNoteDismiss, kCalendarOpened, kMySimOpened, kMySimFresh, kAspirationPicked, kTonePreview, kPlayAs, kGallery, kManageWorlds, kGameMenuButton, kInventoryPie, kGodView, kContactsOpened, kContactPicked, kContactAction, kContactPie, kContactPlayAs, kContactCall, kCheat, kNoteAnswer, kSimsForever, kInventorySell,
-              kPiePick, kPieClose, kListPick, kListDone, kListClose, kVrOptions, kBuildTool, kKey };
+              kPick, kPickerClose, kPhonePick, kPhoneSilence, kPhoneOptions, kPhoneColor, kNotesOpened, kNotesClear, kNoteDelete, kNoteDismiss, kCalendarOpened, kMySimOpened, kMySimFresh, kAspirationPicked, kTonePreview, kPlayAs, kGallery, kManageWorlds, kGameMenuButton, kInventoryPie, kGodView, kContactsOpened, kContactPicked, kContactAction, kContactPie, kContactPlayAs, kContactCall, kCheat, kNoteAnswer, kSimsForever, kInventorySell, kCallAnswer, kCallHangup,
+              kPiePick, kPieClose, kListPick, kListDone, kListClose, kVrOptions, kBuildTool, kKey, kPhysics, kNeedSolve,
+              kOutfitButton, kPhotoView, kWorkButton };
+// kWorkButton: the work card's button, `index` = work.py's control code (controls.py 8700000 + index).
+// kPhotoView: the Photos app opened photo `index` (phonesim inventory index) large: control 8810000 + index (photowatch.view).
+// kOutfitButton: the outfit panel's button, `index` = outfit.py's control code (controls.py 8600000 + index).
+// kNeedSolve: the need `index` (hudinfo order) pressed on the wrist or the phone's Needs app: needclick.py.
+// kPhysics: the phone's Body Physics app, `index` = control 8400000 + index (physapp.control).
 // kKey: a key of the VR keyboard, `index` = the UTF-16 character (>= 32) or a KeyCode below.
 enum KeyCode { kKeyBackspace = 1, kKeyEnter, kKeyLeft, kKeyRight, kKeyClose };
 // Any thread: the text of the focused text field (UTF-8), shown on the keyboard's preview line.
@@ -78,7 +91,11 @@ void setKeyboardText(const char* utf8);
 void toggleKeyboard();
 void setKeyboardManual(bool on);
 bool keyboardManual();
-// kBuildTool: the build tablet's tray tool `index` (TrayTool).
+// kBuildTool: the build tablet's tray tool `index` (TrayTool), or (>= 100) the phone camera app's button (CameraTool).
+// The camera app (a photo session, Frame.cameraTray) uses the same tray area and sheet; Frame.trayLit bit (tool - 100)
+// lights Flash and the chosen photo size.
+enum CameraTool { kCamShutter = 100, kCamZoomIn, kCamZoomOut, kCamFilterNext, kCamFilterPrev, kCamFlash, kCamOrient,
+                  kCamClose, kCamSmall, kCamMedium, kCamLarge };
 // kInventorySell: the inventory's multiselect, inventoryPicked() its rows; index 0 sell, 1 favorite, 2 unfavorite.
 std::vector<int> inventoryPicked();
 // Presses on the phone screen (buttons, not swipes) since the last call.
@@ -143,6 +160,10 @@ int tipKind();
 float tipHeight();
 // Python: an icon's image bytes (PNG, DDS/DST), decoded here (any thread).
 void setIcon(uint64_t instance, const uint8_t* data, size_t size);
+// Any thread: the Photos app's large picture `id` (image bytes: PNG, JPEG, DDS...), kept at up to 1024 px, aspect kept.
+// photoViewReady(id): that picture is the one on show.
+void setPhotoView(uint64_t id, const uint8_t* data, size_t size);
+bool photoViewReady(uint64_t id);
 // The icons the shown items still need (Python reads and sends them).
 int missingIcons(uint64_t* out, int max);
 // Pictures from the game's thumbnail system (thumbs.cpp), drawn like icons:
@@ -213,6 +234,21 @@ float pickerHeight();
 void setPhoneContent(const char* data, size_t size);
 // Python (notebook.py): the game's notebook for the book in your hand, records split by 0x1e (see notebook.py); empty: gone.
 void setNotebookContent(const char* data, size_t size);
+// Python (outfit.py), while its panel shows (empty: gone): records split by 0x1e, fields by 0x1f (outfit.py _send):
+// "outfit" kind (1 mirror, 2 drawer, 3 in front), f|m, flags (1 undo, 2 redo, 4 remove, 8 every colour listed, 16 a
+// drawer), the open category's name json, its tab, the list's serial, the worn part's index (-1 none), the lit
+// category (-1 none), a message json; per category / tab "group" / "tab" key, name json, icon, selected icon; per
+// catalog part "part" id, bits (1 worn, 2 locked), locked tooltip json; per colour of the worn part "colour" id,
+// ARGB, worn (1).
+void setOutfitContent(const char* data, size_t size);
+// There is outfit panel content to draw.
+bool outfitPending();
+// Present thread: the panel's height drawn in kOutfitArea (0 while not drawn).
+float outfitHeight();
+// Python (work.py), while the work card shows (empty: gone): records split by 0x1e, fields by 0x1f (hud_work.inc).
+void setWorkContent(const char* data, size_t size);
+// There is work card content to draw.
+bool workPending();
 // Python (lotintro.py): the lot intro (a crop of the vanilla UI's arrival banner) starts for <seconds> (text); empty: stop.
 void setLotIntro(const char* data, size_t size);
 // Any thread: the lot intro is playing (in, shown, out).
@@ -229,6 +265,11 @@ void setPhoneCalendar(const char* data, size_t size);
 // The My Sim app's values (phonesim.py records).
 // The phone's screen is off (it comes out dark until the holding hand's trigger): presses on it do nothing.
 void setPhoneAsleep(bool asleep);
+// The build tray's open category (0 = Objects), -1 closed.
+int trayCategory();
+// A phone call of your Sim (phonecall.py): 0 none, 1 incoming, 2 in call; data: "call" 0x1f mode 0x1f name 0x1f portrait.
+void setPhoneCall(const char* data, size_t size);
+int phoneCallMode();
 void setPhoneSim(const char* data, size_t size);
 // Present thread: the height of the notification card drawn in kNote (Frame.note), 0 while not drawn.
 float noteHeight();
@@ -243,7 +284,8 @@ void phoneTakenOut();
 // (0 thought, 1 speech, 2 distress/shout, 3 sentiment, 4 infant sentiment), its priority (lower = more
 // important) and how long it stays (ms). Same rules as SimBalloon.HandleAddBalloon: dropped when this Sim's
 // shown balloon is more important; else it takes its slot. Expires by itself.
-void addBalloon(uint64_t sim, uint64_t picture, uint64_t overlay, uint64_t category, int type, int priority, int durationMs);
+void addBalloon(uint64_t sim, uint64_t picture, uint64_t overlay, uint64_t category, int type, int priority, int durationMs,
+                const char* text = nullptr);  // text: words in the bubble instead of a picture (influence.py)
 struct BalloonInfo {
     uint64_t sim;
     int slot;   // 0..kBalloonSlots-1: its place in kBalloons
@@ -277,16 +319,23 @@ struct Frame {
     bool book = false;       // the notebook's pages (kBookLeft / kBookRight) and cover (kBookCover)
     float bookCrop[4] = {0.07f, 0.04f, 0.02f, 0.05f};  // the page art's outer, spine, top and bottom edges cut off (fractions)
     int bookSpread = 0;      // the spread to draw (0 = the owner and the categories)
+    int bookFlipTo = -1;     // a page turning toward this spread: also draw its pages in kBookFlipBack / kBookFlipUnder
     bool money = false;      // the money gained / lost
     bool phone = false;      // the game's phone menu (kPhone)
+    float stickScroll = 0;   // the right stick's scroll of the phone's lists: game pixels a second, signed (down = more); 0 none
+    float swipeStart = 6, swipeSpeed = 1;  // the phone's swipe threshold (game pixels) and how far lists follow it
     float phoneText = 1;     // the phone's text size ([phone] text_size)
     bool phoneWait = false;  // something the phone's screen needs is still coming (the wallpaper, Options' menu): it waits covered
     bool balloons = false;
     bool buildTray = false;  // the build tablet's tool tray (kBuildTray)
     uint32_t trayLit = 0;    // its tools that are on, a bit per TrayTool
+    bool cameraTray = false; // the phone camera app's buttons in the same place (kBuildTray), a photo session
     bool bars = false;       // the skill bars over Sims' heads   // the balloons over Sims' heads (addBalloon)
     uint64_t note = 0;       // the notification drawn as a card in kNote (notify.py), 0: none
     bool keyboard = false;   // the VR keyboard (kKeyboard)
+    bool work = false;       // the work card (kWorkArea; wins over the outfit panel)
+    bool outfit = false;     // the outfit panel (kOutfitArea)
+    float outfitAspect = 1.5f;  // its place's height / width
     // The settings page open places this piece (user 2026-10-23): its area gets a see-through green box behind it,
     // and kPreview is filled (cards with no area of their own). w 0: none.
     Rect preview{0, 0, 0, 0};
@@ -304,5 +353,7 @@ void release();
 
 // The build tray closed (its tabs alone): where they start in kBuildTray, 0..1 from its left (0 = open).
 float buildTrayLeft();
+// Any thread: the camera app (not the build tray) is what kBuildTray shows (its panel is always open).
+void setCameraTrayWanted(bool on);
 
 }  // namespace s4vr::hud

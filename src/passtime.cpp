@@ -5,11 +5,13 @@
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <utility>
 
 #include "MinHook.h"
 #include "addrs.h"
 #include "log.h"
+#include "camera.h"
 #include "singleview.h"
 
 namespace s4vr::passtime {
@@ -32,6 +34,27 @@ StepFn g_original[kCount] = {};
 std::atomic<uint32_t> g_runs[kCount][2] = {};
 std::atomic<uint64_t> g_ticks[kCount][2] = {};
 std::atomic<ULONGLONG> g_lastLog{0};
+std::atomic<uint32_t> g_waterDone{0};
+std::atomic<void*> g_mainScene{nullptr};
+
+// The water state (scene+0xe08: heights +0x2c/+0x30, a pointer at +0x38, active flags +0x40/+0x41) is computed in
+// FrameBegin (0x12596c0) and read by the water stage, a job that runs later. The 857 log showed it half-written or
+// zeroed when the stage read it (world 1 lot 0, heights 150.00 0.00 with a still camera): something else recomputes it
+// in between, so the pool's reflection was skipped or drawn from a stale camera in some passes. Keep FrameBegin's
+// result per eye and put it back just before the stage.
+constexpr size_t kStateFrom = 0x2c, kStateTo = 0x42;
+struct StateCopy {
+    uint8_t bytes[kStateTo - kStateFrom] = {};
+    bool valid = false;
+};
+StateCopy g_state[2];
+std::atomic<uint32_t> g_stateRestores{0};
+
+uint8_t* stateOf(void* scene) {
+    if (!scene) return nullptr;
+    uint8_t* state = *reinterpret_cast<uint8_t**>(static_cast<uint8_t*>(scene) + 0xe08);
+    return state;
+}
 
 int64_t now() {
     LARGE_INTEGER t;
@@ -66,10 +89,22 @@ void maybeLog() {
 template <int I>
 uint64_t hooked(void* a, uint64_t b, uint64_t c, uint64_t d) {
     const int eye = singleview::inSecond() ? 1 : 0;
+    if (I == 2) {
+        camera::logWaterPass(a, eye);
+        if (a == g_mainScene.load(std::memory_order_relaxed) && g_state[eye].valid) {
+            if (uint8_t* state = stateOf(a)) {
+                if (std::memcmp(state + kStateFrom, g_state[eye].bytes, sizeof(g_state[eye].bytes)) != 0) {
+                    std::memcpy(state + kStateFrom, g_state[eye].bytes, sizeof(g_state[eye].bytes));
+                    g_stateRestores.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+        }
+    }
     const int64_t start = now();
     const uint64_t r = g_original[I](a, b, c, d);
     g_ticks[I][eye].fetch_add(static_cast<uint64_t>(now() - start), std::memory_order_relaxed);
     g_runs[I][eye].fetch_add(1, std::memory_order_relaxed);
+    if (I == 2 && a == g_mainScene.load(std::memory_order_relaxed)) g_waterDone.fetch_add(1, std::memory_order_release);
     maybeLog();
     return r;
 }
@@ -81,6 +116,21 @@ constexpr void* detour(int i, std::integer_sequence<int, Is...>) {
 }
 
 }  // namespace
+
+void noteFrameBegin(void* scene, int eye) {
+    if (scene != g_mainScene.load(std::memory_order_relaxed)) return;
+    camera::fixLotWater(scene);
+    if (uint8_t* state = stateOf(scene)) {
+        std::memcpy(g_state[eye].bytes, state + kStateFrom, sizeof(g_state[eye].bytes));
+        g_state[eye].valid = true;
+    }
+}
+
+uint32_t stateRestores() { return g_stateRestores.exchange(0, std::memory_order_relaxed); }
+
+void setMainScene(void* scene) { g_mainScene.store(scene, std::memory_order_relaxed); }
+
+uint32_t waterDone() { return g_waterDone.load(std::memory_order_acquire); }
 
 void install() {
     MH_STATUS s = MH_Initialize();

@@ -16,6 +16,9 @@ std::atomic<bool> g_covered{false};
 std::atomic<ULONGLONG> g_coveredAt{0}, g_uncoveredAt{0};
 std::atomic<bool> g_held{false};
 std::atomic<bool> g_transition{false};
+std::atomic<bool> g_saveWait{false};
+std::atomic<ULONGLONG> g_saveWaitAt{0};
+constexpr ULONGLONG kSaveWaitMs = 25000;  // no end of the save seen after this: open anyway
 State g_cover;
 float g_waited = 0;  // seconds asleep before the lids start to close
 LARGE_INTEGER g_freq{}, g_last{};
@@ -49,7 +52,21 @@ void setSleeping(bool sleeping) {
 
 bool sleeping() { return g_sleeping.load(std::memory_order_relaxed); }
 
+void setSaveWait(bool wait) {
+    static std::atomic<ULONGLONG> endedAt{0};
+    const ULONGLONG now = GetTickCount64();
+    if (wait) {
+        // Armed once per save: the dialog's later updates (after the save step ended) must not shut the eyes again.
+        if (g_saveWait.load(std::memory_order_relaxed) || now - endedAt.load(std::memory_order_relaxed) < 6000) return;
+        g_saveWaitAt.store(now, std::memory_order_relaxed);
+    } else {
+        endedAt.store(now, std::memory_order_relaxed);
+    }
+    if (g_saveWait.exchange(wait) != wait) LOG("Eyelids: %s", wait ? "the game is saving, shut" : "the save is over");
+}
+
 void setHeld(bool held) {
+    if (!held) setSaveWait(false);  // Python's save_end/release: the save is over
     if (g_held.exchange(held) != held) LOG("Eyelids: %s", held ? "held shut" : "released, opening");
 }
 
@@ -89,7 +106,11 @@ State advance() {
         shut = false;
     }
     if (!shut && ms - g_uncoveredAt.load(std::memory_order_relaxed) < kCoverHoldMs && g_cover.closure > 0) shut = true;
-    if (g_held.load(std::memory_order_relaxed) || g_transition.load(std::memory_order_relaxed)) shut = true;
+    if (g_saveWait.load(std::memory_order_relaxed) && ms - g_saveWaitAt.load(std::memory_order_relaxed) > kSaveWaitMs) {
+        g_saveWait.store(false, std::memory_order_relaxed);
+        LOG("Eyelids: no end of the save seen after %llu s, opening", kSaveWaitMs / 1000);
+    }
+    if (g_held.load(std::memory_order_relaxed) || g_saveWait.load(std::memory_order_relaxed) || g_transition.load(std::memory_order_relaxed)) shut = true;
     if (shut) {
         g_cover.closure = approach(g_cover.closure, 1, dt / kCoverClose);
         if (g_cover.closure >= 1) g_cover.dark = approach(g_cover.dark, 1, dt / kCoverDarken);

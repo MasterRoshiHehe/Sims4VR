@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstring>
 #include <cwctype>
 #include <mutex>
@@ -12,36 +13,64 @@
 #include <thread>
 #include <vector>
 
+#include "linearboard.h"
 #include "log.h"
 
 namespace s4vr::claudescreen {
 namespace {
 
-constexpr int kMaxW = 2560, kMaxH = 1600;
-constexpr DWORD kFrameMs = 50;  // 20 pictures a second
+constexpr int kMaxCaptureW = 3840, kMaxCaptureH = 2160;
+constexpr ULONGLONG kUnseenMs = 1000;  // nobody drew the slot for this long: no pictures taken
 
-std::mutex g_mutex;
-std::atomic<bool> g_on{false};
-float g_v[11] = {};
-std::wstring g_exe;
+// One window on one screen. Slot 0 is Claude, slot 1 Discord (a viewer).
+struct Inst {
+    int slot = 0;
+    const char* name = "Claude screen";
+
+    std::mutex mutex;
+    std::atomic<bool> on{false};
+    float v[11] = {};
+    std::wstring exe, title;
+    std::atomic<int> fps{20}, maxWidth{2560};
+    std::atomic<bool> interactive{true};
+    std::atomic<HWND> window{nullptr};  // the window on show (capture thread)
+    std::atomic<ULONGLONG> viewedAt{0};  // the last time the render thread asked for the picture
+    std::atomic<ULONGLONG> returnFrontAt{0};  // after a click: the game gets the front back then
+    bool threadStarted = false;
+
+    // The latest picture (BGRA), written by the capture thread.
+    std::mutex frameMutex;
+    std::vector<uint32_t> frame;
+    int frameW = 0, frameH = 0, frameSeq = 0;
+
+    // Render thread only.
+    ID3D11Texture2D* texture = nullptr;
+    ID3D11ShaderResourceView* view = nullptr;
+    ID3D11Device* device = nullptr;
+    int texW = 0, texH = 0, uploadedSeq = -1;
+
+    // The laser's mouse (present thread).
+    int buttons = 0;
+    POINT lastSet{-1, -1};
+
+    bool claude() const { return slot == kClaude; }
+};
+Inst g_inst[kSlots];
 std::atomic<HWND> g_game{nullptr};
-std::atomic<HWND> g_window{nullptr};  // the Claude window on show (capture thread)
-bool g_threadStarted = false;
+std::once_flag g_names;
 
-// The latest picture (BGRA), written by the capture thread.
-std::mutex g_frameMutex;
-std::vector<uint32_t> g_frame;
-int g_frameW = 0, g_frameH = 0, g_frameSeq = 0;
-
-// Render thread only.
-ID3D11Texture2D* g_texture = nullptr;
-ID3D11ShaderResourceView* g_view = nullptr;
-ID3D11Device* g_device = nullptr;
-int g_texW = 0, g_texH = 0, g_uploadedSeq = -1;
-
-// The laser's mouse (present thread).
-int g_buttons = 0;
-POINT g_lastSet{-1, -1};
+Inst& inst(int slot) {
+    std::call_once(g_names, [] {
+        g_inst[kClaude].slot = kClaude;
+        g_inst[kClaude].name = "Claude screen";
+        g_inst[kDiscord].slot = kDiscord;
+        g_inst[kDiscord].name = "Discord screen";
+        g_inst[kDiscord].fps = 30;
+        g_inst[kDiscord].maxWidth = 1920;
+        g_inst[kDiscord].interactive = true;
+    });
+    return g_inst[slot < 0 || slot >= kSlots ? 0 : slot];
+}
 
 std::wstring widen(const char* s) {
     if (!s || !*s) return L"";
@@ -56,56 +85,90 @@ std::wstring lower(std::wstring s) {
     return s;
 }
 
-// The Claude app's main window: its largest visible top-level window.
+// The app's main window: its largest visible top-level window (of its process; with `title` in its title).
 struct Find {
+    int slot = 0;
+    std::wstring title;
     HWND best = nullptr;
     long area = 0;
 };
-BOOL CALLBACK findClaude(HWND hwnd, LPARAM lp) {
+BOOL CALLBACK findWindowProc(HWND hwnd, LPARAM lp) {
     auto* f = reinterpret_cast<Find*>(lp);
     if (!IsWindowVisible(hwnd) || GetWindow(hwnd, GW_OWNER) || GetWindowTextLengthW(hwnd) == 0) return TRUE;
+    if (!f->title.empty()) {
+        wchar_t text[256] = {};
+        GetWindowTextW(hwnd, text, 256);
+        if (lower(text).find(f->title) == std::wstring::npos) return TRUE;
+    }
     DWORD pid = 0;
     GetWindowThreadProcessId(hwnd, &pid);
     HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
     if (!process) return TRUE;
     wchar_t path[MAX_PATH] = {};
     DWORD size = MAX_PATH;
-    bool claude = false;
+    bool match = false;
     if (QueryFullProcessImageNameW(process, 0, path, &size)) {
         std::wstring p = lower(path);
-        claude = p.size() >= 11 && p.compare(p.size() - 11, 11, L"\\claude.exe") == 0;
+        size_t slash = p.find_last_of(L'\\');
+        std::wstring base = slash == std::wstring::npos ? p : p.substr(slash + 1);
+        if (f->slot == kClaude)
+            match = base == L"claude.exe";
+        else  // Discord, its public test and canary builds
+            match = base.size() >= 11 && base.compare(0, 7, L"discord") == 0 && base.compare(base.size() - 4, 4, L".exe") == 0;
     }
     CloseHandle(process);
-    if (!claude) return TRUE;
+    if (!match) return TRUE;
     RECT r;
     GetWindowRect(hwnd, &r);
-    long area = (r.right - r.left) * (r.bottom - r.top);
+    long w = r.right - r.left, h = r.bottom - r.top;
+    if (f->slot == kDiscord && (w < 200 || h < 150) && !IsIconic(hwnd)) return TRUE;  // helper windows
+    long area = w * h;
+    if (IsIconic(hwnd)) area = 1;  // a minimised one still counts, last
     if (area > f->area) {
         f->area = area;
         f->best = hwnd;
     }
     return TRUE;
 }
-HWND findWindow() {
+HWND findWindow(Inst& s) {
     Find f;
-    EnumWindows(findClaude, reinterpret_cast<LPARAM>(&f));
+    f.slot = s.slot;
+    {
+        std::lock_guard<std::mutex> lock(s.mutex);
+        f.title = lower(s.title);
+    }
+    EnumWindows(findWindowProc, reinterpret_cast<LPARAM>(&f));
     return f.best;
 }
 
-void launch(const std::wstring& configured) {
+void launch(Inst& s, const std::wstring& configured) {
     std::wstring exe = configured;
-    if (exe.empty()) {
-        wchar_t local[MAX_PATH] = {};
-        if (GetEnvironmentVariableW(L"LOCALAPPDATA", local, MAX_PATH)) exe = std::wstring(local) + L"\\AnthropicClaude\\claude.exe";
-    }
-    if (!exe.empty() && GetFileAttributesW(exe.c_str()) != INVALID_FILE_ATTRIBUTES) {
-        HINSTANCE r = ShellExecuteW(nullptr, L"open", exe.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-        LOG("Claude screen: starting %ls (%s)", exe.c_str(), reinterpret_cast<INT_PTR>(r) > 32 ? "ok" : "failed");
+    wchar_t local[MAX_PATH] = {};
+    const bool haveLocal = GetEnvironmentVariableW(L"LOCALAPPDATA", local, MAX_PATH) > 0;
+    if (s.claude()) {
+        if (exe.empty() && haveLocal) exe = std::wstring(local) + L"\\AnthropicClaude\\claude.exe";
+        if (!exe.empty() && GetFileAttributesW(exe.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            HINSTANCE r = ShellExecuteW(nullptr, L"open", exe.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            LOG("%s: starting %ls (%s)", s.name, exe.c_str(), reinterpret_cast<INT_PTR>(r) > 32 ? "ok" : "failed");
+            return;
+        }
+        // Installed another way: its link handler starts it.
+        HINSTANCE r = ShellExecuteW(nullptr, L"open", L"claude://", nullptr, nullptr, SW_SHOWNORMAL);
+        LOG("%s: the app isn't at \"%ls\"; asked Windows to open claude:// (%s)", s.name, exe.c_str(),
+            reinterpret_cast<INT_PTR>(r) > 32 ? "ok" : "failed");
         return;
     }
-    // Installed another way: its link handler starts it.
-    HINSTANCE r = ShellExecuteW(nullptr, L"open", L"claude://", nullptr, nullptr, SW_SHOWNORMAL);
-    LOG("Claude screen: the app isn't at \"%ls\"; asked Windows to open claude:// (%s)", exe.c_str(),
+    // Discord: its updater starts the current build.
+    if (exe.empty() && haveLocal) exe = std::wstring(local) + L"\\Discord\\Update.exe";
+    if (!exe.empty() && GetFileAttributesW(exe.c_str()) != INVALID_FILE_ATTRIBUTES) {
+        const bool updater = lower(exe).find(L"update.exe") != std::wstring::npos;
+        HINSTANCE r = ShellExecuteW(nullptr, L"open", exe.c_str(), updater ? L"--processStart Discord.exe" : nullptr,
+                                    nullptr, SW_SHOWMINNOACTIVE);
+        LOG("%s: starting %ls (%s)", s.name, exe.c_str(), reinterpret_cast<INT_PTR>(r) > 32 ? "ok" : "failed");
+        return;
+    }
+    HINSTANCE r = ShellExecuteW(nullptr, L"open", L"discord://", nullptr, nullptr, SW_SHOWMINNOACTIVE);
+    LOG("%s: Discord isn't at \"%ls\"; asked Windows to open discord:// (%s)", s.name, exe.c_str(),
         reinterpret_cast<INT_PTR>(r) > 32 ? "ok" : "failed");
 }
 
@@ -120,6 +183,16 @@ bool toFront(HWND window) {
     alt[1].ki.dwFlags = KEYEVENTF_KEYUP;
     SendInput(2, alt, sizeof(INPUT));
     SetForegroundWindow(window);
+    if (GetForegroundWindow() == window) return true;
+    // Windows refused (the other window, Discord's, is in front and owned by another process): join its input
+    // queue for the moment, which lets the front change hands (692 log: "Windows refused to bring it to the front").
+    HWND front = GetForegroundWindow();
+    DWORD frontThread = front ? GetWindowThreadProcessId(front, nullptr) : 0, me = GetCurrentThreadId();
+    bool attached = frontThread && frontThread != me && AttachThreadInput(me, frontThread, TRUE);
+    if (IsIconic(window)) ShowWindow(window, SW_RESTORE);
+    BringWindowToTop(window);
+    SetForegroundWindow(window);
+    if (attached) AttachThreadInput(me, frontThread, FALSE);
     return GetForegroundWindow() == window;
 }
 
@@ -138,33 +211,86 @@ void drawCursor(HDC dc, HWND window) {
     DrawIconEx(dc, p.x - hx, p.y - hy, ci.hCursor, 0, 0, 0, nullptr, DI_NORMAL);
 }
 
-void captureThread() {
-    HDC mem = CreateCompatibleDC(nullptr);
+// A 32-bit top-down bitmap of w x h selected into `dc`.
+struct Dib {
+    HDC dc = nullptr;
     HBITMAP bmp = nullptr;
     void* bits = nullptr;
-    int bw = 0, bh = 0;
+    int w = 0, h = 0;
+    void init() { dc = CreateCompatibleDC(nullptr); }
+    bool size(int nw, int nh) {
+        if (nw == w && nh == h) return bmp != nullptr;
+        if (bmp) DeleteObject(bmp);
+        BITMAPINFO bi{};
+        bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
+        bi.bmiHeader.biWidth = nw;
+        bi.bmiHeader.biHeight = -nh;
+        bi.bmiHeader.biPlanes = 1;
+        bi.bmiHeader.biBitCount = 32;
+        bmp = CreateDIBSection(dc, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+        if (bmp) SelectObject(dc, bmp);
+        w = bmp ? nw : 0;
+        h = bmp ? nh : 0;
+        return bmp != nullptr;
+    }
+};
+
+// Every sampled pixel black: a window the capture gets nothing of.
+bool looksBlack(const uint32_t* px, int w, int h) {
+    for (int j = 1; j < 9; ++j)
+        for (int i = 1; i < 9; ++i)
+            if (px[static_cast<size_t>(h * j / 10) * w + static_cast<size_t>(w * i / 10)] & 0x00FFFFFFu) return false;
+    return true;
+}
+
+void captureThread(Inst* sp) {
+    Inst& s = *sp;
+    Dib full, scaled;
+    full.init();
+    scaled.init();
+    SetStretchBltMode(scaled.dc, COLORONCOLOR);  // HALFTONE took 48 ms a picture (692 log); the GPU's mip chain smooths it
+    SetBrushOrgEx(scaled.dc, 0, 0, nullptr);
+    std::vector<uint32_t> scratch;
     HWND window = nullptr;
-    bool placed = false, launched = false, fronted = false, clipped = false;
+    bool placed = false, launched = false, fronted = false, clipped = false, wasIconic = false;
     WINDOWPLACEMENT saved{};
     saved.length = sizeof(saved);
     DWORD lastLook = 0, startedAt = 0;
-    int captures = 0, failures = 0;
+    int captures = 0, failures = 0, blackRun = 0;
+    ULONGLONG raisedAt = 0;
+    bool bitBlt = false, bitBltLogged = false;
     auto release = [&]() {
         if (clipped) ClipCursor(nullptr);
         clipped = false;
-        if (window && placed && IsWindow(window)) SetWindowPlacement(window, &saved);
-        if (placed) LOG("Claude screen: off; the window has its old place back");
-        placed = fronted = launched = false;
+        if (window && placed && IsWindow(window)) {
+            if (s.claude())
+                SetWindowPlacement(window, &saved);
+            else if (wasIconic)
+                ShowWindow(window, SW_SHOWMINNOACTIVE);  // as it was: minimised
+        }
+        if (placed) LOG("%s: off; the window has its old place back", s.name);
+        if (window && bitBlt && IsWindow(window))  // back behind the game
+            SetWindowPos(window, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        placed = fronted = launched = wasIconic = bitBlt = bitBltLogged = false;
+        blackRun = 0;
         window = nullptr;
-        g_window = nullptr;
-        if (HWND game = g_game.load()) toFront(game);
+        s.window = nullptr;
+        if (s.claude() || s.buttons) {
+            if (HWND game = g_game.load()) toFront(game);
+        }
     };
     for (;;) {
         DWORD now = GetTickCount();
-        if (!g_on) {
+        if (!s.on) {
             if (window || placed || launched) release();
             Sleep(100);
             continue;
+        }
+        // The game's front back, a moment after a click into the window.
+        ULONGLONG back = s.returnFrontAt.load();
+        if (back && GetTickCount64() >= back) {
+            s.returnFrontAt = 0;
+            if (HWND game = g_game.load()) toFront(game);
         }
         if (!window || !IsWindow(window)) {
             if (now - lastLook < 500) {
@@ -172,181 +298,264 @@ void captureThread() {
                 continue;
             }
             lastLook = now;
-            window = findWindow();
+            window = findWindow(s);
             if (!window) {
                 if (!launched) {
                     std::wstring exe;
                     {
-                        std::lock_guard<std::mutex> lock(g_mutex);
-                        exe = g_exe;
+                        std::lock_guard<std::mutex> lock(s.mutex);
+                        exe = s.exe;
                     }
-                    launch(exe);
+                    launch(s, exe);
                     launched = true;
                     startedAt = now;
                 } else if (now - startedAt > 30000 && now - startedAt < 30600) {
-                    LOG("Claude screen: no Claude window 30 s after starting the app");
+                    LOG("%s: no window 30 s after starting the app", s.name);
                 }
                 continue;
             }
-            LOG("Claude screen: found the Claude window %p", static_cast<void*>(window));
-            g_window = window;
+            LOG("%s: found the window %p", s.name, static_cast<void*>(window));
+            s.window = window;
+            placed = false;
         }
         if (!placed) {
-            // Its place kept for later; restored to a normal window shaped like the screen.
-            GetWindowPlacement(window, &saved);
-            float aspect;
-            {
-                std::lock_guard<std::mutex> lock(g_mutex);
-                aspect = g_v[10] > 0 ? g_v[9] / g_v[10] : 16.0f / 9.0f;
+            if (s.claude()) {
+                // Its place kept for later; restored to a normal window shaped like the screen.
+                GetWindowPlacement(window, &saved);
+                float aspect;
+                {
+                    std::lock_guard<std::mutex> lock(s.mutex);
+                    aspect = s.v[10] > 0 ? s.v[9] / s.v[10] : 16.0f / 9.0f;
+                }
+                if (IsIconic(window) || IsZoomed(window)) ShowWindow(window, SW_RESTORE);
+                int h = 900, w = std::max(700, std::min(2400, static_cast<int>(h * aspect + 0.5f)));
+                RECT want{0, 0, w, h};
+                AdjustWindowRectEx(&want, static_cast<DWORD>(GetWindowLongW(window, GWL_STYLE)), FALSE,
+                                   static_cast<DWORD>(GetWindowLongW(window, GWL_EXSTYLE)));
+                RECT r;
+                GetWindowRect(window, &r);
+                HMONITOR monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
+                MONITORINFO mi{};
+                mi.cbSize = sizeof(mi);
+                GetMonitorInfoW(monitor, &mi);
+                int ww = want.right - want.left, wh = want.bottom - want.top;
+                int x = std::max(static_cast<int>(mi.rcWork.left), std::min(static_cast<int>(r.left), static_cast<int>(mi.rcWork.right) - ww));
+                int y = std::max(static_cast<int>(mi.rcWork.top), std::min(static_cast<int>(r.top), static_cast<int>(mi.rcWork.bottom) - wh));
+                SetWindowPos(window, HWND_TOP, x, y, ww, wh, SWP_NOACTIVATE);
+                LOG("%s: window sized %dx%d for a %.2f:1 screen", s.name, w, h, aspect);
+            } else {
+                // A viewer: the window stays as it is (a stream you set up on your desktop), only brought back
+                // from the taskbar without taking the front, since nothing is drawn for a minimised window.
+                wasIconic = IsIconic(window) != FALSE;
+                if (wasIconic) ShowWindow(window, SW_SHOWNOACTIVATE);
+                RECT r;
+                GetClientRect(window, &r);
+                LOG("%s: viewing the window as it is, %ldx%ld%s", s.name, r.right, r.bottom,
+                    wasIconic ? " (restored from the taskbar)" : "");
             }
-            if (IsIconic(window) || IsZoomed(window)) ShowWindow(window, SW_RESTORE);
-            int h = 900, w = std::max(700, std::min(2400, static_cast<int>(h * aspect + 0.5f)));
-            RECT want{0, 0, w, h};
-            AdjustWindowRectEx(&want, static_cast<DWORD>(GetWindowLongW(window, GWL_STYLE)), FALSE,
-                               static_cast<DWORD>(GetWindowLongW(window, GWL_EXSTYLE)));
-            RECT r;
-            GetWindowRect(window, &r);
-            HMONITOR monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
-            MONITORINFO mi{};
-            mi.cbSize = sizeof(mi);
-            GetMonitorInfoW(monitor, &mi);
-            int ww = want.right - want.left, wh = want.bottom - want.top;
-            int x = std::max(static_cast<int>(mi.rcWork.left), std::min(static_cast<int>(r.left), static_cast<int>(mi.rcWork.right) - ww));
-            int y = std::max(static_cast<int>(mi.rcWork.top), std::min(static_cast<int>(r.top), static_cast<int>(mi.rcWork.bottom) - wh));
-            SetWindowPos(window, HWND_TOP, x, y, ww, wh, SWP_NOACTIVATE);
             placed = true;
-            LOG("Claude screen: window sized %dx%d for a %.2f:1 screen", w, h, aspect);
         }
-        bool front = GetForegroundWindow() == window;
-        if (!front && !fronted) {
-            fronted = true;  // once: after that you may click elsewhere (it comes back with the laser)
-            front = toFront(window);
-            LOG("Claude screen: the Claude window %s the front (your mouse and keyboard type into it)",
-                front ? "has" : "didn't get");
+        // Nobody is looking at the screen: no pictures (the last one stays up).
+        if (s.frameW > 0 && GetTickCount64() - s.viewedAt.load() > kUnseenMs) {
+            Sleep(150);
+            continue;
         }
-        // The real mouse stays on the window while it's in front.
-        if (front) {
-            RECT wr;
-            GetWindowRect(window, &wr);
-            ClipCursor(&wr);
-            clipped = true;
-        } else if (clipped) {
-            ClipCursor(nullptr);
-            clipped = false;
+        if (s.claude()) {
+            bool front = GetForegroundWindow() == window;
+            if (!front && !fronted) {
+                fronted = true;  // once: after that you may click elsewhere (it comes back with the laser)
+                front = toFront(window);
+                LOG("%s: the Claude window %s the front (your mouse and keyboard type into it)", s.name,
+                    front ? "has" : "didn't get");
+            }
+            // The real mouse stays on the window while it's in front.
+            if (front) {
+                RECT wr;
+                GetWindowRect(window, &wr);
+                ClipCursor(&wr);
+                clipped = true;
+            } else if (clipped) {
+                ClipCursor(nullptr);
+                clipped = false;
+            }
         }
         RECT rc;
         GetClientRect(window, &rc);
-        int w = std::min(static_cast<int>(rc.right), kMaxW), h = std::min(static_cast<int>(rc.bottom), kMaxH);
-        if (w > 0 && h > 0) {
-            if (w != bw || h != bh) {
-                if (bmp) DeleteObject(bmp);
-                BITMAPINFO bi{};
-                bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
-                bi.bmiHeader.biWidth = w;
-                bi.bmiHeader.biHeight = -h;
-                bi.bmiHeader.biPlanes = 1;
-                bi.bmiHeader.biBitCount = 32;
-                bmp = CreateDIBSection(mem, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
-                if (bmp) SelectObject(mem, bmp);
-                bw = bmp ? w : 0;
-                bh = bmp ? h : 0;
-            }
+        int w = std::min(static_cast<int>(rc.right), kMaxCaptureW), h = std::min(static_cast<int>(rc.bottom), kMaxCaptureH);
+        if (w > 0 && h > 0 && full.size(w, h)) {
             LARGE_INTEGER t0, t1;
             QueryPerformanceCounter(&t0);
-            if (bmp && PrintWindow(window, mem, PW_CLIENTONLY | 0x2 /* PW_RENDERFULLCONTENT */)) {
-                drawCursor(mem, window);
+            bool ok;
+            if (bitBlt) {
+                // PrintWindow gave black pictures (a stream drawn by the graphics card): the window as it is on the
+                // screen, which needs nothing in front of it. The game's own window is, so Discord goes on top of
+                // it without taking the focus (the game keeps the keyboard; 700 log 20:39: black at once).
+                if (GetTickCount64() - raisedAt > 500) {
+                    raisedAt = GetTickCount64();
+                    SetWindowPos(window, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+                }
+                HDC wdc = GetDC(window);
+                ok = wdc && BitBlt(full.dc, 0, 0, w, h, wdc, 0, 0, SRCCOPY | CAPTUREBLT);
+                if (wdc) ReleaseDC(window, wdc);
+            } else {
+                ok = PrintWindow(window, full.dc, PW_CLIENTONLY | 0x2 /* PW_RENDERFULLCONTENT */) != FALSE;
+            }
+            if (ok) {
+                if (s.claude() || s.interactive) drawCursor(full.dc, window);
                 GdiFlush();
-                std::lock_guard<std::mutex> lock(g_frameMutex);
-                g_frame.resize(static_cast<size_t>(w) * h);
-                const uint32_t* in = static_cast<const uint32_t*>(bits);
-                for (size_t i = 0; i < g_frame.size(); ++i) g_frame[i] = in[i] | 0xFF000000u;
-                g_frameW = w;
-                g_frameH = h;
-                ++g_frameSeq;
-                if (captures++ == 0) LOG("Claude screen: picture %dx%d", w, h);
+                // Wider than allowed: scaled down here, on this thread.
+                const int cap = std::max(320, s.maxWidth.load());
+                int ow = w, oh = h;
+                const uint32_t* in = static_cast<const uint32_t*>(full.bits);
+                if (w > cap) {
+                    ow = cap;
+                    oh = std::max(1, static_cast<int>(static_cast<long long>(h) * cap / w));
+                    if (scaled.size(ow, oh)) {
+                        StretchBlt(scaled.dc, 0, 0, ow, oh, full.dc, 0, 0, w, h, SRCCOPY);
+                        GdiFlush();
+                        in = static_cast<const uint32_t*>(scaled.bits);
+                    } else {
+                        ow = w;
+                        oh = h;
+                    }
+                }
+                scratch.resize(static_cast<size_t>(ow) * oh);
+                for (size_t i = 0; i < scratch.size(); ++i) scratch[i] = in[i] | 0xFF000000u;
+                // A window the capture gets nothing of (a GPU-drawn stream): the on-screen copy instead.
+                if (!s.claude() && !bitBlt) {
+                    if (looksBlack(scratch.data(), ow, oh)) {
+                        if (++blackRun == 15) {
+                            bitBlt = true;
+                            if (!bitBltLogged) {
+                                bitBltLogged = true;
+                                LOG("%s: PrintWindow pictures are black; copying from the screen instead (the Discord "
+                                    "window is put on top of the game's, without the focus)", s.name);
+                            }
+                        }
+                    } else {
+                        blackRun = 0;
+                    }
+                }
+                {
+                    std::lock_guard<std::mutex> lock(s.frameMutex);
+                    s.frame.swap(scratch);
+                    s.frameW = ow;
+                    s.frameH = oh;
+                    ++s.frameSeq;
+                }
+                if (captures++ == 0) LOG("%s: picture %dx%d (window %dx%d)", s.name, ow, oh, w, h);
                 // What a picture costs (user 2026-10-15 00:53Z asked about the
-                // performance): logged every 30 s while Claude is on a screen.
+                // performance): logged every 30 s while a window is on a screen.
                 static LARGE_INTEGER freq{};
-                static double total = 0, most = 0;
-                static int pictures = 0;
-                static DWORD since = GetTickCount();
+                static double total[kSlots] = {}, most[kSlots] = {};
+                static int pictures[kSlots] = {};
+                static DWORD since[kSlots] = {};
                 if (!freq.QuadPart) QueryPerformanceFrequency(&freq);
+                if (!since[s.slot]) since[s.slot] = GetTickCount();
                 QueryPerformanceCounter(&t1);
                 double ms = 1000.0 * static_cast<double>(t1.QuadPart - t0.QuadPart) / static_cast<double>(freq.QuadPart);
-                total += ms;
-                most = std::max(most, ms);
-                ++pictures;
-                if (GetTickCount() - since >= 30000) {
-                    LOG("Claude screen: %d pictures of %dx%d in the last %lu s, %.1f ms each on average, %.1f ms at "
-                        "most (its own thread, not the game's)",
-                        pictures, w, h, (GetTickCount() - since) / 1000, total / pictures, most);
-                    total = most = 0;
-                    pictures = 0;
-                    since = GetTickCount();
+                total[s.slot] += ms;
+                most[s.slot] = std::max(most[s.slot], ms);
+                ++pictures[s.slot];
+                if (GetTickCount() - since[s.slot] >= 30000) {
+                    LOG("%s: %d pictures of %dx%d in the last %lu s, %.1f ms each on average, %.1f ms at most (its own "
+                        "thread, not the game's)",
+                        s.name, pictures[s.slot], ow, oh, (GetTickCount() - since[s.slot]) / 1000,
+                        total[s.slot] / pictures[s.slot], most[s.slot]);
+                    total[s.slot] = most[s.slot] = 0;
+                    pictures[s.slot] = 0;
+                    since[s.slot] = GetTickCount();
                 }
             } else if (failures++ < 5) {
-                LOG("Claude screen: no picture of the window (%lu)", GetLastError());
+                LOG("%s: no picture of the window (%lu)", s.name, GetLastError());
             }
         }
+        DWORD frameMs = 1000u / static_cast<DWORD>(std::max(1, std::min(60, s.fps.load())));
         DWORD spent = GetTickCount() - now;
-        Sleep(spent < kFrameMs ? kFrameMs - spent : 1);
+        Sleep(spent < frameMs ? frameMs - spent : 1);
     }
 }
 
 }  // namespace
 
-void set(int on, const float v[11], const char* exe) {
+void set(int on, const float v[11], const char* exe, int slot, const char* title, int fps, int maxWidth, int interactive) {
+    if (slot == kLinear) return linearboard::set(on, v, exe, title, fps, maxWidth);
+    Inst& s = inst(slot);
     {
-        std::lock_guard<std::mutex> lock(g_mutex);
-        if (on && v) std::memcpy(g_v, v, sizeof(g_v));
-        g_exe = widen(exe);
-        if (on && !g_threadStarted) {
-            g_threadStarted = true;
-            std::thread(captureThread).detach();
+        std::lock_guard<std::mutex> lock(s.mutex);
+        if (on && v) {
+            if (s.on && std::fabs(v[0] - s.v[0]) + std::fabs(v[1] - s.v[1]) + std::fabs(v[2] - s.v[2]) > 0.05f)
+                LOG("%s: moved to another screen at %.2f %.2f %.2f, %.2f x %.2f", s.name, v[0], v[1], v[2], v[9], v[10]);
+            std::memcpy(s.v, v, sizeof(s.v));
         }
-    }
-    if (on != static_cast<int>(g_on.load())) {
-        LOG("Claude screen: %s", on ? "on the computer's screen" : "off the screen");
+        s.exe = widen(exe);
+        s.title = widen(title);
         if (on) {
-            std::lock_guard<std::mutex> lock(g_frameMutex);
-            g_frameW = g_frameH = 0;  // no old picture
+            s.fps = std::max(1, std::min(60, fps));
+            s.maxWidth = std::max(320, std::min(kMaxCaptureW, maxWidth));
+            s.interactive = interactive != 0;
+        }
+        if (on && !s.threadStarted) {
+            s.threadStarted = true;
+            std::thread(captureThread, &s).detach();
         }
     }
-    g_on = on != 0;
-    if (!on && g_buttons) mouse(0.5f, 0.5f, 0);
+    if (on != static_cast<int>(s.on.load())) {
+        LOG("%s: %s", s.name, on ? "on a screen" : "off the screen");
+        if (on) {
+            std::lock_guard<std::mutex> lock(s.frameMutex);
+            s.frameW = s.frameH = 0;  // no old picture
+            s.viewedAt = GetTickCount64();
+        }
+    }
+    s.on = on != 0;
+    if (!on && s.buttons) mouse(0.5f, 0.5f, 0, slot);
 }
 
-bool on() { return g_on; }
+bool on(int slot) { return slot == kLinear ? linearboard::on() : inst(slot).on.load(); }
 
-bool screen(float v[11]) {
-    if (!g_on) return false;
-    std::lock_guard<std::mutex> lock(g_mutex);
-    std::memcpy(v, g_v, sizeof(g_v));
+bool interactive(int slot) {
+    if (slot == kLinear) return linearboard::on();
+    Inst& s = inst(slot);
+    return s.on && s.interactive;
+}
+
+bool screen(float v[11], int slot) {
+    if (slot == kLinear) return linearboard::screen(v);
+    Inst& s = inst(slot);
+    if (!s.on) return false;
+    std::lock_guard<std::mutex> lock(s.mutex);
+    std::memcpy(v, s.v, sizeof(s.v));
     return true;
 }
 
-bool frameSize(int& w, int& h) {
-    std::lock_guard<std::mutex> lock(g_frameMutex);
-    w = g_frameW;
-    h = g_frameH;
+bool frameSize(int& w, int& h, int slot) {
+    if (slot == kLinear) return linearboard::frameSize(w, h);
+    Inst& s = inst(slot);
+    std::lock_guard<std::mutex> lock(s.frameMutex);
+    w = s.frameW;
+    h = s.frameH;
     return w > 0 && h > 0;
 }
 
-ID3D11ShaderResourceView* frameView(ID3D11DeviceContext* context) {
+ID3D11ShaderResourceView* frameView(ID3D11DeviceContext* context, int slot) {
+    if (slot == kLinear) return linearboard::frameView(context);
+    Inst& s = inst(slot);
     if (!context) return nullptr;
-    std::lock_guard<std::mutex> lock(g_frameMutex);
-    int w = g_frameW, h = g_frameH;
+    s.viewedAt = GetTickCount64();
+    std::lock_guard<std::mutex> lock(s.frameMutex);
+    int w = s.frameW, h = s.frameH;
     if (w <= 0 || h <= 0) return nullptr;
     ID3D11Device* device = nullptr;
     context->GetDevice(&device);
     if (!device) return nullptr;
     device->Release();  // the context holds it
-    if (device != g_device || w != g_texW || h != g_texH) {
-        if (g_view) g_view->Release();
-        if (g_texture) g_texture->Release();
-        g_view = nullptr;
-        g_texture = nullptr;
-        g_device = device;
+    if (device != s.device || w != s.texW || h != s.texH) {
+        if (s.view) s.view->Release();
+        if (s.texture) s.texture->Release();
+        s.view = nullptr;
+        s.texture = nullptr;
+        s.device = device;
         D3D11_TEXTURE2D_DESC d{};
         d.Width = w;
         d.Height = h;
@@ -359,41 +568,44 @@ ID3D11ShaderResourceView* frameView(ID3D11DeviceContext* context) {
         d.Usage = D3D11_USAGE_DEFAULT;
         d.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
         d.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
-        if (FAILED(device->CreateTexture2D(&d, nullptr, &g_texture)) ||
-            FAILED(device->CreateShaderResourceView(g_texture, nullptr, &g_view))) {
-            if (g_texture) g_texture->Release();
-            g_texture = nullptr;
+        if (FAILED(device->CreateTexture2D(&d, nullptr, &s.texture)) ||
+            FAILED(device->CreateShaderResourceView(s.texture, nullptr, &s.view))) {
+            if (s.texture) s.texture->Release();
+            s.texture = nullptr;
             static int failed = 0;
-            if (failed++ < 3) LOG("Claude screen: no %dx%d texture", w, h);
+            if (failed++ < 3) LOG("%s: no %dx%d texture", s.name, w, h);
             return nullptr;
         }
-        g_texW = w;
-        g_texH = h;
-        g_uploadedSeq = -1;
+        s.texW = w;
+        s.texH = h;
+        s.uploadedSeq = -1;
     }
-    if (g_frameSeq != g_uploadedSeq) {
-        context->UpdateSubresource(g_texture, 0, nullptr, g_frame.data(), w * 4, 0);
-        context->GenerateMips(g_view);
-        g_uploadedSeq = g_frameSeq;
+    if (s.frameSeq != s.uploadedSeq) {
+        context->UpdateSubresource(s.texture, 0, nullptr, s.frame.data(), w * 4, 0);
+        context->GenerateMips(s.view);
+        s.uploadedSeq = s.frameSeq;
     }
-    return g_view;
+    return s.view;
 }
 
-void mouse(float u, float v, int buttons) {
-    HWND window = g_window.load();
+void mouse(float u, float v, int buttons, int slot) {
+    if (slot == kLinear) return linearboard::pointer(u, v, buttons);
+    Inst& s = inst(slot);
+    if (!s.claude() && !s.interactive) return;
+    HWND window = s.window.load();
     if (!window || !IsWindow(window)) return;
     RECT rc;
     GetClientRect(window, &rc);
     POINT p{static_cast<LONG>(std::max(0.0f, std::min(1.0f, u)) * (rc.right - 1)),
             static_cast<LONG>(std::max(0.0f, std::min(1.0f, v)) * (rc.bottom - 1))};
     // Only when the laser moved, so the real mouse still works.
-    if (std::abs(p.x - g_lastSet.x) > 1 || std::abs(p.y - g_lastSet.y) > 1) {
-        g_lastSet = p;
-        POINT s = p;
-        ClientToScreen(window, &s);
-        SetCursorPos(s.x, s.y);
+    if (std::abs(p.x - s.lastSet.x) > 1 || std::abs(p.y - s.lastSet.y) > 1) {
+        s.lastSet = p;
+        POINT pt = p;
+        ClientToScreen(window, &pt);
+        SetCursorPos(pt.x, pt.y);
     }
-    int changed = buttons ^ g_buttons;
+    int changed = buttons ^ s.buttons;
     if (changed) {
         if (buttons && GetForegroundWindow() != window) toFront(window);
         INPUT in{};
@@ -406,11 +618,13 @@ void mouse(float u, float v, int buttons) {
             in.mi.dwFlags = (buttons & 2) ? MOUSEEVENTF_RIGHTDOWN : MOUSEEVENTF_RIGHTUP;
             SendInput(1, &in, sizeof(in));
         }
-        g_buttons = buttons;
+        // A viewer doesn't keep the front: the game gets it back a moment after the click.
+        if (!s.claude() && !buttons) s.returnFrontAt = GetTickCount64() + 150;
+        s.buttons = buttons;
     }
 }
 
-bool keepsGameFocused() { return g_on; }
+bool keepsGameFocused() { return inst(kClaude).on || (inst(kDiscord).on && inst(kDiscord).interactive); }
 
 void setGameWindow(HWND game) { g_game = game; }
 

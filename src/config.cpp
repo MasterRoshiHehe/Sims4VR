@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 
@@ -96,11 +97,18 @@ Config loadConfig(const std::wstring& ini) {
     c.fsrOutputScale = readFloat(ini, "stereo", "fsr_output_scale", c.fsrOutputScale);
     if (!(c.fsrOutputScale >= 0.3f && c.fsrOutputScale <= 2.0f)) c.fsrOutputScale = 1.0f;
     c.turnReprojection = readBool(ini, "stereo", "turn_reprojection", c.turnReprojection);
+    c.latePose = readBool(ini, "stereo", "late_pose", c.latePose);
+    c.capLead = readBool(ini, "stereo", "cap_lead", c.capLead);
     c.turnDisplayClock = readBool(ini, "stereo", "turn_display_clock", c.turnDisplayClock);
     c.walkDisplayClock = readBool(ini, "stereo", "walk_display_clock", c.walkDisplayClock);
     c.turnLead = readBool(ini, "stereo", "turn_lead", c.turnLead);
+    c.turnLeadScale = std::clamp(readFloat(ini, "stereo", "turn_lead_scale", c.turnLeadScale), 0.f, 2.f);
+    c.turnEase = std::clamp(readFloat(ini, "body", "turn_ease", c.turnEase), 0.f, 1.f);
     c.gpuYield = readBool(ini, "stereo", "gpu_yield", c.gpuYield);
     c.pairedEyes = readBool(ini, "stereo", "paired_eyes", c.pairedEyes);
+    c.eyeWaitDrawn = readBool(ini, "stereo", "eye_wait_drawn", c.eyeWaitDrawn);
+    c.photoLens = readBool(ini, "photo", "lens", c.photoLens);
+    c.eyeWaitMs = std::clamp(readFloat(ini, "stereo", "eye_wait_ms", c.eyeWaitMs), 20.f, 1000.f);
     c.pairedHands = readBool(ini, "stereo", "paired_hands", c.pairedHands);
     c.bodyLayer = readBool(ini, "stereo", "body_layer", c.bodyLayer);
     c.alignEyes = readBool(ini, "stereo", "align_eyes", c.alignEyes);
@@ -114,6 +122,7 @@ Config loadConfig(const std::wstring& ini) {
     // both_eyes_skip is a live test: every start begins with it off (a saved 4 was "Frame begin",
     // which crashed in 317; 1-3 leave a scene part out of the right eye).
     c.bothEyesSkip = 0;
+    c.pairShadows = readBool(ini, "stereo", "pair_shadows", c.pairShadows);
     c.reuseShadows = readBool(ini, "stereo", "reuse_shadows", c.reuseShadows);
     c.skipShadowLists = readBool(ini, "stereo", "skip_shadow_prep", c.skipShadowLists);
     c.frameClock = readBool(ini, "stereo", "frame_clock", c.frameClock);
@@ -147,6 +156,9 @@ Config loadConfig(const std::wstring& ini) {
     c.pieMode = readInt(ini, "ui", "pie_mode", c.pieMode);
     c.scandalHide = readInt(ini, "bubbles", "scandal_hide", 0) != 0;
     c.piePalmSize = readFloat(ini, "ui", "pie_palm_size", c.piePalmSize);
+    c.pieTvFront = readInt(ini, "ui", "pie_tv", 1) != 0;
+    c.pieTvSize = readFloat(ini, "ui", "pie_tv_size", c.pieTvSize);
+    c.pieTvOffset = readFloat(ini, "ui", "pie_tv_offset", c.pieTvOffset);
     c.piePalmLift = readFloat(ini, "ui", "pie_palm_lift", c.piePalmLift);
     c.pieCrop = readFloat(ini, "ui", "pie_crop", c.pieCrop);
     c.objectMenus = readInt(ini, "ui", "object_menus", 1) != 0;
@@ -226,10 +238,19 @@ Config loadConfig(const std::wstring& ini) {
     three("sleep_pos", c.wristSleepPos);
     three("sleep_turn", c.wristSleepTurn);
     c.wristSleepSize = readFloat(ini, "wrist", "sleep_size", c.wristSleepSize);
+    c.wristWork = readInt(ini, "wrist", "work_card", 1) != 0;
+    three("work_card_pos", c.wristWorkPos);
+    three("work_card_turn", c.wristWorkTurn);
+    c.wristWorkSize = readFloat(ini, "wrist", "work_card_size", c.wristWorkSize);
     c.wristLotIntro = readInt(ini, "wrist", "lot_intro", 1) != 0;
     three("lot_intro_pos", c.wristLotPos);
     three("lot_intro_turn", c.wristLotTurn);
     c.wristLotSize = readFloat(ini, "wrist", "lot_intro_size", c.wristLotSize);
+    c.wristLotCropAuto = readInt(ini, "wrist", "lot_intro_crop_auto", 1) != 0;
+    c.wristLotBannerW = readFloat(ini, "wrist", "lot_intro_banner_w", c.wristLotBannerW);
+    c.wristLotBannerY = readFloat(ini, "wrist", "lot_intro_banner_y", c.wristLotBannerY);
+    if (!(c.wristLotBannerW >= 200 && c.wristLotBannerW <= 2000)) c.wristLotBannerW = 1000;
+    if (!(c.wristLotBannerY >= -400 && c.wristLotBannerY <= 400)) c.wristLotBannerY = 0;
     c.wristLotCropW = readFloat(ini, "wrist", "lot_intro_crop_w", c.wristLotCropW);
     c.wristLotCropH = readFloat(ini, "wrist", "lot_intro_crop_h", c.wristLotCropH);
     c.wristLotCropY = readFloat(ini, "wrist", "lot_intro_crop_y", c.wristLotCropY);
@@ -240,13 +261,26 @@ Config loadConfig(const std::wstring& ini) {
     if (!(c.pieWidth >= 0.1f && c.pieWidth <= 1.5f)) c.pieWidth = 0.96f;
     if (c.pieMode < 0 || c.pieMode > 2) c.pieMode = 0;
     if (!(c.piePalmSize >= 0.15f && c.piePalmSize <= 1.0f)) c.piePalmSize = 0.45f;
+    if (!(c.pieTvSize >= 0.5f && c.pieTvSize <= 6.0f)) c.pieTvSize = 3.0f;
+    if (!(c.pieTvOffset >= 0.0f && c.pieTvOffset <= 2.0f)) c.pieTvOffset = 0.30f;
     if (!(c.piePalmLift >= 0.0f && c.piePalmLift <= 0.4f)) c.piePalmLift = 0.10f;
     if (!(c.pieDistance >= 0.2f && c.pieDistance <= 3.0f)) c.pieDistance = 0.45f;
     c.gamepad = readInt(ini, "controls", "gamepad", 0) != 0;
+    c.moveMode = readInt(ini, "controls", "move_mode", c.moveMode);
+    c.teleStick = readInt(ini, "teleport", "stick", c.teleStick);
+    c.teleStyle = readInt(ini, "teleport", "style", c.teleStyle);
+    c.teleDistance = readFloat(ini, "teleport", "max_distance", c.teleDistance);
+    c.teleBlink = readBool(ini, "teleport", "blink", c.teleBlink);
+    c.teleBlinkTime = readFloat(ini, "teleport", "blink_seconds", c.teleBlinkTime);
+    c.teleMaxRise = readFloat(ini, "teleport", "max_rise", c.teleMaxRise);
+    c.teleMarker = readBool(ini, "teleport", "marker", c.teleMarker);
     c.snapTurn = readBool(ini, "controls", "snap_turn", c.snapTurn);
     c.snapAngle = readFloat(ini, "controls", "snap_angle", c.snapAngle);
     c.snapAngleBig = readFloat(ini, "controls", "snap_angle_big", c.snapAngleBig);
     c.recenterTurnsBody = readBool(ini, "controls", "recenter_turns_body", c.recenterTurnsBody);
+    c.doorSlide = readFloat(ini, "body", "door_slide", c.doorSlide);
+    c.fridgeDoorPull = readFloat(ini, "body", "fridge_door_pull", c.fridgeDoorPull);
+    c.doorHandleReach = readFloat(ini, "body", "door_handle_reach", c.doorHandleReach);
     c.doorPushSpeed = readFloat(ini, "body", "door_push_speed", c.doorPushSpeed);
     c.trailArrive = readFloat(ini, "body", "trail_arrive", c.trailArrive);
     c.trailStopDist = readFloat(ini, "body", "trail_stop_dist", c.trailStopDist);
@@ -254,11 +288,19 @@ Config loadConfig(const std::wstring& ini) {
     c.turnSpeed = readFloat(ini, "controls", "turn_speed", c.turnSpeed);
     c.audioFollowsHead = readInt(ini, "audio", "follow_head", 1) != 0;
     c.audioPanAnyDistance = readInt(ini, "audio", "pan_any_distance", 1) != 0;
+    c.audioFlatTo3D = std::clamp(static_cast<int>(readInt(ini, "audio", "flat_to_3d", 1)), 0, 2);
+    c.audioFlatIds = readString(ini, "audio", "flat_to_3d_ids", "");
+    c.audioFlatGraph = std::strtoull(readString(ini, "audio", "flat_to_3d_graph", "e29d705fca6cd456").c_str(), nullptr, 16);
     c.audioVoiceNear = readFloat(ini, "audio", "voice_near", c.audioVoiceNear);
     c.audioVoiceFar = readFloat(ini, "audio", "voice_far", c.audioVoiceFar);
     c.mirrorInterior = readFloat(ini, "stereo", "mirror_far_inside", c.mirrorInterior);
     c.mirrorExterior = readFloat(ini, "stereo", "mirror_far_outside", c.mirrorExterior);
+    c.monitorEye = std::clamp(static_cast<int>(readInt(ini, "stereo", "monitor_eye", 0)), 0, 1);
+    c.monitorZoom = std::clamp(readFloat(ini, "stereo", "monitor_zoom", 1.4f), 1.0f, 3.0f);
+    c.monitorFit = std::clamp(static_cast<int>(readInt(ini, "stereo", "monitor_fit", 1)), 0, 2);
     c.mirrorClip = readInt(ini, "stereo", "mirror_clip", 1) != 0;
+    c.waterClip = readInt(ini, "stereo", "water_clip", 1) != 0;
+    c.waterOnePlane = readInt(ini, "stereo", "water_one_plane", 1) != 0;
     c.reflectionsOff = readInt(ini, "stereo", "reflections_off", 0) != 0;
     c.ambientOcclusion = readBool(ini, "stereo", "ambient_occlusion", c.ambientOcclusion);
     if (readBool(ini, "stereo", "ssao_off", false)) c.ambientOcclusion = false;  // the key of v0.13.279
@@ -267,17 +309,41 @@ Config loadConfig(const std::wstring& ini) {
     c.simCacheBoost = readBool(ini, "perf", "sim_cache_boost", c.simCacheBoost);
     c.simCacheMb = static_cast<int>(readFloat(ini, "perf", "sim_cache_mb", static_cast<float>(c.simCacheMb)));
     c.simLodScale = readFloat(ini, "perf", "sim_lod_scale", c.simLodScale);
+    c.eyeSimCull = readFloat(ini, "perf", "far_sim_cull_eyes", c.eyeSimCull);
+    c.gpuTimeline = readBool(ini, "perf", "gpu_timeline", c.gpuTimeline);
+    c.farSimCull = readFloat(ini, "perf", "far_sim_cull", c.farSimCull);
     c.nearOncePerPair = readBool(ini, "perf", "near_once_per_pair", c.nearOncePerPair);
     c.hitchCatcher = readBool(ini, "perf", "hitch_catcher", c.hitchCatcher);
     c.outdoorFade = readFloat(ini, "audio", "outdoor_fade", c.outdoorFade);
     if (!(c.outdoorFade >= 0 && c.outdoorFade <= 20)) c.outdoorFade = 4.0f;
+    c.outdoorBasement = readFloat(ini, "audio", "outdoor_basement", c.outdoorBasement);
+    if (!(c.outdoorBasement >= 0 && c.outdoorBasement <= 1)) c.outdoorBasement = 0.4f;
+    c.outdoorFloor = readFloat(ini, "audio", "outdoor_floor", c.outdoorFloor);
+    if (!(c.outdoorFloor >= 0 && c.outdoorFloor <= 1)) c.outdoorFloor = 0.15f;
     c.phone = readBool(ini, "phone", "phone", true);
+    c.phoneSlot = (int)std::clamp<long>(readInt(ini, "slots", "phone", c.phoneSlot), 0, 10);
+    c.tabletSlot = (int)std::clamp<long>(readInt(ini, "slots", "tablet", c.tabletSlot), 0, 10);
+    c.bookSlot = (int)std::clamp<long>(readInt(ini, "slots", "book", c.bookSlot), 0, 10);
+    c.slotThisPhone = (int)std::clamp<long>(readInt(ini, "slots", "this_phone", 0), 0, 11);
+    c.slotThisTablet = (int)std::clamp<long>(readInt(ini, "slots", "this_tablet", 0), 0, 11);
+    c.slotThisBook = (int)std::clamp<long>(readInt(ini, "slots", "this_book", 0), 0, 11);
+    c.slotRadius = std::max(0.05f, std::min(0.4f, readFloat(ini, "slots", "radius", c.slotRadius)));
     c.phoneHipDrop = readFloat(ini, "phone", "hip_drop", c.phoneHipDrop);
+    c.flashBrightness = std::max(0.0f, std::min(100.0f, readFloat(ini, "phone", "flash_brightness", c.flashBrightness)));
+    c.flashFill = std::max(0.0f, std::min(0.3f, readFloat(ini, "phone", "flash_fill", c.flashFill)));
+    c.flashRange = std::max(1.0f, std::min(40.0f, readFloat(ini, "phone", "flash_range", c.flashRange)));
+    c.flashCone = std::max(10.0f, std::min(120.0f, readFloat(ini, "phone", "flash_cone", c.flashCone)));
+    c.phonePass = readBool(ini, "phone", "pass", c.phonePass);
+    c.phonePassReach = std::max(0.08f, std::min(0.5f, readFloat(ini, "phone", "pass_reach", c.phonePassReach)));
     c.phonePopupBuzz = readBool(ini, "phone", "popup_buzz", c.phonePopupBuzz);
+    c.phoneStickScroll = std::clamp(readFloat(ini, "phone", "stick_scroll", c.phoneStickScroll), 0.f, 1500.f);
+    c.phoneStickDeadzone = std::clamp(readFloat(ini, "phone", "stick_deadzone", c.phoneStickDeadzone), 0.05f, 0.9f);
+    c.phoneSwipeStart = std::clamp(readFloat(ini, "phone", "swipe_start", c.phoneSwipeStart), 1.f, 20.f);
+    c.phoneSwipeSpeed = std::clamp(readFloat(ini, "phone", "swipe_speed", c.phoneSwipeSpeed), 0.3f, 3.f);
     c.phoneTextSize = readInt(ini, "phone", "text_size", c.phoneTextSize);
     c.phoneSoundMode = readInt(ini, "phone", "sound_mode", c.phoneSoundMode);
-    c.phoneRingtone = readInt(ini, "phone", "ringtone", c.phoneRingtone);
-    c.phoneTextTone = readInt(ini, "phone", "text_tone", c.phoneTextTone);
+    c.phoneRingtone = readInt(ini, "phone", "ringtone_file", c.phoneRingtone);
+    c.phoneTextTone = readInt(ini, "phone", "text_tone_file", c.phoneTextTone);
     c.phoneWidth = readFloat(ini, "phone", "phone_width", c.phoneWidth);
     if (!(c.phoneWidth >= 0.03f && c.phoneWidth <= 0.5f)) c.phoneWidth = 0.102f;
     c.phoneHeight = readFloat(ini, "phone", "phone_height", c.phoneHeight);
@@ -382,6 +448,10 @@ Config loadConfig(const std::wstring& ini) {
     if (!(c.tabletDepth >= 0.002f && c.tabletDepth <= 0.05f)) c.tabletDepth = 0.008f;
     c.tabletBezel = readFloat(ini, "tablet", "bezel", c.tabletBezel);
     if (!(c.tabletBezel >= 0 && c.tabletBezel * 8 < c.tabletWidth)) c.tabletBezel = 0.010f;
+    c.tabletSteady = std::max(0.0f, std::min(1.0f, readFloat(ini, "tablet", "steady", c.tabletSteady)));
+    c.tabletClickHover = std::clamp(readFloat(ini, "tablet", "click_hover", c.tabletClickHover), 0.0f, 600.0f);
+    c.tabletClickPress = std::clamp(readFloat(ini, "tablet", "click_press", c.tabletClickPress), 0.0f, 1000.0f);
+    c.tabletPointer = std::max(0.0f, std::min(1.0f, readFloat(ini, "tablet", "pointer_steady", c.tabletPointer)));
     c.tabletHold = readFloat(ini, "tablet", "hold", c.tabletHold);
     if (!(c.tabletHold >= 0 && c.tabletHold < c.tabletWidth / 2)) c.tabletHold = 0.035f;
     c.tabletUiScale = readFloat(ini, "tablet", "menu_size", c.tabletUiScale);
@@ -404,6 +474,13 @@ Config loadConfig(const std::wstring& ini) {
     c.voiceGateDb = readFloat(ini, "voice", "mic_gate", c.voiceGateDb);
     c.voiceFullDb = readFloat(ini, "voice", "mic_full", c.voiceFullDb);
     c.voiceMouthOpen = readFloat(ini, "voice", "mouth_open", c.voiceMouthOpen);
+    c.casStereo = readInt(ini, "cas", "stereo", 1) != 0;
+    c.casDistance = std::clamp(readFloat(ini, "cas", "distance", c.casDistance), 0.8f, 4.0f);
+    c.casEyeHeight = std::clamp(readFloat(ini, "cas", "eye_height", c.casEyeHeight), 0.5f, 2.5f);
+    c.casEyeSeparation = std::clamp(readFloat(ini, "cas", "eye_separation", c.casEyeSeparation), 0.0f, 2.0f);
+    c.casBody = readInt(ini, "cas", "body", 1) != 0;
+    c.casBodyEyes = readInt(ini, "cas", "body_eyes", 1) != 0;
+    c.casBodyStill = readInt(ini, "cas", "body_still", 1) != 0;
     c.devProbe = readInt(ini, "dev", "probe", 0) != 0;
 
     c.bodyForward = readFloat(ini, "body", "forward", c.bodyForward);
@@ -414,6 +491,14 @@ Config loadConfig(const std::wstring& ini) {
     c.bodyHeadZ = readFloat(ini, "body", "head_z", c.bodyHeadZ);
     c.bodySmoothing = readFloat(ini, "body", "smoothing", c.bodySmoothing);
     c.bodySeatFollow = readInt(ini, "body", "seat_follow", 1) != 0;
+    c.bodySeatBack = readFloat(ini, "body", "seat_back", c.bodySeatBack);
+    c.bodySeatUp = readFloat(ini, "body", "seat_up", c.bodySeatUp);
+    c.bodySeatHold = readFloat(ini, "body", "seat_hold", c.bodySeatHold);
+    c.bodySeatStill = readFloat(ini, "body", "seat_still", c.bodySeatStill);
+    if (!(c.bodySeatHold >= 0.02f && c.bodySeatHold <= 1)) c.bodySeatHold = 0.08f;
+    if (!(c.bodySeatStill >= 0 && c.bodySeatStill <= 0.2f)) c.bodySeatStill = 0.03f;
+    if (!(std::fabs(c.bodySeatBack) <= 1)) c.bodySeatBack = 0;
+    if (!(std::fabs(c.bodySeatUp) <= 1)) c.bodySeatUp = 0;
     c.bodySeatTorso = readInt(ini, "body", "seat_torso", 1) != 0;
     c.bodyNearClip = readFloat(ini, "body", "near_clip", c.bodyNearClip);
     c.bodyNearAdaptive = readInt(ini, "body", "near_adaptive", 1) != 0;
@@ -428,6 +513,8 @@ Config loadConfig(const std::wstring& ini) {
     c.bodyTurnRate = readFloat(ini, "body", "turn_rate", c.bodyTurnRate);
     c.walkSpeed = readFloat(ini, "body", "walk_speed", c.walkSpeed);
     c.runSpeed = readFloat(ini, "body", "run_speed", c.runSpeed);
+    c.bodyLazyTurn = readInt(ini, "body", "turn_body_lazy", 1) != 0;
+    c.bodyStandRate = std::clamp(readFloat(ini, "body", "turn_body_rate", c.bodyStandRate), 0.f, 60.f);
     c.bodyKeepHeight = readInt(ini, "body", "keep_height", 1) != 0;
     c.bodySmoothSlide = readInt(ini, "body", "smooth_slide", 1) != 0;
     c.bodyCollision = readInt(ini, "body", "collision", 1) != 0;
@@ -438,6 +525,20 @@ Config loadConfig(const std::wstring& ini) {
     c.handObjectGap = readFloat(ini, "body", "hand_object_gap", c.handObjectGap);
     c.softPlants = readInt(ini, "body", "soft_plants", 1) != 0;
     c.plantSlowdown = readFloat(ini, "body", "plant_slowdown", c.plantSlowdown);
+    c.foliagePatch = readInt(ini, "foliage", "patch_shaders", 1) != 0;
+    c.foliagePush = readInt(ini, "foliage", "push", 1) != 0;
+    c.foliagePushCm = readFloat(ini, "foliage", "push_cm", c.foliagePushCm);
+    c.foliageHeadRadius = readFloat(ini, "foliage", "head_radius", c.foliageHeadRadius);
+    c.foliageHandRadius = readFloat(ini, "foliage", "hand_radius", c.foliageHandRadius);
+    c.foliageBodyRadius = readFloat(ini, "foliage", "body_radius", c.foliageBodyRadius);
+    c.foliageHead = readInt(ini, "foliage", "head", 1) != 0;
+    c.foliageHands = readInt(ini, "foliage", "hands", 1) != 0;
+    c.foliageBody = readInt(ini, "foliage", "body", 1) != 0;
+    c.foliageSims = readInt(ini, "foliage", "sims", 1) != 0;
+    c.foliageLiftCm = readFloat(ini, "foliage", "lift_cm", c.foliageLiftCm);
+    c.stepOver = readInt(ini, "body", "step_over", 1) != 0;
+    c.stepAll = readInt(ini, "body", "step_all", 0) != 0;
+    c.stepHeight = readFloat(ini, "body", "step_height", c.stepHeight);
     c.crouch = readInt(ini, "body", "crouch", 1) != 0;
     c.crouchDepth = readFloat(ini, "body", "crouch_depth", c.crouchDepth);
     c.crouchSpeed = readFloat(ini, "body", "crouch_speed", c.crouchSpeed);

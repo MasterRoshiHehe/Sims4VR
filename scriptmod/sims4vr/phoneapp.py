@@ -464,6 +464,38 @@ def clear():
     _pending = None
 
 
+class _SnapOwner(object):
+    pass
+
+
+_snap_owner = _SnapOwner()
+
+
+def _snap_queue(label):
+    """Photo probe: what the Sim's queue holds (a photo action that never starts)."""
+    try:
+        import services
+        sim = services.get_active_sim()
+        queue = [str(i) for i in sim.queue]
+        controller = sim.transition_controller
+        _log('photo queue {}: queue {} running {} si_state {} transition {} ready {}'.format(
+            label, queue, sim.queue.running, [str(i) for i in sim.si_state], controller,
+            getattr(controller, 'ready_to_start', None) if controller is not None else None))
+    except Exception as e:
+        _log('photo queue {}: failed {!r}'.format(label, e))
+
+
+def _snap_later(seconds):
+    try:
+        import alarms
+        import clock
+        alarms.add_alarm_real_time(_snap_owner, clock.interval_in_real_seconds(seconds),
+                                   lambda handle, s=seconds: _snap_queue('{} s later'.format(s)))
+    except Exception as e:
+        _log('photo queue alarm failed {!r}'.format(e))
+
+
+
 def select(node):
     """Item `node` pressed on the phone: the game's interactions.select."""
     global _pending
@@ -479,6 +511,10 @@ def select(node):
     try:
         result = client.select_interaction(choice, _revision)
         _log('picked {} (choice {}): {}'.format(node, choice, result))
+        if 'photography' in str(result):
+            _snap_queue('after the pick')
+            for seconds in (2, 6, 15):
+                _snap_later(seconds)
     except Exception as e:
         _log_error('picking {}'.format(node), e)
     # The game's panel hides once something is picked; the phone shows its

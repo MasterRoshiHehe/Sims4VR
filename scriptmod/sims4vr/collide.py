@@ -40,16 +40,19 @@ SCAN = 150  # objects of the whole lot looked at per tick while building
 BATCH = 15  # nearby objects measured per tick while building
 SWITCH_EVERY = 2.0  # seconds between reads of the debug-menu switch ([body] collision_scene)
 MIN_HEIGHT = 0.05  # metres: lower things (rugs, seed packs) are walked over
+DROP = 1.5  # metres: walls and low walls reach this far below the floor, so a step down of a metre or more beside them
+#   (the floor under you reads lower there) doesn't leave you below them (user 2026-11-03: walked out over a half wall)
 HIP = 0.9  # metres above the floor: objects starting lower can stop your body
 DOOR_THICK = 0.05  # metres: half the thickness of a closed door's solid panel
 DOOR_HEIGHT = 2.0  # metres
+MIN_GAP_HALF = 0.55  # metres: a doorway is at least this wide on each side of its centre
 GAP_DEPTH = 0.3  # metres either side of a door's strip cut out of the wall
 DEFAULT_STOREY = 3.0  # metres when the level above has no height
 COMPARE_EVERY = 1.0  # seconds between comparisons with the ray check
 PROBE = 0.4 + 0.123  # metres: walk.PROBE_DISTANCE plus the navmesh's agent radius (it keeps Sims that far off)
 RAYS = 24
 
-walls = []    # (ax, az, bx, bz, y0, y1)
+walls = []    # (ax, az, bx, bz, y0, y1[, fence])
 hand_shapes = []  # (polygon, y0, y1, flags): what your hands meet of an object (its visible shape or meshes' boxes;
                   # flags None: hands only, else as the footprint's: its body too)
 _hand_skip = set()  # id() of the footprint polygons hand_shapes stand in for
@@ -57,7 +60,12 @@ _meshes = {}  # definition id: [(min xyz, max xyz)] of its model's meshes, () fo
 _shapes = {}  # definition id: [(corners, y0, y1)] of its model's visible shape (model space), () stand-in, None
 _placed = {}  # object id: (where it stands, its visible shape there): turned and moved once while it stays
 _body_skip = set()  # id() of the footprint polygons whose body part the visible shape took over
+_step = set()  # id() of the footprint polygons of low objects you walk over (flag 64: collide.cpp stepHeight)
+_step_check = [0.0]
+_step_all = [False]  # [body] step_all: every low object, not only rocks
+_step_max = [0.0]  # metres: objects up to this tall are stepped on (0: off); [body] step_over / step_height
 _soft = set()  # id() of the footprint polygons of plants (flag 16: they slow you, collide.cpp softSlow)
+_step_logged = set()
 _soft_logs = [0, set()]  # bushes logged with their solid and leaf layers
 _scenery = {'zone': None, 'lot': None, 'status': None, 'area': '', 'cells': {}, 'count': 0}  # the area's scenery
 _scenery_shapes = {}  # model instance: (prisms, reach, height, kind) in model space, or None (no model)
@@ -84,6 +92,7 @@ _MATERIAL_WORDS = (
 )
 _state = None  # (centre x, z, level, planner build id)
 _pending = None  # generator of a build in progress
+_occ_at = [0.0, 0.0, 0]  # x, z, level of the last build: where the floors are read for muffling
 _door_panels = {}  # door id -> the solid shape of its closed panel
 _dirty = 0.0  # when an object near the scene was added, removed or moved (0: not since the last build)
 _built_at = 0.0
@@ -138,7 +147,8 @@ def _send():
         return
     data = [float(len(walls))]
     for w in walls:
-        data.extend(w)
+        data.extend(w[:6])
+        data.append(w[6] if len(w) > 6 else 0.0)  # 1: a fence or railing, kept clear of by furniture_radius
     shapes = [o for o in objects if 3 <= len(o[0]) < 256]
     # Your hands meet an object at its model's box where there is one (collide.cpp
     # stopHand: flag 2, hands only); its footprint then gets flag 4 (not for hands).
@@ -149,6 +159,7 @@ def _send():
         material = o[5] if len(o) > 5 else 0  # touch sounds (foley.py)
         flags = (1 if blocks and id(pts) not in _body_skip else 0) | material << 8 | (4 if id(pts) in with_box else 0)
         flags |= 16 | 32 if id(pts) in _soft else 0  # 32: this footprint slows you (collide.cpp plantSpeed)
+        flags |= 64 if id(pts) in _step else 0  # 64: you walk over it (collide.cpp stepHeight)
         data.extend((float(len(pts)), y0, y1, float(flags)))
         for x, z in pts:
             data.extend((x, z))
@@ -157,6 +168,78 @@ def _send():
         for x, z in pts:
             data.extend((x, z))
     fn(struct.pack('<{}f'.format(len(data)), *data))
+    _send_occlusion()
+
+
+def _centre_line(pts):
+    """The middle line of a thin footprint [(x, z), ...]: ((ax, az), (bx, bz)), along its longest edge."""
+    n = len(pts)
+    best = max(range(n), key=lambda i: math.hypot(pts[(i + 1) % n][0] - pts[i][0], pts[(i + 1) % n][1] - pts[i][1]))
+    ux, uz = pts[(best + 1) % n][0] - pts[best][0], pts[(best + 1) % n][1] - pts[best][1]
+    length = math.hypot(ux, uz) or 1.0
+    ux, uz = ux / length, uz / length
+    nx, nz = -uz, ux
+    along = [x * ux + z * uz for x, z in pts]
+    across = [x * nx + z * nz for x, z in pts]
+    c = (min(across) + max(across)) / 2
+    a0, a1 = min(along), max(along)
+    return (a0 * ux + c * nx, a0 * uz + c * nz), (a1 * ux + c * nx, a1 * uz + c * nz)
+
+
+def _send_occlusion():
+    """What muffles sound, to the DLL (collide.cpp occlusion; it hands Extended Sound Control the amount for each
+    sound from camera.cpp hookedPan). [audio] muffle_feed switches it; the amounts are the debug menu's Sound page:
+    a wall side lets through 1 - wall (two faces to cross), a closed door, a half wall piece and a floor each block
+    their share."""
+    fn = native._optional('occlusion_scene')  # absent in a DLL older than the script
+    if fn is None:
+        return
+    try:
+        if not native.setting_flag('audio', 'muffle_feed', True):
+            fn(struct.pack('<f', 0.0))
+            return
+        wall = min(max(float(native.setting('audio', 'muffle_wall', 0.5) or 0.0), 0.0), 0.95)
+        door = min(max(float(native.setting('audio', 'muffle_door', 0.35) or 0.0), 0.0), 0.95)
+        half = min(max(float(native.setting('audio', 'muffle_half_wall', 0.25) or 0.0), 0.0), 0.95)
+        slab = min(max(float(native.setting('audio', 'muffle_floor', 0.6) or 0.0), 0.0), 0.95)
+        face = 1.0 - math.sqrt(1.0 - wall)  # a wall is two sides: both together block `wall`
+        data = []
+        count = 0
+        for w in walls:
+            if len(w) > 6 and w[6]:
+                continue  # a fence or railing: sound passes
+            data.extend((w[0], w[1], w[2], w[3], w[4], w[5], face))
+            count += 1
+        for o in objects:
+            if len(o) < 7 or len(o[0]) < 3:
+                continue
+            name = o[4]
+            if name == 'door':
+                if o[6] not in _door_panels or doors_mod.is_open(o[6]):
+                    continue
+                weight = door
+            elif str(name).startswith('object_Half_Wall'):
+                weight = half
+            else:
+                continue
+            if weight <= 0:
+                continue
+            (ax, az), (bx, bz) = _centre_line(o[0])
+            data.extend((ax, az, bx, bz, o[1], o[2], weight))
+            count += 1
+        x, z, level = _occ_at
+        floors = []
+        for lv in range(level - 2, level + 4):
+            h = _floor(lv, x, z)
+            if h is not None and not any(abs(h - f) < 0.3 for f in floors):
+                floors.append(h)
+        out = [float(count)] + data + [float(len(floors) if slab > 0 else 0)]
+        if slab > 0:
+            for h in floors:
+                out.extend((h, slab))
+        fn(struct.pack('<{}f'.format(len(out)), *out))
+    except Exception as e:
+        _log('muffle scene: {!r}'.format(e))
 
 
 def forget():
@@ -172,6 +255,9 @@ def forget():
     _soft.clear()
     _placed.clear()
     _door_panels.clear()
+    fn = native._optional('occlusion_scene')
+    if fn is not None:
+        fn(struct.pack('<f', 0.0))  # no scene: no muffling
     try:
         _send()
     except Exception:
@@ -242,6 +328,7 @@ def _strip(door):
     cz = sum(p[1] for p in pts) / len(pts)
     _, ux, uz = longest
     half = max(abs((p[0] - cx) * ux + (p[1] - cz) * uz) for p in pts)
+    half = max(half, MIN_GAP_HALF)  # user 2026-10-28: a narrow door was too slim to walk through
     return (cx, cz), (ux, uz), half, (-uz, ux), GAP_DEPTH
 
 
@@ -416,6 +503,211 @@ def _plant_kind(obj):
             _log('{} ({}) {}'.format(name, why, 'is a plant: it slows you instead of stopping you' if kind == 2
                                       else 'has leaves: they let you through, the rest stops you'))
     return kind
+
+
+def _step_height():
+    """[body] step_over / step_height: how tall an object can be for you to walk over it (0: off)."""
+    if not native.setting_flag('body', 'step_over', True):
+        return 0.0
+    try:
+        return max(0.0, min(1.0, float(native.setting('body', 'step_height', '0.5'))))
+    except ValueError:
+        return 0.5
+
+
+_ROCK_WORDS = ('rock', 'stone', 'boulder', 'pebble', 'cobble')  # + [body] step_words (comma list, sims4vr.ini)
+_NOT_ROCK = ('planter', 'fence', 'wall', 'edge', 'border', 'bush', 'hedge', 'raised', 'curb', 'railing', 'brick')
+_rocks = {}  # definition id: True for rock-like decor (tags or tuning name)
+
+
+def _is_rock(obj):
+    """Rock-like decor: a game tag or the tuning name has rock/stone/boulder in it (user 2026-10-28: planter edges and
+    low garden walls stay solid, only the rocks are stepped over); anything with a planter/edge/border/fence/wall word,
+    and plants, never."""
+    key = getattr(obj.definition, 'id', None)
+    hit = _rocks.get(key)
+    if hit is None:
+        hit = False
+        name = str(obj).split(':')[0].lower()
+        extra = tuple(w.strip().lower() for w in (native.setting('body', 'step_words', '') or '').split(',') if w.strip())
+        why = ''
+        try:
+            import tag
+            names = [n for n in dir(tag.Tag) if not n.startswith('_')]
+            have = set(int(t) for t in obj.get_tags())
+            tags = [n for n in names if any(w in n.lower() for w in _ROCK_WORDS) and not any(w in n.lower() for w in _NOT_ROCK)
+                    and isinstance(getattr(tag.Tag, n, None), int) and int(getattr(tag.Tag, n)) in have]
+            if tags:
+                why = 'tag ' + tags[0]
+        except Exception as e:
+            _log('rock check of {}: {!r}'.format(obj, e))
+        if not why:
+            word = next((w for w in _ROCK_WORDS + extra if w in name), None)
+            if word:
+                why = 'name: ' + word
+        hit = bool(why) and not any(w in name for w in _NOT_ROCK) and _plant_kind(obj) == 0
+        _rocks[key] = hit
+        if hit and len(_rocks) < 80:
+            _log('{} is rock-like decor ({})'.format(name, why))
+    return hit
+
+
+_WALL_WORDS = ('half_wall', 'halfwall', 'low_wall', 'lowwall', 'railing', 'parapet', 'balustrade', 'ledge')  # + [body] wall_words
+_WALL_MORE = ('fence', 'barrier', 'divider', 'planter', 'banister', 'guardrail', 'handrail', 'balcony', 'terrace', 'wall')  # looser hints, only with a low thin shape
+_WALL_NOT = ('painting', 'prototype', 'wallobject', 'retail', 'frame', 'picture', 'screen', 'light', 'art', 'deco', 'shelf', 'clock', 'mirror', 'hang', 'poster', 'tv', 'sconce', 'sofa', 'bench', 'table', 'bed',
+             'desk', 'counter', 'cabinet', 'dresser', 'chair', 'plant', 'bookcase', 'fireplace', 'window', 'door', 'column', 'pillar')
+_WALL_HEIGHT = 0.5  # metres: a low wall whose model/footprint gives no height ("Tiny half wall 0.5")
+_wall_logs = [0, set()]
+_tall_logs = [0, set()]
+_low_walls = {}  # (definition id, wall_words text): _is_low_wall answer
+
+
+_HALF_WALL_ID = 0x17B94  # object_Half_Wall (halfWallTrimSlots_GEN), read from the user's save (field 30 of 290 of them)
+_HALF_WALL_THICK = 0.1  # metres either side of the centre line
+_HALF_WALL_HEIGHT = 1.0  # metres: the drawn wall; the helper object itself claims 2 m
+
+
+class _P(object):
+    __slots__ = ('x', 'y', 'z')
+
+    def __init__(self, x, y, z):
+        self.x, self.y, self.z = x, y, z
+
+
+def _half_wall_polygons(obj):
+    """The half walls the build tools draw are a wall type the game's wall list (get_wall_contours) leaves out; each
+    1 m piece only leaves an invisible helper object (class HalfWall) at its centre, with a 1 cm footprint, facing across
+    the wall (the game stands Sims 0.25 m either side of it along forward). The save holds 290 of them on a 1 m grid, a
+    piece 1 m long (1.41 m on a diagonal). Build the piece from that: [(x, z) polygon] as vector-like points, or None."""
+    try:
+        if obj.definition.id != _HALF_WALL_ID and type(obj).__name__ != 'HalfWall':
+            return None
+        f = obj.forward
+        n = math.hypot(f.x, f.z)
+        if n < 1e-3:
+            return None
+        fx, fz = f.x / n, f.z / n
+    except Exception:
+        return None
+    half = 0.5 * (1.4143 if min(abs(fx), abs(fz)) > 0.3 else 1.0)
+    ux, uz = -fz, fx  # along the wall
+    p = obj.position
+    out = []
+    for a, b in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
+        out.append(_P(p.x + ux * half * a + fx * _HALF_WALL_THICK * b, p.y, p.z + uz * half * a + fz * _HALF_WALL_THICK * b))
+    return [out]
+
+
+def _is_low_wall(obj):
+    """A low wall or railing object (user 2026-10-29: "tiny half wall 0.5" had no collision): its tuning name has a
+    half wall / railing word. Walls drawn by the build tools are not objects and stay with the wall code."""
+    key = getattr(getattr(obj, 'definition', None), 'id', None)
+    raw = native.setting('body', 'wall_words', '') or ''
+    hit = _low_walls.get((key, raw)) if key is not None else None
+    if hit is None:
+        name = str(obj).split(':')[0].lower()
+        extra = tuple(w.strip().lower() for w in raw.split(',') if w.strip())
+        hit = any(w in name for w in _WALL_WORDS + extra)
+        if key is not None:
+            _low_walls[(key, raw)] = hit  # per definition: the tuning name never changes
+    return hit
+
+
+def _looks_low_wall(obj, polygons, height):
+    """A low, thin, long object with a wall-ish name that the strict word list missed (user 2026-11-04: two half walls
+    in the 880 marks had no collision and no "low wall" log line)."""
+    if not 0.25 <= height <= 1.35:
+        return False
+    name = str(obj).split(':')[0].lower()
+    model = str(getattr(getattr(obj, 'definition', None), 'name', '') or '').lower()  # the catalog name "Half Wall" is a string table entry, not this
+    both = name + ' ' + model
+    if any(w in both for w in _WALL_NOT):
+        return False
+    try:
+        xs = [v.x for poly in polygons for v in poly]
+        zs = [v.z for poly in polygons for v in poly]
+        dx, dz = max(xs) - min(xs), max(zs) - min(zs)
+    except Exception:
+        return False
+    thin, long_ = min(dx, dz), max(dx, dz)
+    named = any(w in both for w in _WALL_MORE)
+    hit = (thin <= 0.6 and long_ >= 0.9) if named else (thin <= 0.35 and long_ >= 1.0)  # no wall word: only a plain thin slab
+    if hit and len(_tall_logs[1]) < 40 and obj.id not in _tall_logs[1]:
+        _tall_logs[1].add(obj.id)
+        _log('{} / {} taken for a low wall by shape ({:.2f} x {:.2f} m, {:.2f} m tall)'.format(name, model, thin, long_, height))
+    return hit
+
+
+def _wall_sides(polygon):
+    """(centre, across unit, half thickness, along unit, half length) of a thin footprint, from its longest edge."""
+    pts = [(v.x, v.z) for v in polygon]
+    n = len(pts)
+    best = max(range(n), key=lambda i: math.hypot(pts[(i + 1) % n][0] - pts[i][0], pts[(i + 1) % n][1] - pts[i][1]))
+    a, b = pts[best], pts[(best + 1) % n]
+    length = math.hypot(b[0] - a[0], b[1] - a[1]) or 1.0
+    ux, uz = (b[0] - a[0]) / length, (b[1] - a[1]) / length
+    nx, nz = -uz, ux
+    along = [(x * ux + z * uz) for x, z in pts]
+    across = [(x * nx + z * nz) for x, z in pts]
+    ca, cc = (min(along) + max(along)) / 2, (min(across) + max(across)) / 2
+    return ((ca * ux + cc * nx, ca * uz + cc * nz), (nx, nz), (max(across) - min(across)) / 2,
+            (ux, uz), (max(along) - min(along)) / 2)
+
+
+def _wall_crossable(obj, polygons, level, surface):
+    """True when walkable floor lies on both sides of the low wall (about the same height and on the navmesh):
+    you step over it. A drop or nothing on a side (it guards a ledge): False, it stays an invisible wall."""
+    try:
+        polygon = max(polygons, key=lambda poly: len(poly))
+        (cx, cz), (nx, nz), half, (ux, uz), length = _wall_sides(polygon)
+        ground = _floor(level, cx, cz)
+        if ground is None:
+            return False
+        for side in (-1, 1):
+            for t in (-0.5, 0.0, 0.5):
+                d = half + 0.45
+                x = cx + nx * d * side + ux * length * t
+                z = cz + nz * d * side + uz * length * t
+                f = _floor(level, x, z)
+                if f is None or abs(f - ground) > 0.2:
+                    return False
+                if surface is not None and not routing.test_point_placement_in_navmesh(surface, sims4.math.Vector3(x, f, z)):
+                    return False
+        return True
+    except Exception as e:
+        _log('{}: wall sides check failed {!r}'.format(str(obj).split(':')[0], e))
+        return False
+
+
+def _steppable(obj, level, y0, y1, shape, wall=False):
+    """A low rock-like thing lying on the ground (a garden rock; every low object with step_all): its top (the visible shape's where
+    known) no higher than step_height over the ground there, standing on it (not an overhang). Seats and beds
+    (objects with parts) stay solid."""
+    try:
+        if getattr(obj, 'parts', None) and not wall:
+            return False
+        if not wall and not _step_all[0] and not _is_rock(obj):
+            return False
+        ground = _floor(level, obj.position.x, obj.position.z)
+        if ground is None:
+            return False
+        bottom, top = (min(a for _, a, _, _ in shape), max(b for _, _, b, _ in shape)) if shape else (y0, y1)
+        if bottom > ground + 0.15 or top - ground > _step_max[0] + (0.1 if wall else 0.0):
+            return False
+        if len(_step_logged) < 40 and obj.definition.id not in _step_logged:
+            _step_logged.add(obj.definition.id)
+            _log('{}: {:.2f} m tall: you step over it'.format(str(obj).split(':')[0], top - ground))
+        return True
+    except Exception:
+        return False
+
+
+def _wall_note(obj, what):
+    key = (obj.definition.id, what)
+    if _wall_logs[0] < 40 and key not in _wall_logs[1]:
+        _wall_logs[0] += 1
+        _wall_logs[1].add(key)
+        _log('{} (low wall): {}'.format(str(obj).split(':')[0], what))
 
 
 def _is_soft(obj):
@@ -648,7 +940,7 @@ def _mesh_shapes(obj, top):
     return shapes
 
 
-def _hand_polygon(obj, pts):
+def _hand_polygon(obj, pts, whole=False):
     """The footprint polygon cut down to the object's model box (its mesh's
     bounds, turned and scaled like the object): what your hand touches. A lamp's
     or bookshelf's footprint reaches well past it (user 2026-10-27: hands
@@ -671,6 +963,8 @@ def _hand_polygon(obj, pts):
         return (p.x + x + q.w * tx + (q.y * tz - q.z * ty), p.z + z + q.w * tz + (q.x * ty - q.y * tx))
 
     rect = [world(box[0], box[2]), world(box[3], box[2]), world(box[3], box[5]), world(box[0], box[5])]
+    if whole:
+        return rect  # a placeholder footprint (a CC half wall's 1 cm square): the model box is the object
     # Clip the footprint to the box (Sutherland-Hodgman; the box is convex).
     area = sum(rect[i][0] * rect[(i + 1) % 4][1] - rect[(i + 1) % 4][0] * rect[i][1] for i in range(4))
     sign = 1.0 if area > 0 else -1.0
@@ -694,6 +988,12 @@ def _hand_polygon(obj, pts):
     return out if 3 <= len(out) < 256 else None
 
 
+def _area(polygon):
+    pts = [(v.x, v.z) for v in polygon]
+    return abs(sum(pts[i][0] * pts[(i + 1) % len(pts)][1] - pts[(i + 1) % len(pts)][0] * pts[i][1]
+                   for i in range(len(pts)))) / 2 if len(pts) >= 3 else 0.0
+
+
 def _blocks_navmesh(surface, pts, y):
     """True when the navmesh is cut at the middle of the footprint (Sims can't stand there)."""
     cx = sum(p[0] for p in pts) / len(pts)
@@ -706,13 +1006,16 @@ def _blocks_navmesh(surface, pts, y):
 
 def _build(sim, x, y, z, surface):
     """Generator: yields between batches; ends with the new scene in place."""
-    global walls, objects, hand_shapes, _hand_skip, _body_skip, _soft
+    global walls, objects, hand_shapes, _hand_skip, _body_skip, _soft, _step
+    _step_max[0] = _step_height()
+    _step_all[0] = native.setting_flag('body', 'step_all', False)
     spent = 0.0
     started = time.perf_counter()
     level = surface.secondary_id
     floor = _floor(level, x, z)
     if floor is None:
         return
+    _occ_at[:] = [x, z, level]
     # 1. Nearby objects and doors, scanning the lot a slice per tick.
     everything = list(services.object_manager().values())
     near = []
@@ -756,6 +1059,7 @@ def _build(sim, x, y, z, surface):
     jambs = {}
     for contour in build_buy.get_wall_contours(x, z, surface, False):
         n = len(contour)
+        fence = 1.0 if all(abs(v.y) < 0.001 for v in contour) else 0.0  # fences and railings come back at height 0 (outdoors.py)
         for i in range(n):
             a, b = contour[i], contour[(i + 1) % n]
             if not _near_segment(x, z, a.x, a.z, b.x, b.z, RADIUS):
@@ -769,9 +1073,9 @@ def _build(sim, x, y, z, surface):
                     top = tops.get(cell)
                     if top is None:
                         top = tops[cell] = _top(level, (s[0] + s[2]) / 2, (s[1] + s[3]) / 2, floor)
-                    new_walls.append(s + (floor, top))
+                    new_walls.append(s + (floor - DROP, top, fence))
                     _jamb_ends(jambs, gaps, s, a, b, top)
-    new_walls.extend(_jambs(jambs, floor))
+    new_walls.extend(_jambs(jambs, floor - DROP))
     spent += time.perf_counter() - started
     yield
     started = time.perf_counter()
@@ -781,6 +1085,8 @@ def _build(sim, x, y, z, surface):
     new_skip = set()
     new_body_skip = set()
     new_soft = set()
+    new_step = set()
+    tight = native.setting_flag('body', 'tight_body', True)  # [body] tight_body: bodies meet the model, not its wider footprint
     for i, obj in enumerate(near):
         if i and i % BATCH == 0:
             spent += time.perf_counter() - started
@@ -789,52 +1095,117 @@ def _build(sim, x, y, z, surface):
         try:
             if obj.parent is not None:
                 continue  # carried or held
+            lowwall = _is_low_wall(obj)
             footprint = getattr(obj, 'footprint', None)
             if footprint is None or not obj.footprint_component.footprints_enabled:
+                if lowwall:
+                    _wall_note(obj, 'no footprint')
                 continue
             polygons = obj.footprint_polygon
         except Exception:
             continue
         if polygons is None:
+            if lowwall:
+                _wall_note(obj, 'no footprint polygon')
             continue
         span = _y_range(obj, footprint)
+        piece = _half_wall_polygons(obj)
+        if piece is not None:
+            polygons = piece  # its footprint is a 1 cm point; the piece itself is a 1 m wall (see _half_wall_polygons)
+            span = (obj.position.y, obj.position.y + _HALF_WALL_HEIGHT)
+            lowwall = True
+        if lowwall and (span is None or span[1] - span[0] < MIN_HEIGHT):
+            span = (obj.position.y, obj.position.y + _WALL_HEIGHT)
         if span is None:
             continue
         y0, y1 = span
-        y1 = min(y1, _top(level, obj.position.x, obj.position.z, floor))
+        base = y0
+        if not lowwall and base <= floor + 0.2 and _looks_low_wall(obj, polygons, y1 - y0):
+            lowwall = True
+        if lowwall:
+            y0 -= DROP  # down to the lower floor beside it; its top isn't cut by a slab a metre up
+        else:
+            y1 = min(y1, _top(level, obj.position.x, obj.position.z, floor))
         if y1 - y0 < MIN_HEIGHT or y1 <= floor:
+            if lowwall:
+                _wall_note(obj, 'height {:.2f}..{:.2f} over floor {:.2f}'.format(y0, y1, floor))
             continue
+        cross = _wall_crossable(obj, polygons, level, surface) if lowwall else None
+        # Standing on the floor: reach DROP below it too, so a floor reading a metre lower beside it (the ground
+        # outside a terrace edge) doesn't make it "above your hips" (user 2026-11-03: floor 156.17 -> 155.17, walked through)
+        ground = None if lowwall else _floor(level, obj.position.x, obj.position.z)
+        grounded = ground is not None and base <= ground + 0.15
+        if grounded:
+            y0 -= DROP
+        if lowwall:
+            _wall_note(obj, '{:.2f} m tall: {}'.format(y1 - y0, 'you step over it' if cross else
+                                                       'nothing to walk on beyond it, it stays a wall'))
         name = str(obj)[:48]
         material = _material(obj)
         shape = _shape_of(obj, y1)
         meshes = None if shape else _mesh_shapes(obj, y1)
         first = len(new_objects)
         hands_from = len(new_hands)
+        body_meshes = False
         if time.perf_counter() - started > 0.004:
             spent += time.perf_counter() - started
             yield
             started = time.perf_counter()
+        # A tall thing with several footprints and no model data to cut them down (a column): the big ones are
+        # clearance around it, not the thing; keep the small ones for the body. [body] tight_body
+        areas = [_area(poly) for poly in polygons]
+        small = min((a for a in areas if a > 1e-4), default=0.0)
+        loose = tight and not shape and not meshes and y1 - y0 > 1.5 and len(areas) > 1 and small > 0
         for polygon in polygons:
             pts = [(v.x, v.z) for v in polygon]
             if len(pts) >= 3:
-                blocks = y0 < floor + HIP and _blocks_navmesh(surface, pts, floor)
+                if loose and _area(polygon) > small * 2.5:
+                    continue
+                blocks = y0 < floor + HIP and (cross is False or _blocks_navmesh(surface, pts, floor))
                 new_objects.append((pts, y0, y1, blocks, name, material, obj.id))
                 if shape:  # its visible shape stands in for the footprint, for hands and body
                     new_skip.add(id(pts))
                     new_body_skip.add(id(pts))
                 elif meshes is not None:
                     new_skip.add(id(pts))
+                    if blocks and tight and meshes:  # the meshes stop your body too, not the footprint (columns)
+                        new_body_skip.add(id(pts))
+                        body_meshes = True
                 else:
-                    hand = _hand_polygon(obj, pts)
+                    pa = abs(sum(pts[i][0] * pts[(i + 1) % len(pts)][1] - pts[(i + 1) % len(pts)][0] * pts[i][1]
+                                 for i in range(len(pts)))) / 2
+                    tiny = lowwall and pa < 0.05
+                    hand = _hand_polygon(obj, pts, whole=tiny)
+                    if tiny and hand is not None:
+                        _log('{} has a placeholder footprint ({:.3f} m2): the model box stands in, {:.2f} x {:.2f} m'.format(
+                            name, pa, math.hypot(hand[1][0] - hand[0][0], hand[1][1] - hand[0][1]),
+                            math.hypot(hand[2][0] - hand[1][0], hand[2][1] - hand[1][1])))
                     if hand is not None:
-                        new_hands.append((hand, y0, y1, None))
+                        # the model's own box stops your body too: a column's footprint is wider than the column
+                        # (user 2026-11-01: could not get close to columns)
+                        new_hands.append((hand, y0, y1, (1 | material << 8) if blocks and tight else None))
                         new_skip.add(id(pts))
+                        if blocks and tight:
+                            new_body_skip.add(id(pts))
+        if y1 - y0 > 1.5 and len(_tall_logs[1]) < 60 and obj.definition.id not in _tall_logs[1]:
+            _tall_logs[1].add(obj.definition.id)  # tall things like columns: what stops you, how wide
+            try:
+                xs = [v.x for poly in polygons for v in poly]
+                zs = [v.z for poly in polygons for v in poly]
+                _log('{} tall {:.2f} m: footprint {:.2f} x {:.2f} m, body from {}, hands from {}'.format(
+                    str(obj).split(':')[0], y1 - y0, max(xs) - min(xs), max(zs) - min(zs),
+                    'shape' if shape else ('meshes' if body_meshes else ('model box' if tight and any(id(o[0]) in new_body_skip for o in new_objects[first:]) else 'footprint')),
+                    'shape' if shape else ('meshes' if meshes else 'model box or footprint')))
+            except Exception:
+                pass
         if shape:
             mine = new_objects[first:]
             flags = (1 if any(o[3] for o in mine) else 0) | next((o[5] for o in mine if len(o) > 5), 0) << 8
             # Leaves and fronds are soft like bushes (plant flag 16): no stop, they slow you.
             leafy = _plant_kind(obj) > 0  # alpha cut-outs elsewhere are solid (a laptop's body has one)
             new_hands.extend((pts, a, b, flags | (16 if leaves and leafy else 0)) for pts, a, b, leaves in shape)
+        if body_meshes:
+            meshes = [(pts, a, b, 1 | material << 8) for pts, a, b, _ in meshes]
         new_hands.extend(meshes or ())
         if _is_soft(obj):
             new_soft.update(id(o[0]) for o in new_objects[first:])
@@ -849,9 +1220,14 @@ def _build(sim, x, y, z, surface):
                     'stop you' if leafy_layers else 'soft too (no leaf meshes to tell apart)'))
             if not leafy_layers:
                 new_hands[hands_from:] = [(p, a, b, (2 if f is None else f) | 16) for p, a, b, f in new_hands[hands_from:]]
+        elif _step_max[0] > 0 and cross is not False and _steppable(obj, level, y0, y1, shape, lowwall):
+            new_step.update(id(o[0]) for o in new_objects[first:])
+            new_hands[hands_from:] = [(p, a, b, (2 if f is None else f) | 64) for p, a, b, f in new_hands[hands_from:]]
+        if grounded:
+            new_hands[hands_from:] = [(p, a - DROP if a <= ground + 0.15 else a, b, f) for p, a, b, f in new_hands[hands_from:]]
     spent += time.perf_counter() - started
-    walls, objects, hand_shapes, _hand_skip, _body_skip, _soft = (new_walls, new_objects, new_hands, new_skip,
-                                                                  new_body_skip, new_soft)
+    walls, objects, hand_shapes, _hand_skip, _body_skip, _soft, _step = (new_walls, new_objects, new_hands, new_skip,
+                                                                         new_body_skip, new_soft, new_step)
     # 4. The neighbourhood's own scenery (the area's .world file: trees, rocks, lamps, fences; drawn by the game,
     #    never live objects; user 2026-10-28: walked right through them). [body] world_scenery
     _scenery_on[0] = native.setting_flag('body', 'world_scenery', True)
@@ -889,16 +1265,23 @@ def _cross(px, pz, qx, qz, ax, az, bx, bz):
 def _ray_hit(x, z, angle):
     """What the PROBE-long ray from (x, z) hits (a wall or a body-stopping object), or None."""
     ex, ez = x + math.sin(angle) * PROBE, z + math.cos(angle) * PROBE
-    for ax, az, bx, bz, _, _ in walls:
+    for ax, az, bx, bz, _, _ in (w[:6] for w in walls):
         if _cross(x, z, ex, ez, ax, az, bx, bz):
             return 'wall'
     for pts, _, _, blocks, name, _, _ in objects:
-        if not blocks:
+        if not blocks or id(pts) in _body_skip:  # the visible shape stands in for its (wider) footprint
             continue
         n = len(pts)
         for i in range(n):
             if _cross(x, z, ex, ez, pts[i][0], pts[i][1], pts[(i + 1) % n][0], pts[(i + 1) % n][1]):
                 return name
+    for pts, _, _, flags in hand_shapes:
+        if flags is None or not flags & 1 or flags & (16 | 64):
+            continue  # hands only, plants (slow you) and low things you step over
+        n = len(pts)
+        for i in range(n):
+            if _cross(x, z, ex, ez, pts[i][0], pts[i][1], pts[(i + 1) % n][0], pts[(i + 1) % n][1]):
+                return 'shape'
     return None
 
 
@@ -948,6 +1331,69 @@ def mark_dirty():
             _log('door panels: {!r}'.format(e))
 
 
+_relaxed = [0, 0.0]
+
+
+def relax(mask, x, y, z, surface):
+    """The game's ray check (navmesh) keeps you ~0.5 m off furniture and leaves a wide hole around every column
+    (user 2026-11-03: huge hit box; 24 directions blocked only by the ray check). Where the collision scene has
+    nothing in that direction, the ground ahead is the same level and a body-stopping object is within 1 m (so
+    it is that object's navmesh margin, not a drop, water or an unroutable area), the direction is opened:
+    the scene's own pushOut stops you at the real edge. [body] scene_walk"""
+    try:
+        if (not mask or _state is None or _pending is not None or surface is None or not objects
+                or _state[2] != surface.secondary_id or math.hypot(x - _state[0], z - _state[1]) > 1.5
+                or surface.type == routing.SurfaceType.SURFACETYPE_POOL
+                or not native.setting_flag('body', 'scene_walk', True)):
+            return mask
+        level = surface.secondary_id
+        ground = _floor(level, x, z)
+        if ground is None:
+            return mask
+        close = []  # the body-stopping objects within 1 m: the navmesh's margin is theirs
+        for pts, _, _, blocks, _, _, _ in objects:
+            if blocks and any(_near_segment(x, z, pts[i][0], pts[i][1], pts[(i + 1) % len(pts)][0],
+                                            pts[(i + 1) % len(pts)][1], 1.0) for i in range(len(pts))):
+                close.append(pts)
+        if not close:
+            return mask
+        out = mask
+        why = {'scene': 0, 'far': 0, 'floor': 0}
+        for i in range(RAYS):
+            if not mask & (1 << i):
+                continue
+            a = i * 2 * math.pi / RAYS
+            if _ray_hit(x, z, a) is not None:
+                why['scene'] += 1
+                continue
+            ex, ez = x + math.sin(a) * PROBE, z + math.cos(a) * PROBE
+            if not any(_near_segment(ex, ez, pts[k][0], pts[k][1], pts[(k + 1) % len(pts)][0],
+                                     pts[(k + 1) % len(pts)][1], 0.9) for pts in close for k in range(len(pts))):
+                why['far'] += 1
+                continue  # nothing of furniture that way: a ledge or wall the scene doesn't know stays closed
+            f = _floor(level, ex, ez)
+            if f is None or abs(f - ground) > 0.15:
+                why['floor'] += 1
+                continue
+            out &= ~(1 << i)
+        if out and time.monotonic() - _relaxed[1] > 3:
+            _relaxed[1] = time.monotonic()
+            _log('ray check still blocks {} directions at {:.2f} {:.2f} with furniture within 1 m: scene {}, no furniture that way {}, ground differs {}'.format(
+                bin(out).count('1'), x, z, why['scene'], why['far'], why['floor']))
+        if out != mask:
+            _relaxed[0] += 1
+            if _relaxed[0] <= 10 or time.monotonic() - _relaxed[1] > 30:
+                _relaxed[1] = time.monotonic()
+                _log('opened {} of the ray check\'s blocked directions at {:.2f} {:.2f}: only furniture margin, the scene stops you at the edge'.format(
+                    bin(mask & ~out).count('1'), x, z))
+        return out
+    except Exception as e:
+        if _relaxed[0] < 3:
+            _relaxed[0] += 1
+            _log('relax failed: {!r}'.format(e))
+        return mask
+
+
 def update(sim, x, y, z, surface, free, mask):
     """walk.py's tick: keeps the scene built around you; compares while you walk freely."""
     global _state, _pending, _compared, _dirty, _built_at
@@ -962,6 +1408,10 @@ def update(sim, x, y, z, surface, free, mask):
                 forget()
     if not _switch[0] or surface is None:
         return
+    if now - _step_check[0] > SWITCH_EVERY:
+        _step_check[0] = now
+        if _step_height() != _step_max[0] or native.setting_flag('body', 'step_all', False) != _step_all[0]:
+            _state = None  # the step switch or height changed: build the scene again
     if now - _scenery_on[1] > SWITCH_EVERY:
         _scenery_on[1] = now
         if native.setting_flag('body', 'world_scenery', True) != _scenery_on[0]:

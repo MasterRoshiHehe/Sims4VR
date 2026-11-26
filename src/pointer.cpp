@@ -49,6 +49,8 @@ void sendMouse(DWORD flags, DWORD data = 0) {
 void setKey(int index, bool down) {
     if (g_keyDown[index] == down) return;
     g_keyDown[index] = down;
+    if (kHeldKeys[index] == kAlt || kHeldKeys[index] == kShift)
+        LOG("Pointer: %s %s (build tray modifier)", kHeldKeys[index] == kAlt ? "Alt" : "Shift", down ? "down" : "up");
     sendKey(kHeldKeys[index], down);
 }
 
@@ -218,6 +220,14 @@ bool raise(HWND game) {
     // Windows lets a program in the background take the front right after it
     // sent input itself, so a mouse move of nothing goes first.
     sendMouse(MOUSEEVENTF_MOVE);
+    SetForegroundWindow(game);
+    if (gameInFront(game)) return true;
+    // The Alt-key nudge (700 log: refused for 10 s after a click into Discord).
+    INPUT alt[2] = {};
+    alt[0].type = alt[1].type = INPUT_KEYBOARD;
+    alt[0].ki.wVk = alt[1].ki.wVk = VK_MENU;
+    alt[1].ki.dwFlags = KEYEVENTF_KEYUP;
+    SendInput(2, alt, sizeof(INPUT));
     SetForegroundWindow(game);
     if (gameInFront(game)) return true;
     // Second try: share the input state of the window in front for a moment.

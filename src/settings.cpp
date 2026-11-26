@@ -18,9 +18,12 @@
 
 #include "armik.h"
 #include "benchmark.h"
+#include "ambience.h"
 #include "camera.h"
 #include "facehide.h"
+#include "gputimeline.h"
 #include "godhands.h"
+#include "casbody.h"
 #include "collide.h"
 #include "walkstop.h"
 #include "gesture.h"
@@ -66,6 +69,7 @@ struct Row {
     const wchar_t* tip = nullptr;  // what it does: shown in a box under the row while it's picked
     const char* when = nullptr;       // another mod's Link row: it opens only while this key of the mod is not 0
     const wchar_t* offTip = nullptr;  // with when: the tip while it can't be opened (greyed out)
+    bool dev = false;  // developer-only: hidden unless Options > Developer options is on (settings_dev.inc)
 };
 
 // The menu's pages (structure: user 2026-10-15 18:25Z, v0.13.153). Rows sit on
@@ -84,10 +88,17 @@ struct Page {
 const Page kFixedPages[] = {
     {L"", L"Sims4VR", nullptr},
     {L"Testing", L"Testing cheats", L""},
+    {L"Logging", L"Logging (testing)", L"Options"},
     // Options: the five categories (user 2026-10-23: the menu got hard to navigate).
     {L"Options", L"Options", L""},
     {L"Game", L"Game settings", L"Options"},
     {L"Passive objects", L"Objects around you", L"Game"},
+    {L"Influence", L"Influencing other Sims", L"Game"},
+    {L"Gaze watch", L"Looking through windows and at Sims", L"Game"},
+    {L"Light switches", L"Touching light switches", L"Game"},
+    {L"Drone", L"Flying the Streaming Drone", L"Game"},
+    {L"CAS", L"Create a Sim (CAS)", L"Game"},
+    {L"Outfits", L"Live outfit planning", L"Game"},
     {L"Reach", L"Reach and walking to things", L"Game"},
     {L"Trail", L"Footprint trail", L"Reach"},
     {L"Other Sims", L"Other Sims", L"Game"},
@@ -101,6 +112,14 @@ const Page kFixedPages[] = {
     {L"Other Sims look at hand", L"They look at your hand", L"Other Sims touch"},
     {L"Other Sims hit strength", L"How hard a touch counts", L"Other Sims hits"},
     {L"Other Sims gestures", L"Hand gestures", L"Controls"},
+    {L"Body physics app", L"Body Physics phone app", L"Controls"},
+    {L"Body app frozen Sim", L"Her Settings", L"Body physics app"},
+    {L"Body app size", L"Size preset", L"Body app frozen Sim"},
+    {L"Body app gravity", L"Gravity preset", L"Body app frozen Sim"},
+    {L"Body app spacing", L"Spacing preset", L"Body app frozen Sim"},
+    {L"Relationships", L"Relationships", L"Testing"},
+    {L"Body app friendship", L"Friendship with the Body app Sim", L"Relationships"},
+    {L"Body app romance", L"Romance with the Body app Sim", L"Relationships"},
     {L"Gesture follow", L"Follow me", L"Other Sims gestures"},
     {L"Gesture shoo", L"Shoo", L"Other Sims gestures"},
     {L"Other Sims high five", L"High five and taps", L"Other Sims gestures"},
@@ -109,7 +128,9 @@ const Page kFixedPages[] = {
     {L"Touch sounds skin", L"On bare skin", L"Touch sounds"},
     {L"Touch sounds volume", L"Volume of your own sounds", L"Touch sounds"},
     {L"Touch sounds objects", L"Hitting objects", L"Touch sounds"},
+    {L"Knocking", L"Knocking on doors and windows", L"Touch sounds"},
     {L"Ragdoll", L"Ragdoll falls", L"Other Sims hits"},
+    {L"Shoves", L"Shoves", L"Other Sims hits"},
     {L"Loading", L"Loading and saving", L"Game"},
     {L"Graphics", L"Graphics & Performance", L"Options"},
     {L"View picture", L"Picture", L"Graphics"},
@@ -124,12 +145,15 @@ const Page kFixedPages[] = {
     {L"Controls", L"Controls", L"Options"},
     {L"Moving", L"Moving", L"Controls"},
     {L"Collision", L"Walls and furniture", L"Controls"},
+    {L"Foliage", L"Plants and leaves", L"Controls"},
     {L"Crouch", L"Crouch", L"Moving"},
+    {L"Teleport", L"Teleport", L"Moving"},
     {L"Turning", L"Turning", L"Controls"},
     {L"Hands", L"Hands and touch", L"Controls"},
     {L"Doors", L"Doors", L"Hands"},
     {L"View head", L"Head and body", L"Controls"},
     {L"View place", L"Place your view", L"View head"},
+    {L"Seat place", L"Seated: where you sit", L"View head"},
     {L"Interface", L"Interface", L"Options"},
     {L"Handhelds", L"Phone, tablet and notebook", L"Interface"},
     {L"Menus pie", L"Pie menu", L"Interface"},
@@ -146,6 +170,7 @@ const Page kFixedPages[] = {
     {L"HUD pause", L"Pause symbol", L"HUD"},
     {L"HUD sleep", L"Clock while asleep", L"HUD"},
     {L"HUD lot intro", L"Lot name and traits on arrival", L"HUD"},
+    {L"HUD work card", L"Work card (eyes closed at work)", L"HUD"},
     {L"HUD note", L"Notification card", L"Interface"},
     {L"Bubbles", L"Speech bubbles and skill bars", L"Interface"},
     {L"Bubbles yours", L"Your bubble", L"Bubbles"},
@@ -159,6 +184,8 @@ const Page kFixedPages[] = {
     {L"Phone size", L"Size and screen", L"Phone"},
     {L"Phone model", L"Game's phone model", L"Phone"},
     {L"Phone sounds", L"Sounds", L"Phone"},
+    {L"Phone notes", L"Notifications", L"Phone"},
+    {L"Phone flashlight", L"Flashlight", L"Phone"},
     {L"Phone sf", L"Sims Forever", L"Phone"},
     {L"Phone sf left", L"Left hand", L"Phone sf"},
     {L"Phone sf right", L"Right hand", L"Phone sf"},
@@ -317,6 +344,7 @@ Row percent(Row r) {
 }
 
 #include "settings_tips.inc"
+#include "settings_dev.inc"
 
 std::vector<Row> makeRows() {
     const wchar_t* moving = L"Moving";
@@ -330,6 +358,8 @@ std::vector<Row> makeRows() {
     const wchar_t* phoneSize = L"Phone size";
     const wchar_t* phoneModel = L"Phone model";
     const wchar_t* phoneSounds = L"Phone sounds";
+    const wchar_t* phoneNotes = L"Phone notes";
+    const wchar_t* phoneFlash = L"Phone flashlight";
     const wchar_t* tablet = L"Tablet";
     const wchar_t* notebook = L"Notebook";
     const wchar_t* notebookPosition = L"Notebook position";
@@ -345,6 +375,14 @@ std::vector<Row> makeRows() {
     auto button = [testing](const wchar_t* label, int action) {
         Row r;
         r.group = testing;
+        r.label = label;
+        r.kind = Kind::Action;
+        r.action = action;
+        return r;
+    };
+    auto relButton = [](const wchar_t* label, int action) {
+        Row r;
+        r.group = L"Relationships";
         r.label = label;
         r.kind = Kind::Action;
         r.action = action;
@@ -396,6 +434,36 @@ std::vector<Row> makeRows() {
     keyboardButton.kind = Kind::Action;
     keyboardButton.action = 204;
     keyboardButton.tip = L"Opens the keyboard in front of you for a text box it did not open for, or closes it.";
+    // physapp.py (thread "Add body physics phone app"): the frozen Sim's outfit and WickedWhims pose menu by control.
+    auto physicsButton = [](const wchar_t* label, int control, const wchar_t* tip, const wchar_t* group = L"Body app frozen Sim") {
+        Row r;
+        r.group = group;
+        r.label = label;
+        r.kind = Kind::Action;
+        r.action = 8400000 + control;
+        r.tip = tip;
+        return r;
+    };
+    // The frozen Sim's pie menu options (physapp.py _groups / control): presets by control 300 + 30 * group + index.
+    std::vector<Row> physicsRows;
+    physicsRows.push_back(physicsButton(L"Previous outfit", 10, L"The Sim frozen in the Body Physics app wears her previous outfit (the pie menu's list: Everyday, Formal, Athletic, ...).", L"Body physics app"));
+    physicsRows.push_back(physicsButton(L"Next outfit", 11, L"She wears her next outfit.", L"Body physics app"));
+    physicsRows.push_back(physicsButton(L"WickedWhims pose menu", 12, L"Opens WickedWhims' own pose menu for her (needs WickedWhims). The physics mod's freeze hold on her is dropped while it runs her.", L"Body physics app"));
+    physicsRows.push_back(physicsButton(L"Freeze her again", 13, L"Holds her in the neutral pose again after WickedWhims' poses.", L"Body physics app"));
+    physicsRows.push_back(physicsButton(L"Top: switch Clothed / Topless", 14, L"Sets her top part as nude or as clothed for the physics, as the pie menu's Set as nude / Set as clothed."));
+    physicsRows.push_back(physicsButton(L"Breasts: switch Enhanced / Natural", 15, L"Switches her breasts between natural and enhanced, as the pie menu."));
+    struct Preset { const wchar_t* group; const wchar_t* labels[8]; };
+    static const Preset kPresets[5] = {
+        {L"Body app size", {L"Auto (from CAS)", L"Small", L"Medium", L"Bigger", L"Huge", nullptr}},
+        {L"Body app gravity", {L"Bolt on", L"Enhanced", L"Natural", L"Heavy", L"Saggy", L"Follow the debug menu", nullptr}},
+        {L"Body app spacing", {L"Very together", L"Together", L"Natural", L"Apart", L"Very apart", L"Follow the debug menu", nullptr}},
+        {L"Body app friendship", {L"Enemy (-100)", L"Disliked (-50)", L"Neutral (0)", L"Acquaintance (20)", L"Friend (40)", L"Good friend (70)", L"Best friend (100)"}},
+        {L"Body app romance", {L"Hostile (-50)", L"None (0)", L"Flirty (25)", L"Romantic (50)", L"Lovers (75)", L"Soulmates (100)", nullptr}},
+    };
+    for (int g = 0; g < 5; ++g)
+        for (int i = 0; i < 8 && kPresets[g].labels[i]; ++i)
+            physicsRows.push_back(physicsButton(kPresets[g].labels[i], 300 + g * 30 + i,
+                                                L"Applies to the Sim frozen in the Body Physics app (the pie menu's choice).", kPresets[g].group));
     Row alignReset;
     alignReset.group = L"View align";
     alignReset.label = L"Reset the alignment";
@@ -403,6 +471,14 @@ std::vector<Row> makeRows() {
     alignReset.action = 203;  // native: every made_eye_* row back to as measured
     alignReset.tip = L"Picture and headset rows back to 0 (eye distance and depth to 100%). Each change logs "
                      L"\"Depth eye alignment\" and is saved in your ini.";
+    Row outfitProbe;  // outfit.py control 90000 (controls.py 8600000 + code)
+    outfitProbe.group = L"Outfits";
+    outfitProbe.label = L"Outfit probe (testing)";
+    outfitProbe.kind = Kind::Action;
+    outfitProbe.action = 8690000;
+    outfitProbe.dev = true;
+    outfitProbe.tip = L"First person: puts a catalog part on your Sim the panel's way and logs each step (outfit: lines in "
+                      L"the python log). Save, reload and press it again to see whether the part stayed.";
     Row reset;
     reset.group = L"Options";
     reset.label = L"Use sims4vr.ini for everything";
@@ -419,6 +495,8 @@ std::vector<Row> makeRows() {
         // these rows moved here from their pages).
         number(L"View picture", L"Render resolution", "stereo", "render_scale", &Config::renderScale, 0.4f, 1.5f, 0.05f, 100,
                L"%.0f%%", kRenderScale),
+        choice(L"Moving", L"Movement mode", "controls", "move_mode", &Config::moveMode,
+               {L"Smooth walking (left stick)", L"Point to teleport"}),
         number(L"Moving", L"Walk speed", "body", "walk_speed", &Config::walkSpeed, 0.5f, 5, 0.1f, 1, L"%.1f m/s", kWalk),
         number(L"Turning", L"Turn speed", "body", "turn_rate", &Config::bodyTurnRate, 30, 360, 10, 1, L"%.0f°/s"),
         toggle(L"Turning", L"Snap turning (off: smooth turning)", "controls", "snap_turn", &Config::snapTurn),
@@ -430,6 +508,12 @@ std::vector<Row> makeRows() {
                0.1f, 100, L"%.0f cm"),  // trail.py
         number(L"Trail", L"Trail: the same for touching socials", "body", "trail_arrive_contact", &Config::trailArriveContact,
                0.1f, 1, 0.05f, 100, L"%.0f cm"),  // trail.py
+        flag(L"Trail", L"Trail: the game takes you through elevators", "body", "trail_elevator", true, kLive),  // trail.py
+        flag(L"Trail", L"Trail: the game climbs ladders with you", "body", "trail_ladder", true, kLive),  // trail.py
+        flag(L"Trail", L"Elevator: walk into the car yourself, eyes shut for the ride", "body", "elevator_ride", true, kLive),  // trail.py
+        flag(L"Trail", L"Elevator: long ride (off: short, only the end of the sound)", "body", "elevator_long", true, kLive),  // trail.py
+        percent(scriptNumber(L"Trail", L"Elevator: sound volume", "foley", "volume_elevator", 1.0f, 0, 2, 0.05f, L"%.0f%%")),
+        flag(L"Trail", L"Click a need to find a way to fulfil it", "body", "need_click", true, kLive),  // needclick.py
         flag(L"Trail", L"Trail: Sims you walk to stop and face you", "body", "trail_stop", true, kLive),  // trail.py
         number(L"Trail", L"Trail: how near you are when they stop", "body", "trail_stop_dist", &Config::trailStopDist, 1, 10, 0.5f, 1,
                L"%.1f m"),  // trail.py
@@ -437,17 +521,21 @@ std::vector<Row> makeRows() {
                "recenter_turns_body", &Config::recenterTurnsBody),
         flag(L"Loading", L"Start with eyes closed and time paused until you can move", "body", "load_eyes_closed", true,
              kLive),  // loadshut.py
-        flag(L"Loading", L"Eyes closed while saving on exit", "body", "exit_eyes_closed", true, kLive),  // loadshut.py
+        flag(L"Loading", L"Eyes closed while the game saves", "body", "exit_eyes_closed", true, kLive),  // loadshut.py
         toggle(L"Hands", L"Pick things up", "hands", "grab", &Config::grab, kNextStart),
+        toggle(L"Hands", L"Arms follow your controllers (next start)", "body", "arm_ik", &Config::armIk, kNextStart),
+        toggle(L"Hands", L"Real hands when controllers are put down (next start)", "body", "hand_tracking", &Config::handTracking, kNextStart),
         toggle(L"Hands", L"Touch to click", "body", "touch", &Config::touch, kNextStart),
         toggle(L"Hands", L"Selected Sim's hands in god mode", "body", "god_hands", &Config::bodyGodHands, kView),
         toggle(L"Menus pie", L"Pie menu at your hand", "ui", "pie_at_hand", &Config::pieAtHand),
         toggle(L"Menus popups", L"Popups in the world", "ui", "popups_3d", &Config::popups3d),
+        flag(L"Menus popups", L"Phone-ring Sim pickers as cards (Invite over)", "ui", "ring_pickers_3d", true, kLive),  // objmenu.py
         toggle(L"HUD", L"HUD on (all of it)", "wrist", "hud", &Config::wristPieces),
         number(L"HUD", L"HUD size (all of it)", "wrist", "scale", &Config::wristScale, 0.3f, 3, 0.05f, 100, L"%.0f%%"),
         toggle(L"Phone", L"Phone at your hip", "phone", "phone", &Config::phone),
         flag(L"Phone", L"Notifications about one Sim over their head (off: phone only)", "phone", "notes_overhead", true, kLive),  // notify.py
         flag(L"Phone", L"Game camera for photos and selfies (off: no photo session, testing)", "photo", "game_camera", true, kLive),  // photowatch.py
+        flag(L"Phone", L"Camera app buttons on the phone during photos", "photo", "camera_app", true, kLive),  // photowatch.py control()
         toggle(L"View head", L"Mic moves your Sim's mouth", "voice", "mic", &Config::voiceMic, kNextStart),
         link(front, L"Options", L"Options"),
         reset,
@@ -456,10 +544,90 @@ std::vector<Row> makeRows() {
         link(L"Options", L"Sound", L"Sound"),
         link(L"Options", L"Controls", L"Controls"),
         link(L"Options", L"Interface", L"Interface"),
+        flag(L"Options", L"Developer options (testing only)", "debug", "dev_options", kDevDefault, kLive),
+        link(L"Options", L"Logging (testing)", L"Logging"),
+        flag(L"Logging", L"Flight recorder (last seconds kept in memory)", "logging", "recorder", true, kLive),
+        flag(L"Logging", L"Decision (why) lines", "logging", "why", true, kLive),
+        flag(L"Logging", L"Noisy tags (frame map, photo, sound probes)", "logging", "noisy", false, kLive),
+        scriptNumber(L"Logging", L"Recorder length", "logging", "ring_seconds", 20, 10, 60, 10, L"%.0f s"),
+        scriptNumber(L"Logging", L"Trace files kept", "logging", "keep_dumps", 20, 5, 50, 5, L"%.0f"),
+        [] {
+            Row r;
+            r.group = L"Logging";
+            r.label = L"Dump trace now";
+            r.kind = Kind::Action;
+            r.action = 205;  // native: log::dumpTrace
+            return r;
+        }(),
         link(L"Game", L"Reach and walking to things", L"Reach"),
         link(L"Game", L"Other Sims", L"Other Sims"),
         link(L"Game", L"Loading and saving", L"Loading"),
         link(L"Game", L"Objects around you", L"Passive objects"),
+        link(L"Game", L"Looking through windows and at Sims", L"Gaze watch"),
+        link(L"Game", L"Influencing other Sims", L"Influence"),
+        link(L"Game", L"Touching light switches", L"Light switches"),
+        link(L"Game", L"Flying the Streaming Drone", L"Drone"),
+        link(L"Game", L"Create a Sim (CAS)", L"CAS"),
+        toggle(L"CAS", L"CAS in 3D with your eyes", "cas", "stereo", &Config::casStereo, kView),
+        number(L"CAS", L"Distance to the Sim", "cas", "distance", &Config::casDistance, 0.8f, 4.0f, 0.1f, 1, L"%.1f m", kView),
+        number(L"CAS", L"Eye height", "cas", "eye_height", &Config::casEyeHeight, 0.5f, 2.5f, 0.1f, 1, L"%.1f m", kView),
+        number(L"CAS", L"Eye separation", "cas", "eye_separation", &Config::casEyeSeparation, 0.0f, 2.0f, 0.1f, 1, L"%.1f x", kView),
+        toggle(L"CAS", L"Your body in Create a Sim", "cas", "body", &Config::casBody, kView),
+        toggle(L"CAS", L"Eyes at your body's height", "cas", "body_eyes", &Config::casBodyEyes, kView),
+        toggle(L"CAS", L"Your body stands still", "cas", "body_still", &Config::casBodyStill, kView),
+        // outfit.py (+ hud_outfit.inc, 14c_outfit.inc): Plan Outfit on a mirror, dresser or wardrobe opens our panel in
+        // the room (first person); a dresser's drawers pull out by hand; Store options on its pie
+        link(L"Game", L"Live outfit planning", L"Outfits"),
+        flag(L"Outfits", L"Live outfit planning", "outfit", "on", true, kLive),  // the whole feature; off = the game's CAS
+        flag(L"Outfits", L"Dressers and wardrobes open by hand", "outfit", "drawers", true, kLive),
+        flag(L"Outfits", L"Open by hand without Plan Outfit", "outfit", "always", true, kLive),
+        scriptNumber(L"Outfits", L"How far to pull a drawer", "outfit", "drawer_pull", 0.18f, 0.05f, 0.5f, 0.01f, L"%.2f m"),
+        flag(L"Outfits", L"Drawer sounds", "outfit", "sounds", true, kLive),
+        flag(L"Outfits", L"Store options on dressers and wardrobes", "outfit", "tags", true, kLive),
+        flag(L"Outfits", L"Every colour as its own part (testing)", "outfit", "all_variants", false, kLive),
+        scriptNumber(L"Outfits", L"How a change is put on (testing)", "outfit", "apply_route", 0, 0, 2, 1, L"%.0f"),
+        flag(L"Outfits", L"Log every step (testing)", "outfit", "log", false, kLive),
+        outfitProbe,
+        // drone.py (+ drone.cpp): start a drone recording/stream and you fly it yourself, the view from the drone
+        flag(L"Drone", L"Fly the drone yourself", "drone", "enabled", true, kLive),
+        scriptNumber(L"Drone", L"Speed", "drone", "speed", 6, 1, 20, 0.5f, L"%.1f m/s"),
+        scriptNumber(L"Drone", L"Climb speed", "drone", "lift_speed", 3, 0.5f, 10, 0.5f, L"%.1f m/s"),
+        scriptNumber(L"Drone", L"Smoothing", "drone", "smoothing", 0.25f, 0, 1, 0.05f, L"%.2f s"),
+        scriptNumber(L"Drone", L"Stick fully pushed speeds up by", "drone", "boost", 2, 1, 4, 0.25f, L"x%.2f"),
+        scriptNumber(L"Drone", L"Lowest height above the ground", "drone", "min_height", 1, 0.3f, 5, 0.1f, L"%.1f m"),
+        scriptNumber(L"Drone", L"Highest height above the ground", "drone", "max_height", 60, 5, 200, 5, L"%.0f m"),
+        // influence.py: "Influence to..." on a household Sim's pie; Try... then picks what they do
+        flag(L"Influence", L"Influence to... on household Sims", "influence", "on", true, kLive),
+        scriptNumber(L"Influence", L"Willing from friendship", "influence", "min_friendship", -20, -100, 100, 5, L"%.0f"),
+        scriptNumber(L"Influence", L"A close friend ignores a bad mood from", "influence", "mood_override", 60, -100, 100, 5, L"%.0f"),
+        scriptNumber(L"Influence", L"They only look with their eyes within", "influence", "look_eyes", 0.6f, 0, 3, 0.1f, L"%.1f m"),
+        scriptNumber(L"Influence", L"They turn their head from", "influence", "look_head", 1.5f, 0, 5, 0.1f, L"%.1f m"),
+        scriptNumber(L"Influence", L"They turn their body past", "influence", "body_angle", 75, 30, 150, 5, L"%.0f°"),
+        scriptNumber(L"Influence", L"They never turn further from you than", "influence", "face_keep", 60, 20, 120, 5, L"%.0f°"),
+        flag(L"Influence", L"Ignore willingness and consent (testing)", "influence", "ignore_willingness", false, kLive),
+        flag(L"Influence", L"Only household Sims", "influence", "household_only", true, kLive),
+        flag(L"Influence", L"Social picks need their consent", "influence", "gate_socials", true, kLive),
+        scriptNumber(L"Influence", L"Romance needed for flirting and kissing", "influence", "romance_min", 15, -100, 100, 5, L"%.0f"),
+        scriptNumber(L"Influence", L"Romance needed for sex and making a move", "influence", "intimate_min", 40, -100, 100, 5, L"%.0f"),
+        scriptNumber(L"Influence", L"Friendship needed for friendly and pranks", "influence", "friendly_min", -10, -100, 100, 5, L"%.0f"),
+        scriptNumber(L"Influence", L"Choosing ends after", "influence", "timeout", 45, 10, 300, 5, L"%.0f s"),
+        // gazewatch.py: looking steadily peeps through a window / watches a Sim (WickedWhims interactions)
+        flag(L"Gaze watch", L"Looking does things (peeping, watching)", "gazewatch", "on", true, kLive),
+        flag(L"Gaze watch", L"Peep by looking through a window", "gazewatch", "peep", true, kLive),
+        scriptNumber(L"Gaze watch", L"Look through it for", "gazewatch", "peep_seconds", 4, 1, 30, 0.5f, L"%.1f s"),
+        scriptNumber(L"Gaze watch", L"Window may be off-centre by", "gazewatch", "peep_angle", 25, 5, 60, 5, L"%.0f°"),
+        scriptNumber(L"Gaze watch", L"Window must be within", "gazewatch", "peep_range", 3, 1, 8, 0.5f, L"%.1f m"),
+        flag(L"Gaze watch", L"Watch Sims by looking at them", "gazewatch", "watch", true, kLive),
+        scriptNumber(L"Gaze watch", L"Look at them for", "gazewatch", "watch_seconds", 1.5f, 0.5f, 10, 0.5f, L"%.1f s"),
+        scriptNumber(L"Gaze watch", L"Sim may be off-centre by", "gazewatch", "watch_angle", 12, 3, 40, 1, L"%.0f°"),
+        scriptNumber(L"Gaze watch", L"Sim must be within", "gazewatch", "watch_range", 12, 2, 30, 1, L"%.0f m"),
+        scriptNumber(L"Gaze watch", L"Looking away stops it after", "gazewatch", "grace", 2, 0.5f, 10, 0.5f, L"%.1f s"),
+        // lightswitch.py: touching a placeable light switch flips its room's lights
+        flag(L"Light switches", L"Touch a light switch to flip the room's lights", "lightswitch", "on", true, kLive),
+        scriptNumber(L"Light switches", L"Touch distance (palm to switch)", "lightswitch", "touch_radius", 0.10f, 0.03f, 0.30f, 0.01f, L"%.2f m"),
+        scriptNumber(L"Light switches", L"Wait before the same hand flips it again", "lightswitch", "cooldown", 0.8f, 0.2f, 3, 0.1f, L"%.1f s"),
+        flag(L"Light switches", L"Buzz the hand on a flip", "lightswitch", "haptics", true, kLive),
+        flag(L"Light switches", L"Log the switches found and flips", "lightswitch", "log", true, kLive),
         link(L"Other Sims", L"Talking and following", L"Other Sims talk"),
         link(L"Other Sims", L"Hugs and kisses", L"Other Sims hugs"),
         link(L"Other Sims", L"Touching and grabbing", L"Other Sims touch"),
@@ -467,9 +635,22 @@ std::vector<Row> makeRows() {
         link(L"Other Sims hits", L"How hard a touch counts", L"Other Sims hit strength"),
         link(L"Other Sims hits", L"Knock out", L"Knockout"),
         link(L"Other Sims hits", L"Ragdoll falls", L"Ragdoll"),
+        link(L"Other Sims hits", L"Shoves", L"Shoves"),
         link(L"Reach", L"Footprint trail", L"Trail"),
         link(L"Hands", L"Doors", L"Doors"),
         link(L"Moving", L"Crouch", L"Crouch"),
+        link(L"Moving", L"Teleport (point to move)", L"Teleport"),
+        choice(L"Teleport", L"Stick that aims (push forward)", "teleport", "stick", &Config::teleStick,
+               {L"Left stick", L"Right stick"}),
+        choice(L"Teleport", L"Pointer style", "teleport", "style", &Config::teleStyle, {L"Arc", L"Straight laser"}),
+        number(L"Teleport", L"Longest jump", "teleport", "max_distance", &Config::teleDistance, 2, 30, 1, 1, L"%.0f m"),
+        flag(L"Teleport", L"Jump over stairs to other levels", "teleport", "other_levels", true, kLive),  // walk.py
+        number(L"Teleport", L"Biggest height difference", "teleport", "max_rise", &Config::teleMaxRise, 0.2f, 3, 0.1f, 1,
+               L"%.1f m"),  // walk.py
+        toggle(L"Teleport", L"Footprints at the spot", "teleport", "marker", &Config::teleMarker),
+        toggle(L"Teleport", L"Blink around the jump", "teleport", "blink", &Config::teleBlink),
+        number(L"Teleport", L"Blink length", "teleport", "blink_seconds", &Config::teleBlinkTime, 0.05f, 1, 0.05f, 1000,
+               L"%.0f ms"),
         link(L"Other Sims gestures", L"Follow me", L"Gesture follow"),
         link(L"Other Sims gestures", L"Shoo", L"Gesture shoo"),
         link(L"Other Sims gestures", L"High five and taps", L"Other Sims high five"),
@@ -489,11 +670,24 @@ std::vector<Row> makeRows() {
         flag(L"Passive objects", L"Objects around you affect you", "passive", "on", true, kLive),
         flag(L"Passive objects", L"Log what the game's objects do to you", "passive", "log", true, kLive),
         flag(L"Passive objects", L"Music nearby gives fun", "passive", "music", true, kLive),
-        scriptNumber(L"Passive objects", L"Music reaches you within", "passive", "music_range", 6, 1, 20, 1, L"%.0f m"),
+        scriptNumber(L"Passive objects", L"Music heard up to (high volume)", "passive", "music_range", 12, 1, 30, 1, L"%.0f m"),
         scriptNumber(L"Passive objects", L"Fun a game minute from music", "passive", "music_rate", 0.15f, 0, 1, 0.05f, L"%.2f"),
         flag(L"Passive objects", L"Watch a TV by looking at it", "tv", "gaze", true, kLive),
-        scriptNumber(L"Passive objects", L"TV nearby reaches you within", "tv", "nearby", 4, 1, 20, 1, L"%.0f m"),
+        scriptNumber(L"Passive objects", L"TV heard up to (high volume)", "tv", "nearby", 10, 1, 30, 1, L"%.0f m"),
         scriptNumber(L"Passive objects", L"Fun from a TV nearby (share of watching)", "tv", "passive_share", 0.3f, 0, 1, 0.05f, L"%.2f"),
+        // passive_gain.py: an interaction's gains without the interaction (thread "Research passive actions framework")
+        flag(L"Passive objects", L"TV gives its gains without the watch action", "tv", "engine", true, kLive),
+        scriptNumber(L"Passive objects", L"Speed of passive gains", "passive", "gain_scale", 1, 0, 3, 0.1f, L"%.1fx"),
+        flag(L"Passive objects", L"Skill from things nearby too", "passive", "nearby_skill", false, kLive),
+        scriptNumber(L"Passive objects", L"Heard through a wall", "passive", "wall_factor", 0.4f, 0, 1, 0.05f, L"%.2f"),
+        scriptNumber(L"Passive objects", L"Heard through a floor", "passive", "floor_factor", 0.2f, 0, 1, 0.05f, L"%.2f"),
+        flag(L"Passive objects", L"Music gives its gains without the listen action", "passive", "music_engine", true, kLive),
+        // dance.cpp + passive.py: dancing in real life to music you hear
+        flag(L"Passive objects", L"Dance in real life to music", "dance", "on", true, kLive),
+        scriptNumber(L"Passive objects", L"Dancing starts at movement", "dance", "energy", 0.25f, 0.05f, 1, 0.05f, L"%.2f m/s"),
+        scriptNumber(L"Passive objects", L"Full dancing at movement", "dance", "full_energy", 0.7f, 0.2f, 2, 0.05f, L"%.2f m/s"),
+        scriptNumber(L"Passive objects", L"Dancing needs a beat of", "dance", "rhythm", 0.35f, 0, 0.9f, 0.05f, L"%.2f"),
+        scriptNumber(L"Passive objects", L"Dancing needs the music heard at", "dance", "hearing", 0.3f, 0, 1, 0.05f, L"%.2f"),
         link(L"Other Sims touch", L"How they react", L"Other Sims reactions"),
         link(L"Other Sims touch", L"Grabbing", L"Other Sims grab"),
         link(L"Other Sims touch", L"They look at your hand", L"Other Sims look at hand"),
@@ -501,6 +695,7 @@ std::vector<Row> makeRows() {
         link(L"Touch sounds", L"On bare skin", L"Touch sounds skin"),
         link(L"Touch sounds", L"Volume of your own sounds", L"Touch sounds volume"),
         link(L"Touch sounds", L"Hitting objects", L"Touch sounds objects"),
+        link(L"Touch sounds", L"Knocking on doors and windows", L"Knocking"),
         link(L"Graphics", L"Picture", L"View picture"),
         link(L"Graphics", L"Mirrors and reflections", L"View mirrors"),
         link(L"Graphics", L"Near clipping", L"View near"),
@@ -511,15 +706,27 @@ std::vector<Row> makeRows() {
         link(L"View eyes", L"Right eye alignment (depth eye)", L"View align"),
         link(L"Controls", L"Moving", L"Moving"),
         link(L"Controls", L"Walls and furniture", L"Collision"),
+        link(L"Controls", L"Plants and leaves", L"Foliage"),
         link(L"Controls", L"Turning", L"Turning"),
         link(L"Controls", L"Hands and touch", L"Hands"),
         link(L"Controls", L"Hand gestures", L"Other Sims gestures"),
+        link(L"Controls", L"Body Physics phone app", L"Body physics app"),
+        link(L"Body physics app", L"Global settings", L"ibp:main"),
+        link(L"Body physics app", L"Her Settings", L"Body app frozen Sim"),
+        link(L"Body app frozen Sim", L"Size preset", L"Body app size"),
+        link(L"Body app frozen Sim", L"Gravity preset", L"Body app gravity"),
+        link(L"Body app frozen Sim", L"Spacing preset", L"Body app spacing"),
+        link(L"Body app frozen Sim", L"More of her settings", L"ibp:sim"),
+        link(testing, L"Relationships", L"Relationships"),
+        link(L"Relationships", L"Friendship with the Sim picked in the Body Physics app", L"Body app friendship"),
+        link(L"Relationships", L"Romance with the Sim picked in the Body Physics app", L"Body app romance"),
         link(L"Controls", L"Head and body", L"View head"),
         // Their pages come from their own menu exports once they are loaded (mergeMenus, v0.13.236/237).
         link(L"Other mods", L"Integrated Body Physics", L"ibp:main"),
         link(L"Other mods", L"Extended Sound Control", L"esc:main"),
         link(L"Other mods", L"Claude Performance", L"Performance"),
         link(L"Other mods", L"Claude Bustin Out", L"cbo:main"),
+        link(L"Other mods", L"Claude Realistic Lighting", L"crl:main"),
 
         cheats,
         cheatPies,
@@ -527,8 +734,10 @@ std::vector<Row> makeRows() {
         button(L"Motherlode (+50,000 simoleons)", 7),    // motherlode
         button(L"Move objects on", 8),                   // bb.moveobjects on
         button(L"CAS full edit mode", 10),               // cas.fulleditmode
-        button(L"Everyone here hates me", 14),           // controls.py: every Sim on the lot, friendship + romance lowest
-        button(L"Everyone here loves me", 15),           // controls.py: highest
+        relButton(L"Everyone here hates me", 14),           // controls.py: every Sim on the lot, friendship + romance lowest
+        relButton(L"Everyone here loves me", 15),           // controls.py: highest
+        button(L"Fill nearby Sims' needs", 16),          // controls.py: every other Sim within cheats.fill_radius
+        scriptNumber(testing, L"Fill nearby Sims' needs: radius", "cheats", "fill_radius", 3, 1, 15, 0.5f, L"%.1f m"),
 
         // The separate Claude Performance mod's console commands (user 2026-10-16 19:13Z, v0.13.184):
         // controls.py actions 70-76 run perf.* as if typed; that mod answers with a game notification.
@@ -556,13 +765,24 @@ std::vector<Row> makeRows() {
                0.6f, 1.5f, 0.05f, 100, L"%.0f%%", kRenderScale),
         toggle(L"View picture", L"Card goes to the headset stream first", "stereo", "gpu_yield", &Config::gpuYield),
         toggle(L"View picture", L"Align the eyes (SteamVR)", "stereo", "align_eyes", &Config::alignEyes),
+        number(L"View picture", L"World scale (bigger = world feels smaller)", "stereo", "world_scale", &Config::worldScale, 0.2f, 5,
+               0.05f, 100, L"%.2f x", kView),
         toggle(L"View picture", L"Lopsided eye view (draws less unseen picture)", "stereo", "exact_fov", &Config::exactFov,
                kRenderScale),
         toggle(L"View motion", L"Smooth stick turning", "stereo", "turn_reprojection", &Config::turnReprojection),
+        toggle(L"View motion", L"Head pose for the shown moment", "stereo", "late_pose", &Config::latePose),
+        toggle(L"View motion", L"Game waits for the headset frame (less delay)", "stereo", "cap_lead", &Config::capLead),
         toggle(L"View motion", L"Stick turn on the headset's clock", "stereo", "turn_display_clock", &Config::turnDisplayClock),
         toggle(L"View motion", L"Stick walk on the headset's clock", "stereo", "walk_display_clock", &Config::walkDisplayClock),
         toggle(L"View motion", L"Draw ahead of the stick turn", "stereo", "turn_lead", &Config::turnLead),
+        number(L"View motion", L"Draw-ahead strength", "stereo", "turn_lead_scale", &Config::turnLeadScale, 0, 2, 0.1f, 100, L"%.0f%%"),
+        toggle(L"View motion", L"Body waits out stick turns", "body", "turn_body_lazy", &Config::bodyLazyTurn, kWalk),
+        number(L"View motion", L"Body turn steps a second", "body", "turn_body_rate", &Config::bodyStandRate, 0, 60, 5, 1, L"%.0f", kWalk),
+        number(L"View motion", L"Ease into stick turns", "body", "turn_ease", &Config::turnEase, 0, 1, 0.1f, 100, L"%.0f%%"),
         toggle(L"View motion", L"Both eyes drawn from one place (walking)", "stereo", "paired_eyes", &Config::pairedEyes),
+        toggle(L"View motion", L"Next eye waits until the last was drawn", "stereo", "eye_wait_drawn", &Config::eyeWaitDrawn),
+        toggle(L"Phone", L"Photo: phone lens as a third picture (off: the phone shows your own view; selfie looks out the glass)", "photo", "lens", &Config::photoLens),
+        number(L"View motion", L"Longest wait for a drawn eye (ms)", "stereo", "eye_wait_ms", &Config::eyeWaitMs, 20, 1000, 10, 1, L"%.0f"),
         toggle(L"View motion", L"Hands match in both eyes (walking)", "stereo", "paired_hands", &Config::pairedHands),
         toggle(L"View eyes", L"Own body steady while turning", "stereo", "body_layer", &Config::bodyLayer),
         toggle(L"View eyes", L"Both eyes every frame (depth)", "stereo", "depth_eye", &Config::depthEye),
@@ -574,6 +794,12 @@ std::vector<Row> makeRows() {
                &Config::frameClock),
         toggle(L"View motion", L"Draw only the width the headset needs (faster)", "stereo", "headset_width",
                &Config::headsetWidth),
+        choice(L"View eyes", L"Eye shown on the desktop window", "stereo", "monitor_eye", &Config::monitorEye,
+               {L"Left", L"Right"}),
+        choice(L"View eyes", L"Desktop window picture shape", "stereo", "monitor_fit", &Config::monitorFit,
+               {L"Stretched", L"Cropped to window", L"Whole, with bars"}),
+        number(L"View eyes", L"Desktop window zoom (cropped; higher = narrower view)", "stereo", "monitor_zoom",
+               &Config::monitorZoom, 1.0f, 2.5f, 0.05f, 1, L"%.2fx"),
         choice(L"View eyes", L"Right eye reuses a scene part (test)", "stereo", "both_eyes_skip", &Config::bothEyesSkip,
                {L"Off", L"Part 3", L"Part 4", L"Part 8"}),
         choice(L"View eyes", L"Depth eye test view", "stereo", "depth_eye_debug", &Config::depthEyeDebug,
@@ -602,8 +828,15 @@ std::vector<Row> makeRows() {
                     L"Stand still, close this menu. After 8 s: 5 s still, 3 turns each way, 5 s still. One 'Benchmark:' line in the log. Pause the game first."),
         benchButton(L"Run turn test (game running)", 202,
                     L"Same test with the game running at speed 1 (the sim runs too). Compare it with the paused run."),
+        number(L"View speed", L"Far Sims left out of shadows and mirrors (0 = off)", "perf", "far_sim_cull", &Config::farSimCull, 0, 150, 5, 1,
+               L"%.0f m", kView),
+        number(L"View speed", L"Far Sims not drawn in your view (0 = off)", "perf", "far_sim_cull_eyes", &Config::eyeSimCull, 0, 300, 10, 1,
+               L"%.0f m", kView),
+        toggle(L"View speed", L"GPU timeline (log GPU time per pass)", "perf", "gpu_timeline", &Config::gpuTimeline, kView),
         toggle(L"View speed", L"Bigger Sim caches (next start)", "perf", "sim_cache_boost", &Config::simCacheBoost, kNextStart),
-        number(L"View speed", L"Sim detail distance (next start)", "perf", "sim_lod_scale", &Config::simLodScale, 1, 3, 0.5f, 1, L"x%.1f", kNextStart),
+        number(L"View speed", L"Sim detail distance (next start)", "perf", "sim_lod_scale", &Config::simLodScale, 0.25f, 3, 0.25f, 1, L"x%.2f", kNextStart),
+        choice(L"View speed", L"Edge smoothing (MSAA) when scaled (next start)", "stereo", "render_msaa", &Config::renderMsaa,
+               {L"Off", L"Off", L"2x", L"3x", L"4x"}),
         toggle(L"View speed", L"Hitch catcher (log stalls, next start)", "perf", "hitch_catcher", &Config::hitchCatcher, kNextStart),
         toggle(L"View speed", L"Try an unrecognised game build (next start)", "patch", "try_unknown_build", &Config::tryUnknownBuild, kNextStart),
         number(L"View head", L"Head follow speed", "body", "smoothing", &Config::bodySmoothing, 0.05f, 1, 0.05f, 1, L"%.2f",
@@ -619,6 +852,11 @@ std::vector<Row> makeRows() {
         toggle(L"View head", L"Your Sim's head follows your look", "body", "head_tracking", &Config::headTracking, kHands),
         toggle(L"View head", L"Seated: your Sim leans with you", "body", "seat_follow", &Config::bodySeatFollow, kView),
         toggle(L"View head", L"Seated: your head moves the upper body", "body", "seat_torso", &Config::bodySeatTorso, kView),
+        link(L"View head", L"Seated: where you sit", L"Seat place"),
+        number(L"Seat place", L"Back from screen (+) / closer (-)", "body", "seat_back", &Config::bodySeatBack, -0.3f, 1, 0.01f, 100, L"%.0f cm", kView),
+        number(L"Seat place", L"Up (+) / down (-)", "body", "seat_up", &Config::bodySeatUp, -0.3f, 0.3f, 0.01f, 100, L"%.0f cm", kView),
+        number(L"Seat place", L"Your view may leave the Sim's eyes by", "body", "seat_hold", &Config::bodySeatHold, 0.02f, 1, 0.02f, 100, L"%.0f cm", kView),
+        number(L"Seat place", L"Ignore the Sim's idle sway under", "body", "seat_still", &Config::bodySeatStill, 0, 0.2f, 0.01f, 100, L"%.0f cm", kView),
         toggle(L"View head", L"Hide your own face (mirrors keep it)", "body", "hide_face", &Config::bodyHideFace, kView),
         toggle(L"View head", L"Steady wrist HUD (idle doesn't move it)", "body", "steady_shoulders",
                &Config::bodySteadyShoulders, kView),
@@ -635,8 +873,14 @@ std::vector<Row> makeRows() {
                &Config::mirrorExterior, 0, 100, 5, 1, L"%.0f m", kNextStart),
         toggle(L"View mirrors", L"Mirrors clip at the glass (may pop objects)", "stereo", "mirror_clip", &Config::mirrorClip,
                kLive),
+        toggle(L"View mirrors", L"Pool reflection clipped at the water (nothing below it)", "stereo", "water_clip", &Config::waterClip,
+               kLive),
+        toggle(L"View mirrors", L"Pool reflection in the main pool's plane (not a mean of all)", "stereo", "water_one_plane",
+               &Config::waterOnePlane, kLive),
         toggle(L"View mirrors", L"No mirror or water reflections", "stereo", "reflections_off", &Config::reflectionsOff,
                kNextStart),
+        toggle(L"View shadows", L"Right eye of a pair reuses the left eye's shadows (walking/turning, faster)", "stereo", "pair_shadows",
+               &Config::pairShadows),
         toggle(L"View shadows", L"Right eye reuses the left eye's shadows (both real eyes, faster)", "stereo", "reuse_shadows",
                &Config::reuseShadows),
         toggle(L"View shadows", L"Right eye skips preparing shadows (faster)", "stereo",
@@ -654,6 +898,7 @@ std::vector<Row> makeRows() {
         number(L"Turning", L"Game camera turn speed", "controls", "turn_speed", &Config::turnSpeed, 200, 3000, 100, 1,
                L"%.0f"),
         flag(moving, L"Stairs and ladders carry you", "body", "carried_stairs", true),
+        flag(L"Swimming", L"Stick takes you into and out of the water", "swim", "enter_exit", true),  // swim.py
         toggle(moving, L"Body drawn at your height (stairs)", "body", "keep_height", &Config::bodyKeepHeight, kWalk),
         toggle(moving, L"Slide smoothly along walls", "body", "smooth_slide", &Config::bodySmoothSlide, kWalk),
         flag(L"Collision", L"Map walls and furniture around you", "body", "collision_scene", true, kLive),  // collide.py
@@ -671,6 +916,26 @@ std::vector<Row> makeRows() {
         toggle(L"Collision", L"Walk through bushes and flowers", "body", "soft_plants", &Config::softPlants, kWalk),
         number(L"Collision", L"Bushes slow you by up to", "body", "plant_slowdown", &Config::plantSlowdown, 0, 0.9f, 0.05f,
                100, L"%.0f%%", kWalk),
+        toggle(L"Collision", L"Step over low objects", "body", "step_over", &Config::stepOver, kWalk),
+        toggle(L"Collision", L"Step over any low object, not only rocks", "body", "step_all", &Config::stepAll, kWalk),  // collide.py
+        number(L"Collision", L"Tallest object you step over", "body", "step_height", &Config::stepHeight, 0.1f, 1.0f, 0.05f, 100,
+               L"%.0f cm", kWalk),
+        toggle(L"Foliage", L"Plants and leaves give way to your body", "foliage", "push", &Config::foliagePush),
+        toggle(L"Foliage", L"Prepare the shaders for it (next start)", "foliage", "patch_shaders", &Config::foliagePatch,
+               kNextStart),
+        number(L"Foliage", L"Push at the closest", "foliage", "push_cm", &Config::foliagePushCm, 5, 80, 5, 1, L"%.0f cm"),
+        toggle(L"Foliage", L"Your head pushes", "foliage", "head", &Config::foliageHead),
+        number(L"Foliage", L"Head reach", "foliage", "head_radius", &Config::foliageHeadRadius, 0.1f, 0.6f, 0.025f, 100,
+               L"%.1f cm"),
+        toggle(L"Foliage", L"Your hands push", "foliage", "hands", &Config::foliageHands),
+        number(L"Foliage", L"Hand reach", "foliage", "hand_radius", &Config::foliageHandRadius, 0.05f, 0.4f, 0.01f, 100,
+               L"%.0f cm"),
+        toggle(L"Foliage", L"Your body pushes", "foliage", "body", &Config::foliageBody),
+        number(L"Foliage", L"Body reach", "foliage", "body_radius", &Config::foliageBodyRadius, 0.1f, 0.8f, 0.025f, 100,
+               L"%.1f cm"),
+        toggle(L"Foliage", L"Other Sims push", "foliage", "sims", &Config::foliageSims),
+        number(L"Foliage", L"Test: every leaf rises by (0 = off)", "foliage", "lift_cm", &Config::foliageLiftCm, 0, 100, 5, 1,
+               L"%.0f cm"),
         flag(moving, L"Walking animation on stairs", "body", "stairs_walk", true, kLive),  // stride.py
         toggle(moving, L"Start and stop walking animations", "body", "walk_clips", &Config::bodyWalkClips, kWalk),
         number(moving, L"Stop smoothness (0 = instant)", "body", "stop_time", &Config::bodyStopTime, 0, 1.5f, 0.05f, 1,
@@ -688,10 +953,19 @@ std::vector<Row> makeRows() {
         flag(L"Doors", L"Doors open by hand", "body", "manual_doors", true, kLive),  // doors.py, collide.py
         number(L"Doors", L"Door push: hand speed that opens it", "body", "door_push_speed", &Config::doorPushSpeed, 0.3f, 3,
                0.1f, 1, L"%.1f m/s"),  // doors.py
+        flag(L"Doors", L"Doors need a handle grab", "body", "door_handle", true, kLive),  // doors.py
+        number(L"Doors", L"Door handle reach", "body", "door_handle_reach", &Config::doorHandleReach, 0.1f, 1.0f, 0.05f, 100,
+               L"%.0f cm"),  // doors.py
+        number(L"Doors", L"Sliding door: how far to slide it", "body", "door_slide", &Config::doorSlide, 0.05f, 0.5f, 0.05f, 100,
+               L"%.0f cm"),  // doors.py
         flag(L"Doors", L"Doors swing the other way", "body", "door_flip", false, kLive),  // doors.py
+        flag(L"Doors", L"Open the fridge door to cook", "body", "fridge_door", true, kLive),  // objmenu.py
+        number(L"Doors", L"Fridge door: how far to pull it open", "body", "fridge_door_pull", &Config::fridgeDoorPull, 0.05f, 0.6f,
+               0.05f, 100, L"%.0f cm"),  // objmenu.py
         flag(L"Reach", L"Grey out what is too far", "body", "grey_far", true, kLive),  // reach.py
         flag(L"Reach", L"Reactions don't stop you", "body", "reactions_in_place", true, kLive),  // scripted.py
         flag(L"Reach", L"The game can't send you to things", "body", "no_errands", true, kLive),  // scripted.py
+        flag(L"Reach", L"Nothing violent happens on its own", "body", "no_auto_violence", true, kLive),  // scripted.py
         flag(L"Reach", L"Stop walks you didn't ask for", "body", "route_guard", true, kLive),  // halt.py
 
         number(hands, L"Hand angle", "body", "hand_pitch", &Config::handPitch, 0, 90, 5, 1, L"%.0f°", kHands),
@@ -732,6 +1006,10 @@ std::vector<Row> makeRows() {
         scriptNumber(L"Other Sims hit strength", L"Counts as a hard hit from (pain)", "physical", "hard_pain", 0.8f, 0.2f, 2, 0.05f, L"%.2f"),
         scriptNumber(L"Other Sims hit strength", L"How much a hard pull hurts", "physical", "pull_pain", 0.5f, 0, 1.5f, 0.05f, L"%.2fx"),
         scriptNumber(L"Other Sims hit strength", L"How close you must be for intimate places", "physical", "intimacy_weight", 0.6f, 0, 1.5f, 0.05f, L"%.2fx"),
+        flag(L"Other Sims hit strength", L"Head slaps: surprised (or angry) first", "physical", "head_hit_first", true, kLive),
+        scriptNumber(L"Other Sims hit strength", L"Head slaps: what they do next comes after", "physical", "head_hit_delay", 1.5f, 0, 4, 0.25f, L"%.2f s"),
+        flag(L"Other Sims hit strength", L"Light hits can be friendly", "physical", "friendly_hits", true, kLive),
+        scriptNumber(L"Other Sims hit strength", L"Friendly up to", "physical", "friendly_max_speed", 2.4f, 0.5f, 4, 0.1f, L"%.1f m/s"),
         toggle(L"Other Sims look at hand", L"They look at the hand that touches them", "physical", "look_at_hand", &Config::lookAtHand, kTouch),
         number(L"Other Sims look at hand", L"Look: how fast it moves", "physical", "look_speed", &Config::lookSpeed, 1, 20, 0.5f, 1, L"%.1f", kTouch),
         number(L"Other Sims look at hand", L"Look: eyes only within", "physical", "look_eyes_within", &Config::lookEyesWithin, 0, 1, 0.05f, 100, L"%.0f cm", kTouch),
@@ -748,6 +1026,15 @@ std::vector<Row> makeRows() {
         flag(L"Other Sims hugs", L"Partner steps onto its spot at the start", "pair", "snap", true, kLive),  // pair.py
         flag(L"Other Sims hugs", L"Hugs and kisses hold you in place", "pair", "lock", true, kLive),  // pair.py
         scriptNumber(L"Other Sims hugs", L"Kiss: partner steps in by", "pair", "kiss_in", 10, 0, 40, 1, L"%.0f cm"),  // pair.py
+        // physapp.py: the phone's Body Physics app picks a Sim by touch or by looking (thread "Add body physics phone app")
+        flag(L"Body physics app", L"Touching a Sim picks her while picking", "bodyphysics", "pick_by_touch", true, kLive),
+        scriptNumber(L"Body physics app", L"Looking at a Sim picks her after", "bodyphysics", "dwell_seconds", 1.2f, 0.4f, 4, 0.1f,
+                     L"%.1f s"),
+        scriptNumber(L"Body physics app", L"Looking: within (of the middle of your view)", "bodyphysics", "dwell_angle", 8, 2, 25, 1,
+                     L"%.0f deg"),
+        flag(L"Body physics app", L"Outfit changes play the change spin", "bodyphysics", "outfit_spin", true, kLive),
+        scriptNumber(L"Body physics app", L"Picking mode ends after", "bodyphysics", "pick_timeout", 60, 10, 300, 10, L"%.0f s"),
+        scriptNumber(L"Body physics app", L"Pick the Sim I look at: within", "bodyphysics", "look_angle", 15, 4, 40, 1, L"%.0f deg"),
         // gestures.py: hand gestures at other Sims (thread "Hand gesture interactions with Sims")
         flag(L"Other Sims gestures", L"Wave: they wave back", "gestures", "wave", true, kLive),
         flag(L"Other Sims gestures", L"Open-palm come hither: they walk to you", "gestures", "come_hither", true, kLive),
@@ -774,7 +1061,22 @@ std::vector<Row> makeRows() {
         flag(L"Other Sims hits", L"Hits while you walk with the stick", "foley", "walk_hits", true, kLive),
         percent(scriptNumber(L"Other Sims hits", L"Knockback where you hit", "foley", "knockback", 1.0f, 0, 2, 0.05f,
                              L"%.0f%%")),
+        // Shoves (thread "Build aggressive shove gesture"): armik.cpp shove(), bodygrab.py shove()
+        flag(L"Shoves", L"Shoving Sims on", "foley", "shove", true, kLive),
+        scriptNumber(L"Shoves", L"A shove from (palm straight into them)", "foley", "shove_speed", 1.3f, 0.5f, 5, 0.1f,
+                     L"%.1f m/s"),
+        scriptNumber(L"Shoves", L"Sideways share allowed (more = swipes count too)", "foley", "shove_ratio", 0.7f, 0.2f, 2,
+                     0.05f, L"%.2f"),
+        scriptNumber(L"Shoves", L"Push: share of your hand's speed they take", "foley", "shove_force", 1.5f, 0.2f, 4, 0.05f,
+                     L"%.2f"),
+        scriptNumber(L"Shoves", L"They fall from (else they stumble)", "foley", "shove_fall_speed", 2.8f, 1, 8, 0.1f,
+                     L"%.1f m/s"),
+        scriptNumber(L"Shoves", L"A fallen Sim lies limp for", "foley", "shove_limp", 3.0f, 0.5f, 15, 0.5f, L"%.1f s"),
+        scriptNumber(L"Shoves", L"How much a shove hurts", "physical", "shove_pain", 0.45f, 0, 1.5f, 0.05f, L"%.2f"),
+        flag(L"Shoves", L"Light shoves from friends are play", "physical", "friendly_shoves", true, kLive),
         // ragdoll.cpp (thread "Build ragdoll system for punching", docs/RAGDOLL.md)
+        flag(L"Ragdoll", L"Test mode: ragdoll showcase (flinch, soft limits, relaxed pose, hit spin at test values)", "ragdoll",
+             "showcase", true, kLive),
         flag(L"Ragdoll", L"Ragdoll falls on", "ragdoll", "on", true, kLive),
         flag(L"Ragdoll", L"Test: your slaps and punches drop the Sim limp", "ragdoll", "test_on_hit", false, kLive),
         scriptNumber(L"Ragdoll", L"Blow: share of your hand's speed they take", "ragdoll", "strength", 0.5f, 0, 3, 0.05f,
@@ -782,6 +1084,32 @@ std::vector<Row> makeRows() {
         scriptNumber(L"Ragdoll", L"Limp for (then they blend back)", "ragdoll", "limp_seconds", 4, 0.5f, 30, 0.5f,
                      L"%.1f s"),
         scriptNumber(L"Ragdoll", L"Gravity", "ragdoll", "gravity", 1.0f, 0.2f, 2, 0.1f, L"%.1f x"),
+        flag(L"Ragdoll", L"Knocked out Sims fall as ragdolls", "ragdoll", "on_knockout", true, kLive),
+        scriptNumber(L"Ragdoll", L"Knocked out: ragdoll lasts", "ragdoll", "knockout_limp", 3.0f, 0.5f, 15, 0.5f,
+                     L"%.1f s"),
+        scriptNumber(L"Ragdoll", L"Soft joint limits (limbs and spine slow before the end)", "ragdoll", "soft_limits", 0.8f, 0, 1, 0.1f,
+                     L"%.1f"),
+        scriptNumber(L"Ragdoll", L"Relaxed pose (knees and elbows settle slightly bent)", "ragdoll", "relaxed", 0.5f, 0, 2, 0.1f,
+                     L"%.1f"),
+        scriptNumber(L"Ragdoll", L"Hit spin (arms trail the blow, legs lag)", "ragdoll", "hit_spin", 0.5f, 0, 2, 0.1f, L"%.1f"),
+        flag(L"Ragdoll", L"Flinch: hits make the struck part give way and spring back", "ragdoll", "flinch", true, kLive),
+        scriptNumber(L"Ragdoll", L"Flinch: share of your hand's speed they take", "ragdoll", "flinch_strength", 0.35f, 0, 2, 0.05f,
+                     L"%.2f"),
+        scriptNumber(L"Ragdoll", L"Flinch: back to the pose in", "ragdoll", "flinch_recover", 0.4f, 0.1f, 2, 0.05f,
+                     L"%.2f s"),
+        scriptNumber(L"Ragdoll", L"Flinch: stiffness at the hit part", "ragdoll", "flinch_local", 0.1f, 0, 1, 0.05f, L"%.2f"),
+        scriptNumber(L"Ragdoll", L"Flinch: stiffness of the rest", "ragdoll", "flinch_body", 0.9f, 0, 1, 0.05f, L"%.2f"),
+        scriptNumber(L"Ragdoll", L"Flinch: spread from the hit", "ragdoll", "flinch_spread", 0.45f, 0.1f, 1.5f, 0.05f,
+                     L"%.2f m"),
+        scriptNumber(L"Ragdoll", L"Stagger: how fast the body returns", "ragdoll", "stagger_omega", 5.0f, 2, 12, 0.5f, L"%.1f /s"),
+        scriptNumber(L"Ragdoll", L"Stagger: upper body leans further by", "ragdoll", "stagger_lean", 0.7f, 0, 2, 0.05f, L"%.2f"),
+        scriptNumber(L"Ragdoll", L"Stagger: a foot steps when the body is this far", "ragdoll", "stagger_step", 0.08f, 0.02f, 0.4f, 0.01f,
+                     L"%.2f m"),
+        scriptNumber(L"Ragdoll", L"Stagger: one step takes", "ragdoll", "stagger_step_time", 0.22f, 0.08f, 0.6f, 0.02f, L"%.2f s"),
+        flag(L"Ragdoll", L"Bumps into walls and furniture", "ragdoll", "world", true, kLive),
+        scriptNumber(L"Ragdoll", L"Stays within (of where the Sim stands, 0 = free)", "ragdoll", "tether", 1.2f, 0, 4, 0.1f,
+                     L"%.1f m"),
+        scriptNumber(L"Ragdoll", L"Blend back takes", "ragdoll", "blend_out", 1.0f, 0.1f, 3, 0.1f, L"%.1f s"),
         scriptNumber(L"Ragdoll", L"Damping (how fast motion dies away)", "ragdoll", "damping", 1.5f, 0, 4, 0.1f,
                      L"%.1f"),
         // knockout.py (user 2026-10-26 22:03Z)
@@ -805,6 +1133,11 @@ std::vector<Row> makeRows() {
         percent(scriptNumber(L"Touch sounds volume", L"Objects: tap", "foley", "volume_object_tap", 1.0f, 0, 2, 0.05f, L"%.0f%%")),
         percent(scriptNumber(L"Touch sounds volume", L"Objects: slap", "foley", "volume_object_slap", 1.0f, 0, 2, 0.05f, L"%.0f%%")),
         percent(scriptNumber(L"Touch sounds volume", L"Objects: punch", "foley", "volume_object_punch", 1.0f, 0, 2, 0.05f, L"%.0f%%")),
+        // Knocking (user 2026-11-01): fist (grip + trigger) into a door or window; armik.cpp objectTrack, knock.py, sounds\\knock
+        flag(L"Knocking", L"Knock on doors and windows", "foley", "knock", true, kLive),
+        scriptNumber(L"Knocking", L"A knock from (into it)", "foley", "knock_speed", 0.2f, 0.05f, 3, 0.05f, L"%.2f m/s"),
+        percent(scriptNumber(L"Knocking", L"Knock volume", "foley", "volume_knock", 1.0f, 0, 2, 0.05f, L"%.0f%%")),
+        flag(L"Knocking", L"Log the doors and windows found and knocks", "knock", "log", true, kLive),
         // Your hand hitting objects (armik.cpp objectTrack, collide.cpp handContact, foley.py; user 2026-10-27)
         flag(L"Touch sounds objects", L"Sounds when you hit objects and walls", "foley", "objects", true, kLive),
         scriptNumber(L"Touch sounds objects", L"A tap from (into it)", "foley", "object_tap_speed", 0.8f, 0.2f, 4, 0.1f, L"%.1f m/s"),
@@ -858,6 +1191,11 @@ std::vector<Row> makeRows() {
                L"%.0f%%"),
         number(L"Menus pie", L"Pie on the palm: height above it", "ui", "pie_palm_lift", &Config::piePalmLift, 0, 0.4f, 0.02f,
                100, L"%.0f cm"),
+        toggle(L"Menus pie", L"Pie on a TV: hover in front of its screen", "ui", "pie_tv", &Config::pieTvFront),
+        number(L"Menus pie", L"Pie on a TV: size against in front of you", "ui", "pie_tv_size", &Config::pieTvSize, 0.5f, 6, 0.25f,
+               100, L"%.0f%%"),
+        number(L"Menus pie", L"Pie on a TV: distance from the screen", "ui", "pie_tv_offset", &Config::pieTvOffset, 0, 2, 0.05f,
+               100, L"%.0f cm"),
         toggle(L"Menus pie", L"Own pie menu: poke your stomach", "ui", "self_pie_poke", &Config::selfPiePoke),
         toggle(L"Menus pie", L"Own pie menu: laser on your palm", "ui", "self_pie_palm", &Config::selfPiePalm),
         number(L"Menus pie", L"Pie menu distance", "ui", "pie_distance", &Config::pieDistance, 0.25f, 1, 0.05f, 100,
@@ -867,6 +1205,19 @@ std::vector<Row> makeRows() {
         number(L"Menus pickers", L"Picker size on fronts", "ui", "object_menu_width", &Config::objectMenuWidth, 0.4f, 1.5f, 0.05f,
                100, L"%.0f cm"),
         flag(L"Menus pickers", L"Open Claude on TVs too", "claude", "tvs", false, kLive),  // claude.py
+        flag(L"Menus pickers", L"Open Discord on screens", "discord", "on", true, kLive),  // discord.py
+        flag(L"Menus pickers", L"Discord screen: laser clicks", "discord", "interactive", true, kLive),
+        flag(L"Menus pickers", L"Discord sound: mute off screen", "discord", "mute_off_screen", false, kLive),
+        flag(L"Menus pickers", L"Discord sound: from the screen", "discord", "sound_3d", false, kLive),
+        scriptNumber(L"Menus pickers", L"Discord screen: pictures a second", "discord", "fps", 30, 5, 60, 5, L"%.0f"),
+        scriptNumber(L"Menus pickers", L"Discord screen: widest picture", "discord", "max_width", 1920, 640, 3840, 160,
+                     L"%.0f px"),
+        flag(L"Menus pickers", L"Open Linear board on screens", "linear", "on", true, kLive),  // linearboard.py
+        scriptNumber(L"Menus pickers", L"Linear board: refresh every", "linear", "poll", 20, 10, 120, 5, L"%.0f s"),
+        scriptNumber(L"Menus pickers", L"Linear board: Done shows last", "linear", "done_days", 14, 0, 60, 1, L"%.0f days"),
+        flag(L"Menus pickers", L"Linear board: Canceled column", "linear", "canceled", false, kLive),
+        flag(L"Menus pickers", L"Linear scrumboard on wall art", "linear", "cork", true, kLive),
+        scriptNumber(L"Menus pickers", L"Linear board: picture width", "linear", "width", 1920, 1280, 3840, 320, L"%.0f px"),
         flag(L"Menus popups", L"Other Sims' decisions: picked at random", "ui", "others_decide", true, kLive),  // objmenu.py
         number(L"Menus popups", L"Popup distance", "ui", "popup_distance", &Config::popupDistance, 0.4f, 1.5f, 0.05f, 100,
                L"%.0f cm"),
@@ -896,6 +1247,12 @@ std::vector<Row> makeRows() {
         toggle(L"HUD watch", L"Watch on your left wrist", "wrist", "watch", &Config::wristTime),
         toggle(L"HUD pause", L"Pause symbol while paused", "wrist", "pause", &Config::wristPause),
         toggle(L"HUD sleep", L"Clock in view while asleep", "wrist", "sleep_clock", &Config::wristSleepClock),
+        toggle(L"HUD lot intro", L"Cut it out where the game puts the banner (screen centre, UI pixels)", "wrist",
+               "lot_intro_crop_auto", &Config::wristLotCropAuto),
+        number(L"HUD lot intro", L"Banner width (game UI pixels, automatic cut-out)", "wrist", "lot_intro_banner_w",
+               &Config::wristLotBannerW, 200, 2000, 20, 1, L"%.0f px"),
+        number(L"HUD lot intro", L"Banner shift down (game UI pixels, automatic cut-out)", "wrist", "lot_intro_banner_y",
+               &Config::wristLotBannerY, -400, 400, 10, 1, L"%+.0f px"),
         number(L"HUD lot intro", L"Cut-out width (share of the UI)", "wrist", "lot_intro_crop_w", &Config::wristLotCropW, 0.1f, 1, 0.02f, 100,
                L"%.0f %%"),
         number(L"HUD lot intro", L"Cut-out height (share of the UI)", "wrist", "lot_intro_crop_h", &Config::wristLotCropH, 0.05f, 1, 0.01f, 100,
@@ -904,6 +1261,8 @@ std::vector<Row> makeRows() {
                100, L"%+.0f %%"),
         toggle(L"HUD lot intro", L"Show the lot name and traits while your eyes are shut for a load", "wrist", "lot_intro",
                &Config::wristLotIntro),  // lotintro.py
+        toggle(L"HUD work card", L"Close your eyes and show the work card when your Sim goes to work", "wrist", "work_card",
+               &Config::wristWork),  // work.py
         toggle(L"HUD needs", L"Needs inside your right forearm", "wrist", "needs", &Config::wristNeeds),
         toggle(L"HUD moodlets", L"Moodlets inside your right forearm", "wrist", "moodlets", &Config::wristMoodlets),
         toggle(L"HUD queue", L"Action queue on your left forearm", "wrist", "actions", &Config::wristQueue),
@@ -958,14 +1317,30 @@ std::vector<Row> makeRows() {
         number(L"Bubbles skill", L"Your skill bar: size", "bubbles", "skill_size", &Config::skillOwnSize, 0.05f, 0.6f, 0.01f,
                100, L"%.0f cm wide"),
 
+        choice(phone, L"Phone: where it comes out", "slots", "phone", &Config::phoneSlot,
+               {L"Right hip", L"Left hip", L"Right front pocket", L"Left front pocket", L"Right back pocket", L"Left back pocket", L"Right shoulder", L"Left shoulder", L"Right bra", L"Left bra", L"Center bra"}),
+        choice(phone, L"Phone: this Sim only", "slots", "this_phone", &Config::slotThisPhone,
+               {L"Same as everyone", L"Right hip", L"Left hip", L"Right front pocket", L"Left front pocket", L"Right back pocket", L"Left back pocket", L"Right shoulder", L"Left shoulder", L"Right bra", L"Left bra", L"Center bra"}),
+        number(phone, L"Slots: pocket, shoulder and bra reach", "slots", "radius", &Config::slotRadius, 0.05f, 0.4f, 0.01f, 100, L"%.0f cm"),
         number(phone, L"Hip: hand below your eyes", "phone", "hip_drop", &Config::phoneHipDrop, 0.1f, 0.9f, 0.02f, 100,
                L"%.0f cm"),
+        toggle(phone, L"Pass the phone to the other hand", "phone", "pass", &Config::phonePass),
+        number(phone, L"Pass: hands closer than", "phone", "pass_reach", &Config::phonePassReach, 0.08f, 0.5f, 0.02f, 100,
+               L"%.0f cm"),
         choice(phone, L"Text size on the phone", "phone", "text_size", &Config::phoneTextSize, {L"Small", L"Medium", L"Large"}),
+        number(phone, L"Right stick scroll speed (0 off)", "phone", "stick_scroll", &Config::phoneStickScroll, 0, 1500, 20, 1,
+               L"%.0f px/s"),
+        number(phone, L"Right stick dead zone", "phone", "stick_deadzone", &Config::phoneStickDeadzone, 0.05f, 0.9f, 0.05f, 100,
+               L"%.0f %%"),
+        number(phone, L"Swipe starts after", "phone", "swipe_start", &Config::phoneSwipeStart, 1, 20, 1, 1, L"%.0f px"),
+        number(phone, L"Swipe scroll speed", "phone", "swipe_speed", &Config::phoneSwipeSpeed, 0.3f, 3, 0.1f, 100, L"%.0f %%"),
         link(phone, L"Position", phonePosition),
         link(phone, L"Hand", phoneHand),
         link(phone, L"Size and screen", phoneSize),
         link(phone, L"Game's phone model", phoneModel),
         link(phone, L"Sounds", phoneSounds),
+        link(phone, L"Notifications", phoneNotes),
+        link(phone, L"Flashlight", phoneFlash),
         link(phone, L"Sims Forever (phone in front of you)", L"Phone sf"),
         link(L"Phone sf", L"Left hand", L"Phone sf left"),
         link(L"Phone sf", L"Right hand", L"Phone sf right"),
@@ -1001,19 +1376,52 @@ std::vector<Row> makeRows() {
                   L"%+.0f\u00b0"),
         component(L"Phone sf right", L"Hand roll", "simsforever", "phone_hand_turn_right", &Config::sfHandTurnR, 2, -180, 180, 5, 1,
                   L"%+.0f\u00b0"),
+        number(phoneFlash, L"Brightness", "phone", "flash_brightness", &Config::flashBrightness, 0, 100, 1, 1, L"x%.0f"),
+        number(phoneFlash, L"Fill light (black surfaces)", "phone", "flash_fill", &Config::flashFill, 0, 0.3f, 0.01f, 100,
+               L"%.0f %%"),
+        number(phoneFlash, L"Range", "phone", "flash_range", &Config::flashRange, 1, 40, 1, 1, L"%.0f m"),
+        number(phoneFlash, L"Cone width", "phone", "flash_cone", &Config::flashCone, 10, 120, 5, 1, L"%.0f\u00b0"),
         // The phone's Sounds screen has these too (phonesound.py: the names match its tone lists).
         choice(phoneSounds, L"Phone", "phone", "sound_mode", &Config::phoneSoundMode, {L"Sound", L"Vibrate", L"Mute"}),
-        choice(phoneSounds, L"Ringtone", "phone", "ringtone", &Config::phoneRingtone,
-               {L"None", L"Pop", L"Alternative", L"Electronica", L"Hip Hop", L"R&B", L"Spop", L"Sim Retro", L"Classical", L"Blues", L"Romance", L"World", L"New Age", L"Singer-Songwriter", L"Easy Listening", L"NuDisco", L"Latin Pop", L"Island Radio", L"Summer Strut", L"Americana", L"Soul", L"Metal", L"Focus", L"Afrobeats", L"Batuu Radio", L"Strange Tunes", L"Winter Holiday", L"Spooky"}),
-        choice(phoneSounds, L"Text and notification tone", "phone", "text_tone", &Config::phoneTextTone,
-               {L"None", L"Positive", L"Neutral", L"Uh-oh", L"Bills Paid", L"Club", L"Accepted", L"Moodlet", L"Advice"}),
+        choice(phoneSounds, L"Ringtone", "phone", "ringtone_file", &Config::phoneRingtone,
+               {L"None", L"Bustin\'", L"Old Phone 1", L"Old Phone 2", L"Outin\'"}),
+        choice(phoneSounds, L"Text and notification tone", "phone", "text_tone_file", &Config::phoneTextTone,
+               {L"None", L"Click", L"Promo", L"Slap", L"Success", L"Upgrade"}),
+        scriptNumber(phoneSounds, L"Phone speaker: high-pass (0 = off)", "foley", "phone_highpass", 600, 0, 2000, 50, L"%.0f Hz"),
         toggle(phoneSounds, L"Buzz when the game shows a popup", "phone", "popup_buzz", &Config::phonePopupBuzz),
+        // Calls (phonecall.py): the phone's own incoming call and in-call screens; the game's ring is left out.
+        flag(phoneSounds, L"Calls on the phone (own screens, no game ring)", "phone", "call_screen", true, kLive),
+        flag(phoneSounds, L"Animated text message screen", "phone", "text_screen", true, kLive),
+        // Notifications (notify.py, phonesound.py): which show live in front of you, and their sound on the phone.
+        flag(phoneNotes, L"Show notifications live", "phone", "notes_live", true, kLive),
+        flag(phoneNotes, L"Live: urgent", "phone", "notes_live_urgent", true, kLive),
+        flag(phoneNotes, L"Live: special moments", "phone", "notes_live_moment", true, kLive),
+        flag(phoneNotes, L"Live: household and game", "phone", "notes_live_player", true, kLive),
+        flag(phoneNotes, L"Live: about a Sim", "phone", "notes_live_sim", true, kLive),
+        flag(phoneNotes, L"Live: other mods", "phone", "notes_live_mod", true, kLive),
+        flag(phoneNotes, L"Live: Claude mods", "phone", "notes_live_claude", true, kLive),
+        flag(phoneNotes, L"Hide mods' notices while a lot loads", "phone", "notes_hide_startup", true, kLive),
+        scriptNumber(phoneNotes, L"Loading window", "phone", "notes_startup_seconds", 120, 0, 600, 15, L"%.0f s"),
+        flag(phoneNotes, L"Phone-only notices play a sound from the phone", "phone", "notes_sound_phone", true, kLive),
+        flag(phoneNotes, L"The game's own notification sound", "phone", "notes_sound_vanilla", false, kLive),
         toggle(tablet, L"Tablet in first-person build/buy", "tablet", "tablet", &Config::tablet),
         number(tablet, L"Width", "tablet", "width", &Config::tabletWidth, 0.15f, 0.5f, 0.01f, 100, L"%.0f cm"),
         number(tablet, L"Height (0 = fits the layout)", "tablet", "height", &Config::tabletHeight, 0, 0.5f, 0.01f, 100,
                L"%.0f cm"),
+        choice(tablet, L"Tablet: where it comes out", "slots", "tablet", &Config::tabletSlot,
+               {L"Right hip", L"Left hip", L"Right front pocket", L"Left front pocket", L"Right back pocket", L"Left back pocket", L"Right shoulder", L"Left shoulder", L"Right bra", L"Left bra", L"Center bra"}),
+        choice(tablet, L"Tablet: this Sim only", "slots", "this_tablet", &Config::slotThisTablet,
+               {L"Same as everyone", L"Right hip", L"Left hip", L"Right front pocket", L"Left front pocket", L"Right back pocket", L"Left back pocket", L"Right shoulder", L"Left shoulder", L"Right bra", L"Left bra", L"Center bra"}),
         number(tablet, L"Thickness", "tablet", "depth", &Config::tabletDepth, 0.003f, 0.03f, 0.001f, 100, L"%.1f cm"),
         number(tablet, L"Screen border", "tablet", "bezel", &Config::tabletBezel, 0, 0.03f, 0.001f, 100, L"%.1f cm"),
+        number(tablet, L"Weight (steadies the tablet in your hand)", "tablet", "steady", &Config::tabletSteady, 0, 1, 0.05f, 100,
+               L"%.0f%%"),
+        number(tablet, L"Steady laser point (hand shake)", "tablet", "pointer_steady", &Config::tabletPointer, 0, 1, 0.05f, 100,
+               L"%.0f%%"),
+        number(tablet, L"Build click: wait before pressing", "tablet", "click_hover", &Config::tabletClickHover, 0, 600, 25, 1,
+               L"%.0f ms"),
+        number(tablet, L"Build click: press length (0 = held)", "tablet", "click_press", &Config::tabletClickPress, 0, 1000, 25, 1,
+               L"%.0f ms"),
         number(tablet, L"Hand in from the edge", "tablet", "hold", &Config::tabletHold, 0, 0.12f, 0.005f, 100,
                L"%.1f cm"),
         number(tablet, L"Build menu size", "tablet", "menu_size", &Config::tabletUiScale, 0.3f, 4.0f, 0.05f, 100,
@@ -1053,6 +1461,10 @@ std::vector<Row> makeRows() {
         toggle(notebook, L"Notebook at your left hip", "book", "book", &Config::book),
         toggle(notebook, L"Poke and laser on the pages (hold the grip)", "book", "poke", &Config::bookPoke),
         toggle(notebook, L"Page-flip sound", "book", "sound", &Config::bookSound),
+        choice(notebook, L"Notebook: where it comes out", "slots", "book", &Config::bookSlot,
+               {L"Right hip", L"Left hip", L"Right front pocket", L"Left front pocket", L"Right back pocket", L"Left back pocket", L"Right shoulder", L"Left shoulder", L"Right bra", L"Left bra", L"Center bra"}),
+        choice(notebook, L"Notebook: this Sim only", "slots", "this_book", &Config::slotThisBook,
+               {L"Same as everyone", L"Right hip", L"Left hip", L"Right front pocket", L"Left front pocket", L"Right back pocket", L"Left back pocket", L"Right shoulder", L"Left shoulder", L"Right bra", L"Left bra", L"Center bra"}),
         number(notebook, L"Hip: hand below your eyes", "book", "hip_drop", &Config::bookHipDrop, 0.1f, 0.9f, 0.02f, 100,
                L"%.0f cm"),
         link(notebook, L"Position", notebookPosition),
@@ -1122,14 +1534,25 @@ std::vector<Row> makeRows() {
         toggle(sound, L"Sound follows your head", "audio", "follow_head", &Config::audioFollowsHead, kNextStart),
         toggle(sound, L"Far sounds come from where they are", "audio", "pan_any_distance",
                &Config::audioPanAnyDistance, kAudio),
+        choice(sound, L"Flat sounds made 3D (phone jingles)", "audio", "flat_to_3d", &Config::audioFlatTo3D,
+               {L"Off", L"Phone jingles", L"All flat UI sounds (test)"}),
         number(sound, L"Flat voices: full volume up to", "audio", "voice_near", &Config::audioVoiceNear, 0.5f, 10, 0.5f, 1,
                L"%.1f m", kAudio),
         number(sound, L"Flat voices: silent beyond (0 = their own)", "audio", "voice_far", &Config::audioVoiceFar, 0, 60, 1,
                1, L"%.0f m", kAudio),
         flag(sound, L"Outdoor sound comes in through doorways", "audio", "doors_matter", true, kLive),  // outdoors.py
         flag(sound, L"Porches with railings count as outside", "audio", "railings_outside", true, kLive),  // outdoors.py
+        number(sound, L"Outdoor sound heard inside, at least", "audio", "outdoor_floor", &Config::outdoorFloor, 0, 1, 0.05f, 2,
+               L"%.2f", kAudio),
+        number(sound, L"In a basement the outdoors is (1 = same)", "audio", "outdoor_basement", &Config::outdoorBasement, 0, 1,
+               0.05f, 2, L"%.2f", kAudio),
         scriptNumber(sound, L"A closed door lets through", "audio", "closed_door", 0.35f, 0, 1, 0.05f, L"%.2f"),
         scriptNumber(sound, L"Walls let through", "audio", "wall_leak", 0.25f, 0, 1, 0.05f, L"%.2f"),
+        flag(sound, L"Muffle sounds through walls and floors", "audio", "muffle_feed", true, kLive),  // collide.py -> Extended Sound Control
+        scriptNumber(sound, L"Muffle: a wall blocks", "audio", "muffle_wall", 0.5f, 0, 0.95f, 0.05f, L"%.2f"),
+        scriptNumber(sound, L"Muffle: a closed door blocks", "audio", "muffle_door", 0.35f, 0, 0.95f, 0.05f, L"%.2f"),
+        scriptNumber(sound, L"Muffle: a half wall blocks", "audio", "muffle_half_wall", 0.25f, 0, 0.95f, 0.05f, L"%.2f"),
+        scriptNumber(sound, L"Muffle: a floor or ceiling blocks", "audio", "muffle_floor", 0.6f, 0, 0.95f, 0.05f, L"%.2f"),
     };
     // Each HUD element's own page: where it sits (x y z), how it turns (yaw
     // pitch roll), its size; on an arm also how far round the arm.
@@ -1162,6 +1585,8 @@ std::vector<Row> makeRows() {
          &Config::wristSleepSize, 0.05f, 0.6f},
         {L"HUD lot intro", L"Lot name and traits on arrival", "lot_intro", &Config::wristLotPos, &Config::wristLotTurn,
          nullptr, &Config::wristLotSize, 0.3f, 3.0f},
+        {L"HUD work card", L"Work card (eyes closed at work)", "work_card", &Config::wristWorkPos, &Config::wristWorkTurn,
+         nullptr, &Config::wristWorkSize, 0.2f, 1.5f},
     };
     static std::string keys[sizeof(kHudRows) / sizeof(kHudRows[0])][4];
     for (size_t e = 0; e < sizeof(kHudRows) / sizeof(kHudRows[0]); ++e) {
@@ -1191,6 +1616,8 @@ std::vector<Row> makeRows() {
         rows.push_back(number(h.page, L"Size", "wrist", keys[e][3].c_str(), h.size, h.sizeMin, h.sizeMax, 0.005f, 100,
                               L"%.1f cm"));
     }
+    // The Body Physics phone app's rows join before pages are assigned (they were added after, so every one sat on the front page).
+    rows.insert(rows.end(), physicsRows.begin(), physicsRows.end());
     for (Row& r : rows) {
         if (r.index >= 0 && r.min <= -180 && r.max >= 180) r.wrap = true;  // the model's turns
         r.page = pageOf(r.group);
@@ -1206,6 +1633,7 @@ std::vector<Row> makeRows() {
         back.linkPage = parentOf(p);
         rows.push_back(back);
     }
+    applyDev(rows);
     applyTips(rows);
     return rows;
 }
@@ -1218,6 +1646,25 @@ bool g_hasNotePlace = false;
 Config* g_live = nullptr;
 std::vector<Row> g_rows;
 std::vector<char> g_flags;    // script mod switches' values
+size_t g_devRow = SIZE_MAX;   // the Developer options switch's row
+bool devOn() { return g_devRow >= g_flags.size() || g_flags[g_devRow] != 0; }
+bool rowGone(const Row& r, int depth);
+// A page whose rows are all hidden (it has rows): its link goes too.
+bool pageAllGone(int page, int depth) {
+    bool any = false;
+    for (const Row& r : g_rows) {
+        if (r.page != page || r.kind == Kind::Back) continue;
+        any = true;
+        if (!rowGone(r, depth + 1)) return false;
+    }
+    return any;
+}
+// Developer-only rows (and links to pages with nothing else) hide while Developer options is off.
+bool rowGone(const Row& r, int depth) {
+    if (devOn()) return false;
+    if (r.dev) return true;
+    return r.kind == Kind::Link && r.linkPage > 0 && depth < 8 && pageAllGone(r.linkPage, depth);
+}
 std::vector<float> g_values;  // script mod numbers' values
 std::mutex g_valueMutex;      // the values, for the script mod reading them (liveValue) on its thread
 std::vector<char> g_changed;  // saved when the menu closes
@@ -1273,6 +1720,7 @@ std::string g_savedPage;                  // what settings_page holds
 
 void buildLines() {
     if (!pageShown(g_page)) g_page = 0;  // its mod isn't loaded (any more)
+    if (g_page > 0 && pageAllGone(g_page, 0)) g_page = 0;  // developer-only page, Developer options off
     g_lines.clear();
     for (size_t i = 0; i < g_rows.size(); ++i)
         if (g_rows[i].kind == Kind::Back && g_rows[i].page == g_page) g_lines.push_back({static_cast<int>(i), nullptr});
@@ -1281,6 +1729,7 @@ void buildLines() {
         const Row& r = g_rows[i];
         if (r.page != g_page || r.kind == Kind::Back) continue;
         if (r.kind == Kind::Link && (r.linkPage <= 0 || !pageShown(r.linkPage))) continue;
+        if (rowGone(r, 0)) continue;
         if (g_page == 0 && (!group || wcscmp(group, r.group) != 0)) {
             group = r.group;
             g_lines.push_back({-1, group});
@@ -1295,6 +1744,7 @@ int pageSize(int page, int depth = 0) {
     for (const Row& r : g_rows) {
         if (r.page != page || r.kind == Kind::Back) continue;
         if (r.kind == Kind::Link && (r.linkPage <= 0 || !pageShown(r.linkPage))) continue;
+        if (rowGone(r, 0)) continue;
         // depth: another mod's menu could link round in a circle
         n += r.kind == Kind::Link && r.linkPage != page ? depth < 8 ? pageSize(r.linkPage, depth + 1) : 0 : 1;
     }
@@ -1356,6 +1806,7 @@ void setToggle(size_t i, bool on) {
         g_live->*r.toggle = on;
     else
         g_flags[i] = on;
+    if (i == g_devRow) buildLines();  // rows appear or go
 }
 
 // true/false, yes/no, on/off or a number, as config.cpp reads them.
@@ -1397,20 +1848,31 @@ void applyChange(Apply apply) {
                                   c.bodyNearAdaptive, c.bodyNearMax);
             camera::setHeadOffset(c.bodyHeadX, c.bodyHeadY, c.bodyHeadZ);
             camera::setSeatFollow(c.bodySeatFollow);
+            camera::setCas(c.casStereo, c.casDistance, c.casEyeSeparation, c.casEyeHeight);
+            camera::setWorldScale(c.worldScale);
             armik::setSeatTorso(c.bodySeatTorso);
             armik::setSteadyShoulders(c.bodySteadyShoulders);
             facehide::setEnabled(c.bodyHideFace);
+            facehide::setFarSimCull(c.farSimCull);
+            facehide::setEyeSimCull(c.eyeSimCull);
+            gputimeline::setEnabled(c.gpuTimeline);
             godhands::setEnabled(c.bodyGodHands);
+            casbody::setEnabled(c.casBody);
+            casbody::setEyesAtBody(c.casBodyEyes);
+            casbody::setStill(c.casBodyStill);
             break;
         case kWalk:
             player::configure(c.walkSpeed, c.runSpeed, c.bodyForward, c.bodyHeight, c.touchBodies && c.armIk);
             player::setKeepHeight(c.bodyKeepHeight);
+            player::setLazyTurn(c.bodyLazyTurn);
+            player::setStandRate(c.bodyStandRate);
             player::setSmoothSlide(c.bodySmoothSlide);
             collide::configure(c.bodyCollision, c.bodyRadius);
             collide::setFurnitureRadius(c.furnitureRadius);
             collide::configureHands(c.handCollision);
             collide::setHandGaps(c.handWallGap, c.handObjectGap);
             collide::configurePlants(c.softPlants, c.plantSlowdown);
+            collide::configureStep(c.stepOver, c.stepHeight);
             player::setStopTime(c.bodyStopTime);
             player::configureCrouch(c.crouch, c.crouchDepth, c.crouchSpeed, c.crouchSeconds);
             player::setStopGlide(c.bodyStopGlide);
@@ -1429,8 +1891,11 @@ void applyChange(Apply apply) {
         case kRenderScale: g_renderScaleChanged = true; break;
         case kShadows: shadows::configure(c.steadyShadows, c.shadowStep, c.shadowSharp); break;
         case kAudio:
+            ambience::setFloor(c.outdoorFloor);
+            ambience::setBasement(c.outdoorBasement);
             camera::setPanAnyDistance(c.audioPanAnyDistance);
             camera::setVoiceRadii(c.audioVoiceNear, c.audioVoiceFar);
+            camera::setFlatTo3D(c.audioFlatTo3D, c.audioFlatIds, c.audioFlatGraph);
             break;
         default: break;
     }
@@ -1448,6 +1913,7 @@ const char* modName(othermods::Mod mod) {
     switch (mod) {
         case othermods::kSoundControl: return "Extended Sound Control";
         case othermods::kBustinOut: return "Claude Bustin Out";
+        case othermods::kRealisticLighting: return "Claude Realistic Lighting";
         default: return "Integrated Body Physics";
     }
 }
@@ -1664,6 +2130,8 @@ bool mergeMenus() {
         any = merged[othermods::kSoundControl] = true;
     if (!merged[othermods::kBustinOut] && mergeMenu(othermods::kBustinOut, L"cbo:"))
         any = merged[othermods::kBustinOut] = true;
+    if (!merged[othermods::kRealisticLighting] && mergeMenu(othermods::kRealisticLighting, L"crl:"))
+        any = merged[othermods::kRealisticLighting] = true;
     return any;
 }
 
@@ -1679,6 +2147,8 @@ void changed(size_t i) {
         g_redraw = true;
         return;
     }
+    if (g_rows[i].section && !strcmp(g_rows[i].section, "logging") && g_rows[i].key)
+        s4vr::log::setOption(g_rows[i].key, g_rows[i].kind == Kind::Toggle ? (g_flags[i] ? 1.0f : 0.0f) : g_values[i]);
     g_lastChange = GetTickCount64();
     // A three-number key is saved whole: its other rows count as changed too.
     if (g_rows[i].index >= 0) {
@@ -1858,6 +2328,14 @@ bool change(size_t i, int dir) {
                 g_doneAt = GetTickCount64();
                 g_doneRow = i;
                 LOG("Settings: %ls", r.label);
+                return true;
+            }
+            if (r.action == 205) {  // native: the flight recorder's last seconds to a trace file
+                const std::string file = s4vr::log::dumpTrace("menu", true);
+                LOG("Settings: %ls -> %s", r.label, file.empty() ? "nothing to dump (recorder off?)" : file.c_str());
+                g_redraw = true;
+                g_doneAt = GetTickCount64();
+                g_doneRow = i;
                 return true;
             }
             if (r.action == 201 || r.action == 202) {  // native: the turn benchmark (benchmark.cpp), not a script control
@@ -2379,12 +2857,22 @@ void init(const std::wstring& moduleDir, Config* live) {
     g_ini = moduleDir + L"\\sims4vr.ini";
     g_live = live;
     g_rows = makeRows();
+    {   // A row whose group has no entry in kFixedPages lands on the main page: say so in the log (2026-11-04).
+        static std::vector<std::wstring> reported;
+        for (const Row& r : g_rows) {
+            if (!r.group || pageOf(r.group) != 0 || !wcscmp(r.group, g_pages[0].group)) continue;
+            if (std::find(reported.begin(), reported.end(), r.group) != reported.end()) continue;
+            reported.push_back(r.group);
+            LOG("Settings: rows in group '%ls' have no page in kFixedPages (they would show on the main page)", r.group);
+        }
+    }
     g_flags.assign(g_rows.size(), 0);
     g_values.assign(g_rows.size(), 0.0f);
     g_changed.assign(g_rows.size(), 0);
     g_removed.assign(g_rows.size(), 0);
     for (size_t i = 0; i < g_rows.size(); ++i) {
         const Row& r = g_rows[i];
+        if (r.key && !strcmp(r.key, "dev_options")) g_devRow = i;
         if (r.kind == Kind::Toggle && !r.toggle && r.key)
             g_flags[i] = parseFlag(readSetting(g_ini, r.section, r.key, ""), r.fallback);
         if (r.kind == Kind::Number && !r.number && !r.triple && r.key) {
@@ -2567,6 +3055,14 @@ void queueSave(std::vector<Entry> entries) {
 
 std::vector<PageRow> pageRows(const wchar_t* group, std::wstring* title, std::wstring* parent) {
     std::vector<PageRow> out;
+    // Another mod's pages (ibp:/esc:/cbo:) on the phone without the menu ever opened: merge their export now and
+    // keep the values current (the menu does both on open; the phone apps of those mods show them closed).
+    if (!g_open && group && group[0] && group[3] == L':') {
+        static ULONGLONG lastRead = 0;
+        const ULONGLONG now = GetTickCount64();
+        mergeMenus();
+        if (now - lastRead > 400) readJiggle(), lastRead = now;
+    }
     const int page = pageOf(group);
     if (page <= 0) return out;
     if (title) *title = g_pages[page].name;

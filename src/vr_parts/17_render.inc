@@ -238,7 +238,7 @@ static void steadyMirror(ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_DESC
                 static_cast<unsigned long long>(counts[1]));
     }
     if (g_mirror) {
-        if (eye == 0) {
+        if (eye == std::clamp(g_config.monitorEye, 0, 1)) {
             context->CopyResource(g_mirror, backbuffer);
             g_mirrorValid = true;
         } else if (g_mirrorValid) {

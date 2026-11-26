@@ -11,6 +11,7 @@
 #include "armik.h"
 #include "collide.h"
 #include "crashlog.h"
+#include "framecost.h"
 #include "addrs.h"
 #include "gameaddr.h"
 #include "log.h"
@@ -49,7 +50,7 @@ float g_restPoint[3] = {};  // where slowing down ends (x, z) and how far off
 bool g_poseValid = false;
 
 // Game thread.
-float g_walkSpeed = 1.5f, g_runSpeed = 3.0f, g_eyeForward = 0.10f, g_eyeHeight = 0.15f;
+float g_walkSpeed = 1.5f, g_runSpeed = 2.5f, g_eyeForward = 0.10f, g_eyeHeight = 0.15f;
 bool g_simCollision = true;
 // Your head against other Sims ([physical] head, user 2026-10-17 04:06Z: "if
 // I try and put my head through another sim, I will get repelled"): leaning
@@ -65,6 +66,8 @@ int g_collideLogs = 0;
 float g_lean[2] = {};
 ULONGLONG g_collideLogTick = 0;
 ULONGLONG g_repelLogTick = 0;
+bool g_teleGo = false;  // teleportTo asked (under g_mutex)
+float g_teleTo[3] = {};
 std::atomic<bool> g_running{false};  // left stick tapped: run speed and the Sim's run walk
 bool g_free = false;
 float g_crouchDrop = 0;  // game units the view is lowered by crouching
@@ -106,6 +109,11 @@ float g_stopW = 0;
 float g_rest = 0;  // metres still to go while slowing (published with the pose)
 float g_plantSpeed = 1;  // walking through bushes (collide::plantSpeed, eased)
 float g_floorY = 0;
+float g_stepY = 0;  // feet and view ride this far above the floor on a low object (collide::stepHeight, eased)
+constexpr float kLedgeDrop = 1.2f;  // metres: a floor this much lower than under you holds you back (balcony edges)
+float g_ledgeHead[2] = {0, 0};
+bool g_ledgeValid = false;
+int g_ledgeLogs = 0;
 float g_eyeAboveFloor = 0;
 float g_mark[2] = {};  // last sane eye offset from the root, in the body's frame
 bool g_markValid = false;
@@ -258,11 +266,15 @@ constexpr size_t kSetTransformSlot = 0x28 / 8;
 std::atomic<uint8_t*> g_pinActor{nullptr};
 SRWLOCK g_pinLock = SRWLOCK_INIT;
 float g_pin[7] = {};  // position, rotation xyzw
+std::atomic<bool> g_lazyTurn{true};
+std::atomic<float> g_standRate{10.0f};
+std::atomic<ULONGLONG> g_stickTurnTick{0};
 SetTransformFn g_setTransform = nullptr;  // the game's, behind our hook
 bool g_pinHookTried = false;
 
 void pinnedSetTransform(void* actor, const float* t) {
     if (actor && actor == g_pinActor.load(std::memory_order_acquire)) {
+        framecost::bodyPlaced();
         alignas(16) float c[12];
         std::memcpy(c, t, sizeof(c));
         AcquireSRWLockShared(&g_pinLock);
@@ -509,6 +521,9 @@ void setClipStop(float metres) {
 void release() { unpin(); }
 
 void setKeepHeight(bool on) { g_keepHeight.store(on, std::memory_order_relaxed); }
+void setLazyTurn(bool on) { g_lazyTurn.store(on, std::memory_order_relaxed); }
+void setStandRate(float perSecond) { g_standRate.store(perSecond, std::memory_order_relaxed); }
+void noteStickTurn() { g_stickTurnTick.store(GetTickCount64(), std::memory_order_relaxed); }
 
 void setStopTime(float seconds) {
     if (!(seconds >= 0 && seconds <= 3)) seconds = 0.5f;
@@ -565,6 +580,14 @@ void reset() {
     g_poseValid = false;
     g_freeAllowed = false;
     g_stateTick = 0;
+}
+
+void teleportTo(float x, float y, float z) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    g_teleTo[0] = x;
+    g_teleTo[1] = y;
+    g_teleTo[2] = z;
+    g_teleGo = true;
 }
 
 bool update(const Input& in, float viewYaw, float turn, Output& out) {
@@ -650,6 +673,8 @@ bool update(const Input& in, float viewYaw, float turn, Output& out) {
         g_facingHead = false;
         g_speed = 0;
         g_floorY = cur[1];
+        g_stepY = 0;
+        g_ledgeValid = false;
         g_eyeAboveFloor = in.headJoint[1] - cur[1] + (std::isfinite(in.eyeUp) ? in.eyeUp : g_eyeHeight * s);
         g_free = true;
         g_markValid = false;
@@ -767,6 +792,30 @@ bool update(const Input& in, float viewYaw, float turn, Output& out) {
     }
     g_base[0] += vx * dt;
     g_base[1] += vz * dt;
+    // A teleport (teleport.cpp): the head goes over the spot, standing on the floor there.
+    {
+        bool go;
+        float to[3];
+        {
+            std::lock_guard<std::mutex> lock(g_mutex);
+            go = g_teleGo;
+            g_teleGo = false;
+            std::memcpy(to, g_teleTo, sizeof(to));
+        }
+        if (go && finite3(to)) {
+            float ax, az;
+            turnXZ(g_viewYaw, in.hmd[0] * s, in.hmd[2] * s, ax, az);
+            g_base[0] = to[0] - ax;
+            g_base[1] = to[2] - az;
+            g_lean[0] = g_lean[1] = 0;
+            g_speed = g_speedRate = 0;
+            g_slowing = false;
+            g_floorY = to[1];
+            g_stepY = 0;
+            g_ledgeValid = false;
+            LOG("Player: teleported to %.2f %.2f %.2f", to[0], to[1], to[2]);
+        }
+    }
     if (g_stepLogs < kStepMaxLogs && dt > 0 && vx * vx + vz * vz > 0.25f * s * s) {
         StepStats& st = g_steps;
         st.walked += dt;
@@ -808,7 +857,7 @@ bool update(const Input& in, float viewYaw, float turn, Output& out) {
         float rx = hx - g_lean[0], rz = hz - g_lean[1];  // where you'd be without the hold
         float x = rx, z = rz;
         int what = 0;
-        float moved = collide::pushOut(x, z, bodyRadius * s, collide::furnitureRadius() * s, g_floorY,
+        float moved = collide::pushOut(x, z, bodyRadius * s, collide::furnitureRadius() * s, g_floorY + g_stepY,
                                         (bodyRadius + 0.25f) * s, what);
         float lx = walking ? 0 : x - rx, lz = walking ? 0 : z - rz;
         g_base[0] += x - hx;
@@ -878,6 +927,8 @@ bool update(const Input& in, float viewYaw, float turn, Output& out) {
     // standing only once you look far enough aside (glancing around doesn't
     // spin the body).
     bool moving = std::sqrt(vx * vx + vz * vz) > 0.15f * s;
+    const ULONGLONG turnTick = g_stickTurnTick.load(std::memory_order_relaxed);
+    const bool stickTurning = g_lazyTurn.load(std::memory_order_relaxed) && turnTick && GetTickCount64() - turnTick < 250;
     float want = g_simYaw;
     float fx, fz;
     turnXZ(g_viewYaw, in.hmdForward[0], in.hmdForward[1], fx, fz);
@@ -888,7 +939,8 @@ bool update(const Input& in, float viewYaw, float turn, Output& out) {
         g_facingHead = false;
     } else if (lookValid) {
         float off = std::remainder(look - g_simYaw, kTwoPi);
-        if (std::fabs(off) > kStandingSlack) g_facingHead = true;
+        // Turning with the stick: the body waits, so the game isn't asked to re-place it at a new heading every picture.
+        if (std::fabs(off) > kStandingSlack && !stickTurning) g_facingHead = true;
         if (g_facingHead) {
             want = look;
             if (std::fabs(off) < 0.05f) g_facingHead = false;
@@ -939,14 +991,61 @@ bool update(const Input& in, float viewYaw, float turn, Output& out) {
         g_poseMark[2] = jy;
         g_poseMarkValid = true;
     }
+    // Ledge guard: a step that would put the floor under your head more than kLedgeDrop lower (a balcony or
+    // roof edge the walls didn't hold, not a flight of stairs) is not taken: you stay where you were.
+    if (floorFresh && flight[4] <= 0 && g_ledgeValid) {
+        float below = floorAt(hx, hz, g_floorY);
+        if (std::isfinite(below) && below < g_floorY - kLedgeDrop * s) {
+            if (g_ledgeLogs < 30) {
+                ++g_ledgeLogs;
+                LOG("Player: ledge guard: the floor there is %.2f m lower than under you; step not taken", (g_floorY - below) / s);
+            }
+            g_base[0] += g_ledgeHead[0] - hx;
+            g_base[1] += g_ledgeHead[1] - hz;
+            hx = g_ledgeHead[0];
+            hz = g_ledgeHead[1];
+        }
+    }
+    g_ledgeHead[0] = hx;
+    g_ledgeHead[1] = hz;
+    g_ledgeValid = true;
     turnXZ(g_simYaw, lx, lz, wx, wz);
     float root[3];
     root[0] = hx + std::sin(look) * ahead - wx;
     root[2] = hz + std::cos(look) * ahead - wz;
-    root[1] = floorAt(root[0], root[2], cur[1]);
+    // Low objects (garden rocks, borders): the feet ride on top of the one under your head, up quickly, down a little
+    // slower; never on stairs.
+    {
+        float ground = floorAt(hx, hz, cur[1]);
+        float goal = floorFresh && flight[4] <= 0 && std::isfinite(ground) ? collide::stepHeight(hx, hz, ground) : 0;
+        if (!std::isfinite(goal) || goal < 0) goal = 0;
+        g_stepY += (goal - g_stepY) * ease(goal > g_stepY ? 16.0f : 10.0f, dt);
+        if (std::fabs(goal - g_stepY) < 0.002f * s) g_stepY = goal;
+    }
+    root[1] = floorAt(root[0], root[2], cur[1]) + g_stepY;
     installPin(in.actor);
     pin(in.actor, root, g_simYaw);
-    if (!in.deferPlace) place(in.actor, root, g_simYaw);
+    // Standing while the stick turns: the body is already where it was put, so the game isn't told again.
+    static float s_placed[4];
+    static uint8_t* s_placedActor = nullptr;
+    // A standing body that only turns (catching up after the stick turn) is placed at most kPlaceRate times a second.
+    static ULONGLONG s_placedTick = 0;
+    const float rate = g_standRate.load(std::memory_order_relaxed);
+    const ULONGLONG nowTick = GetTickCount64();
+    const bool turnOnly = !moving && s_placedActor == in.actor && std::fabs(root[0] - s_placed[0]) < 1e-4f &&
+                          std::fabs(root[1] - s_placed[1]) < 1e-4f && std::fabs(root[2] - s_placed[2]) < 1e-4f;
+    const bool slow = rate > 0.5f && turnOnly && nowTick - s_placedTick < static_cast<ULONGLONG>(1000.0f / rate) &&
+                      std::fabs(std::remainder(g_simYaw - s_placed[3], kTwoPi)) < 0.5f;
+    const bool same = slow || stickTurning && !moving && s_placedActor == in.actor && std::fabs(root[0] - s_placed[0]) < 1e-4f &&
+                      std::fabs(root[1] - s_placed[1]) < 1e-4f && std::fabs(root[2] - s_placed[2]) < 1e-4f &&
+                      std::fabs(g_simYaw - s_placed[3]) < 1e-4f;
+    if (!in.deferPlace && !same) {
+        place(in.actor, root, g_simYaw);
+        std::memcpy(s_placed, root, sizeof(root));
+        s_placed[3] = g_simYaw;
+        s_placedActor = in.actor;
+        s_placedTick = nowTick;
+    }
 
     // Camera: eye height above the floor under your head, from how tall the
     // Sim stands (slowly, so the walk's bob doesn't move the view).
@@ -982,7 +1081,7 @@ bool update(const Input& in, float viewYaw, float turn, Output& out) {
         static ULONGLONG lastLog = 0;
         static int logs = 0;
         ULONGLONG tick = GetTickCount64();
-        if (logs < 120 && tick - lastLog > 500) {
+        if (logs < 120 && tick - lastLog > 2000) {
             lastLog = tick;
             ++logs;
             const float* its = eyes ? in.eyes : in.headJoint;
@@ -1006,7 +1105,7 @@ bool update(const Input& in, float viewYaw, float turn, Output& out) {
         g_crouchDrop = (amount * amount * (3 - 2 * amount)) * g_crouchDepth.load(std::memory_order_relaxed) * s;
     }
     out.base[0] = g_base[0];
-    out.base[1] = g_floorY + g_eyeAboveFloor - g_crouchDrop;
+    out.base[1] = g_floorY + g_stepY + g_eyeAboveFloor - g_crouchDrop;
     out.base[2] = g_base[1];
     out.viewYaw = g_viewYaw;
 

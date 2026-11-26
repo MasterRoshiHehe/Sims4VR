@@ -171,6 +171,9 @@ bool takeFoleyEvent(FoleyEvent& e);
 void configureGrab(float curl, float drag, float breastCurl, float buttCurl);
 // A Sim you touch or grab looks at that hand, then at you ([physical] look_at_hand).
 void setLookAtHand(bool on, float speed, float eyesWithin, float headFrom);
+// Influence (influence.py): that Sim looks where the player's laser ends: eyes only within eyesWithin metres of its
+// eyes, the head turning from headFrom metres (as a touch does). nullptr: off.
+void setInfluenceLook(void* actor, float eyesWithin, float headFrom);
 // That Sim raises a hand toward your raised `side` hand for `seconds` (0 withdraws);
 // your palm meeting it is touch event kind 7.
 void offerHighFive(void* actor, int side, float seconds);
@@ -221,5 +224,10 @@ void saveGameGrip();
 // the head's left-right axis on top of the game's animation.
 void setVoiceActor(void* actor);
 void setMouth(float radians);
+
+
+// A Sim falls as a ragdoll (ragdoll.h) along `velocity` (m/s, world; all zero: along the last blow your hand
+// gave it, if within 3 s) and blends back after `limpSeconds`. Any thread; false if refused.
+bool ragdollStart(void* actor, const float velocity[3], float limpSeconds);
 
 }  // namespace s4vr::armik

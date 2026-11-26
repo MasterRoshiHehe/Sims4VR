@@ -106,10 +106,11 @@ def _sims_forever(sim):
     return None
 
 
-def _screen(obj):
-    """Centre, normal, up, width, height of the computer's screen (world units)."""
+def _screen(obj, index=0):
+    """Centre, normal, up, width, height of the computer's screen (world units); `index`: which, of a model
+    with several (screenmesh.names)."""
     from sims4vr import objmenu
-    centre, normal, up, width, height, video = objmenu._front(obj, True)
+    centre, normal, up, width, height, video = objmenu._front(obj, True, index)
     if not video:
         # No screen in the model: a 4:3 screen 55% of the front's width, near its top.
         w = width * 0.55

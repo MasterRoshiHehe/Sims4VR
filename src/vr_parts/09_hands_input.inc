@@ -71,10 +71,16 @@ static int g_phoneHand = 1;
 static bool g_bookOut = false;
 static int g_bookHand = 0;
 static int g_bookSpread = 0;
+static std::atomic<int> g_bookFlipTo{-1};      // a page turning toward this spread (-1: none)
+static std::atomic<float> g_bookFlipPsi{-1};   // the turning leaf's angle from lying right (0) to lying left (pi); -1: none
+static int g_bookFlipFrom = 0;
+static ULONGLONG g_bookFlipAt = 0;
 static float g_bookAnim = 0;
 static void bookHandShift(int side, camera::Vec3& move, camera::Quat& turn);
 static void updateBookLeaves();
 static void bookApplyPick();
+static std::atomic<int> g_buildPhoneHand{-1};  // the hand that held the phone when build mode was asked for (-1: none)
+static std::atomic<int> g_tabletOpenHand{-1};  // eyes open in build mode: bring the tablet out in this hand (controls)
 static bool g_tablet = false;  // what's out is the tablet (first-person build/buy), not the phone
 static float g_tabletAspect = 1;  // its screen's width / height (the palette's, or the whole UI's)
 static void phoneSize(float& w, float& h, float& d);

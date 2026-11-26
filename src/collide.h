@@ -9,7 +9,7 @@
 namespace s4vr::collide {
 
 // Python (any thread): the scene, packed as floats:
-//   wall count, then 6 per wall side (ax, az, bx, bz, y0, y1),
+//   wall count, then 7 per wall side (ax, az, bx, bz, y0, y1, fence 0/1),
 //   shape count, then per shape: point count n, y0, y1, flags (1: stops your
 //   body; 2: what your hands meet of an object, its model's box; 4: a
 //   footprint your hands skip, as it has a 2), then n x, z pairs.
@@ -51,6 +51,14 @@ void configurePlants(bool soft, float maxSlow);
 // (1: nothing slows you; 1 - maxSlow at most).
 float plantSpeed(float x, float z, float feetY);
 
+// [body] step_over / step_height (debug menu, Controls > Moving): objects up
+// to maxHeight tall (shapes with flag 64, marked by collide.py) don't stop your
+// body or hands; you walk over them.
+void configureStep(bool on, float maxHeight);
+// Game thread: how far above the ground (y `ground` under your head) your feet
+// ride at (x, z): the top of the stepped-on object there (0 on bare ground).
+float stepHeight(float x, float z, float ground);
+
 // The pose hook (armik.cpp), every solve of your Sim's arm (side 0 left):
 // where your real palm is (`target`, world) and the hand's shape around it:
 // `count` balls, each `offsets` (x, y, z world vector from the palm) with
@@ -72,5 +80,19 @@ float stopHand(int side, const float target[3], const float* offsets, const floa
 // deepest contact: its normal (out of the surface toward the hand: the top of a table is
 // straight up) and material (collide.py: 0 hard, 1 metal, 2 soft, 3 glass; 4 a wall).
 bool handContact(float x, float y, float z, float radius, float normal[3], int& material);
+
+}  // namespace s4vr::collide
+
+namespace s4vr::collide {
+
+// Muffling (Extended Sound Control's esc_set_occlusion): collide.py sends what blocks sound, as floats:
+//   segment count, then 7 per segment (ax, az, bx, bz, y0, y1, weight 0..1: the share it blocks per crossing),
+//   floor count, then per floor slab: y, weight.
+// An empty array switches it off.
+void setOcclusion(const float* data, int count);
+// Audio thread: false while off (nothing sent to the sound mod).
+bool occlusionActive();
+// Audio thread: 0 (clear) .. 0.95 (nearly blocked) between a listener and a sound (world metres x, y, z).
+float occlusion(const float* from, const float* to);
 
 }  // namespace s4vr::collide

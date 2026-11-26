@@ -90,6 +90,20 @@ TRAITS = (('hotheaded', -0.1), ('mean', -0.1), ('evil', -0.05), ('snob', -0.05),
           ('gloomy', -0.03), ('cheerful', 0.05), ('goofball', 0.05), ('outgoing', 0.05))
 ROMANTIC_TRAIT = 0.1  # trait_Romantic, on intimate places when romance can be
 TEMPERED = ('hotheaded', 'mean')  # these heckle instead of looking shocked
+# A slap or punch to the head (user 2026-10-28 04:37Z): first an unpleasantly
+# surprised reaction (the game's own, from mean socials), then whatever they
+# do next; hot-tempered or angry Sims skip the surprise and get angry at once.
+HEAD = frozenset(('face', 'hair', 'neck'))
+# Light slaps and punches can be friendly (user 2026-10-28 04:45Z): a light one
+# on the arm, shoulder or back between friends, or on the butt between lovers,
+# reads as play when the Sim likes you or is in a playful mood (no hard stop,
+# no hurt moodlets, they laugh). A hard one ([physical] hard_hit_speed) is
+# never welcome, whoever you are to them.
+FRIENDLY_PLACES = frozenset(('hand', 'forearm', 'upper arm', 'shoulder', 'back'))
+PLAYFUL_TRAITS = ('goofball', 'cheerful', 'outgoing', 'flirty', 'romantic', 'childish')
+PLAYFUL_MOODS = ('playful', 'flirty', 'happy', 'confident')
+HOT_TEMPERED = ('hotheaded', 'mean', 'evil')
+MEAN_SURPRISED = SURPRISED  # reaction_Mixer_Socials_Mean_Surprised
 
 PAT_SPEED, SLAP_SPEED = 0.5, 1.8  # m/s into the body, as the touch sounds tell them apart
 WELCOME, SURPRISED_TIER, DISPLEASED = 0.1, -0.2, -0.45  # margins: at or above each
@@ -227,6 +241,13 @@ def _number(key, default):
         return default
 
 
+def _foley_number(key, default):
+    try:
+        return float(native.setting('foley', key, str(default)) or default)
+    except (TypeError, ValueError):
+        return default
+
+
 def force_of(how, region, speed):
     """How hard a touch was, and what it does to them (debug menu page
     How hard a touch counts): force 'touch', 'pat', 'slap' or 'hit' by speed;
@@ -238,15 +259,41 @@ def force_of(how, region, speed):
     hard_at = max(slap_at + 0.1, _number('hard_hit_speed', 3.0))
     hurt = HURT.get(region, 0.4)
     force, pain = 'touch', 0.0
-    if how == 'pull':
+    if how == 'shove':
+        # An aggressive push (armik.cpp shove): always a hit, whatever the place. Pain from shove_pain, rising
+        # with speed up to the fall speed (a fall is a hard hit).
+        fall_at = max(1.4, _foley_number('shove_fall_speed', 2.8))
+        from_at = _foley_number('shove_speed', 1.3)
+        strength = 0.8 + 0.8 * min(1.0, max(0.0, (speed - from_at) / (fall_at - from_at)))
+        force, pain = 'shove', _number('shove_pain', 0.45) * strength
+        if speed >= fall_at:
+            pain = max(pain, _number('hard_pain', 0.8))
+    elif how == 'pull':
         force, pain = 'pull', _number('pull_pain', 0.5) * hurt
     elif how == 'touch' and speed >= PAT_SPEED:
         force = 'hit' if speed >= hard_at else 'slap' if speed >= slap_at else 'pat'
         strength = min(1.5, (speed - PAT_SPEED) / (hard_at - PAT_SPEED))
         pain = _number('hit_weight', 0.9) * hurt * strength
-    hit = pain > 0 and pain >= _number('hit_from', 0.3)
+    hit = pain > 0 and (force == 'shove' or pain >= _number('hit_from', 0.3))
     hard = pain >= _number('hard_pain', 0.8)
     return force, pain, hit, hard
+
+
+def shove(you, npc, hand, speed, fall):
+    """Your open palm shoved `npc` (foley kind 8 from armik.cpp shove, speed m/s into them, fall: the
+    ragdoll takes it down). Judged as an aggressive hit on the shoulder (the DLL has already moved the body);
+    a light one from a friend can be play. Children and teens are refused by the DLL."""
+    now = time.monotonic()
+    if npc is None or not npc.sim_info.is_human or not native.setting_flag('physical', 'touch_reactions', True):
+        return
+    if _in_scene(you) or _in_scene(npc) or _too_young(you, npc):
+        return
+    if now - _last_judged.get(npc.id, -COOLDOWN) < 1.0:
+        return
+    _last_judged[npc.id] = now
+    if native.setting_flag('physical', 'haptics', True):
+        native.haptic(hand, 0.5, 0.08)
+    _judge(you, npc, 'shoulder', 'shove', speed)
 
 
 def _judge(you, npc, region, how, speed=0.0):
@@ -285,7 +332,19 @@ def _judge(you, npc, region, how, speed=0.0):
     if intimate and romance_ok and any('romantic' in t for t in traits):
         margin += ROMANTIC_TRAIT
         notes.append('romantic')
-    slap = force in ('slap', 'hit')
+    slap = force in ('slap', 'hit', 'shove')
+    friendly = False
+    if ((how == 'touch' and force in ('pat', 'slap')) or force == 'shove') and not hard and \
+            speed < _number('friendly_max_speed', 2.4) and \
+            native.setting_flag('physical', 'friendly_shoves' if force == 'shove' else 'friendly_hits', True) and \
+            not (family and intimate):
+        playful = any(word in mood for word in PLAYFUL_MOODS) or any(any(word in t for t in traits) for word in PLAYFUL_TRAITS)
+        place_ok = region in FRIENDLY_PLACES or (region == 'butt' and romance_ok and love >= 0.3)
+        if place_ok and (friend >= 0.3 or love >= 0.3 or (playful and friend >= 0.1)):
+            margin += pain * 0.75 + (0.1 if playful else 0.0)  # most of the sting is play
+            pain, hit = pain * 0.25, False
+            friendly = True
+            notes.append('friendly {}'.format(force))
     if how == 'grab':
         margin -= 0.05 * s
     elif how == 'pull':
@@ -299,6 +358,9 @@ def _judge(you, npc, region, how, speed=0.0):
         margin -= 0.1 * bad + 0.1 * hits
         notes.append('{} unwelcome, {} hits lately'.format(bad, hits))
     margin += random.gauss(0.0, 0.08)
+    if force == 'hit' or hard or (force == 'shove' and not friendly):
+        # Hard (or a shove): never welcome, whoever you are to them.
+        margin = min(margin, SURPRISED_TIER - 0.01)
     if family and intimate:
         margin = min(margin, DISPLEASED - 0.1)
         notes.append('family')
@@ -330,6 +392,13 @@ def _judge(you, npc, region, how, speed=0.0):
         friendship *= 1.0 + pain
     if native.setting_flag('physical', 'touch_relationship', True):
         _change(you, npc, friendship, romance)
+    head_first = None
+    if region in HEAD and slap and tier != 'welcome' and native.setting_flag('physical', 'head_hit_first', True):
+        hot = 'angry' in mood or any(any(word in t for t in traits) for word in HOT_TEMPERED)
+        head_first = 'angry' if hot else 'surprised'
+        mixer = (ANIM_ANGRY, HECKLE_STRONG) if hot else (None, MEAN_SURPRISED)
+        notes.append('head hit: {} first'.format(head_first))
+
     # Violent or unwelcome: whatever they were doing stops first. A casual touch
     # from someone they really like doesn't stop their chat: no body reaction
     # then, only the look at your hand (user 2026-10-26 23:55Z).
@@ -364,14 +433,20 @@ def _judge(you, npc, region, how, speed=0.0):
         if _you_busy(you) and not hit:
             _log('{}: you are on your way to something: no follow-up'.format(npc.sim_info.first_name))
             return
-        try:
-            reactions.consequence(you, npc, consequence)
-        except Exception as e:
-            _error('consequence', e)
+
+        def follow_up():
+            try:
+                reactions.consequence(you, npc, consequence)
+            except Exception as e:
+                _error('consequence', e)
+        if head_first and reacted:
+            reactions.after(_number('head_hit_delay', 1.5), follow_up)  # once the first reaction has played
+        else:
+            follow_up()
 
     # Violent or unwelcome: they stop dead first (as Stop everything stops
     # you), then react; act() runs once they are clear.
-    if not keep_on and ((hit and tier != 'welcome') or tier == 'angry') and native.setting_flag('physical', 'touch_interrupts', True):
+    if not keep_on and ((hit and tier != 'welcome') or tier == 'angry' or head_first) and native.setting_flag('physical', 'touch_interrupts', True):
         try:
             reactions.interrupt(npc, '{} {}'.format(how, region), act, you, spare_you=not hit)
         except Exception as e:
@@ -385,12 +460,41 @@ def _judge(you, npc, region, how, speed=0.0):
 _anim_mixers = {}  # animation id -> reaction mixer playing it (None if it can't be made)
 
 
+def _clone(obj):
+    """A shallow copy without copy.copy: tuned factory wrappers forward
+    unknown attributes (__getattr__) to fields a half-made copy doesn't have
+    yet, so copy.copy recursed until RecursionError (every by-id animation
+    failed until v0.13.661). Slots and __dict__ are copied raw."""
+    cls = type(obj)
+    new = object.__new__(cls)
+    for klass in cls.__mro__:
+        slots = klass.__dict__.get('__slots__', ())
+        for slot in ((slots,) if isinstance(slots, str) else slots):
+            if slot in ('__dict__', '__weakref__'):
+                continue
+            try:
+                object.__setattr__(new, slot, object.__getattribute__(obj, slot))
+            except AttributeError:
+                pass
+    try:
+        object.__getattribute__(new, '__dict__').update(object.__getattribute__(obj, '__dict__'))
+    except AttributeError:
+        pass
+    return new
+
+
+def _put(obj, attr, value):
+    try:
+        setattr(obj, attr, value)
+    except Exception:
+        object.__setattr__(obj, attr, value)
+
+
 def mixer_for_animation(anim_id):
     """The giggle reaction mixer playing another animation instead: the same
     in-place one-shot (no tests, no loot), its animation_ref pointed at another
     AnimationElement (the Socials_Responses_* family it already uses, or
     others). Made once per animation; None if the game won't have it."""
-    import copy
     if anim_id in _anim_mixers:
         return _anim_mixers[anim_id]
     cls = None
@@ -400,17 +504,17 @@ def mixer_for_animation(anim_id):
         if base is None or anim is None:
             _log('animation {}: {}'.format(anim_id, 'no giggle mixer' if base is None else 'not installed'))
         else:
-            ref = copy.copy(base.basic_content.animation_ref)
+            ref = _clone(base.basic_content.animation_ref)
             for attr in ('factory', '_factory'):
                 try:
-                    setattr(ref, attr, anim)
+                    _put(ref, attr, anim)
                 except Exception:
                     continue
                 if getattr(ref, 'factory', None) is anim:
                     break
             if getattr(ref, 'factory', None) is anim:
-                content = copy.copy(base.basic_content)
-                content.animation_ref = ref
+                content = _clone(base.basic_content)
+                _put(content, 'animation_ref', ref)
                 cls = type('s4vr_reaction_{}'.format(anim.__name__), (base,), {'basic_content': content})
             else:
                 _log('animation {}: cannot point the reaction at it ({})'.format(anim_id, type(ref).__name__))
@@ -561,7 +665,8 @@ def _tap(you, npc, kind, region, speed, now):
         _log('{} already faces you'.format(npc.sim_info.first_name))
         return
     try:
-        from sims4vr import trail
+        from sims4vr import physapp, trail
+        physapp.thaw(npc, 'act')
         trail._stop_for(you, npc)
         _log('{} {}: turns to face you'.format(npc.sim_info.first_name, 'poked twice' if kind == 6 else 'tapped twice'))
     except Exception as e:
@@ -595,6 +700,11 @@ def tick(you):
                     from sims4vr import gestures
                     gestures.high_five_hit(you, npc, hand, value)
                 continue
+            if kind in (1, 4, 6) and native.setting_flag('bodyphysics', 'pick_by_touch', True):
+                from sims4vr import physapp
+                npc = _sim_for_actor(you, actor)
+                if npc is not None and npc.sim_info.is_human and physapp.pick_touch(you, npc):
+                    continue  # the Body Physics app's pick mode takes the touch
             if kind in (4, 6):
                 # value = degrees off your look * 10 + m/s (armik.cpp)
                 off, value = int(value // 10), value % 10

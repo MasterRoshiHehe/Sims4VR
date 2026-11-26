@@ -24,6 +24,77 @@ static bool atLeftHip(const armik::Hand& hand, int side, const grab::HeadPose& h
     return hip;
 }
 
+// Any slot (Config: 0 right hip, 1 left hip, 2/3 front pockets, 4/5 back pockets, 6/7 shoulders, 8/9/10 bra right,
+// left, center): the hips as before, the others a sphere (slotRadius) at a place in the level head frame.
+static bool atSlot(int slot, const armik::Hand& hand, int side, const grab::HeadPose& head) {
+    if (slot == 0) return atRightHip(hand, side, head);
+    if (slot == 1) return atLeftHip(hand, side, head);
+    static const float kAt[9][3] = {  // right of you, below your eyes, ahead of you (metres)
+        {0.14f, 0.58f, 0.12f}, {-0.14f, 0.58f, 0.12f}, {0.13f, 0.62f, -0.14f}, {-0.13f, 0.62f, -0.14f},
+        {0.20f, 0.20f, -0.04f}, {-0.20f, 0.20f, -0.04f}, {0.09f, 0.36f, 0.13f}, {-0.09f, 0.36f, 0.13f}, {0.0f, 0.36f, 0.13f}};
+    if (slot < 2 || slot > 10) return false;
+    XrQuaternionf q{head.orientation.x, head.orientation.y, head.orientation.z, head.orientation.w};
+    XrVector3f right = rotate3(q, {1, 0, 0});
+    float len = std::sqrt(right.x * right.x + right.z * right.z);
+    if (len < 0.2f) return false;
+    right = {right.x / len, 0, right.z / len};
+    XrVector3f forward{right.z, 0, -right.x};
+    XrVector3f rel{hand.position.x - head.position.x, hand.position.y - head.position.y,
+                   hand.position.z - head.position.z};
+    const float* c = kAt[slot - 2];
+    const float dr = dot3(rel, right) - c[0], dd = -rel.y - c[1], da = dot3(rel, forward) - c[2];
+    const bool at = std::sqrt(dr * dr + dd * dd + da * da) < g_config.slotRadius;
+    static int logged = 0;
+    if (logged++ < 30)
+        LOG("Slot %d: %s hand closed %.2f m right, %.2f m below your eyes, %.2f m ahead: %s", slot, side ? "right" : "left",
+            dot3(rel, right), -rel.y, dot3(rel, forward), at ? "in it" : "not in it");
+    return at;
+}
+
+// The slot an item comes out of: this Sim's own choice, else the global one (kind 0 phone, 1 tablet, 2 notebook).
+static int slotFor(int kind) {
+    const int own = kind == 0 ? g_config.slotThisPhone : kind == 1 ? g_config.slotThisTablet : g_config.slotThisBook;
+    if (own > 0) return own - 1;
+    return kind == 0 ? g_config.phoneSlot : kind == 1 ? g_config.tabletSlot : g_config.bookSlot;
+}
+
+// Per Sim: the menu's "this Sim only" rows edit slotThis*; they are kept in sims4vr_user.ini [slots_sim] under the Sim's
+// id, taken up again when you play that Sim (and written to [slots] too, so a settings reload keeps them).
+static void syncSlots() {
+    static uint64_t sim = 0;
+    static int last[3] = {0, 0, 0};
+    const uint64_t id = camera::bodyId();
+    if (!id) return;
+    const std::wstring ini = settings::userIni();
+    if (ini.empty()) return;
+    int* now[3] = {&g_config.slotThisPhone, &g_config.slotThisTablet, &g_config.slotThisBook};
+    char key[32];
+    snprintf(key, sizeof(key), "%llu", static_cast<unsigned long long>(id));
+    if (id != sim) {
+        char text[64] = {};
+        GetPrivateProfileStringA("slots_sim", key, "", text, sizeof(text), std::string(ini.begin(), ini.end()).c_str());
+        int v[3] = {0, 0, 0};
+        if (sscanf(text, "%d,%d,%d", &v[0], &v[1], &v[2]) < 0) v[0] = v[1] = v[2] = 0;
+        static const char* const names[3] = {"this_phone", "this_tablet", "this_book"};
+        for (int i = 0; i < 3; ++i) {
+            *now[i] = std::clamp(v[i], 0, 11);
+            last[i] = *now[i];
+            WritePrivateProfileStringA("slots", names[i], std::to_string(*now[i]).c_str(), std::string(ini.begin(), ini.end()).c_str());
+        }
+        sim = id;
+        LOG("Slots: Sim %llu: phone %d, tablet %d, notebook %d (0 = the global choice)", static_cast<unsigned long long>(id),
+            *now[0], *now[1], *now[2]);
+        return;
+    }
+    if (*now[0] != last[0] || *now[1] != last[1] || *now[2] != last[2]) {
+        for (int i = 0; i < 3; ++i) last[i] = *now[i];
+        char text[64];
+        snprintf(text, sizeof(text), "%d,%d,%d", last[0], last[1], last[2]);
+        WritePrivateProfileStringA("slots_sim", key, text, std::string(ini.begin(), ini.end()).c_str());
+        LOG("Slots: saved for Sim %llu: %s", static_cast<unsigned long long>(id), text);
+    }
+}
+
 static ULONGLONG g_bookOpenedAt = 0;
 
 // A page turning: the game's own book_turnpage foley, started by notebook.py on the joint of the hand holding the
@@ -37,6 +108,8 @@ static void bookOpen(int hand) {
     g_bookOut = true;
     g_bookHand = hand;
     g_bookSpread = 0;
+    g_bookFlipTo = -1;
+    g_bookFlipPsi = -1;
     g_bookAnim = 0;
     g_bookOpenedAt = GetTickCount64();
     grab::pushControl(83);  // notebook.py builds the pages and hands them over
@@ -136,25 +209,66 @@ static void bookHandShift(int side, camera::Vec3& move, camera::Quat& turn) {
 static std::atomic<float> g_bookAngle{0};
 static std::atomic<int> g_bookSide{0};
 constexpr float kBookPageAspect = 568.0f / 422.0f;  // the game's page art, height over width
-enum BookCrop { kCropRight, kCropLeft, kCropLeather, kCropPlain, kCropPaper, kCropEdge };
+enum BookCrop { kCropRight, kCropLeft, kCropLeather, kCropPlain, kCropPaper, kCropEdge, kCropFlipBack, kCropFlipUnder };
 struct BookLeaf {
     bool turns;       // rides on the front board (turned by the angle) or stays with the back board
     float c[3];       // its centre (the board's frame when it turns)
     float ax[3], ay[3];
     float w, h;       // along ax, along ay
     int crop;
+    float u0 = 0, u1 = 1;  // the part of the crop (across ax) it shows
 };
-constexpr int kBookLeaves = 19;
+// Faces 0..18 are the boards, edges and blocks; 2, 14 and 15 (the old flat pages and spine) are left empty. The
+// pages are strips along a bowed surface (they dip toward the gutter and ease off to the edge), the spine is a
+// rounded half-tube of strips.
+constexpr int kPageStrips = 8, kSpineStrips = 7;
+constexpr int kStripRight = 19, kStripLeft = kStripRight + kPageStrips, kStripSpine = kStripLeft + kPageStrips;
+constexpr int kFlipStrips = 8, kFlipFront = kStripSpine + kSpineStrips, kFlipBack = kFlipFront + kFlipStrips;
+constexpr int kBookLeaves = kFlipBack + kFlipStrips;  // the turning leaf: a front and a back strip each
+constexpr float kBookFlipSeconds = 0.5f;
+
+// How high the page surface lies above the pages' plane at x from the spine, as a fraction of the block's height.
+static float pageBow(float x, float pw) {
+    const float f = x / pw;
+    return 0.60f + 0.40f * std::sin(std::min(1.0f, f / 0.45f) * 1.5708f) - 0.07f * f * f;
+}
 
 // Leaf i of the book for page width pw, height ph and cover angle: the numbers are what the comments at each
 // face say. Normal = ax x ay.
 static BookLeaf bookLeaf(int i, float pw, float ph) {
     const float m = pw * 0.05f, t = pw * 0.028f, pb = pw * 0.10f, W = pw + m, H = ph + 2 * m;
+    if (i >= kStripRight && i < kStripSpine) {  // a strip of a page
+        const bool right = i < kStripLeft;
+        const int s = i - (right ? kStripRight : kStripLeft);
+        const float x0 = pw * s / kPageStrips, x1 = pw * (s + 1) / kPageStrips, xc = (x0 + x1) / 2;
+        const float z0 = pb * pageBow(x0, pw), z1 = pb * pageBow(x1, pw), zc = pb * pageBow(xc, pw);
+        const float dx = x1 - x0, dz = z1 - z0, len = std::sqrt(dx * dx + dz * dz), k = right ? 1.0f : -1.0f;
+        const float ux = dx / len, uz = dz / len;
+        BookLeaf l{!right, {xc, 0, right ? zc : -zc}, {ux * k, 0, uz * (right ? 1.0f : -1.0f) * k}, {0, 1, 0},
+                   len * 1.03f, ph, right ? kCropRight : kCropLeft};
+        if (!right) {
+            l.u0 = 1 - x1 / pw;
+            l.u1 = 1 - x0 / pw;
+        } else {
+            l.u0 = x0 / pw;
+            l.u1 = x1 / pw;
+        }
+        return l;
+    }
+    if (i >= kFlipFront) {  // the turning leaf (placed live): its strips' shares of the page
+        const bool back = i >= kFlipBack;
+        const int k = i - (back ? kFlipBack : kFlipFront);
+        BookLeaf l{false, {0, 0, 0}, {1, 0, 0}, {0, 1, 0}, 0, ph, kCropRight};
+        l.u0 = back ? 1 - (k + 1.0f) / kFlipStrips : static_cast<float>(k) / kFlipStrips;
+        l.u1 = back ? 1 - static_cast<float>(k) / kFlipStrips : (k + 1.0f) / kFlipStrips;
+        return l;
+    }
+    if (i >= kStripSpine) return {false, {0, 0, 0}, {0, 0, 1}, {0, 1, 0}, 0, H, kCropPlain};  // sized live
     switch (i) {
         // The front board and the left block under it (they turn).
         case 0: return {true, {W / 2, 0, t}, {1, 0, 0}, {0, 1, 0}, W, H, kCropLeather};              // outside
         case 1: return {true, {W / 2, 0, 0}, {-1, 0, 0}, {0, 1, 0}, W, H, kCropPaper};               // inside (endpaper)
-        case 2: return {true, {pw / 2, 0, -pb}, {-1, 0, 0}, {0, 1, 0}, pw, ph, kCropLeft};           // the left page
+        case 2: return {true, {pw / 2, 0, -pb}, {-1, 0, 0}, {0, 1, 0}, 0, ph, kCropLeft};            // (strips)
         case 3: return {true, {W / 2, H / 2, t / 2}, {0, 0, 1}, {1, 0, 0}, t, W, kCropPlain};        // top edge
         case 4: return {true, {W / 2, -H / 2, t / 2}, {1, 0, 0}, {0, 0, 1}, W, t, kCropPlain};       // bottom edge
         case 5: return {true, {W, 0, t / 2}, {0, 1, 0}, {0, 0, 1}, H, t, kCropPlain};                // outer edge
@@ -167,8 +281,8 @@ static BookLeaf bookLeaf(int i, float pw, float ph) {
         case 11: return {false, {W / 2, H / 2, -t / 2}, {0, 0, 1}, {1, 0, 0}, t, W, kCropPlain};
         case 12: return {false, {W / 2, -H / 2, -t / 2}, {1, 0, 0}, {0, 0, 1}, W, t, kCropPlain};
         case 13: return {false, {W, 0, -t / 2}, {0, 1, 0}, {0, 0, 1}, H, t, kCropPlain};
-        case 14: return {false, {0, 0, 0}, {0, 0, 1}, {0, 1, 0}, 0, H, kCropLeather};                // the spine (sized live)
-        case 15: return {false, {pw / 2, 0, pb}, {1, 0, 0}, {0, 1, 0}, pw, ph, kCropRight};          // the right page
+        case 14: return {false, {0, 0, 0}, {0, 0, 1}, {0, 1, 0}, 0, H, kCropLeather};                // (strips)
+        case 15: return {false, {pw / 2, 0, pb}, {1, 0, 0}, {0, 1, 0}, 0, ph, kCropRight};          // (strips)
         case 16: return {false, {pw / 2, ph / 2, pb / 2}, {0, 0, 1}, {1, 0, 0}, pb, pw, kCropEdge};
         case 17: return {false, {pw / 2, -ph / 2, pb / 2}, {1, 0, 0}, {0, 0, 1}, pw, pb, kCropEdge};
         default: return {false, {pw, 0, pb / 2}, {0, 1, 0}, {0, 0, 1}, ph, pb, kCropEdge};
@@ -198,9 +312,42 @@ static void placeBook(phone3d::Panel* leaves, int count) {
         }
         BookLeaf l = bookLeaf(p.tag, pw, ph);
         XrVector3f at{l.c[0], l.c[1], l.c[2]}, ax{l.ax[0], l.ax[1], l.ax[2]}, ay{l.ay[0], l.ay[1], l.ay[2]};
-        if (p.tag == 14) {  // the spine spans the boards' gap
-            l.w = hinge + 2 * t;
-            at.z = hinge / 2;
+        if (p.tag >= kStripSpine && p.tag < kFlipFront) {  // a strip of the rounded spine, over the boards' gap
+            const int k = p.tag - kStripSpine;
+            const float half = (hinge + 2 * t) / 2, bulge = std::min(half, pw * 0.07f);
+            const float phi = (k + 0.5f) / kSpineStrips * 3.14159265f;
+            const float tx = -bulge * std::cos(phi), tz = half * std::sin(phi), len = std::sqrt(tx * tx + tz * tz);
+            at = {-bulge * std::sin(phi), 0, hinge / 2 - half * std::cos(phi)};
+            ax = {tx / len, 0, tz / len};
+            l.w = len * 3.14159265f / kSpineStrips * 1.06f;
+        }
+        if (p.tag >= kFlipFront) {  // a strip of the turning leaf, chained from the spine
+            const float psi = g_bookFlipPsi.load();
+            if (psi < 0 || th < 3.14f) {
+                p.width = p.height = 0;
+                continue;
+            }
+            const bool back = p.tag >= kFlipBack, forward = g_bookFlipTo.load() > g_bookFlipFrom;
+            const int k = p.tag - (back ? kFlipBack : kFlipFront), segs = kFlipStrips;
+            const float len = pw / segs, curl = 0.9f * std::sin(psi);
+            float px = 0, pz = pb * pageBow(0, pw), cx = 0, cz = 0, a = 0;
+            for (int j = 0; j <= k; ++j) {  // forward: the outer part trails the lifting edge; backward: it leads
+                a = psi + (forward ? -curl : curl) * (j + 0.5f) / segs;
+                cx = px + std::cos(a) * len / 2;
+                cz = pz + std::sin(a) * len / 2;
+                px += std::cos(a) * len;
+                pz += std::sin(a) * len;
+            }
+            // Near the book it follows the bowed pages under it; in the air, only the chain.
+            cz += pb * (pageBow(std::fabs(cx), pw) - pageBow(0, pw)) * std::max(0.0f, 1 - 2 * std::sin(psi));
+            const float side = back ? -0.0003f : 0.0003f;  // the two sides of the paper
+            const float nx = -std::sin(a) * side, nz = std::cos(a) * side;
+            at = {cx + nx, 0, cz + nz};
+            ax = back ? XrVector3f{-std::cos(a), 0, -std::sin(a)} : XrVector3f{std::cos(a), 0, std::sin(a)};
+            l.w = len * 1.04f;
+        } else if (p.tag == 2 || p.tag == 14 || p.tag == 15) {
+            p.width = p.height = 0;
+            continue;
         }
         if (l.turns) {
             auto turn = [&](const XrVector3f& v) { return XrVector3f{v.x * ct - v.z * st, v.y, v.x * st + v.z * ct}; };
@@ -232,8 +379,22 @@ static void updateBookLeaves() {
     g_bookSide = g_bookHand;
     ID3D11Texture2D* atlas = hud::texture();
     if (!atlas) return;
-    static const hud::Rect* const kRects[6] = {&hud::kBookRight, &hud::kBookLeft, &hud::kBookLeatherAll,
-                                               &hud::kBookLeatherPlain, &hud::kBookPaper, &hud::kBookEdge};
+    static const hud::Rect* const kRects[8] = {&hud::kBookRight, &hud::kBookLeft, &hud::kBookLeatherAll,
+                                               &hud::kBookLeatherPlain, &hud::kBookPaper, &hud::kBookEdge,
+                                               &hud::kBookFlipBack, &hud::kBookFlipUnder};
+    // A page turning: the leaf is up for kBookFlipSeconds, then the spread is the new one.
+    const int flipTo = g_bookFlipTo.load();
+    const bool forward = flipTo > g_bookFlipFrom;
+    if (flipTo >= 0) {
+        const float e = std::min(1.0f, (GetTickCount64() - g_bookFlipAt) / 1000.0f / kBookFlipSeconds);
+        const float eased = e * e * (3 - 2 * e);
+        g_bookFlipPsi = 3.14159265f * (forward ? eased : 1 - eased);
+        if (e >= 1) {
+            g_bookSpread = flipTo;
+            g_bookFlipTo = -1;
+            g_bookFlipPsi = -1;
+        }
+    }
     phone3d::Panel leaves[kBookLeaves];
     for (int i = 0; i < kBookLeaves; ++i) {
         phone3d::Panel& p = leaves[i];
@@ -241,10 +402,18 @@ static void updateBookLeaves() {
         p.clear = true;
         p.opacity = 1;
         p.tag = i;
-        const hud::Rect& r = *kRects[bookLeaf(i, 0.13f, 0.175f).crop];
-        p.crop[0] = r.x / hud::kWidth;
+        int crop = bookLeaf(i, 0.13f, 0.175f).crop;
+        if (flipTo >= 0) {  // the pages under a turning leaf: the new page it uncovers
+            if (i >= kStripRight && i < kStripLeft && forward) crop = kCropFlipUnder;
+            else if (i >= kStripLeft && i < kStripSpine && !forward) crop = kCropFlipUnder;
+            else if (i >= kFlipFront && i < kFlipBack) crop = forward ? kCropRight : kCropFlipBack;
+            else if (i >= kFlipBack) crop = forward ? kCropFlipBack : kCropLeft;
+        }
+        const hud::Rect& r = *kRects[crop];
+        const BookLeaf lf = bookLeaf(i, 0.13f, 0.175f);
+        p.crop[0] = (r.x + r.w * lf.u0) / hud::kWidth;
         p.crop[1] = r.y / hud::kHeight;
-        p.crop[2] = (r.x + r.w) / hud::kWidth;
+        p.crop[2] = (r.x + r.w * lf.u1) / hud::kWidth;
         p.crop[3] = (r.y + r.h) / hud::kHeight;
     }
     phone3d::setBookPlacer(placeBook);
@@ -253,6 +422,7 @@ static void updateBookLeaves() {
 
 // Controls thread: the other hand's sweep across the book turns a page (a swipe toward the left, the way a page
 // turns forward in a book you read, is the next page). The book in app space comes from the Sim's hand.
+static void bookStartFlip(int to);
 static void updateBookSwipe(const armik::Hand hands[2]) {
     static bool over = false;
     static float anchor = 0;
@@ -276,7 +446,7 @@ static void updateBookSwipe(const armik::Hand hands[2]) {
         const float pw = g_config.bookWidth / 2;
         const hud::Rect* areas[2] = {&hud::kBookLeft, &hud::kBookRight};
         for (int i = 0; i < 2; ++i) {
-            if (!g_config.bookPoke || g_bookAnim < 1) {
+            if (!g_config.bookPoke || g_bookAnim < 1 || g_bookFlipTo.load() >= 0) {
                 hideHud(g_bookSheet[i]);
                 continue;
             }
@@ -315,15 +485,26 @@ static void updateBookSwipe(const armik::Hand hands[2]) {
     if (std::fabs(moved) < g_config.bookSwipe) return;
     const int spreads = std::max(1, hud::notebookSpreads());
     const int was = g_bookSpread;
-    g_bookSpread = std::max(0, std::min(spreads - 1, g_bookSpread + (moved < 0 ? 1 : -1)));
+    const int target = std::max(0, std::min(spreads - 1, g_bookSpread + (moved < 0 ? 1 : -1)));
     anchor = u;
     lastTurn = now;
-    if (g_bookSpread != was) {
+    if (g_bookFlipTo.load() < 0 && target != was) {
         buzz(other, 0.3f, 0.04f);
-        bookFlipSound();
+        bookStartFlip(target);
         static int logged = 0;
-        if (logged++ < 40) LOG("Book: turned to spread %d of %d", g_bookSpread + 1, spreads);
+        if (logged++ < 40) LOG("Book: turning to spread %d of %d", target + 1, spreads);
     }
+}
+
+// A page turns to spread `to` (the leaf rises, then the spread changes): not while one is turning already.
+static void bookStartFlip(int to) {
+    const int spreads = std::max(1, hud::notebookSpreads());
+    to = std::max(0, std::min(spreads - 1, to));
+    if (g_bookFlipTo.load() >= 0 || to == g_bookSpread || g_bookAnim < 1) return;
+    g_bookFlipFrom = g_bookSpread;
+    g_bookFlipAt = GetTickCount64();
+    g_bookFlipTo = to;
+    bookFlipSound();
 }
 
 // Present thread: a spread the pointer picked (a category cell, a page corner).
@@ -331,9 +512,7 @@ static void bookApplyPick() {
     if (!g_bookOut) return;
     const int want = hud::notebookTakeSpread();
     if (want >= 0) {
-        const int was = g_bookSpread;
-        g_bookSpread = std::max(0, std::min(std::max(1, hud::notebookSpreads()) - 1, want));
-        if (g_bookSpread != was) bookFlipSound();
+        bookStartFlip(want);
         LOG("Book: pointer turned to spread %d", g_bookSpread + 1);
     }
 }

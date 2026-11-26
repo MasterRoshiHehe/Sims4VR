@@ -35,6 +35,7 @@ ID3D11DepthStencilView* sceneDepthAtPresent(bool& reversed);
 // Both real eyes every frame (singleview.cpp): the frame's second scene pass (the right eye) is
 // drawn between these. Our 3D pieces (phone, panels, bubbles, screens) go into it again with its
 // camera; the game's flat UI isn't drawn a second time (the UI texture already has this frame's).
+void setLensPass(bool on);  // the phone lens' pass runs (singleview.cpp): drawPhone draws nothing in it
 void beginSecondPass();
 void endSecondPass();
 // UI renders since the last call, and how many of them fell in second passes.

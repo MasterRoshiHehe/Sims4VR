@@ -23,11 +23,17 @@ static void status(const wchar_t* text) {
 struct FindData {
     DWORD pid;
     HWND found;
+    int all, visible, owned;  // top-level windows of Sims 1 seen (for the status while waiting)
 };
 static BOOL CALLBACK findWindow(HWND hwnd, LPARAM lp) {
     auto* f = reinterpret_cast<FindData*>(lp);
     DWORD pid = 0;
     GetWindowThreadProcessId(hwnd, &pid);
+    if (pid == f->pid) {
+        ++f->all;
+        if (IsWindowVisible(hwnd)) ++f->visible;
+        if (GetWindow(hwnd, GW_OWNER)) ++f->owned;
+    }
     if (pid == f->pid && IsWindowVisible(hwnd) && !GetWindow(hwnd, GW_OWNER)) {
         f->found = hwnd;
         return FALSE;
@@ -69,8 +75,15 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     status(L"launcher: Sims 1 started, waiting for its window");
 
     // Its window (it takes a while: intro, loading).
-    FindData f{pi.dwProcessId, nullptr};
+    FindData f{pi.dwProcessId, nullptr, 0, 0, 0};
     for (int i = 0; i < 1200 && !f.found; ++i) {
+        if (i && i % 100 == 0) {  // every 10 s: what Sims 1 has, for the log
+            wchar_t line[96];
+            _snwprintf(line, 95, L"launcher: %d s, Sims 1 has %d window(s), %d visible, %d owned", i / 10, f.all, f.visible, f.owned);
+            line[95] = 0;
+            status(line);
+        }
+        f.all = f.visible = f.owned = 0;
         if (WaitForSingleObject(pi.hProcess, 100) == WAIT_OBJECT_0) {
             status(L"launcher: Sims 1 closed before it opened a window");
             return 4;

@@ -63,6 +63,77 @@ static void splitBody(const Swapchain& eye, ID3D11Texture2D* image) {
     g_bodyState[slot] = !released ? kBodyUnknown : drawn ? kBodyDrawn : empty ? kBodyEmpty : kBodyUnknown;
 }
 
+// Create a Sim proof of what reaches the headset: after each eye picture is copied into its swapchain image, eight
+// sample pixels of that image are read back (a diagnostic, only while CAS runs, a few hundred copies), and at submit time
+// the sample of the image each view really points at is logged (CAS shown). A picture that flickers in shows as another
+// sample set in the stream; an image shown again or before it was written shows as the same or a missing serial.
+struct CasImageRecord {
+    XrSwapchain handle = XR_NULL_HANDLE;
+    uint32_t index = 0;
+    uint64_t serial = 0;
+    ULONGLONG tick = 0;
+    uint32_t sample[8] = {};
+};
+static CasImageRecord g_casImages[8];
+static uint64_t g_casCopySerial = 0;
+
+static void casRecordImage(ID3D11Device* device, ID3D11DeviceContext* context, ID3D11Texture2D* target, const Swapchain& s,
+                           uint32_t index) {
+    static int taken = 0;
+    if (taken >= 1200) return;
+    static ID3D11Texture2D* staging = nullptr;
+    static DXGI_FORMAT stagingFormat = DXGI_FORMAT_UNKNOWN;
+    D3D11_TEXTURE2D_DESC td{};
+    target->GetDesc(&td);
+    if (!staging || stagingFormat != td.Format) {
+        if (staging) staging->Release();
+        staging = nullptr;
+        D3D11_TEXTURE2D_DESC sd{};
+        sd.Width = 8;
+        sd.Height = 1;
+        sd.MipLevels = 1;
+        sd.ArraySize = 1;
+        sd.Format = td.Format;
+        sd.SampleDesc.Count = 1;
+        sd.Usage = D3D11_USAGE_STAGING;
+        sd.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        if (FAILED(device->CreateTexture2D(&sd, nullptr, &staging))) return;
+        stagingFormat = td.Format;
+    }
+    const float xs[4] = {0.2f, 0.4f, 0.6f, 0.8f}, ys[2] = {0.35f, 0.7f};
+    for (int i = 0; i < 8; ++i) {
+        const UINT x = static_cast<UINT>(td.Width * xs[i % 4]), y = static_cast<UINT>(td.Height * ys[i / 4]);
+        D3D11_BOX box{x, y, 0, x + 1, y + 1, 1};
+        context->CopySubresourceRegion(staging, 0, i, 0, 0, target, 0, &box);
+    }
+    D3D11_MAPPED_SUBRESOURCE mapped{};
+    if (FAILED(context->Map(staging, 0, D3D11_MAP_READ, 0, &mapped))) return;
+    CasImageRecord rec;
+    rec.handle = s.handle;
+    rec.index = index;
+    rec.serial = ++g_casCopySerial;
+    rec.tick = GetTickCount64();
+    std::memcpy(rec.sample, mapped.pData, sizeof(rec.sample));
+    context->Unmap(staging, 0);
+    ++taken;
+    for (CasImageRecord& r : g_casImages)
+        if (r.handle == s.handle) {
+            r = rec;
+            return;
+        }
+    for (CasImageRecord& r : g_casImages)
+        if (r.handle == XR_NULL_HANDLE) {
+            r = rec;
+            return;
+        }
+}
+
+static const CasImageRecord* casImageOf(XrSwapchain handle) {
+    for (const CasImageRecord& r : g_casImages)
+        if (r.handle == handle) return &r;
+    return nullptr;
+}
+
 static bool copyIntoSwapchain(Swapchain& s, ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_DESC& desc) {
     uint32_t index = 0;
     if (!acquireImage(s, index)) return false;
@@ -85,6 +156,10 @@ static bool copyIntoSwapchain(Swapchain& s, ID3D11Texture2D* backbuffer, const D
         context->CopySubresourceRegion(target, 0, 0, 0, 0, backbuffer, 0, nullptr);
     if (g_keepEye >= 0) eyealign::keep(g_keepEye, target, s.format, s.width, s.height);
     if (g_captureSlot >= 0) screenshot::offer(context, target, g_captureSlot);
+    if (camera::casActive()) casRecordImage(device, context, target, s, index);
+    // CAS: submit the copy to the GPU before the image is released to the compositor (a mark's extra copy of the
+    // same image made the view look right for a moment; this is the test of whether that was the missing flush).
+    if (camera::casActive()) context->Flush();
     if (g_splitSlot >= 0) splitBody(s, target);
     context->Release();
     device->Release();

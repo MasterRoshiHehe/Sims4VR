@@ -29,5 +29,8 @@ void setHeld(bool held);
 // The DLL (19_present_control.inc): eyes shut across a switch into or out of build/buy mode in first person,
 // until the game runs steadily again (user 2026-10-28). Same look as setCovered, no timeout of its own.
 void setTransition(bool shut);
+// The DLL (clientdlg.cpp): the game's Saving dialog appeared (first person). Eyes shut from now until Python's setHeld(false)
+// (the save step ended) or kSaveWaitMs, whichever comes first. Python's own hold only starts ~6 s after the dialog.
+void setSaveWait(bool wait);
 
 }  // namespace s4vr::eyelids

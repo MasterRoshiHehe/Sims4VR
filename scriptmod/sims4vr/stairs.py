@@ -27,6 +27,12 @@ UP_START_OUT = 0.309  # the up lane starts this far before the bottom step
 UP_END_OUT = 0.25  # and ends this far past the top step
 SIDE_INSET = 0.25  # the outermost lane lines sit this far inside the sides
 ON_HEIGHT = 0.6  # metres between you and the ramp that still count as on it
+# Once you are on a flight, its sides count this much wider (hysteresis). Your
+# body (the base) drifts a little further from the centre line than your head
+# when you lean, and on a 0.5 m flight the edge is only 0.25 m out: a lean
+# crossed it, `on` went false for a tick and walk._climb put you on the floor
+# of the nearest end (down or up, whichever end your height was nearer).
+SIDE_HOLD = 0.4
 # Rise over run above which a run of steps is not a straight flight (spiral
 # stairs). The game's straight stairs climb at exactly 1.0, so the line sits
 # well above that.
@@ -54,11 +60,13 @@ class Flight:
         g = (self.h1 - self.h0) / self.run
         return g * self.dx, g * self.dz
 
-    def on(self, x, y, z):
+    def on(self, x, y, z, held=False):
         """On the steps (between the bottom and the top step, within the
-        width, at the ramp's height)."""
+        width, at the ramp's height). held: you were on this flight a moment
+        ago, so the sides count SIDE_HOLD wider."""
         s, l = self.coords(x, z)
-        return 0.0 < s < self.run and abs(l) < self.half_w and abs(self.height(s) - y) < ON_HEIGHT
+        return 0.0 < s < self.run and abs(l) < self.half_w + (SIDE_HOLD if held else 0.0) \
+            and abs(self.height(s) - y) < ON_HEIGHT
 
     def __repr__(self):
         return 'flight of {:.1f} m, {:.2f} -> {:.2f} high, {:.1f} m wide'.format(
@@ -181,11 +189,11 @@ def forget():
     _flights_sig = None
 
 
-def flight_under(x, y, z):
-    """The flight you are on, or None."""
+def flight_under(x, y, z, held=None):
+    """The flight you are on, or None. held: the flight you were on last tick."""
     best, best_dy = None, ON_HEIGHT
     for f in flights():
-        if f.on(x, y, z):
+        if f.on(x, y, z, f is held):
             s, _ = f.coords(x, z)
             dy = abs(f.height(s) - y)
             if dy < best_dy:
@@ -193,13 +201,14 @@ def flight_under(x, y, z):
     return best
 
 
-def ramp(x, y, z, reach=0.6):
+def ramp(x, y, z, reach=0.6, held=None):
     """The flight whose ramp carries you here: on its steps, or at one of its
-    ends within reach and level with that end. None elsewhere."""
+    ends within reach and level with that end. None elsewhere. held: the
+    flight you were on last tick (its sides count SIDE_HOLD wider)."""
     best, best_dy = None, 0.3
     for f in flights():
         s, l = f.coords(x, z)
-        if not (-reach < s < f.run + reach and abs(l) < f.half_w):
+        if not (-reach < s < f.run + reach and abs(l) < f.half_w + (SIDE_HOLD if f is held else 0.0)):
             continue
         dy = abs(f.height(s) - y)
         limit = ON_HEIGHT if 0.0 < s < f.run else 0.3

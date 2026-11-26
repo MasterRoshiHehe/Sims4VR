@@ -3,12 +3,12 @@
 // The separate mods the debug menu (B) has pages for and that sims4vr reads
 // settings from while they are loaded: Integrated Body Physics (was Claude
 // Jiggle), Extended Sound Control (was Claude Sound) and Claude Bustin Out, all
-// DLLs, and the Claude Performance script mod. Each is optional: none of their pages or
+// DLLs, Claude Realistic Lighting (DLL, 2026-11-01; was Claude Interior Darkness), and the Claude Performance script mod. Each is optional: none of their pages or
 // rows show while it isn't loaded (user 2026-10-17 16:09Z).
 namespace s4vr::othermods {
 
 // kPerformance is a bit number the script mod sends (setScriptMods): new mods go after it.
-enum Mod { kBodyPhysics, kSoundControl, kPerformance, kBustinOut, kModCount };
+enum Mod { kBodyPhysics, kSoundControl, kPerformance, kBustinOut, kRealisticLighting, kModCount };
 
 using GetFn = int (*)(const char* key, float* out);
 using SetFn = int (*)(const char* key, float value);

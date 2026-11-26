@@ -4,6 +4,7 @@ static constexpr float kLensFov = 65.0f;  // degrees, the phone lens' vertical a
 static ID3D11Texture2D* g_viewfinder = nullptr;
 static D3D11_TEXTURE2D_DESC g_viewfinderDesc{};
 static ULONGLONG g_viewfinderAt = 0;
+static ULONGLONG g_lensPictureAt = 0;  // the last picture that came from the phone lens (a third pass)
 
 static DXGI_FORMAT plainFormat(DXGI_FORMAT f) {
     switch (f) {
@@ -56,4 +57,5 @@ static void storeViewfinder(ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_D
 }
 
 // The viewfinder has a recent picture (it comes every third frame; a second is long past a session's end).
-static bool viewfinderReady() { return g_viewfinder && GetTickCount64() - g_viewfinderAt < 1000; }
+// A gap (the game's photo UI, a paused frame) keeps the last picture on the glass instead of dropping to the home screen.
+static bool viewfinderReady() { return g_viewfinder && GetTickCount64() - g_viewfinderAt < 6000; }

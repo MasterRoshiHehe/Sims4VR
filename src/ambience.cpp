@@ -37,6 +37,9 @@ CurveFn g_curve = nullptr;
 uint8_t* g_manager = nullptr;
 float g_fade = 0;
 std::atomic<bool> g_firstPerson{false};
+std::atomic<bool> g_basement{false};
+std::atomic<float> g_basementScale{0.4f};
+std::atomic<float> g_floor{0.15f};  // least outdoor share inside (outdoor_floor)
 
 // The way out through doors and arches (outdoors.py, a few times a second):
 // how much of the outdoors reaches you inside, 0..1 (-1: not known, the wall
@@ -158,6 +161,11 @@ float hookedValue(uint8_t* gc) {
     }
     void* curve = gc + kGcCurve;
     float in = g_curve(curve, 0), out = g_curve(curve, 1);
+    // Outdoor sounds (louder outside) never drop below the floor inside.
+    if (out > in) {
+        s = std::fmax(s, g_floor.load(std::memory_order_relaxed));
+        if (g_basement.load(std::memory_order_relaxed)) s *= g_basementScale.load(std::memory_order_relaxed);
+    }
     logGc(gc, width);
     return in + (out - in) * s;
 }
@@ -190,7 +198,20 @@ void install(float fadeMetres) {
 
 void setFirstPerson(bool on) { g_firstPerson.store(on, std::memory_order_relaxed); }
 
-void setOpenings(float through, float wallLeak) {
+void setFloor(float floor) {
+    if (!(floor >= 0)) floor = 0;
+    if (floor > 1) floor = 1;
+    g_floor.store(floor, std::memory_order_relaxed);
+}
+
+void setBasement(float scale) {
+    if (!(scale >= 0)) scale = 0;
+    if (scale > 1) scale = 1;
+    g_basementScale.store(scale, std::memory_order_relaxed);
+}
+
+void setOpenings(float through, float wallLeak, bool basement) {
+    g_basement.store(basement, std::memory_order_relaxed);
     if (!(through <= 1)) through = 1;
     if (!(wallLeak >= 0)) wallLeak = 0;
     if (wallLeak > 1) wallLeak = 1;

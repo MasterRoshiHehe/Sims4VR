@@ -133,6 +133,8 @@ def ways():
 
 def forget():
     global _ways, _ways_time, _ways_sig, _trip
+    from sims4vr import swim
+    swim.forget()
     _ways = []
     _ways_time = -1e9
     _ways_sig = None
@@ -141,7 +143,8 @@ def forget():
 
 def active():
     """A trip is under way: walk.py must not cancel it when you push the stick."""
-    return _trip is not None
+    from sims4vr import swim, trail
+    return _trip is not None or swim.active() or trail.riding() or trail.climbing()
 
 
 def _toward(stick, x, z, tx, tz):

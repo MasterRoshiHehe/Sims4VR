@@ -5,7 +5,11 @@ static bool g_alignBroken = false;  // a turned image couldn't be drawn: off for
 static bool alignEyes() { return g_steamVR && g_config.alignEyes && !g_alignBroken; }
 // Both eyes every frame (deptheye.h): first person, not with SteamVR's eye align.
 // Both real eyes every frame ([stereo] both_eyes): first person, the game draws both eyes a frame.
-static bool bothEyesOn() { return g_config.bothEyes && !alignEyes() && camera::bodyActive(); }
+// Create a Sim too (camera.cpp casActive): the same paired pass as in first person, so both eyes come from one base.
+// (Stays on in a photo session: 818, both eyes on, no cross-eye. 824-837 switched it off for a third lens frame and
+// every session came out with the eyes swapped, "3 queued" for good: the paired path can't tell a copy that was
+// never presented from a picture; both-eyes mode marks each frame's left eye and drops such entries.)
+static bool bothEyesOn() { return g_config.bothEyes && !alignEyes() && (camera::bodyActive() || camera::casActive()); }
 static bool g_depthEyeBroken = false;  // the pass couldn't be made: off for this session
 static bool depthEyeOn() {
     return g_config.depthEye && g_config.depthEyeDebug != 4 && !alignEyes() && !g_depthEyeBroken &&
@@ -508,6 +512,78 @@ static bool holdBothFirst(ID3D11Texture2D* backbuffer) {
 // The head point the shown eyes were turned about (the frame clock turns them on about it).
 static XrVector3f g_shownHead{};
 
+// Pose ring (GLA-22). Every Present asks the game for the next picture's head pose and tags the request with a
+// number (camera::setPoseSeq); the picture carries it back (Rendered::poseSeq). Present then knows how old the pose
+// a picture was drawn from is, in Presents and in display time, and counts it: exact (the usual age), older (the
+// game was slower than usual), newer, stale (3+ Presents older than usual, or gone from the ring).
+// With [stereo] late_pose the pose asked for is predicted that far ahead (the measured request-to-shown time), so
+// the picture is drawn from where the head will be when it is shown, not where it was when the game was asked.
+static constexpr int kPoseRing = 32;
+struct PoseTag {
+    uint64_t seq = 0;
+    XrTime time = 0;
+};
+static PoseTag g_poseRing[kPoseRing];
+static uint64_t g_poseSeq = 0;
+static double g_lateLeadNs = 0;  // request to shown, display time (smoothed)
+static int g_ageHist[16];
+static struct {
+    uint64_t pictures = 0, exact = 0, older = 0, newer = 0, stale = 0, lost = 0, untagged = 0;
+    double ageSum = 0;
+    ULONGLONG since = 0;
+} g_poseStat;
+
+static void notePictureAge(const camera::Rendered& rendered, XrTime time) {
+    ++g_poseStat.pictures;
+    const uint64_t seq = rendered.poseSeq;
+    if (!seq) {
+        ++g_poseStat.untagged;
+        return;
+    }
+    const uint64_t age = g_poseSeq - seq;
+    const PoseTag& tag = g_poseRing[seq % kPoseRing];
+    if (age >= kPoseRing || tag.seq != seq) {
+        ++g_poseStat.lost;
+        ++g_poseStat.stale;
+        return;
+    }
+    int typical = 0;
+    for (int i = 1; i < 16; ++i)
+        if (g_ageHist[i] > g_ageHist[typical]) typical = i;
+    const int a = int(std::min<uint64_t>(age, 15));
+    if (a == typical) ++g_poseStat.exact;
+    else if (a > typical + 2) ++g_poseStat.stale;
+    else if (a > typical) ++g_poseStat.older;
+    else ++g_poseStat.newer;
+    g_poseStat.ageSum += double(age);
+    int total = 0;
+    for (int i = 0; i < 16; ++i) total += g_ageHist[i];
+    if (total > 256)
+        for (int i = 0; i < 16; ++i) g_ageHist[i] /= 2;
+    ++g_ageHist[a];
+    const double ahead = double(time - tag.time);
+    if (ahead > 0 && ahead < 80e6) g_lateLeadNs += (ahead - g_lateLeadNs) * (g_lateLeadNs > 0 ? 0.05 : 1.0);
+    const ULONGLONG now = GetTickCount64();
+    if (!g_poseStat.since) g_poseStat.since = now;
+    if (now - g_poseStat.since >= 10000) {
+        int t = 0;
+        for (int i = 1; i < 16; ++i)
+            if (g_ageHist[i] > g_ageHist[t]) t = i;
+        LOG("Pose ring: %llu pictures in %.1f s: exact %llu, older %llu, newer %llu, stale %llu (%llu gone from the ring), %llu untagged; "
+            "pose age %.2f Presents on average (usual %d); shown %.1f ms after asked; late pose %s",
+            static_cast<unsigned long long>(g_poseStat.pictures), (now - g_poseStat.since) / 1000.0,
+            static_cast<unsigned long long>(g_poseStat.exact), static_cast<unsigned long long>(g_poseStat.older),
+            static_cast<unsigned long long>(g_poseStat.newer), static_cast<unsigned long long>(g_poseStat.stale),
+            static_cast<unsigned long long>(g_poseStat.lost), static_cast<unsigned long long>(g_poseStat.untagged),
+            g_poseStat.pictures > g_poseStat.untagged
+                ? g_poseStat.ageSum / double(g_poseStat.pictures - g_poseStat.untagged)
+                : 0.0,
+            t, g_lateLeadNs / 1e6, g_config.latePose ? "on" : "off");
+        g_poseStat = {};
+        g_poseStat.since = now;
+    }
+}
+
 static bool renderStereo(ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_DESC& desc, XrTime time,
                          XrCompositionLayerProjection& layer, XrCompositionLayerProjectionView (&views)[2]) {
     XrViewLocateInfo locate{XR_TYPE_VIEW_LOCATE_INFO};
@@ -519,6 +595,8 @@ static bool renderStereo(ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_DESC
     uint32_t count = 0;
     if (!check(xrLocateViews(g_session, &locate, &viewState, 2, &count, located), "xrLocateViews")) return false;
     computeRenderSize(located);
+    ++g_poseSeq;
+    g_poseRing[g_poseSeq % kPoseRing] = {g_poseSeq, time};
     bool newPicture = false;  // a new eye picture (or pair) shown from this frame on
 
     // Turning now, or about to? (kBodyLinger)
@@ -536,9 +614,25 @@ static bool renderStereo(ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_DESC
     //    entry, since the game thread can run a frame ahead of Present.
     camera::Rendered rendered;
     bool havePicture = camera::takeRendered(rendered);
+    if (havePicture && rendered.eye <= 1 && !camera::casActive()) notePictureAge(rendered, time);
+    if (havePicture && rendered.eye <= 1 && camera::photoSession() && g_phoneOut &&
+        (!g_config.photoLens || GetTickCount64() - g_lensPictureAt > 800)) {  // either eye: a shifted pairing must not starve it
+        storeViewfinder(backbuffer, desc);  // the phone's screen shows your own view (and the capture reads this very picture)
+    }
     if (havePicture && rendered.eye == 2) {
+        g_lensPictureAt = GetTickCount64();
         storeViewfinder(backbuffer, desc);  // the phone lens' picture: onto the phone's screen, not to an eye
         havePicture = false;
+    }
+    static int casTraces = 0, casSeen = 0;
+    const bool casTrace = camera::casActive() && (casTraces < 400 || (++casSeen % 50) == 0) && casTraces < 800;
+    if (casTrace) {
+        ++casTraces;
+        LOG("CAS present %d: picture %d eye %d pairFirst %d; render yaw %.1f deg pos %.2f %.2f %.2f; left held %d, valid %d %d",
+            casTraces, havePicture, havePicture ? rendered.eye : -1, havePicture ? rendered.pairFirst : -1,
+            havePicture ? rendered.yaw * 57.29578f : 0.0f, havePicture ? rendered.position.x : 0.0f,
+            havePicture ? rendered.position.y : 0.0f, havePicture ? rendered.position.z : 0.0f, g_leftHeld, g_eyeValid[0],
+            g_eyeValid[1]);
     }
     if (havePicture) {
         int eye = rendered.eye;
@@ -618,16 +712,38 @@ static bool renderStereo(ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_DESC
     // 2. Point the game camera at the other eye for the frames it renders next.
     //    Body mode also wants the headset itself, between the eyes.
     const XrPosef &l = located[0].pose, &r = located[1].pose;
-    camera::setHead({(l.position.x + r.position.x) / 2, (l.position.y + r.position.y) / 2,
-                     (l.position.z + r.position.z) / 2},
-                    {l.orientation.x, l.orientation.y, l.orientation.z, l.orientation.w});
+    // Late pose: the head where it will be when the picture asked for now is shown.
+    XrView aim[2] = {located[0], located[1]};
+    bool aimLate = false;
+    if (g_config.latePose && g_lateLeadNs > 0 && !camera::casActive()) {
+        XrViewLocateInfo again = locate;
+        again.displayTime = time + static_cast<XrTime>(g_lateLeadNs);
+        XrViewState lateState{XR_TYPE_VIEW_STATE};
+        XrView late[2] = {{XR_TYPE_VIEW}, {XR_TYPE_VIEW}};
+        uint32_t lateCount = 0;
+        const XrViewStateFlags need = XR_VIEW_STATE_POSITION_VALID_BIT | XR_VIEW_STATE_ORIENTATION_VALID_BIT;
+        if (XR_SUCCEEDED(xrLocateViews(g_session, &again, &lateState, 2, &lateCount, late)) && lateCount == 2 &&
+            (lateState.viewStateFlags & need) == need) {
+            aim[0].pose = late[0].pose;
+            aim[1].pose = late[1].pose;
+            aimLate = true;
+        }
+    }
+    (void)aimLate;
+    camera::setPoseSeq(g_poseSeq);
+    const XrPosef &la = aim[0].pose, &ra = aim[1].pose;
+    camera::setHead({(la.position.x + ra.position.x) / 2, (la.position.y + ra.position.y) / 2,
+                     (la.position.z + ra.position.z) / 2},
+                    {la.orientation.x, la.orientation.y, la.orientation.z, la.orientation.w});
     const bool both = bothEyesOn();
     camera::setPairedEyes((g_config.pairedEyes || both) && !alignEyes() && !depthEyeOn());
     camera::setBothEyes(both);
+    camera::setLeadCap(g_config.capLead);
     {
         static const int kSkip[4] = {0, 3, 4, 8};
         singleview::setSecondSkip(kSkip[std::clamp(g_config.bothEyesSkip, 0, 3)]);
         shadowreuse::setOn(g_config.reuseShadows);
+        shadowreuse::setPairs(g_config.pairShadows);
         shadowreuse::setSkipLists(g_config.skipShadowLists);
     }
     camera::setExactFov(g_config.exactFov);
@@ -642,40 +758,76 @@ static bool renderStereo(ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_DESC
     // Both eyes: the left eye here, the right eye for the frame's second pass.
     int next = both || (depthEye && !g_config.depthEyeAlternate) ? 0 : g_renderingEye == 0 ? 1 : 0;
     if (both) {
-        const XrPosef& rp = located[1].pose;
-        const XrFovf& rf = located[1].fov;
+        const XrPosef& rp = aim[1].pose;
+        const XrFovf& rf = aim[1].fov;
         camera::applyRight({rp.position.x, rp.position.y, rp.position.z},
                            {rp.orientation.x, rp.orientation.y, rp.orientation.z, rp.orientation.w},
                            {rf.angleLeft, rf.angleRight, rf.angleUp, rf.angleDown});
     }
-    // A photo session: the phone lens' picture after each pair (the phone must be out, where it has a place).
-    const bool lens = camera::photoSession() && g_phoneOut && g_phoneFrontOk &&
-                      !both && !depthEye && !depthCompare() && !alignEyes() && g_config.pairedEyes && camera::bodyActive();
-    if (lens && g_renderingEye == 1) {
-        const XrVector3f back = g_phoneAxes[2];
-        const float behind = g_phoneGlassOut + 0.004f;  // the lens just behind the phone's back
-        const XrVector3f at{g_phoneBodyPose.position.x - back.x * behind, g_phoneBodyPose.position.y - back.y * behind,
-                            g_phoneBodyPose.position.z - back.z * behind};
+    // The game draws fewer frames than Present runs in a photo session (about every second one): setting the other
+    // eye every Present then left it always on the same eye (the log's "eye 1" lines for a minute, the left eye
+    // never drawn: cross-eyed, user 2026-10-28). Each eye is held until the game has drawn the one set before.
+    static uint64_t eyeSetAt = ~0ull;
+    static ULONGLONG eyeSetTick = 0;
+    const bool alternating = g_config.eyeWaitDrawn && !both && !(depthEye && !g_config.depthEyeAlternate);
+    const bool waiting = alternating && eyeSetAt == camera::appliedCount() && GetTickCount64() - eyeSetTick < static_cast<ULONGLONG>(g_config.eyeWaitMs);
+    // A photo session: the phone lens' picture (the phone must be out, where it has a place). Looks out the phone's
+    // back, or out its glass in a selfie session.
+    const bool lensWanted = camera::photoSession() && g_config.photoLens && g_phoneOut && g_phoneFrontOk &&
+                            !alignEyes() && camera::bodyActive();
+    auto lensPose = [&](XrVector3f& at, XrQuaternionf& o, XrFovf& fov) {
+        XrVector3f back = g_phoneAxes[2];
+        const float away = g_phoneGlassOut + 0.004f;  // the lens just off the phone's surface
+        const bool selfie = camera::photoSelfie();
+        const float side = selfie ? 1.0f : -1.0f;  // + out of the glass (toward you), - behind the phone
+        at = {g_phoneBodyPose.position.x + back.x * away * side, g_phoneBodyPose.position.y + back.y * away * side,
+              g_phoneBodyPose.position.z + back.z * away * side};
+        const XrQuaternionf b = g_phoneBodyPose.orientation;  // x right, y up, z back: the lens looks out the back
+        o = selfie ? XrQuaternionf{-b.z, b.w, b.x, -b.y} : b;  // a selfie: turned half a turn about the phone's up
         const float vertical = kLensFov * 0.5f * 0.0174533f;  // half the lens' vertical angle
         const float horizontal = std::atan(std::tan(vertical) * static_cast<float>(desc.Width) /
                                            static_cast<float>(desc.Height));
-        const XrQuaternionf o = g_phoneBodyPose.orientation;  // x right, y up, z back: the lens looks out the back
-        camera::apply(2, {at.x, at.y, at.z}, {o.x, o.y, o.z, o.w}, {-horizontal, horizontal, vertical, -vertical});
+        fov = {-horizontal, horizontal, vertical, -vertical};
+    };
+    if (both) {
+        if (lensWanted) {  // the pass after the right eye's draws it (singleview.cpp thirdEye)
+            XrVector3f at;
+            XrQuaternionf o;
+            XrFovf lf;
+            lensPose(at, o, lf);
+            camera::setLens({at.x, at.y, at.z}, {o.x, o.y, o.z, o.w}, {lf.angleLeft, lf.angleRight, lf.angleUp, lf.angleDown});
+        } else {
+            camera::clearLens();
+        }
+    }
+    const bool lens = lensWanted && !waiting && !both && !depthEye && !depthCompare() && g_config.pairedEyes;
+    if (lens && (g_renderingEye == 1 || camera::photoCapturing())) {
+        XrVector3f at;
+        XrQuaternionf o;
+        XrFovf lf;
+        lensPose(at, o, lf);
+        camera::apply(2, {at.x, at.y, at.z}, {o.x, o.y, o.z, o.w}, {lf.angleLeft, lf.angleRight, lf.angleUp, lf.angleDown});
         g_renderingEye = 2;
         next = 2;
     }
-    const XrPosef& p = located[next == 2 ? 0 : next].pose;
+    const XrPosef& p = aim[next == 2 ? 0 : next].pose;
     XrFovf f = located[next == 2 ? 0 : next].fov;
     if (depthEye || depthCompare()) {  // the compare view: both eyes drawn exactly as the depth eye draws them
         const XrFovf& o = located[1 - next].fov;
         f = {std::min(f.angleLeft, o.angleLeft), std::max(f.angleRight, o.angleRight), std::max(f.angleUp, o.angleUp),
              std::min(f.angleDown, o.angleDown)};
     }
-    if (next != 2) {
+    if (waiting) {
+        // the eye set last hasn't been drawn yet
+    } else if (next != 2) {
         camera::apply(next, {p.position.x, p.position.y, p.position.z},
                       {p.orientation.x, p.orientation.y, p.orientation.z, p.orientation.w},
                       {f.angleLeft, f.angleRight, f.angleUp, f.angleDown});
         g_renderingEye = next;
+    }
+    if (!waiting) {
+        eyeSetAt = camera::appliedCount();
+        eyeSetTick = GetTickCount64();
     }
 
     // 3. Submit once both eyes hold an image. Each view carries the pose its
@@ -687,7 +839,9 @@ static bool renderStereo(ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_DESC
     // turned only every other frame. Each eye's pose is turned back by how
     // far the world has turned since it was rendered, about your head, so
     // the runtime reprojects that turn like a head turn, every refresh.
-    float nowYaw = g_config.turnReprojection ? camera::viewYaw() : NAN;
+    // Not in Create a Sim: nothing there turns with the stick, and the view's heading follows the game's camera as it
+    // tweens, so turning the eyes back by it moved the whole view by up to 9 degrees on one frame in nine (trace 786).
+    float nowYaw = g_config.turnReprojection && !camera::casActive() ? camera::viewYaw() : NAN;
     // Turn lead: how long a pair's heading is set before it's shown, from how
     // far the shown right eye trails the turn (its lead taken out), averaged
     // while the stick turns; the next pair is drawn that far ahead.
@@ -699,7 +853,7 @@ static bool renderStereo(ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_DESC
             const float seconds = behind / g_stickRate;
             if (seconds > 0 && seconds < 0.2f) g_turnLatency += (seconds - g_turnLatency) * 0.03f;
         }
-        const float lead = leadOn ? std::clamp(g_stickRate * g_turnLatency, -0.3f, 0.3f) : 0.0f;
+        const float lead = leadOn ? std::clamp(g_stickRate * g_turnLatency * g_config.turnLeadScale, -0.3f, 0.3f) : 0.0f;
         camera::setTurnLead(lead);
         if (g_turnChecking) g_turnCheck.leadMax = std::max(g_turnCheck.leadMax, std::fabs(lead) * 57.29578f);
     }
@@ -725,6 +879,39 @@ static bool renderStereo(ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_DESC
         const float cd = std::cos(delta), sd = std::sin(delta);
         pose.position.x = head.x + cd * dx + sd * dz;
         pose.position.z = head.z - sd * dx + cd * dz;
+    }
+    if (casTrace) {
+        // The images the two views point at (the sample taken when each was copied in; see casRecordImage).
+        const CasImageRecord* a = casImageOf(views[0].subImage.swapchain);
+        const CasImageRecord* b = casImageOf(views[1].subImage.swapchain);
+        auto sig = [](const CasImageRecord* r, char* out, size_t n) {
+            if (!r) {
+                std::snprintf(out, n, "none");
+                return;
+            }
+            std::snprintf(out, n, "#%llu img%u %llums %06x %06x %06x %06x %06x %06x %06x %06x",
+                          static_cast<unsigned long long>(r->serial), r->index,
+                          static_cast<unsigned long long>(GetTickCount64() - r->tick), r->sample[0] & 0xffffff,
+                          r->sample[1] & 0xffffff, r->sample[2] & 0xffffff, r->sample[3] & 0xffffff,
+                          r->sample[4] & 0xffffff, r->sample[5] & 0xffffff, r->sample[6] & 0xffffff,
+                          r->sample[7] & 0xffffff);
+        };
+        char left[160], right[160];
+        sig(a, left, sizeof(left));
+        sig(b, right, sizeof(right));
+        LOG("CAS shown: new %d; left %s | right %s", newPicture ? 1 : 0, left, right);
+    }
+    if (casTrace) {
+        // What the headset is sent: the right eye's place from the left's, and each eye's turn and heading.
+        const XrPosef &a = views[0].pose, &b = views[1].pose;
+        const XrVector3f d = qrot(qconj(a.orientation), {b.position.x - a.position.x, b.position.y - a.position.y,
+                                                         b.position.z - a.position.z});
+        const XrQuaternionf m = qmul(qconj(a.orientation), b.orientation);
+        LOG("CAS submit: right eye from the left %+.1f %+.1f %+.1f mm, turned %.2f deg; shown yaw %.1f / %.1f, now %.1f; "
+            "turned back %.2f / %.2f deg",
+            d.x * 1000, d.y * 1000, d.z * 1000, 2 * std::acos(std::min(1.0f, std::fabs(m.w))) * 57.29578f,
+            g_shownYaw[0] * 57.29578f, g_shownYaw[1] * 57.29578f, nowYaw * 57.29578f, turned[0] * 57.29578f,
+            turned[1] * 57.29578f);
     }
     // Your body, which turns with you, on its own layer that the turn leaves
     // alone (bodylayer.h): each eye's as it was drawn.

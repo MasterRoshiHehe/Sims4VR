@@ -130,11 +130,11 @@ def reset():
 
 
 def save_begin(slot_name):
-    """A save starts. Exit / exit to main menu saves have an empty slot name."""
+    """A save starts (manual, autosave, travel or exit: all go through the same persistence step)."""
     global _saving
     from sims4vr import body
     native._log('loadshut: save starts, slot name {!r}'.format(slot_name))
-    if slot_name or not body.enabled or not native.setting_flag('body', 'exit_eyes_closed', True):
+    if not body.enabled or not native.setting_flag('body', 'exit_eyes_closed', True):
         return
     _saving = True
     native.set_eyes_held(True)
@@ -142,6 +142,5 @@ def save_begin(slot_name):
 
 def save_end():
     global _saving
-    if _saving:
-        _saving = False
-        native.set_eyes_held(_held)
+    _saving = False
+    native.set_eyes_held(_held)  # always: also ends the DLL's own wait that starts with the Saving dialog

@@ -1,15 +1,21 @@
 #include "camera.h"
+#include "drone.h"
 #include "player.h"
 
 #include <windows.h>
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <string>
 #include <mutex>
+#include <utility>
+#include <vector>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
@@ -21,12 +27,14 @@
 #include "doorswing.h"
 #include "gamefix.h"
 #include "godhands.h"
+#include "casbody.h"
 #include "ambience.h"
 #include "thumbs.h"
 #include "collide.h"
 #include "walkstop.h"
 #include "facehide.h"
 #include "framecost.h"
+#include "shadowreuse.h"
 #include "framemap.h"
 #include "addrs.h"
 #include "gameaddr.h"
@@ -39,6 +47,8 @@
 #include "touch.h"
 
 namespace s4vr::camera {
+
+void installCasStateHook();  // with casActive, below
 
 namespace {
 
@@ -173,6 +183,7 @@ std::atomic<CopyObserver> g_observer{nullptr};
 std::mutex g_poseMutex;
 bool g_active = false;
 Rendered g_pending{};
+uint64_t g_poseSeqNext = 0;  // g_poseMutex
 // Both real eyes every frame (setBothEyes): the right eye's pose for the second pass, the count of
 // apply() calls (so secondEye's restore never undoes a newer left eye), g_applied at the last
 // scene render, and the frustum applyEye last wrote (+0x14..+0x20).
@@ -185,6 +196,7 @@ float g_writtenFrustum[4] = {};
 // The render camera our eye pose went into, and the eye positions written
 // (left, right): the face is hidden only in passes drawn from them.
 std::atomic<uintptr_t> g_writtenCamera{0};
+std::atomic<uintptr_t> g_waterCamera[2] = {{0}, {0}};  // the water reflection cameras (scene+0x68/+0x70), set per water pass
 std::atomic<float> g_writtenEye[2][3] = {{NAN, NAN, NAN}, {NAN, NAN, NAN}};
 Vec3 g_headCentre{0, 0, 0};  // headset centre (between the eyes) for the frame being rendered
 Quat g_headOrientation{0, 0, 0, 1};
@@ -209,8 +221,23 @@ std::atomic<float> g_appliedCentre[2] = {NAN, NAN};
 std::atomic<float> g_eyeCentre[2][2] = {{NAN, NAN}, {NAN, NAN}};
 int g_oldCentreLogs = 0;
 // Copies the hook changed and Present hasn't consumed yet.
-Rendered g_queue[4];
+constexpr size_t kQueue = 8;
+Rendered g_queue[kQueue];
 size_t g_queueHead = 0, g_queueSize = 0;
+// CAS pairing: entries pushed since the frame's left eye (beginBoth) or right eye (secondEye) was queued. Present
+// pairs pictures with entries by order, so each frame must queue exactly one left and one right: extra camera
+// copies (shadow and snapshot passes) used to add entries and shift every later picture onto the wrong eye (788).
+size_t g_pushedSince = 0, g_trimmed = 0, g_parityDrops = 0;
+// CAS: which eye each scene pass draws, in the order the passes ran. The pictures reach Present in the same order, one
+// per pass, so Present reads the eye of the picture it has from here instead of guessing it from the entry queue (790:
+// the entries ran right, left, right, left against pictures left, right, left, right, so every eye got the other's
+// picture and nothing ever put it back in step).
+struct PassRecord {
+    bool valid = false;
+    Rendered rendered;
+};
+PassRecord g_passRec[16];
+size_t g_passHead = 0, g_passSize = 0, g_passMissing = 0;
 uint64_t g_applied = 0;
 // Where app space sat in the world for the latest changed frame.
 bool g_anchorValid = false;
@@ -563,8 +590,79 @@ void probeCameraLayout(uintptr_t manager, uintptr_t camera) {
                       ok ? "plausible" : "NOT PLAUSIBLE (a field moved?)");
 }
 
+// CAS probe (log only): with no zone camera (menus, CAS) every manager object and the camera it points at, whatever
+// that camera looks like, so the log shows which one CAS draws with. 1.128: CAS rewrites its Camera each frame at
+// 0x234ef0 (re/cas/VR-NOTES.md 2).
+void casProbeManagers(uintptr_t managerVTable, int attempt) {
+    std::vector<uintptr_t> managers = rtti::findInstances(managerVTable, 32);
+    LOG("CAS probe %d: %zu camera manager(s)", attempt, managers.size());
+    for (uintptr_t manager : managers) {
+        uintptr_t camera = 0, vtable = 0;
+        safeRead(manager + kManagerCameraOffset, &camera, sizeof(camera));
+        if (camera) safeRead(camera, &vtable, sizeof(vtable));
+        float p[4] = {NAN, NAN, NAN, NAN}, size[2] = {NAN, NAN}, clip[2] = {NAN, NAN}, fov[2] = {NAN, NAN};
+        if (camera && vtable) {
+            safeRead(camera + kPositionOffset, p, sizeof(p));
+            safeRead(camera + kFrustumOffset, size, sizeof(size));
+            safeRead(camera + kNearOffset, clip, sizeof(clip));
+            safeRead(camera + kFrustumOffset + 8, fov, sizeof(fov));
+        }
+        LOG("CAS probe %d: manager %p camera %p (%s) pos %.2f %.2f %.2f w %.1f frustum %.3f %.3f %.3f %.3f near %.3f far %.1f",
+            attempt, reinterpret_cast<void*>(manager), reinterpret_cast<void*>(camera),
+            !camera ? "none" : vtable == g_cameraVTable ? "Camera" : "other class", p[0], p[1], p[2], p[3], size[0], size[1],
+            fov[0], fov[1], clip[0], clip[1]);
+    }
+}
+
+// CAS probe, from the camera copy hook (any time; the main menu's camera stays "live" inside CAS): each distinct (destination, source) camera pair
+// the game copies once, with the copier's address and the destination's position.
+void casProbeCopy(void* dst, const void* src, void* caller) {
+    static std::mutex mutex;
+    static std::vector<std::pair<void*, const void*>> seen;
+    std::lock_guard<std::mutex> lock(mutex);
+    if (seen.size() >= 120) return;
+    for (const auto& pair : seen)
+        if (pair.first == dst && pair.second == src) return;
+    seen.emplace_back(dst, src);
+    float p[4] = {NAN, NAN, NAN, NAN}, size[2] = {NAN, NAN};
+    safeRead(reinterpret_cast<uintptr_t>(dst) + kPositionOffset, p, sizeof(p));
+    safeRead(reinterpret_cast<uintptr_t>(dst) + kFrustumOffset, size, sizeof(size));
+    uintptr_t vtable = 0;
+    safeRead(reinterpret_cast<uintptr_t>(dst), &vtable, sizeof(vtable));
+    LOG("CAS probe copy: into %p from %p (%s), caller game+0x%llx, dst pos %.2f %.2f %.2f w %.1f frustum %.3f %.3f", dst, src,
+        vtable == g_cameraVTable ? "Camera" : "other class",
+        static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(caller) - reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr))),
+        p[0], p[1], p[2], p[3], size[0], size[1]);
+}
+
 // Several manager objects exist (menus, CAS, build); the live one points at a
 // Camera whose transform has w = 1.
+// CAS probe: the menu's manager can stay the live one through CAS, so the search loop never dumps there. Every 5 s
+// (60 times) the manager list is scanned and logged whenever it or a camera pointer changed.
+void startCasWatcher() {
+    static std::atomic<bool> started{false};
+    if (started.exchange(true)) return;
+    std::thread([] {
+        HMODULE game = GetModuleHandleW(nullptr);
+        uintptr_t managerVTable = rtti::lookup(game, kManagerClass, "CameraManagerVTable");
+        if (!managerVTable) return;
+        std::vector<std::pair<uintptr_t, uintptr_t>> last;
+        for (int round = 0; round < 60; ++round) {
+            Sleep(5000);
+            std::vector<std::pair<uintptr_t, uintptr_t>> now;
+            for (uintptr_t manager : rtti::findInstances(managerVTable, 32)) {
+                uintptr_t camera = 0;
+                safeRead(manager + kManagerCameraOffset, &camera, sizeof(camera));
+                now.emplace_back(manager, camera);
+            }
+            if (now != last) {
+                last = now;
+                casProbeManagers(managerVTable, round);
+            }
+        }
+    }).detach();
+}
+
 void searchManager() {
     if (g_searching.exchange(true)) return;
     std::thread([] {
@@ -588,6 +686,7 @@ void searchManager() {
                 }
             }
             if (!g_manager) {
+                if (attempt < 24) casProbeManagers(managerVTable, attempt);
                 if (attempt == 0) LOG("Game camera not found yet; retrying every 5 s");
                 Sleep(5000);
             }
@@ -971,7 +1070,6 @@ struct Seat {
 Seat g_seat;
 constexpr float kSeatSide = 0.30f;  // metres of lean forward, back and sideways
 constexpr float kSeatUp = 0.04f, kSeatDown = 0.06f;
-constexpr float kSeatHold = 0.08f;  // the view stays this close to the Sim's eyes (metres)
 // Your eyes from the point your head turns about (your neck), in the
 // headset's frame, metres: the headset's own turns don't count as a lean.
 const Vec3 kNeckToEyes{0, 0.08f, -0.08f};
@@ -1019,13 +1117,21 @@ void seatView(float position[3], const Quat& heading, float up, float ahead, con
     Vec3 want{g_bodyAnchor[0] + leanWorld.x + eyes.x, g_bodyAnchor[1] + leanWorld.y + eyes.y,
               g_bodyAnchor[2] + leanWorld.z + eyes.z};
     Vec3 r{want.x - head[0] - eyes.x, want.y - head[1] - eyes.y, want.z - head[2] - eyes.z};
-    float off = std::sqrt(r.x * r.x + r.y * r.y + r.z * r.z), hold = kSeatHold * s;
+    float off = std::sqrt(r.x * r.x + r.y * r.y + r.z * r.z), hold = g_config.bodySeatHold * s;
     ++g_seat.frames;
     if (off > hold) {
         float k = 1 - hold / off;
         want = {want.x - r.x * k, want.y - r.y * k, want.z - r.z * k};
         ++g_seat.held;
     }
+    // Where you sit is yours: debug-menu back/up, along the way the view faces.
+    Vec3 fwd = rotate(heading, {0, 0, -1});
+    float fl = std::sqrt(fwd.x * fwd.x + fwd.z * fwd.z);
+    if (fl > 1e-3f) {
+        want.x -= fwd.x / fl * g_config.bodySeatBack * s;
+        want.z -= fwd.z / fl * g_config.bodySeatBack * s;
+    }
+    want.y += g_config.bodySeatUp * s;
     Vec3 centre = rotate(heading, {g_headCentre.x * s, g_headCentre.y * s, g_headCentre.z * s});
     position[0] = want.x - centre.x;
     position[1] = want.y - centre.y;
@@ -1213,12 +1319,141 @@ Quat viewBase(const Quat& level, bool animated, uint8_t* actor, bool freeMove, f
     return g_viewFrame;
 }
 
+// Flying the Streaming Drone (drone.h): the view's heading while the flight point carries the camera.
+float g_droneYaw = 0;
+bool g_droneWas = false;
+LARGE_INTEGER g_droneLast{};
+
 std::atomic<int> g_photoProbe{0};  // photo probe: applyEye lines still to log (Python photowatch)
 std::atomic<int> g_photoCopyProbe{0};  // and camera copies into the render camera
 
+// Create a Sim: the game copies its CAS camera (a temporary at the Sim, game 1.128 0x234ef0's controller) into the
+// render camera; the eye goes there instead, the Sim g_casDistance in front of you. CAS probe 2026-10-30: the copy
+// source sits near (128.2, 158.9, 131.8), 16:9 frustum, and the Sim stands at (128, 157, 128) (re/cas/VR-NOTES.md).
+std::atomic<bool> g_casOn{true};
+std::atomic<float> g_casDistance{1.6f};
+std::atomic<float> g_casSeparation{1.0f};
+std::atomic<float> g_casHeight{1.6f};
+std::atomic<ULONGLONG> g_casSeen{0};  // tick of the last CAS camera copy
+// Per thread: the game copies cameras on more than one thread. Shared, one thread's "false" after its copy reached
+// another's applyEye still waiting for g_poseMutex, which then worked out a plain eye from the game's camera (797: right
+// eye yaw 5.5-9.8 degrees against 3.1 after each "extra eye entries removed between the eyes").
+thread_local bool g_casEye = false;       // applyEye is drawing a CAS eye
+thread_local bool g_casFromLast = false;  // ... from a copy casSource turned down: placed from the last CAS camera's place
+float g_casLast[3];                   // where the game's CAS camera was at this visit's first copy casSource took
+bool g_casLastValid = false;
+constexpr float kCasSim[3] = {128.0f, 157.0f, 128.0f};
+// The game copies its CAS camera only when it changes, not every frame (user 2026-10-30 17:03Z: the 700 ms hold let
+// CAS flip between the eyes and the flat screen); CAS stays on this long after the last copy.
+constexpr ULONGLONG kCasHold = 5000;
+
+bool casSource(const void* src) {
+    float p[4], frustum[2];
+    if (!safeRead(reinterpret_cast<uintptr_t>(src) + kPositionOffset, p, sizeof(p)) ||
+        !safeRead(reinterpret_cast<uintptr_t>(src) + kFrustumOffset, frustum, sizeof(frustum)))
+        return false;
+    const float ratio = frustum[1] > 0 ? frustum[0] / frustum[1] : 0;
+    return p[3] == 1.0f && std::fabs(p[0] - kCasSim[0]) < 8 && std::fabs(p[2] - kCasSim[2]) < 8 && p[1] > 150 && p[1] < 170 &&
+           ((ratio > 1.7f && ratio < 1.85f) || (ratio > 0.9f && ratio < 0.98f));  // the screen's, or the headset's picture (2768x2944)
+}
+
+// Every camera a CAS copy wrote an eye into since the last frame's right eye (the scene is drawn from one of them,
+// which one is not known): the right eye of a pair goes into all of them (secondEye). Kept per frame, not per eye
+// request: Present's next request often arrives during the left eye's pass, and starting the list again there left
+// the cameras copied before it out, so the right eye's pass drew the left eye from them (798: the right eye showed
+// the left eye's picture after each "extra eye entries removed").
+std::mutex g_casCamMutex;
+uintptr_t g_casCams[12];
+int g_casCamCount = 0;
+bool g_casCamRestart = false;  // secondEye is done with the list: the next copy after its pass starts it again
+
+void casNoteCamera(const void* camera) {
+    std::lock_guard<std::mutex> lock(g_casCamMutex);
+    if (g_casCamRestart && !singleview::inSecond()) {  // the right eye's pass still builds projections from the list
+        g_casCamRestart = false;
+        g_casCamCount = 0;
+    }
+    const uintptr_t at = reinterpret_cast<uintptr_t>(camera);
+    for (int i = 0; i < g_casCamCount; ++i)
+        if (g_casCams[i] == at) return;
+    if (g_casCamCount < 12) g_casCams[g_casCamCount++] = at;
+}
+
+struct CasSaved {
+    uint64_t gen = 0;
+    bool valid = false;
+    uint8_t axes[0x40];  // right, up, back, position (+0x30 .. +0x70)
+    float frustum[4], centre[2], clip[2];
+} g_casSaved;
+
+// The right eye as secondEye() worked it out, for the copies the second scene pass makes (hookedCopy): that pass
+// copies the game's CAS camera into its snapshot cameras again, and they must get this, not the left eye.
+struct CasRight {
+    bool valid = false;
+    uint8_t axes[0x40];
+    float frustum[4], centre[2], clip[2];
+} g_casRight;
+
+// The second scene pass: the right eye secondEye worked out goes into this copy. False: none yet.
+bool casRightInto(void* dst) {
+    std::lock_guard<std::mutex> lock(g_poseMutex);
+    if (!g_casRight.valid) return false;
+    uint8_t* d = static_cast<uint8_t*>(dst);
+    std::memcpy(d + kRightOffset, g_casRight.axes, sizeof(g_casRight.axes));
+    std::memcpy(d + kFrustumOffset, g_casRight.frustum, sizeof(g_casRight.frustum));
+    std::memcpy(d + kCentreOffset, g_casRight.centre, sizeof(g_casRight.centre));
+    std::memcpy(d + kNearOffset, g_casRight.clip, sizeof(g_casRight.clip));
+    return true;
+}
+
+std::atomic<uintptr_t> g_casSceneCam{0};  // the camera the scene renderer draws from (renderer +0xa8 -> +0x60)
+
+// GLA-21 lead cap. Present sets g_presentTook after it takes a picture; the game thread's copy
+// waits on it (<= 11 ms) while a picture is still queued. Stats are logged with the Stereo line.
+std::atomic<bool> g_capLead{false};
+HANDLE g_presentTook = CreateEventW(nullptr, FALSE, FALSE, nullptr);  // auto-reset
+std::atomic<uint64_t> g_capWaits{0}, g_capTimeouts{0};
+std::atomic<long long> g_capWaitUs{0};
+double g_ageTotalMs = 0, g_ageWorstMs = 0;  // pose age at Present (copy -> take), under g_poseMutex
+uint64_t g_ageCount = 0;
+long long qpcNow() {
+    LARGE_INTEGER t;
+    QueryPerformanceCounter(&t);
+    return t.QuadPart;
+}
+double qpcMs(long long ticks) {
+    static LARGE_INTEGER f{};
+    if (!f.QuadPart) QueryPerformanceFrequency(&f);
+    return 1000.0 * static_cast<double>(ticks) / static_cast<double>(f.QuadPart);
+}
+
 void applyEye(uint8_t* dst) {
+    // Only at a frame's first copy (never between a pair's eyes: Present can't take the left eye before the right
+    // one is drawn) and until Present has taken everything queued; racy reads are fine.
+    if (g_capLead.load(std::memory_order_relaxed) && !casActive() && g_lastAppliedEye != 0 && g_queueSize >= 1) {
+        const long long t0 = qpcNow();
+        bool timedOut = false;
+        while (g_queueSize >= 1) {
+            const double left = 11.0 - qpcMs(qpcNow() - t0);
+            if (left <= 0 || WaitForSingleObject(g_presentTook, static_cast<DWORD>(left + 0.5)) == WAIT_TIMEOUT) {
+                timedOut = g_queueSize >= 1;
+                break;
+            }
+        }
+        g_capWaits.fetch_add(1, std::memory_order_relaxed);
+        if (timedOut) g_capTimeouts.fetch_add(1, std::memory_order_relaxed);
+        g_capWaitUs.fetch_add(static_cast<long long>(qpcMs(qpcNow() - t0) * 1000), std::memory_order_relaxed);
+    }
     std::lock_guard<std::mutex> lock(g_poseMutex);
     if (!g_active) return;
+    if (g_casEye && g_casSaved.valid && g_casSaved.gen == g_applyGen) {
+        // Another copy of the same eye request: the same pose, nothing else moves on.
+        std::memcpy(dst + kRightOffset, g_casSaved.axes, sizeof(g_casSaved.axes));
+        std::memcpy(dst + kFrustumOffset, g_casSaved.frustum, sizeof(g_casSaved.frustum));
+        std::memcpy(dst + kCentreOffset, g_casSaved.centre, sizeof(g_casSaved.centre));
+        std::memcpy(dst + kNearOffset, g_casSaved.clip, sizeof(g_casSaved.clip));
+        return;
+    }
     crashlog::note(crashlog::kCopyHook);
     float back[4], position[4];
     std::memcpy(back, dst + kBackOffset, sizeof(back));
@@ -1226,9 +1461,43 @@ void applyEye(uint8_t* dst) {
     float yaw = std::atan2(back[0], back[2]);  // heading of the game camera's back axis
     if (!std::isfinite(yaw)) return;
     const float gameYaw = yaw, gamePos[3] = {position[0], position[1], position[2]};
+    if (g_casEye) {
+        // You stand g_casDistance from the Sim, on the line to where the game's CAS camera is, looking at it.
+        // Your place is set by the game's camera once per visit and then kept: following it, every small pan of the
+        // game's camera (panels opening, zooming to a body part: heading 3.1 -> 1.5 degrees, 803) turned and moved the
+        // whole view by that much on one frame, the twitch left in CAS (user 2026-10-31).
+        if (!g_casFromLast && !g_casLastValid) {
+            std::memcpy(g_casLast, position, sizeof(g_casLast));
+            g_casLastValid = true;
+        }
+        if (g_casLastValid) std::memcpy(position, g_casLast, sizeof(g_casLast));
+        float dx = position[0] - kCasSim[0], dz = position[2] - kCasSim[2];
+        const float len = std::sqrt(dx * dx + dz * dz);
+        if (len > 0.01f) {
+            const float d = g_casDistance.load() * g_config.worldScale;
+            static int logs = 0;
+            if (logs < 8) {
+                ++logs;
+                LOG("CAS eye %d: game camera %.2f %.2f %.2f heading %.1f deg, Sim %.1f m away; you at %.2f %.2f from the Sim (heading %.1f deg), eye offset %.2f %.2f %.2f",
+                    g_pending.eye, gamePos[0], gamePos[1], gamePos[2], gameYaw * 57.2958f, len, dx / len * d, dz / len * d,
+                    std::atan2(dx, dz) * 57.2958f, g_pending.position.x, g_pending.position.y, g_pending.position.z);
+            }
+            position[0] = kCasSim[0] + dx / len * d;
+            position[2] = kCasSim[2] + dz / len * d;
+            position[1] = kCasSim[1] + g_casHeight.load() * g_config.worldScale;  // eye height above the Sim's feet
+            float bodyEyes;  // your CAS body's own eye height, when it is drawn ([cas] body_eyes, casbody.h)
+            if (casbody::eyeHeight(bodyEyes)) position[1] = bodyEyes;
+            yaw = std::atan2(dx, dz);  // face the Sim whatever way the game's camera was turned (it shifts for panels)
+        }
+    }
 
     float s = g_config.worldScale;
-    const Vec3& eye = g_pending.position;
+    Vec3 eyeSeparated = g_pending.position;
+    if (casActive()) {  // Create a Sim: [cas] eye_separation scales how far apart your eyes are drawn
+        const float k = g_casSeparation.load();
+        eyeSeparated = {eyeSeparated.x * k, eyeSeparated.y * k, eyeSeparated.z * k};
+    }
+    const Vec3& eye = eyeSeparated;
     float head[3], facing = NAN, eyes[3] = {NAN, NAN, NAN};
     uint8_t* actor = nullptr;
     bool body = headPosition(head, &facing, &actor, eyes) && toWorld(head);
@@ -1249,7 +1518,7 @@ void applyEye(uint8_t* dst) {
     // The right eye of a pair: drawn from its left eye's place and heading.
     // The stick's turn waits for the next pair and the body stays where it is.
     const int eyeIndex = g_pending.eye;
-    const bool paired = g_pairedEyes.load(std::memory_order_relaxed) && body;
+    const bool paired = g_pairedEyes.load(std::memory_order_relaxed) && (body || g_casEye || casActive());
     // The phone lens' picture (eye 2, a photo session): drawn from where the last pair was, in its place in the
     // eyes' cycle, so the pair after it carries on as if it hadn't come between.
     const bool photo = eyeIndex == 2 && g_pairHave && paired;
@@ -1259,8 +1528,22 @@ void applyEye(uint8_t* dst) {
     const NextBase next = g_nextBase;
     if (!photo) g_nextBase.valid = false;
     const bool useNext = paired && eyeIndex == 0 && g_lastAppliedEye == 1 && next.valid && next.actor == actor &&
-                         actor && g_jointSpace == 1;
+                         actor && g_jointSpace == 1 && !(body && drone::active());
+    // The drone's flight point carries the camera; your Sim stands where it is (first person only: body is set).
+    const bool droneOn = body && drone::active();
+    if (droneOn != g_droneWas && !second) {
+        g_droneWas = droneOn;
+        player::reset();
+        if (droneOn) {
+            g_droneYaw = std::isfinite(g_bodyYaw) ? g_bodyYaw : yaw;
+            g_droneLast = LARGE_INTEGER{};
+            LOG("Drone: the view leaves your Sim for the drone");
+        } else {
+            LOG("Drone: the view is back at your Sim");
+        }
+    }
     if (!photo) g_lastAppliedEye = eyeIndex;
+    shadowreuse::pairSecond(second && !photo);
     if (second && ++g_pairs == 1) LOG("Paired eyes: the right eye drawn from where the left eye was (first person)");
     // Paired hands: the right eye of a free-moving pair moves the player on
     // for the next pair (taking the stick's turn), without moving the body yet.
@@ -1279,7 +1562,7 @@ void applyEye(uint8_t* dst) {
     // under the headset (player.cpp). Needs the joints in world space.
     player::Output free{}, nextFree{};
     bool freeMove = false, movedAhead = false;
-    if (((!second && !useNext) || goAhead) && body && actor && g_jointSpace == 1) {
+    if (((!second && !useNext) || goAhead) && body && actor && g_jointSpace == 1 && !droneOn) {
         player::Input in{};
         in.actor = actor;
         std::memcpy(in.headJoint, head, sizeof(head));
@@ -1319,6 +1602,11 @@ void applyEye(uint8_t* dst) {
     } else if (useNext) {
         freeMove = true;
         yaw = next.yaw;
+    } else if (droneOn) {
+        g_droneYaw = std::remainder(g_droneYaw + turn, 6.2831853f);
+        yaw = g_bodyYaw = g_droneYaw;
+        // So the view carries on smoothly when you land.
+        if (std::isfinite(facing)) g_bodyYawOffset = std::remainder(yaw - facing, 6.2831853f);
     } else if (freeMove) {
         yaw = g_bodyYaw = free.viewYaw;
         // So the view carries on smoothly if the game takes the Sim over.
@@ -1349,7 +1637,7 @@ void applyEye(uint8_t* dst) {
     Quat heading{0, std::sin(yaw / 2), 0, std::cos(yaw / 2)};
     if (second)
         heading = g_pairBase.heading;
-    else if (!useNext)
+    else if (!useNext && !droneOn)
         heading = viewBase(heading, body && !freeMove, actor, freeMove, facing, turn, pitch);
     Quat q = multiply(heading, g_pending.orientation);
     Vec3 neck{0, 0, 0};
@@ -1377,6 +1665,16 @@ void applyEye(uint8_t* dst) {
             g_aheadSettled = 0;
             g_aheadLogTick = now;
         }
+    } else if (droneOn) {
+        LARGE_INTEGER t, f;
+        QueryPerformanceCounter(&t);
+        QueryPerformanceFrequency(&f);
+        const float dt = g_droneLast.QuadPart ? float(t.QuadPart - g_droneLast.QuadPart) / float(f.QuadPart) : 0;
+        g_droneLast = t;
+        float p[3];
+        if (drone::update(dt, s, p)) std::memcpy(position, p, sizeof(p));
+        std::memcpy(g_bodyAnchor, head, sizeof(head));
+        g_bodySmoothed = true;
     } else if (body && freeMove) {
         std::memcpy(position, free.base, sizeof(free.base));
         // Where the view would be if the game takes the Sim over next frame.
@@ -1401,7 +1699,14 @@ void applyEye(uint8_t* dst) {
             LOG("Body view: game camera at %.3f %.3f %.3f, head at %.3f %.3f %.3f", position[0], position[1],
                 position[2], head[0], head[1], head[2]);
         }
-        for (int i = 0; i < 3; ++i) g_bodyAnchor[i] += (anim[i] - g_bodyAnchor[i]) * g_config.bodySmoothing;
+        // Seated: the Sim's idle sway/swivel under bodySeatStill is ignored, past it the view follows.
+        float still = follow ? g_config.bodySeatStill * s : 0;
+        float dx = anim[0] - g_bodyAnchor[0], dy = anim[1] - g_bodyAnchor[1], dz = anim[2] - g_bodyAnchor[2];
+        float dl = std::sqrt(dx * dx + dy * dy + dz * dz);
+        float keep = (still > 0 && dl > 1e-6f) ? (dl > still ? 1 - still / dl : 0) : 1;
+        g_bodyAnchor[0] += dx * keep * g_config.bodySmoothing;
+        g_bodyAnchor[1] += dy * keep * g_config.bodySmoothing;
+        g_bodyAnchor[2] += dz * keep * g_config.bodySmoothing;
         // The eyes sit in front of the head and swing around it as you look
         // around, like a neck. With the Sim's own eyes measured the view sits
         // just behind them, inside its head, where its face never shows.
@@ -1498,7 +1803,7 @@ void applyEye(uint8_t* dst) {
         const float nextMid[3] = {nextFree.base[0] + o.x, nextFree.base[1] + o.y, nextFree.base[2] + o.z};
         armik::setFrame(actor, true, nextFree.base, nextHeading, s, g_headOrientation, nextMid);
     } else {
-        armik::setFrame(body ? actor : nullptr, freeMove, position, heading, s, g_headOrientation, midWorld);
+        armik::setFrame(body && !droneOn ? actor : nullptr, freeMove, position, heading, s, g_headOrientation, midWorld);
     }
     if (body) {
         gamefix::keepTopFloor();
@@ -1517,7 +1822,7 @@ void applyEye(uint8_t* dst) {
     writeAxis(dst, kUpOffset, rotate(q, {0, 1, 0}), 0);
     writeAxis(dst, kBackOffset, rotate(q, {0, 0, 1}), 0);
     writeAxis(dst, kPositionOffset, {position[0] + offset.x, position[1] + offset.y, position[2] + offset.z}, 1);
-    {
+    if (!photo) {
         const int slot = g_pending.eye == 1 ? 1 : 0;
         const float eyeAt[3] = {position[0] + offset.x, position[1] + offset.y, position[2] + offset.z};
         for (int i = 0; i < 3; ++i) g_writtenEye[slot][i].store(eyeAt[i], std::memory_order_relaxed);
@@ -1544,6 +1849,24 @@ void applyEye(uint8_t* dst) {
             if (*flag != want) {
                 *flag = want;
                 LOG("Mirror clip: %d (%s)", want, want ? "the game's" : "off while the eye is lopsided");
+            }
+        }
+        // The water reflection (DrawWaterReflection 0x11c99f0) clips its reflected camera at the water plane the same
+        // way (0x11ce100: CameraObliqueClip, run when the byte at 0x280cb71 is set): on the lopsided eye's projection
+        // each eye's reflection came out skewed differently (pool marks 2026-10-29). Off in first person while the eye is
+        // lopsided (no switch; the mirrors' mirror_clip stays as it was). Untested guess: not proven to be the cause.
+        static uint8_t* waterFlag = nullptr;
+        static int waterOriginal = -1;
+        if (flag) waterFlag = flag - 0xb;  // 0x280cb71
+        if (waterFlag) {
+            if (waterOriginal < 0) {
+                waterOriginal = *waterFlag;
+                LOG("Water clip: the game's water-plane clip is %d", waterOriginal);
+            }
+            const uint8_t want = body && !g_centred ? 0 : static_cast<uint8_t>(waterOriginal);
+            if (*waterFlag != want) {
+                *waterFlag = want;
+                LOG("Water clip: %d (%s)", want, want ? "the game's" : "off while the eye is lopsided");
             }
         }
     }
@@ -1584,8 +1907,22 @@ void applyEye(uint8_t* dst) {
                                       std::max(g_config.bodyNearMax, g_config.bodyNearClip));
         }
         std::memcpy(dst + kNearOffset, &nearZ, sizeof(float));
+    } else if (!body && casActive() && casbody::enabled() && g_config.bodyNearClip > 0) {
+        // Create a Sim with your body (casbody.h): the CAS camera's near limit would cut your hands and body off.
+        float nearZ;
+        std::memcpy(&nearZ, dst + kNearOffset, sizeof(nearZ));
+        static int logs = 0;
+        if (logs < 2 && std::isfinite(nearZ) && nearZ > g_config.bodyNearClip) {
+            ++logs;
+            LOG("CAS body: the CAS camera's near limit %.2f m lowered to %.2f m so your body shows", nearZ,
+                g_config.bodyNearClip);
+        }
+        if (!(nearZ <= g_config.bodyNearClip)) {
+            nearZ = g_config.bodyNearClip;
+            std::memcpy(dst + kNearOffset, &nearZ, sizeof(nearZ));
+        }
     }
-    {
+    if (!photo) {  // the phone lens' picture is not where you hear or pick from
         std::lock_guard<std::mutex> listenerLock(g_listenerMutex);
         g_listener.right = rotate(q, {1, 0, 0});
         g_listener.up = rotate(q, {0, 1, 0});
@@ -1612,7 +1949,7 @@ void applyEye(uint8_t* dst) {
     } else {
         g_appliedCentre[0].store(NAN, std::memory_order_relaxed);
     }
-    {
+    if (!photo) {
         View v{};
         v.right = rotate(q, {1, 0, 0});
         v.up = rotate(q, {0, 1, 0});
@@ -1637,20 +1974,27 @@ void applyEye(uint8_t* dst) {
         g_viewValid = std::isfinite(v.tanX) && v.tanX > 0 && v.tanY > 0 && v.nearZ > 0 && v.farZ > v.nearZ;
     }
     // Touch: a pick through your pointing fingertip with exactly this camera.
-    {
+    if (!photo) {
         int hand = body && actor ? touch::pointingHand() : -1;
         Vec3 tip{};
         bool haveTip = hand >= 0 && fingertipWorld(actor, hand, tip);
         touch::update(dst, g_bodyId.load(), haveTip, tip);
     }
     std::memcpy(g_writtenFrustum, dst + kFrustumOffset, sizeof(g_writtenFrustum));
-    if (g_queueSize == 4) {  // Present stopped consuming; drop the oldest
-        g_queueHead = (g_queueHead + 1) % 4;
+    if (g_queueSize == kQueue) {  // Present stopped consuming; drop the oldest
+        g_queueHead = (g_queueHead + 1) % kQueue;
         --g_queueSize;
+        // CAS: never leave a right eye at the front, or every later picture lands on the other eye.
+        if (casActive() && g_queueSize && g_queue[g_queueHead].eye == 1) {
+            g_queueHead = (g_queueHead + 1) % kQueue;
+            --g_queueSize;
+            ++g_parityDrops;
+        }
     }
     Rendered rendered = g_pending;
     rendered.yaw = yaw;
     rendered.lead = yawLead;
+    rendered.copiedQpc = qpcNow();
     rendered.pairFirst = g_pairBase.valid;
     rendered.worldPosition = {position[0] + offset.x, position[1] + offset.y, position[2] + offset.z};
     rendered.worldOrientation = q;
@@ -1685,7 +2029,18 @@ void applyEye(uint8_t* dst) {
         rendered.body.farZ = clip[1];
         if (!(clip[0] > 0 && clip[1] > clip[0])) rendered.body.count = 0;
     }
-    g_queue[(g_queueHead + g_queueSize++) % 4] = rendered;
+    // CAS: shadow and other passes copy the camera too and every copy came here (774: 290 a second, each one
+    // redoing the eye pairing). The first copy of an eye request does the work and its pose is saved.
+    if (g_casEye) {
+        g_casSaved.gen = g_applyGen;
+        std::memcpy(g_casSaved.axes, dst + kRightOffset, sizeof(g_casSaved.axes));
+        std::memcpy(g_casSaved.frustum, dst + kFrustumOffset, sizeof(g_casSaved.frustum));
+        std::memcpy(g_casSaved.centre, dst + kCentreOffset, sizeof(g_casSaved.centre));
+        std::memcpy(g_casSaved.clip, dst + kNearOffset, sizeof(g_casSaved.clip));
+        g_casSaved.valid = true;
+    }
+    g_queue[(g_queueHead + g_queueSize++) % kQueue] = rendered;
+    ++g_pushedSince;
     // The newest heading: the next pair's once worked out (its turn is taken).
     g_latestYaw = movedAhead ? nextFree.viewYaw : yaw;
     g_latestLead = movedAhead ? g_turnLead : yawLead;
@@ -1758,6 +2113,7 @@ void clearOldCentre(void* camera, const char* where) {
 
 void* hookedCopy(void* dst, const void* src) {
     if (CopyObserver observer = g_observer.load()) observer(dst, src, __builtin_return_address(0));
+    if (dst != src && g_cameraVTable) casProbeCopy(dst, src, __builtin_return_address(0));
     if (dst != src && reinterpret_cast<uintptr_t>(dst) == g_writtenCamera.load(std::memory_order_relaxed))
         logDrawnProjection(dst, __builtin_return_address(0));
     static unsigned copyTick = 0;
@@ -1788,10 +2144,58 @@ void* hookedCopy(void* dst, const void* src) {
         if (reinterpret_cast<uintptr_t>(src) == live && renderCamera(dst)) {
             framecost::renderCamera();
             framemap::mark(framemap::CameraCopy);
-            applyEye(static_cast<uint8_t*>(dst));
+            // Create a Sim: this is the copy the scene is drawn from (manager camera into the render context's). It
+            // needs the CAS eye too, or it is drawn from the game's own CAS camera and flickers in against the rest.
+            // Every copy while CAS is on gets a CAS eye. One casSource turns down (793: the CAS camera into a 4:3 one,
+            // frustum 2.0 x 1.5, game+0x18c0c50) was worked out as a plain eye from the game's camera (heading 11-12
+            // degrees against your 3; 795, with only the same eye request covered: 4-6) and became the pair's base:
+            // the right eye was drawn from there each time one came between the eyes ("extra eye entries removed
+            // between the eyes"). It is placed from where the last CAS camera copy put you instead.
+            const bool source = g_casOn.load(std::memory_order_relaxed) && casSource(src);
+            const bool cas = source || (g_casOn.load(std::memory_order_relaxed) && casActive());
+            if (source) g_casSeen.store(GetTickCount64(), std::memory_order_relaxed);
+            // The second pass's copies get the right eye, as the copies below do (not the left eye saved above).
+            if (!(cas && singleview::inSecond() && casRightInto(dst))) {
+                g_casEye = cas;
+                g_casFromLast = cas && !source;
+                applyEye(static_cast<uint8_t*>(dst));
+                g_casEye = false;
+                g_casFromLast = false;
+            }
+            if (cas) casNoteCamera(dst);
             doorswing::pump();  // the game's main thread, where routes swing doors too
             walkstop::pump();
             thumbs::pump();  // where the game's UI asks for its pictures
+        }
+    }
+    if (manager == 0 || reinterpret_cast<uintptr_t>(src) != [&] { uintptr_t l = 0; safeRead(manager + kManagerCameraOffset, &l, sizeof(l)); return l; }()) {
+        if (g_casOn.load(std::memory_order_relaxed) && dst != src && renderCamera(dst) && casSource(src)) {
+            static bool logged = false;
+            if (!logged) {
+                logged = true;
+                LOG("CAS: the game's CAS camera is copied into the render camera %p; drawing your eyes there", dst);
+            }
+            g_casSeen.store(GetTickCount64(), std::memory_order_relaxed);
+            {
+                static ULONGLONG windowStart = 0;
+                static int copies = 0, windows = 0;
+                const ULONGLONG t = GetTickCount64();
+                ++copies;
+                if (!windowStart) windowStart = t;
+                if (t - windowStart >= 5000 && windows < 12) {
+                    ++windows;
+                    LOG("CAS: %d camera copies drawn with your eyes in the last %llu ms", copies,
+                        static_cast<unsigned long long>(t - windowStart));
+                    windowStart = t;
+                    copies = 0;
+                }
+            }
+            if (!(singleview::inSecond() && casRightInto(dst))) {
+                g_casEye = true;
+                applyEye(static_cast<uint8_t*>(dst));
+                g_casEye = false;
+            }
+            casNoteCamera(dst);
         }
     }
     if (dst != src) {
@@ -2106,6 +2510,55 @@ void placeClose(float* placed, const float* listener, const float* rows) {
     s.since = now;
 }
 
+// Height for Extended Sound Control's HRTF (its esc_set_elevation export, when that mod is loaded): the angle
+// of the sound above (+) or below (-) the listener's ground plane, in degrees. The pan step only passes a
+// horizontal angle on; rows 0 and 2 are the plane, row 1 the listener's up axis.
+using EscElevationFn = void (*)(const void* panner, float degrees);
+std::atomic<EscElevationFn> g_escElevation{nullptr};
+std::atomic<ULONGLONG> g_escElevationTry{0};
+
+void passElevation(const void* panner, const float* position, const float* listener, const float* rows) {
+    EscElevationFn fn = g_escElevation.load(std::memory_order_relaxed);
+    if (!fn) {
+        const ULONGLONG now = GetTickCount64();
+        if (now - g_escElevationTry.load(std::memory_order_relaxed) < 5000) return;
+        g_escElevationTry.store(now, std::memory_order_relaxed);
+        HMODULE mod = GetModuleHandleW(L"extendedsoundcontrol.dll");
+        fn = mod ? reinterpret_cast<EscElevationFn>(GetProcAddress(mod, "esc_set_elevation")) : nullptr;
+        if (!fn) return;
+        g_escElevation.store(fn, std::memory_order_relaxed);
+        LOG("Sound placement: passing each sound's height to Extended Sound Control");
+    }
+    const float d[3] = {position[0] - listener[0], position[1] - listener[1], position[2] - listener[2]};
+    const float x = rows[0] * d[0] + rows[4] * d[1] + rows[8] * d[2];
+    const float y = rows[1] * d[0] + rows[5] * d[1] + rows[9] * d[2];
+    const float z = rows[2] * d[0] + rows[6] * d[1] + rows[10] * d[2];
+    fn(panner, std::atan2(y, std::sqrt(x * x + z * z)) * 57.29578f);
+}
+
+// Muffling for Extended Sound Control (its esc_set_occlusion export): how much of the sound the walls, closed
+// doors, half walls and floors between you and it block, 0..1. collide.py sends what blocks (collide.cpp
+// occlusion); only in first person, only while that scene is on. Sent every update (ESC lets it lapse after 2 s).
+using EscOcclusionFn = void (*)(const void* panner, float amount);
+std::atomic<EscOcclusionFn> g_escOcclusion{nullptr};
+std::atomic<ULONGLONG> g_escOcclusionTry{0};
+
+void passOcclusion(const void* panner, const float* position, const float* listener) {
+    if (!s4vr::collide::occlusionActive()) return;
+    EscOcclusionFn fn = g_escOcclusion.load(std::memory_order_relaxed);
+    if (!fn) {
+        const ULONGLONG now = GetTickCount64();
+        if (now - g_escOcclusionTry.load(std::memory_order_relaxed) < 5000) return;
+        g_escOcclusionTry.store(now, std::memory_order_relaxed);
+        HMODULE mod = GetModuleHandleW(L"extendedsoundcontrol.dll");
+        fn = mod ? reinterpret_cast<EscOcclusionFn>(GetProcAddress(mod, "esc_set_occlusion")) : nullptr;
+        if (!fn) return;
+        g_escOcclusion.store(fn, std::memory_order_relaxed);
+        LOG("Muffle: passing walls, doors and floors between you and each sound to Extended Sound Control");
+    }
+    fn(panner, s4vr::collide::occlusion(listener, position));
+}
+
 void hookedPan(void* sound, void* panner, const float* position, const float* listener, const float* rows,
                float nearRadius) {
     const bool firstPerson = g_panFirstPerson.load(std::memory_order_relaxed);
@@ -2163,6 +2616,8 @@ void hookedPan(void* sound, void* panner, const float* position, const float* li
         if (nearRadius < kPanCircle) nearRadius = kPanCircle;
         placeClose(placed, listener, rows);
     }
+    passElevation(panner, placed, listener, rows);
+    if (firstPerson) passOcclusion(panner, position, listener);
     g_originalPan(sound, panner, placed, listener, rows, nearRadius);
 }
 
@@ -2287,8 +2742,65 @@ std::atomic<float> g_voiceNear{1.5f}, g_voiceFar{12.0f};
 std::mutex g_convertedMutex;
 std::unordered_set<uintptr_t> g_converted;
 
+// Flat sounds made 3D (user 2026-10-28: phone jingles/ringtones play in the middle of the head even on a Sim's
+// joint; docs re/audio/FLAT-SOUNDS.md). The game's ui / bumper / sting / music configs name a flat stereo sound
+// graph (config key 0x9322A8B6, stored at sound+0x560) and no fall-off (key 0x2DA49EE1 -> +0xf8 bit 0). A sound in
+// the list (or, mode 2, one on the flat UI graph) gets the 3D bit as its flags are made (like the voices below) and
+// the lot-speaker stereo-3D graph in +0x560 as it starts. First person only. The log line "Flat to 3D" says per
+// sound what the game ended up with (graph, panner, fall-off), also for listed sounds while the switch is off.
+constexpr uint64_t kGraphFlatUi = 0xa225752284322c6eULL, kGraphLotSpeakers = 0xe29d705fca6cd456ULL;
+constexpr size_t kSoundGraph = 0x560, kSoundId = 0x2a8;
+std::atomic<int> g_flatMode{1};  // 0 off, 1 listed ids, 2 listed ids and every sound on the flat UI graph
+std::atomic<uint64_t> g_flatGraph{kGraphLotSpeakers};  // 0 = the default graph
+std::mutex g_flatMutex;
+std::unordered_set<uint64_t> g_flatIds;
+std::unordered_set<uintptr_t> g_flatMarked;   // sound objects the flags hook gave the 3D bit
+std::unordered_set<uintptr_t> g_flatLogged;   // listed sounds already described
+int g_flatLogs = 0;
+std::atomic<uint64_t> g_flatMade3D{0};
+constexpr int kFlatMaxLogs = 120;
+
+bool flatListed(uint64_t id) {
+    std::lock_guard<std::mutex> lock(g_flatMutex);
+    return g_flatIds.count(id) != 0;
+}
+
+// The graph the config names (through its parents), 0 when it names none.
+uint64_t configGraph(void* props) {
+    using GetU64Fn = char (*)(void*, uint32_t, uint64_t*);
+    uint64_t graph = 0;
+    auto get = reinterpret_cast<GetU64Fn>((*static_cast<void***>(props))[5]);  // vtable +0x28
+    if (!get(props, 0x9322a8b6, &graph)) return 0;
+    return graph;
+}
+
+void flatSwapFlags(void* sound, void* props) {
+    const int mode = g_flatMode.load(std::memory_order_relaxed);
+    if (!props || mode <= 0 || !g_panFirstPerson.load(std::memory_order_relaxed)) return;
+    uint8_t* base = static_cast<uint8_t*>(sound);
+    uint64_t id = 0;
+    std::memcpy(&id, base + kSoundId, sizeof(id));
+    uint32_t flags;
+    std::memcpy(&flags, base + kSoundFlags, sizeof(flags));
+    {
+        std::lock_guard<std::mutex> lock(g_flatMutex);
+        g_flatMarked.erase(reinterpret_cast<uintptr_t>(sound));
+    }
+    if (flags & 1) return;
+    if (!flatListed(id) && !(mode >= 2 && configGraph(props) == kGraphFlatUi)) return;
+    flags |= 1;
+    std::memcpy(base + kSoundFlags, &flags, sizeof(flags));
+    {
+        std::lock_guard<std::mutex> lock(g_flatMutex);
+        if (g_flatMarked.size() > 4096) g_flatMarked.clear();
+        g_flatMarked.insert(reinterpret_cast<uintptr_t>(sound));
+    }
+    ++g_flatMade3D;
+}
+
 void hookedSoundFlags(void* sound, void* props) {
     g_originalSoundFlags(sound, props);
+    flatSwapFlags(sound, props);
     if (!props || !g_panFirstPerson.load(std::memory_order_relaxed) ||
         !g_panAnyDistance.load(std::memory_order_relaxed))
         return;
@@ -2309,6 +2821,17 @@ void hookedSoundFlags(void* sound, void* props) {
 
 void hookedSoundInit(void* sound, uint64_t id) {
     g_originalSoundInit(sound, id);
+    {
+        bool marked;
+        {
+            std::lock_guard<std::mutex> lock(g_flatMutex);
+            marked = g_flatMarked.count(reinterpret_cast<uintptr_t>(sound)) != 0;
+        }
+        if (marked) {
+            const uint64_t graph = g_flatGraph.load(std::memory_order_relaxed);
+            std::memcpy(static_cast<uint8_t*>(sound) + kSoundGraph, &graph, sizeof(graph));
+        }
+    }
     if (!g_panFirstPerson.load(std::memory_order_relaxed) || g_initLogs >= kInitMaxLogs) return;
     uint32_t flags = 0;
     std::memcpy(&flags, static_cast<const uint8_t*>(sound) + kSoundFlags, sizeof(flags));
@@ -2389,6 +2912,34 @@ void hookedDistanceUpdate(void* sound) {
         }
     }
     g_originalDistanceUpdate(sound);
+    if (g_panFirstPerson.load(std::memory_order_relaxed) && g_flatLogs < kFlatMaxLogs) {
+        uint64_t id = 0;
+        std::memcpy(&id, static_cast<const uint8_t*>(sound) + kSoundId, sizeof(id));
+        if (flatListed(id)) {
+            bool fresh;
+            {
+                std::lock_guard<std::mutex> lock(g_flatMutex);
+                if (g_flatLogged.size() > 4096) g_flatLogged.clear();
+                fresh = g_flatLogged.insert(reinterpret_cast<uintptr_t>(sound)).second;
+            }
+            if (fresh) {
+                const uint8_t* b = static_cast<const uint8_t*>(sound);
+                uint32_t flags;
+                uint64_t graph;
+                uintptr_t panner, st;
+                float at[3];
+                std::memcpy(&flags, b + kSoundFlags, 4);
+                std::memcpy(&graph, b + kSoundGraph, 8);
+                std::memcpy(&panner, b + kSoundPanner, 8);
+                std::memcpy(&st, b + kSoundDistance, 8);
+                std::memcpy(at, b + kSoundPosition, 12);
+                ++g_flatLogs;
+                LOG("Flat to 3D: sound %p id 0x%llx flags 0x%x graph 0x%llx panner %s fall-off %s at %.2f %.2f %.2f (switch %d)",
+                    sound, static_cast<unsigned long long>(id), flags, static_cast<unsigned long long>(graph),
+                    panner ? "yes" : "no", st ? "yes" : "no", at[0], at[1], at[2], g_flatMode.load());
+            }
+        }
+    }
     if (!g_panFirstPerson.load(std::memory_order_relaxed)) return;
     LoudStats& s = g_loud;
     const ULONGLONG now = GetTickCount64();
@@ -2651,6 +3202,206 @@ bool installCopyHook() {
 
 void setCopyObserver(CopyObserver observer) { g_observer = observer; }
 
+// The game reflects every lot water (pools, fountains, ponds on the lot) in ONE plane: the weighted mean height of
+// those in view (0x12596c0: state+0x30 = sum(weight * height) / sum(weight)). With a ground pool and a roof pool in
+// view that plane is 15 m off for both, and in stereo the reflection then sits at the wrong depth in each eye (user
+// 2026-11-03: left eye's pool torn and shifted; the snapshot lines showed heights 150.04 / 164.89 / 177 for pools
+// at 150). Use the plane of the heaviest lot water instead and rebuild the lot reflection camera for it the way
+// 0x11cefe0 does: rows reflected in y = h (row' = (x, 2 h w - y, z, w) per row of the render camera), set, update,
+// and the look-at point 0x1209cc0 sets.
+void fixLotWater(void* scene) {
+    if (!g_config.waterOnePlane || !scene) return;
+    const uintptr_t base = reinterpret_cast<uintptr_t>(scene);
+    uintptr_t state = 0, render = 0, lotCam = 0;
+    safeRead(base + 0xe08, &state, sizeof(state));
+    safeRead(base + 0x60, &render, sizeof(render));
+    safeRead(base + 0x70, &lotCam, sizeof(lotCam));
+    if (!state || !render || !lotCam) return;
+    uint8_t lotActive = 0;
+    safeRead(state + 0x41, &lotActive, 1);
+    if (!lotActive) return;
+    uintptr_t buckets = 0;
+    uint32_t count = 0;
+    float camY = 0;
+    safeRead(state + 8, &buckets, sizeof(buckets));
+    safeRead(state + 0x10, &count, sizeof(count));
+    safeRead(render + 0x64, &camY, sizeof(camY));
+    if (!buckets || count == 0 || count > 4096) return;
+    uintptr_t sentinel = 0;
+    safeRead(buckets + 8 * static_cast<uintptr_t>(count), &sentinel, sizeof(sentinel));
+    float bestWeight = 0, bestHeight = 0;
+    bool haveBest = false, bestBelow = false;
+    int seen = 0, lots = 0;
+    for (uint32_t i = 0; i < count && seen < 512; ++i) {
+        uintptr_t node = 0;
+        safeRead(buckets + 8 * static_cast<uintptr_t>(i), &node, sizeof(node));
+        for (int depth = 0; node && node != sentinel && depth < 64 && seen < 512; ++depth, ++seen) {
+            uintptr_t owner = 0;
+            float weight = 0, top = 0, other = 0;
+            safeRead(node + 0xf8, &owner, sizeof(owner));
+            safeRead(node + 0xf0, &weight, sizeof(weight));
+            safeRead(node + 0x74, &top, sizeof(top));
+            safeRead(node + 0xb4, &other, sizeof(other));
+            if (owner) {
+                ++lots;
+                // Stable pick: the lot water nearest below the eye (the one being looked down on), else the nearest above.
+                // The weights swing by 1e3 between frames, so picking the heaviest made the plane flip 150 <-> 165.
+                const float h = top <= camY ? top : other;
+                if (weight > 0 && std::isfinite(h)) {
+                    const bool below = h <= camY + 0.05f;
+                    const bool better = !haveBest || (below && !bestBelow) || (below == bestBelow && (below ? h > bestHeight : h < bestHeight));
+                    if (better) {
+                        haveBest = true;
+                        bestBelow = below;
+                        bestWeight = weight;
+                        bestHeight = h;
+                    }
+                }
+            }
+            uintptr_t next = 0;
+            if (!safeRead(node + 0x110, &next, sizeof(next))) break;
+            node = next;
+        }
+    }
+    float meanHeight = 0;
+    safeRead(state + 0x30, &meanHeight, sizeof(meanHeight));
+    if (bestWeight <= 0 || !std::isfinite(bestHeight) || std::fabs(bestHeight - meanHeight) < 0.02f) return;
+    float rows[16];
+    if (!safeRead(render + 0x30, rows, sizeof(rows))) return;
+    float out[16];
+    for (int r = 0; r < 4; ++r) {
+        out[r * 4 + 0] = rows[r * 4 + 0];
+        out[r * 4 + 1] = 2.f * bestHeight * rows[r * 4 + 3] - rows[r * 4 + 1];
+        out[r * 4 + 2] = rows[r * 4 + 2];
+        out[r * 4 + 3] = rows[r * 4 + 3];
+    }
+    using UpdateFn = void (*)(void* camera, void* unused, void* matrix);
+    static UpdateFn update = reinterpret_cast<UpdateFn>(addrs::fn("CameraUpdate"));
+    if (!update) return;
+    uint8_t* cam = reinterpret_cast<uint8_t*>(lotCam);
+    std::memcpy(cam + 0x30, out, sizeof(out));
+    update(cam, nullptr, nullptr);
+    const float f = *reinterpret_cast<float*>(cam + 0x284);
+    *reinterpret_cast<float*>(cam + 0x200) = *reinterpret_cast<float*>(cam + 0x60) + f * (0.f - *reinterpret_cast<float*>(cam + 0x50));
+    *reinterpret_cast<float*>(cam + 0x204) = *reinterpret_cast<float*>(cam + 0x64) + f * (0.f - *reinterpret_cast<float*>(cam + 0x54));
+    *reinterpret_cast<float*>(cam + 0x208) = *reinterpret_cast<float*>(cam + 0x68) + f * (0.f - *reinterpret_cast<float*>(cam + 0x58));
+    cam[0x280] = 0;
+    *reinterpret_cast<float*>(state + 0x30) = bestHeight;
+    static int logs = 0;
+    if (logs < 12) {
+        ++logs;
+        LOG("Lot water: plane %.2f (nearest to the eye of %d, weight %.3g) instead of the mean %.2f; reflection camera rebuilt", bestHeight,
+            lots, bestWeight, meanHeight);
+    }
+}
+
+namespace {
+struct WaterSnap {
+    bool valid = false;
+    uint8_t active[2] = {};
+    float height[2] = {};
+    float centre[3][2] = {};
+    float pos[3][3] = {};
+    unsigned passes = 0;
+};
+WaterSnap g_waterSnap[2];
+}  // namespace
+
+void logWaterSnapshot() {
+    for (int e = 0; e < 2; ++e) {
+        const WaterSnap& w = g_waterSnap[e];
+        if (!w.valid) continue;
+        LOG("Water snapshot (%s eye, last main-view pass of %u): active world %d lot %d, heights %.2f %.2f; centres render %.3f %.3f world "
+            "%.3f %.3f lot %.3f %.3f; eye at %.2f %.2f %.2f, world cam at %.2f %.2f %.2f, lot cam at %.2f %.2f %.2f",
+            e ? "right" : "left", w.passes, w.active[0], w.active[1], w.height[0], w.height[1], w.centre[0][0], w.centre[0][1],
+            w.centre[1][0], w.centre[1][1], w.centre[2][0], w.centre[2][1], w.pos[0][0], w.pos[0][1], w.pos[0][2], w.pos[1][0],
+            w.pos[1][1], w.pos[1][2], w.pos[2][0], w.pos[2][1], w.pos[2][2]);
+    }
+}
+
+void logWaterPass(void* scene, int eyePass) {
+    // Logs when the water state changes (not on a timer, so a visit to the pool is caught whenever it happens): per
+    // pass the active flags and heights of the water state (renderer+0xe08: +0x40/+0x41, +0x2c/+0x30) and the render
+    // and water cameras' centre and position.
+    static int logs = 0;
+    static float last[2][12] = {};
+    static ULONGLONG lastAt = 0;
+    if (!scene) return;
+    const uintptr_t base = reinterpret_cast<uintptr_t>(scene);
+    // The water reflection cameras (world, lot): hookedProjection leaves their glass clip off on a lopsided eye.
+    for (int i = 0; i < 2; ++i) {
+        uintptr_t cam = 0;
+        safeRead(base + 0x68 + 8 * i, &cam, sizeof(cam));
+        g_waterCamera[i].store(cam, std::memory_order_relaxed);
+    }
+    {
+        // Keep the latest main-view pass per eye for the screenshot log (logWaterSnapshot).
+        uintptr_t c[3] = {}, st = 0;
+        safeRead(base + 0x60, &c[0], sizeof(c[0]));
+        safeRead(base + 0x68, &c[1], sizeof(c[1]));
+        safeRead(base + 0x70, &c[2], sizeof(c[2]));
+        safeRead(base + 0xe08, &st, sizeof(st));
+        if (c[0] && c[0] == g_writtenCamera.load(std::memory_order_relaxed) && st) {
+            WaterSnap& w = g_waterSnap[eyePass];
+            safeRead(st + 0x40, &w.active[0], 1);
+            safeRead(st + 0x41, &w.active[1], 1);
+            safeRead(st + 0x2c, &w.height[0], 4);
+            safeRead(st + 0x30, &w.height[1], 4);
+            for (int i = 0; i < 3; ++i) {
+                if (!c[i]) continue;
+                safeRead(c[i] + 0x1f0, w.centre[i], 8);
+                safeRead(c[i] + 0x60, w.pos[i], 12);
+            }
+            w.valid = true;
+            ++w.passes;
+        }
+    }
+    if (logs >= 300) return;
+    auto rd = [](uintptr_t at) { float v = NAN; safeRead(at, &v, sizeof(v)); return v; };
+    uintptr_t cams[3] = {}, state = 0;
+    safeRead(base + 0x60, &cams[0], sizeof(cams[0]));
+    safeRead(base + 0x68, &cams[1], sizeof(cams[1]));
+    safeRead(base + 0x70, &cams[2], sizeof(cams[2]));
+    safeRead(base + 0xe08, &state, sizeof(state));
+    uint8_t active[2] = {};
+    if (state) {
+        safeRead(state + 0x40, &active[0], 1);
+        safeRead(state + 0x41, &active[1], 1);
+    }
+    float now[12] = {static_cast<float>(active[0]), static_cast<float>(active[1]), cams[1] ? rd(cams[1] + 0x1f0) : 0,
+                     cams[2] ? rd(cams[2] + 0x1f0) : 0, cams[1] ? rd(cams[1] + 0x60) : 0, cams[2] ? rd(cams[2] + 0x60) : 0,
+                     cams[2] ? rd(cams[2] + 0x64) : 0, cams[2] ? rd(cams[2] + 0x68) : 0, cams[0] ? rd(cams[0] + 0x1f0) : 0,
+                     0, 0, 0};
+    // Position moves are small and constant; only flags, centres and the lot camera's jumps count as changes.
+    bool changed = false;
+    for (int i : {0, 1, 2, 3}) changed |= now[i] != last[eyePass][i];
+    changed |= std::fabs(now[5] - last[eyePass][5]) > 0.5f || std::fabs(now[7] - last[eyePass][7]) > 0.5f;
+    const ULONGLONG at = GetTickCount64();
+    if (!changed || at - lastAt < 150) return;
+    lastAt = at;
+    std::memcpy(last[eyePass], now, sizeof(now));
+    ++logs;
+    const uintptr_t eye = g_writtenCamera.load(std::memory_order_relaxed);
+    char line[900];
+    int n = snprintf(line, sizeof(line),
+                     "Water pass (%s eye pass): active world %d lot %d, heights %.2f %.2f, eye %.2f %.2f %.2f:",
+                     eyePass ? "right" : "left", active[0], active[1], state ? rd(state + 0x2c) : 0.f,
+                     state ? rd(state + 0x30) : 0.f, g_writtenEye[eyePass][0].load(), g_writtenEye[eyePass][1].load(),
+                     g_writtenEye[eyePass][2].load());
+    static const char* names[3] = {"render", "world", "lot"};
+    for (int i = 0; i < 3 && n > 0 && n < 800; ++i) {
+        if (!cams[i]) continue;
+        uint8_t flags[2] = {};
+        safeRead(cams[i] + 0x280, &flags[0], 1);
+        safeRead(cams[i] + 0x6e9, &flags[1], 1);
+        n += snprintf(line + n, sizeof(line) - n,
+                      " [%s%s centre %.3f %.3f size %.3f %.3f at %.2f %.2f %.2f lookat %d clip %d]", names[i],
+                      cams[i] == eye ? " =eye" : "", rd(cams[i] + 0x1f0), rd(cams[i] + 0x1f4), rd(cams[i] + 0x14),
+                      rd(cams[i] + 0x18), rd(cams[i] + 0x60), rd(cams[i] + 0x64), rd(cams[i] + 0x68), flags[0], flags[1]);
+    }
+    LOG("%s", line);
+}
+
 // The game's projection build (1.128 0x1208640, Camera update calls it): for
 // the render camera with a lopsided eye, our centre goes back in first.
 using ProjectionFn = void (*)(void* camera);
@@ -2674,8 +3425,19 @@ void logMirrorCamera(const uint8_t* cam, const uint8_t* eye) {
         g_writtenEye[0][2].load(), g_writtenEye[1][0].load(), g_writtenEye[1][1].load(), g_writtenEye[1][2].load());
 }
 
+// Create a Sim: a camera this eye request wrote the eye into (casNoteCamera). The scene is drawn from several of
+// them, so the off-centre projection goes into every one, not only the one written last (flickering views).
+bool casEyeCamera(const void* camera) {
+    if (!casActive()) return false;
+    std::lock_guard<std::mutex> lock(g_casCamMutex);
+    const uintptr_t at = reinterpret_cast<uintptr_t>(camera);
+    for (int i = 0; i < g_casCamCount; ++i)
+        if (g_casCams[i] == at) return true;
+    return false;
+}
+
 void hookedProjection(void* camera) {
-    if (reinterpret_cast<uintptr_t>(camera) == g_writtenCamera.load(std::memory_order_relaxed)) {
+    if (reinterpret_cast<uintptr_t>(camera) == g_writtenCamera.load(std::memory_order_relaxed) || casEyeCamera(camera)) {
         const float cx = g_appliedCentre[0].load(std::memory_order_relaxed);
         if (!std::isnan(cx)) {
             float* at = reinterpret_cast<float*>(static_cast<uint8_t*>(camera) + kCentreOffset);
@@ -2726,6 +3488,24 @@ void hookedProjection(void* camera) {
         uint8_t* cam = static_cast<uint8_t*>(camera);
         uint8_t* eye = reinterpret_cast<uint8_t*>(g_writtenCamera.load(std::memory_order_relaxed));
         if (eye && cam != eye && cam[0x6e9] == 1) logMirrorCamera(cam, eye);
+    }
+    {
+        // The water reflection camera is clipped at the water plane (CameraObliqueClip: plane +0x6f0, byte +0x6e9, from
+        // the water plane callback 0x11ce100). On the eye's off-centre projection that clip is skewed one way in the left
+        // eye and the other in the right (the same fault as the mirror glass clip), so the pool reflected differently per
+        // eye (user 2026-10-29..11-03: left eye showed torn, unclipped slabs). Off while an eye's lens shift is applied.
+        uint8_t* cam = static_cast<uint8_t*>(camera);
+        const uintptr_t at = reinterpret_cast<uintptr_t>(camera);
+        if (!g_config.waterClip && cam[0x6e9] == 1 && (at == g_waterCamera[0].load(std::memory_order_relaxed) ||
+                                at == g_waterCamera[1].load(std::memory_order_relaxed)) &&
+            !std::isnan(g_appliedCentre[0].load(std::memory_order_relaxed))) {
+            cam[0x6e9] = 0;
+            static bool logged = false;
+            if (!logged) {
+                logged = true;
+                LOG("Water clip: left off on the water camera %p while the eye is lopsided", camera);
+            }
+        }
     }
     clearOldCentre(camera, "projection build");
     g_originalProjection(camera);
@@ -2782,11 +3562,14 @@ bool installListenerHook() {
 void init(const Config& config) {
     player::configure(config.walkSpeed, config.runSpeed, config.bodyForward, config.bodyHeight, config.touchBodies && config.armIk);
     player::setKeepHeight(config.bodyKeepHeight);
+    player::setLazyTurn(config.bodyLazyTurn);
+    player::setStandRate(config.bodyStandRate);
     player::setSmoothSlide(config.bodySmoothSlide);
     collide::configure(config.bodyCollision, config.bodyRadius);
     collide::setFurnitureRadius(config.furnitureRadius);
     collide::setHandGaps(config.handWallGap, config.handObjectGap);
     collide::configurePlants(config.softPlants, config.plantSlowdown);
+    collide::configureStep(config.stepOver, config.stepHeight);
     collide::configureHands(config.handCollision);
     player::setHeadRepel(config.headRepel, config.headRadius);
     player::setStopTime(config.bodyStopTime);
@@ -2794,15 +3577,19 @@ void init(const Config& config) {
     player::setStopGlide(config.bodyStopGlide);
     walkstop::setClips(config.bodyWalkClips);
     g_config = config;
+    setCas(config.casStereo, config.casDistance, config.casEyeSeparation, config.casEyeHeight);
     // The test host has no game camera; only look inside the game.
     if (!GetModuleHandleW(L"python37_x64.dll")) return;
     if (installCopyHook()) {
         searchManager();
+        startCasWatcher();
         installProjectionHook();
+        installCasStateHook();
     }
     findSkeletonApi();
     g_panAnyDistance.store(config.audioPanAnyDistance);
     setVoiceRadii(config.audioVoiceNear, config.audioVoiceFar);
+    setFlatTo3D(config.audioFlatTo3D, config.audioFlatIds, config.audioFlatGraph);
     if (config.audioFollowsHead && installListenerHook()) {
         installPanHook();
         installLoudnessLog();
@@ -2811,9 +3598,93 @@ void init(const Config& config) {
 
 void setSeatFollow(bool on) { g_config.bodySeatFollow = on; }
 
+// Create a Sim's game state (StateInCAS, re/cas/NATIVE.md: vtable slot 2 Enter, slot 3 Exit). Leaving it ends CAS
+// at once: the copies alone kept it on for good after exiting to the main menu (800: the menu's camera sits at CAS's
+// spot and, with an eye's frustum written into it, passed casSource; a square view, nothing on the monitor) and for
+// kCasHold into a lot. -1: not hooked (copies alone decide), 0: out, 1: in.
+using CasStateFn = uintptr_t (*)(void*, void*, void*, void*);
+CasStateFn g_casEnter = nullptr, g_casExit = nullptr;
+std::atomic<int> g_casState{-1};
+
+uintptr_t hookedCasEnter(void* state, void* a, void* b, void* c) {
+    g_casState.store(1, std::memory_order_relaxed);
+    {
+        std::lock_guard<std::mutex> lock(g_poseMutex);
+        g_casLastValid = false;  // this visit's place comes from its first CAS camera copy
+    }
+    LOG("CAS state: entered");
+    return g_casEnter(state, a, b, c);
+}
+
+uintptr_t hookedCasExit(void* state, void* a, void* b, void* c) {
+    g_casState.store(0, std::memory_order_relaxed);
+    g_casSeen.store(0, std::memory_order_relaxed);
+    {
+        std::lock_guard<std::mutex> lock(g_poseMutex);
+        g_casLastValid = false;
+    }
+    LOG("CAS state: left; CAS stereo off");
+    return g_casExit(state, a, b, c);
+}
+
+void installCasStateHook() {
+    const uintptr_t vt = rtti::findVTable(GetModuleHandleW(nullptr), ".?AVStateInCAS@ClientApp@Sims4@EA@@");
+    void* enter = vt && rtti::readable(vt, 0x20) ? reinterpret_cast<void**>(vt)[2] : nullptr;
+    void* exit = vt && rtti::readable(vt, 0x20) ? reinterpret_cast<void**>(vt)[3] : nullptr;
+    bool ok = enter && exit &&
+              MH_CreateHook(enter, reinterpret_cast<void*>(&hookedCasEnter), reinterpret_cast<void**>(&g_casEnter)) == MH_OK &&
+              MH_CreateHook(exit, reinterpret_cast<void*>(&hookedCasExit), reinterpret_cast<void**>(&g_casExit)) == MH_OK &&
+              MH_EnableHook(enter) == MH_OK && MH_EnableHook(exit) == MH_OK;
+    if (!ok) {
+        LOG("CAS state: StateInCAS not found or not hooked (vtable %p); CAS follows the camera copies only",
+            reinterpret_cast<void*>(vt));
+        return;
+    }
+    LOG("CAS state: enter game+0x%llx, exit game+0x%llx hooked",
+        static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(enter) - reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr))),
+        static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(exit) - reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr))));
+}
+
+bool casActive() {
+    const ULONGLONG since = GetTickCount64() - g_casSeen.load(std::memory_order_relaxed);
+    const bool on = g_casOn.load(std::memory_order_relaxed) && since < kCasHold &&
+                    g_casState.load(std::memory_order_relaxed) != 0;
+    static std::atomic<int> was{-1};
+    static std::atomic<int> logs{0};
+    if (was.exchange(on ? 1 : 0) != (on ? 1 : 0) && logs.fetch_add(1) < 40)
+        LOG("CAS: %s (%llu ms since the last CAS camera copy)", on ? "on" : "off", static_cast<unsigned long long>(since));
+    return on;
+}
+
+void setCas(bool on, float distance, float separation, float height) {
+    g_casOn = on;
+    g_casDistance = distance;
+    g_casSeparation = separation;
+    g_casHeight = height;
+}
+
 void setVoiceRadii(float nearMeters, float farMeters) {
     g_voiceNear.store(nearMeters);
     g_voiceFar.store(farMeters);
+}
+
+void setFlatTo3D(int mode, const std::string& ids, uint64_t graph) {
+    std::unordered_set<uint64_t> parsed;
+    for (size_t i = 0; i < ids.size();) {
+        while (i < ids.size() && !std::isxdigit(static_cast<unsigned char>(ids[i]))) ++i;
+        size_t j = i;
+        while (j < ids.size() && std::isxdigit(static_cast<unsigned char>(ids[j]))) ++j;
+        if (j > i) parsed.insert(std::strtoull(ids.substr(i, j - i).c_str(), nullptr, 16));
+        i = j;
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_flatMutex);
+        g_flatIds = std::move(parsed);
+    }
+    g_flatGraph.store(graph);
+    g_flatMode.store(mode);
+    LOG("Flat to 3D: switch %d (0 off, 1 listed sounds, 2 all flat UI sounds), %zu listed ids, graph 0x%llx", mode,
+        g_flatIds.size(), static_cast<unsigned long long>(graph));
 }
 
 void setPanAnyDistance(bool on) {
@@ -2868,6 +3739,7 @@ void setBody(uint64_t objectId) {
 
 bool available() {
     uintptr_t manager = g_manager.load();
+    if (g_casOn.load(std::memory_order_relaxed) && GetTickCount64() - g_casSeen.load(std::memory_order_relaxed) < kCasHold) return true;
     if (manager && liveCamera(manager)) return true;
     if (manager) {
         // The manager went away (zone change, CAS, back to menu): search again.
@@ -2876,6 +3748,14 @@ bool available() {
         if (g_hooked) searchManager();
     }
     return false;
+}
+
+bool eyeAt(float out[3]) {
+    for (int i = 0; i < 3; ++i) {
+        out[i] = g_writtenEye[0][i].load(std::memory_order_relaxed);
+        if (!std::isfinite(out[i])) return false;
+    }
+    return true;
 }
 
 bool yourEyeCamera(const void* camera) {
@@ -2894,6 +3774,7 @@ bool yourEyeCamera(const void* camera) {
 // The eye applyEye draws next and its frustum; g_poseMutex held.
 void setPending(int eye, const Vec3& eyePosition, const Quat& eyeOrientation, const Fov& fov) {
     g_pending = {eye, eyePosition, eyeOrientation, fov};
+    g_pending.poseSeq = g_poseSeqNext;
     g_tanX = 0;
     g_centred = true;
     g_centreX = g_centreY = 0;
@@ -2937,17 +3818,58 @@ void setBothEyes(bool on) {
 void applyRight(const Vec3& eyePosition, const Quat& eyeOrientation, const Fov& fov) {
     std::lock_guard<std::mutex> lock(g_poseMutex);
     g_right = {1, eyePosition, eyeOrientation, fov};
+    g_right.poseSeq = g_poseSeqNext;
     g_rightValid = true;
+}
+
+// Create a Sim, from the scene renderer's hook (singleview.cpp): log only. The scene context's camera (renderer +0xa8,
+// +0x60) is the game's own CAS camera that the copies are made FROM; writing into it feeds our pose back into the
+// game (778: Sim seen from below), so it is never written.
+void casFeedScene(void* renderer) {
+    if (!casActive() || !renderer) return;
+    uintptr_t context = 0, camera = 0, vtable = 0;
+    if (!safeRead(reinterpret_cast<uintptr_t>(renderer) + 0xa8, &context, sizeof(context)) || !context ||
+        !safeRead(context + 0x60, &camera, sizeof(camera)) || !camera ||
+        !safeRead(camera, &vtable, sizeof(vtable)) || vtable != g_cameraVTable)
+        return;
+    g_casSceneCam = camera;
+    static int logs = 0;
+    bool listed = false;
+    {
+        std::lock_guard<std::mutex> lock(g_casCamMutex);
+        for (int i = 0; i < g_casCamCount; ++i) listed = listed || g_casCams[i] == camera;
+    }
+    float p[3] = {NAN, NAN, NAN};
+    safeRead(camera + kPositionOffset, p, sizeof(p));
+    if (logs < 6) {
+        ++logs;
+        LOG("CAS scene camera %p (%s), position %.2f %.2f %.2f; %s", reinterpret_cast<void*>(camera),
+            listed ? "one the CAS copies wrote an eye into" : "NOT one the copies wrote into", p[0], p[1], p[2],
+            g_casSaved.valid ? "pose set" : "no saved pose");
+    }
 }
 
 bool beginBoth() {
     std::lock_guard<std::mutex> lock(g_poseMutex);
     const bool fresh = g_applied != g_appliedAtScene;  // a left eye was copied in since the last scene render
     g_appliedAtScene = g_applied;
+    if (casActive() && g_bothEyes.load() && g_pushedSince > 1 && g_queueSize > 1) {
+        // Keep only the newest entry queued since the last frame: it is this frame's left eye.
+        const size_t extra = std::min(g_pushedSince - 1, g_queueSize - 1);
+        const Rendered newest = g_queue[(g_queueHead + g_queueSize - 1) % kQueue];
+        g_queueSize -= extra;
+        g_queue[(g_queueHead + g_queueSize - 1) % kQueue] = newest;
+        g_trimmed += extra;
+        static int logs = 0;
+        if (logs++ < 20)
+            LOG("CAS queue: %zu extra eye entries removed before the left eye (total %zu, parity drops %zu)", extra,
+                g_trimmed, g_parityDrops);
+    }
+    g_pushedSince = 0;
     if (!fresh || !g_bothEyes.load() || !g_active || !g_rightValid || !g_pairBase.valid || g_lastAppliedEye != 0 ||
         !g_queueSize)
         return false;
-    Rendered& newest = g_queue[(g_queueHead + g_queueSize - 1) % 4];
+    Rendered& newest = g_queue[(g_queueHead + g_queueSize - 1) % kQueue];
     if (newest.eye != 0) return false;
     newest.bothFirst = true;
     return true;
@@ -2973,12 +3895,23 @@ bool secondEye() {
         std::lock_guard<std::mutex> lock(g_poseMutex);
         if (!g_bothEyes.load() || !g_active || !g_rightValid || !g_pairBase.valid || g_lastAppliedEye != 0)
             return false;
+        if (casActive() && g_pushedSince) {
+            // Entries queued while the left eye's pass ran are not pictures: only the right eye comes next.
+            const size_t extra = std::min(g_pushedSince, g_queueSize);
+            g_queueSize -= extra;
+            g_trimmed += extra;
+            static int logs = 0;
+            if (logs++ < 20)
+                LOG("CAS queue: %zu extra eye entries removed between the eyes (total %zu)", extra, g_trimmed);
+        }
+        g_pushedSince = 0;
         left = g_pending;
         tanX = g_tanX, tanY = g_tanY, centreX = g_centreX, centreY = g_centreY, coverX = g_coverX, coverY = g_coverY;
         centred = g_centred;
         gen = g_applyGen;
         std::memcpy(written, g_writtenFrustum, sizeof(written));
         setPending(1, g_right.position, g_right.orientation, g_right.fov);
+        g_pending.poseSeq = g_right.poseSeq;
     }
     // What the renderer made of the left eye's frustum after the copy (the frame's aspect fix,
     // 0x1209d80 in 0x137b830): the same for the right eye.
@@ -2986,6 +3919,7 @@ bool secondEye() {
     applyEye(dst);
     {
         std::lock_guard<std::mutex> lock(g_poseMutex);
+        g_pushedSince = 0;  // the right eye's entry is queued; later ones are extras for the next frame's trim
         const float kx = written[0] > 0 ? before[0] / written[0] : 1, ky = written[1] > 0 ? before[1] / written[1] : 1;
         if (std::isfinite(kx) && std::isfinite(ky) && kx > 0.5f && kx < 2 && ky > 0.5f && ky < 2 &&
             (kx != 1 || ky != 1)) {
@@ -3001,6 +3935,7 @@ bool secondEye() {
         }
         if (g_applyGen == gen) {  // the left eye back for the next frame's copy, unless Present gave a newer one
             setPending(0, left.position, left.orientation, left.fov);
+            g_pending.poseSeq = left.poseSeq;
             g_pending = left;
             g_tanX = tanX, g_tanY = tanY, g_centreX = centreX, g_centreY = centreY, g_coverX = coverX,
             g_coverY = coverY;
@@ -3009,11 +3944,119 @@ bool secondEye() {
         g_appliedAtScene = g_applied;
     }
     update(dst, nullptr, nullptr);  // view matrices and projection (hookedProjection puts the centre in)
+    if (casActive()) {
+        {
+            std::lock_guard<std::mutex> lock(g_poseMutex);
+            std::memcpy(g_casRight.axes, dst + kRightOffset, sizeof(g_casRight.axes));
+            std::memcpy(g_casRight.frustum, dst + kFrustumOffset, sizeof(g_casRight.frustum));
+            std::memcpy(g_casRight.centre, dst + kCentreOffset, sizeof(g_casRight.centre));
+            std::memcpy(g_casRight.clip, dst + kNearOffset, sizeof(g_casRight.clip));
+            g_casRight.valid = true;
+        }
+        // Create a Sim: the scene may be drawn from another camera the left eye was written into.
+        uintptr_t cams[12];
+        int count = 0;
+        {
+            std::lock_guard<std::mutex> lock(g_casCamMutex);
+            count = g_casCamCount;
+            std::memcpy(cams, g_casCams, sizeof(cams));
+        }
+        for (int i = 0; i < count; ++i) {
+            uint8_t* other = reinterpret_cast<uint8_t*>(cams[i]);
+            if (other == dst || !rtti::readable(cams[i], 0x200)) continue;
+            std::memcpy(other + kRightOffset, dst + kRightOffset, 0x40);
+            std::memcpy(other + kFrustumOffset, dst + kFrustumOffset, 16);
+            std::memcpy(other + kCentreOffset, dst + kCentreOffset, 8);
+            std::memcpy(other + kNearOffset, dst + kNearOffset, 8);
+            update(other, nullptr, nullptr);
+        }
+        {
+            std::lock_guard<std::mutex> lock(g_casCamMutex);
+            g_casCamRestart = true;
+        }
+    }
+    return true;
+}
+
+namespace {
+struct LensPose {
+    bool valid = false;
+    ULONGLONG tick = 0;
+    Vec3 position{};
+    Quat orientation{};
+    Fov fov{};
+} g_lens;
+}  // namespace
+
+void setLens(const Vec3& position, const Quat& orientation, const Fov& fov) {
+    std::lock_guard<std::mutex> lock(g_poseMutex);
+    g_lens.valid = true;
+    g_lens.tick = GetTickCount64();
+    g_lens.position = position;
+    g_lens.orientation = orientation;
+    g_lens.fov = fov;
+}
+
+void clearLens() {
+    std::lock_guard<std::mutex> lock(g_poseMutex);
+    g_lens.valid = false;
+}
+
+// Both eyes + a photo session: after the right eye's pass, a third pass from the phone's lens (eye 2), the picture
+// for the phone's glass. Same steps as secondEye: pose into the render camera, projection rebuilt; the left eye's
+// pose goes back for the next frame's copy.
+bool thirdEye() {
+    using UpdateFn = void (*)(void* camera, void* unused, void* matrix);
+    static UpdateFn update = reinterpret_cast<UpdateFn>(addrs::fn("CameraUpdate"));
+    uint8_t* dst = reinterpret_cast<uint8_t*>(g_writtenCamera.load(std::memory_order_acquire));
+    if (!update || !dst) return false;
+    Rendered left;
+    float tanX, tanY, centreX, centreY, coverX, coverY;
+    bool centred;
+    uint64_t gen;
+    {
+        std::lock_guard<std::mutex> lock(g_poseMutex);
+        if (!g_lens.valid || GetTickCount64() - g_lens.tick > 250 || !g_bothEyes.load() || !g_active || !g_pairHave ||
+            g_lastAppliedEye != 1)
+            return false;
+        g_pushedSince = 0;
+        left = g_pending;
+        tanX = g_tanX, tanY = g_tanY, centreX = g_centreX, centreY = g_centreY, coverX = g_coverX, coverY = g_coverY;
+        centred = g_centred;
+        gen = g_applyGen;
+        setPending(2, g_lens.position, g_lens.orientation, g_lens.fov);
+    }
+    applyEye(dst);
+    {
+        std::lock_guard<std::mutex> lock(g_poseMutex);
+        g_pushedSince = 0;
+        if (g_applyGen == gen) {
+            setPending(0, left.position, left.orientation, left.fov);
+            g_pending.poseSeq = left.poseSeq;
+            g_pending = left;
+            g_tanX = tanX, g_tanY = tanY, g_centreX = centreX, g_centreY = centreY, g_coverX = coverX,
+            g_coverY = coverY;
+            g_centred = centred;
+        }
+        g_appliedAtScene = g_applied;
+    }
+    update(dst, nullptr, nullptr);
+    static int logs = 0;
+    if (logs++ < 3) LOG("Photo: the phone lens' third pass drawn (both eyes)");
     return true;
 }
 
 bool frontIsBothFirst() {
     std::lock_guard<std::mutex> lock(g_poseMutex);
+    // Create a Sim: the next pass record (takeRendered hands those out there). Its left eye used to go through
+    // renderStereo, which waited for a headset refresh and sent the old pair again: two refreshes a game frame, so CAS
+    // was held at 36 fps (806: "Single view 36.0 a second", "Present with the VR work and its wait 13.7 ms" for each of
+    // 72 pictures). Held here like the lot's left eye, one refresh a game frame.
+    if (casActive()) {
+        if (!g_passSize) return false;
+        const PassRecord& rec = g_passRec[g_passHead];
+        return rec.valid && rec.rendered.eye == 0 && rec.rendered.bothFirst;
+    }
     return g_queueSize && g_queue[g_queueHead].bothFirst;
 }
 
@@ -3046,6 +4089,8 @@ void holdBodyTurn(bool hold) { g_holdTurn = hold; }
 void setBodyView(bool on) { g_bodyViewWanted = on; }
 
 void turnBody(float radians) {
+    framecost::turnNote();
+    player::noteStickTurn();
     float current = g_turnRequest.load();
     while (!g_turnRequest.compare_exchange_weak(current, current + radians)) {
     }
@@ -3127,8 +4172,26 @@ float worldScale() { return g_config.worldScale; }
 
 void setFloor(float worldY) { g_floorY = worldY; }
 std::atomic<bool> g_photoSession{false};
+std::atomic<bool> g_photoSelfie{false};
 void setPhotoSession(bool on) { g_photoSession.store(on); }
 bool photoSession() { return g_photoSession.load(); }
+void setPhotoSelfie(bool on) { g_photoSelfie.store(on); }
+std::atomic<bool> g_inLensPass{false};
+void setInLensPass(bool on) { g_inLensPass.store(on, std::memory_order_release); }
+bool inLensPass() { return g_inLensPass.load(std::memory_order_acquire); }
+bool photoSelfie() { return g_photoSelfie.load(); }
+std::atomic<unsigned long long> g_photoCaptureUntil{0};
+void setPhotoCapture(int ms) { g_photoCaptureUntil.store(ms > 0 ? GetTickCount64() + static_cast<unsigned long long>(ms) : 0); }
+bool photoCapturing() { return GetTickCount64() < g_photoCaptureUntil.load(); }
+void setPoseSeq(uint64_t seq) {
+    std::lock_guard<std::mutex> lock(g_poseMutex);
+    g_poseSeqNext = seq;
+}
+
+uint64_t appliedCount() {
+    std::lock_guard<std::mutex> lock(g_poseMutex);
+    return g_applied;
+}
 void setPhotoProbe(int lines) {
     g_photoProbe.store(lines);
     g_photoCopyProbe.store(lines);
@@ -3161,18 +4224,106 @@ bool projectLive(const Vec3& world, float& x, float& y) {
     return std::isfinite(x) && std::isfinite(y);
 }
 
+void notePass(int eye) {
+    std::lock_guard<std::mutex> lock(g_poseMutex);
+    if (g_passSize == 16) {  // Present stopped consuming
+        g_passHead = (g_passHead + 1) % 16;
+        --g_passSize;
+    }
+    // This pass's own entry: the newest one of its eye. One record per pass, found or not, so the records stay in
+    // step with the pictures Present gets.
+    PassRecord& rec = g_passRec[(g_passHead + g_passSize++) % 16];
+    rec.valid = false;
+    for (size_t i = g_queueSize; i-- > 0;) {
+        const Rendered& entry = g_queue[(g_queueHead + i) % kQueue];
+        // The left eye is the one beginBoth marked before the pass: the pass's own camera copies queue others after it.
+        if (entry.eye == eye && (eye != 0 || entry.bothFirst)) {
+            rec.rendered = entry;
+            rec.valid = true;
+            break;
+        }
+    }
+    if (!rec.valid) {
+        static int logs = 0;
+        if (++g_passMissing, logs++ < 20)
+            LOG("CAS pairing: no eye %d entry for this pass's picture (%zu missing)", eye, g_passMissing);
+    }
+}
+
 bool takeRendered(Rendered& out) {
     std::lock_guard<std::mutex> lock(g_poseMutex);
+    // Create a Sim hands out pass records and leaves the entry queue alone, so it is full (8) when CAS ends. Taken
+    // one a Present from there, every picture got the pose of an entry 8 back and the lot's view twitched (798, user
+    // 2026-10-31: "extremely twitchy" after CAS; "Stereo: ... 8 queued" every line, 1-2 otherwise). Emptied there.
+    static bool wasCas = false;
+    const bool cas = casActive();
+    if (wasCas && !cas) {
+        LOG("CAS: off; %zu eye entries left queued from it dropped", g_queueSize);
+        g_queueSize = 0;
+        // Its cameras too: from CAS in a lot (wardrobe "Plan outfit") they are the lot's own render cameras, and the
+        // projection build kept putting the last eye's off-centre into them (cross-eyed after it, user 2026-10-31).
+        std::lock_guard<std::mutex> camLock(g_casCamMutex);
+        g_casCamCount = 0;
+    }
+    wasCas = cas;
+    if (cas) {
+        // CAS: the picture's own pass record, not the entry queue's order.
+        if (!g_passSize) return false;
+        const PassRecord rec = g_passRec[g_passHead];
+        g_passHead = (g_passHead + 1) % 16;
+        --g_passSize;
+        if (!rec.valid) return false;
+        out = rec.rendered;
+        return true;
+    } else {
+        g_passSize = 0;
+    }
     static uint64_t presents = 0;
     if (++presents % 500 == 0) {
         // Expect about one camera copy per Present; more means eyes can drift.
         LOG("Stereo: %llu presents, %llu camera copies changed, %zu queued", static_cast<unsigned long long>(presents),
             static_cast<unsigned long long>(g_applied), g_queueSize);
+        const uint64_t waits = g_capWaits.exchange(0), timeouts = g_capTimeouts.exchange(0);
+        const long long waitUs = g_capWaitUs.exchange(0);
+        LOG("Lead cap %s: pose age at Present %.1f ms average, worst %.1f (%llu pictures); game thread waited %llu "
+            "times, %llu timed out, %.2f ms average",
+            g_capLead.load() ? "ON" : "off", g_ageCount ? g_ageTotalMs / g_ageCount : 0.0, g_ageWorstMs,
+            static_cast<unsigned long long>(g_ageCount), static_cast<unsigned long long>(waits),
+            static_cast<unsigned long long>(timeouts), waits ? waitUs / 1000.0 / waits : 0.0);
+        g_ageTotalMs = g_ageWorstMs = 0;
+        g_ageCount = 0;
     }
     if (!g_queueSize) return false;
+    // Both eyes: after a right eye the next picture is a frame's left eye (the entry beginBoth marked). An entry
+    // queued with no picture of its own ahead of it put every later picture on the other eye's pose for good: after
+    // the phone's camera mode the queue stayed one longer (803: "3 queued" from then on, 2 before) and the view was
+    // cross-eyed until the game was restarted. Such entries are dropped there.
+    // Dropped only when a marked left eye is queued behind them (every frame is drawn twice with both eyes on: 803
+    // "second pass 693 of 693 frames"); the photo probe's eye count changed parity there, so the extra may be a left.
+    static int lastEye = -1;
+    if (g_bothEyes.load() && lastEye != 0 && !g_queue[g_queueHead].bothFirst && g_queue[g_queueHead].eye != 2) {
+        size_t skip = 1;  // the phone lens' picture (eye 2) is a picture of its own: never one of the dropped
+        while (skip < g_queueSize && !g_queue[(g_queueHead + skip) % kQueue].bothFirst &&
+               g_queue[(g_queueHead + skip) % kQueue].eye != 2)
+            ++skip;
+        if (skip < g_queueSize) {
+            g_queueHead = (g_queueHead + skip) % kQueue;
+            g_queueSize -= skip;
+            static int logs = 0;
+            if (logs++ < 20) LOG("Both eyes: %zu queued eye entries with no picture dropped before a left eye", skip);
+        }
+    }
     out = g_queue[g_queueHead];
-    g_queueHead = (g_queueHead + 1) % 4;
+    g_queueHead = (g_queueHead + 1) % kQueue;
     --g_queueSize;
+    lastEye = out.eye;
+    if (out.copiedQpc) {
+        const double age = qpcMs(qpcNow() - out.copiedQpc);
+        g_ageTotalMs += age;
+        if (age > g_ageWorstMs) g_ageWorstMs = age;
+        ++g_ageCount;
+    }
+    SetEvent(g_presentTook);
     return true;
 }
 
@@ -3185,6 +4336,7 @@ void release() {
     g_appliedCentre[0].store(NAN, std::memory_order_relaxed);
     g_appliedCentre[1].store(NAN, std::memory_order_relaxed);
     g_queueSize = 0;
+    g_passSize = 0;
     g_latestYaw = NAN;
     g_pairBase.valid = false;
     g_nextBase.valid = false;
@@ -3210,6 +4362,9 @@ float viewYaw() {
     return std::isfinite(yaw) ? std::remainder(yaw + g_turnRequest.load() - g_latestLead, 6.2831853f) : NAN;
 }
 
+void setLeadCap(bool on) {
+    if (g_capLead.exchange(on) && !on) SetEvent(g_presentTook);  // release a waiting copy
+}
 void setTurnLead(float radians) { g_leadWanted.store(radians, std::memory_order_relaxed); }
 
 }  // namespace s4vr::camera

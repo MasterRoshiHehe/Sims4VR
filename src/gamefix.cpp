@@ -336,7 +336,9 @@ int shownLevel() {
     return lot ? static_cast<int8_t>(lot[0x14c]) : kNoLevel;
 }
 
-void setSimLevel(int level) { g_simLevel.store(level, std::memory_order_relaxed); }
+void setSimLevel(int level) {
+    if (g_simLevel.exchange(level, std::memory_order_relaxed) != level) LOG("Sim level: now %d (from the script; 1000 and up: on steps)", level);
+}
 
 void keepTopFloor() {
     g_holdWallsUntil.store(GetTickCount64() + 1000, std::memory_order_relaxed);
@@ -347,14 +349,41 @@ void keepTopFloor() {
     // Below ground (a basement) the game shows only that level, walls up, as
     // in its own basement view: with every floor shown the basement's walls
     // were not drawn (user 2026-10-27, marks 17:32).
-    int simLevel = g_simLevel.load(std::memory_order_relaxed);
+    // The script's number: the level you walk on, or on a flight of steps 1000 + (lower + 8) * 20 + upper + 8.
+    int raw = g_simLevel.load(std::memory_order_relaxed);
+    bool onSteps = raw >= 1000;
+    int stepLow = onSteps ? (raw - 1000) / 20 - 8 : 0, stepHigh = onSteps ? (raw - 1000) % 20 - 8 : 0;
+    int simLevel = onSteps ? stepLow : raw;
     bool below = simLevel < 0 && simLevel >= -2;
     // The lowest level the lot has (the zone's +0x128, a signed byte: -1 with a
     // basement). The override's bottom was 0, which left a basement's walls
     // and floor out of the shown range: invisible basement walls.
     uint8_t* zoneInfo = *reinterpret_cast<uint8_t**>(lot + 0xb8);
     uint8_t bottom = zoneInfo ? zoneInfo[0x128] : 0;
-    if (below) top = bottom = static_cast<uint8_t>(static_cast<int8_t>(simLevel));
+    if (below) {
+        bottom = static_cast<uint8_t>(static_cast<int8_t>(simLevel));
+        // Only that level while you walk the basement (all floors shown left its walls undrawn, user 2026-10-27); on
+        // a flight of steps both its levels show, so neither the top nor the bottom of the stairs is void.
+        top = static_cast<uint8_t>(static_cast<int8_t>(onSteps ? stepHigh : simLevel));
+    }
+    // Taking the basement stairs or leaving the house changes what must show: no waiting out an earlier fight
+    // (user 2026-10-30: after leaving the basement only the ground floor showed for a while).
+    static int lastLevel = 1000;
+    if (lastLevel != simLevel) {
+        lastLevel = simLevel;
+        g_nextTopFloor = 0;
+        g_fights = 0;
+    }
+    static int loggedBelow = 1000;
+    if (below && loggedBelow != simLevel) {
+        loggedBelow = simLevel;
+        LOG("Basement view: sim level %d, wanted levels %d to %d (the lot lowest %d, game shows %d to %d, walls %u)", simLevel,
+            static_cast<int>(static_cast<int8_t>(bottom)), static_cast<int>(static_cast<int8_t>(top)),
+            zoneInfo ? static_cast<int8_t>(zoneInfo[0x128]) : 0, static_cast<int8_t>(lot[0x14d]),
+            static_cast<int8_t>(lot[0x14c]), *reinterpret_cast<uint32_t*>(lot + 0x150));
+    } else if (!below) {
+        loggedBelow = 1000;
+    }
     constexpr int kSlot = 3;
     uint8_t* slot = lot + 0xec + kSlot * 0x14;
     bool ours = slot[0] && slot[2] == top && slot[3] == bottom && *reinterpret_cast<uint32_t*>(slot + 4) == 2;

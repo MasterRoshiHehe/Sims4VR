@@ -9,6 +9,7 @@
 
 #include "framecost.h"
 #include "framemap.h"
+#include "gputimeline.h"
 #include "singleview.h"
 #include "log.h"
 
@@ -31,6 +32,7 @@ static HRESULT STDMETHODCALLTYPE hookedPresent(IDXGISwapChain* swapchain, UINT s
         framemap::mark(framemap::Present);
         singleview::presented();
     }
+    if (picture) gputimeline::presented(swapchain);
     if (g_callback && picture) g_callback(swapchain);
     t_inPresent = true;
     HRESULT hr = g_originalPresent(swapchain, syncInterval, flags);
@@ -53,6 +55,7 @@ static HRESULT STDMETHODCALLTYPE hookedPresent1(IDXGISwapChain1* swapchain, UINT
         framemap::mark(framemap::Present);
         singleview::presented();
     }
+    if (picture) gputimeline::presented(swapchain);
     if (g_callback && picture) g_callback(swapchain);
     t_inPresent = true;
     HRESULT hr = g_originalPresent1(swapchain, syncInterval, flags, params);

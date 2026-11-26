@@ -29,6 +29,8 @@ void onPresent(IDXGISwapChain* swapchain) {
     DXGI_SWAP_CHAIN_DESC scDesc;
     if (!g_gameWindow && SUCCEEDED(swapchain->GetDesc(&scDesc))) window = scDesc.OutputWindow;
     onFrame(backbuffer, window, false);
+    if (g_config.monitorFit && SUCCEEDED(swapchain->GetDesc(&scDesc)))
+        monitorfit::apply(backbuffer, scDesc.OutputWindow, g_config.monitorFit, g_config.monitorZoom);
     backbuffer->Release();
 }
 
@@ -62,6 +64,7 @@ int onFrame(ID3D11Texture2D* backbuffer, HWND window, bool ownMirror) {
         gpuload::onFrame(device, context);
         texbias::install(device, g_config.textureBias);
         shadowreuse::install(device);
+        foliagepush::onFrame(device, context, g_config);
         nearplane::collect(context);
         context->Release();
         watchVideoMemory();
@@ -134,7 +137,7 @@ int onFrame(ID3D11Texture2D* backbuffer, HWND window, bool ownMirror) {
             backbuffer->GetDesc(&desc);
             updateControls(frame.predictedDisplayTime, desc);
             drawHud(backbuffer);
-            XrCompositionLayerQuad quad, uiQuad, pieQuad, beamQuad, tipQuad, phoneQuad, settingsQuad, sleepQuad, lotQuad;
+            XrCompositionLayerQuad quad, uiQuad, pieQuad, beamQuad, tipQuad, phoneQuad, settingsQuad, sleepQuad, lotQuad, workQuad;
             XrCompositionLayerProjection projection;
             XrCompositionLayerProjectionView views[2];
             const XrCompositionLayerBaseHeader* layers[10] = {};
@@ -160,12 +163,25 @@ int onFrame(ID3D11Texture2D* backbuffer, HWND window, bool ownMirror) {
             droveBefore = driveRuns;
             bool stereo = !driving && frame.shouldRender && g_appSpace && mode() == Mode::Stereo && camera::available();
             stereoFrame = stereo;
+            // Create a Sim trace: a Present that is not drawn as the stereo picture (the flat screen showing instead).
+            if (camera::casActive() && !stereo) {
+                static int casFlat = 0;
+                if (casFlat++ < 40)
+                    LOG("CAS present: not stereo (driving %d, shouldRender %d, appSpace %d, mode %d, available %d)", driving,
+                        frame.shouldRender, g_appSpace != XR_NULL_HANDLE, static_cast<int>(mode()), camera::available());
+            }
             if (!stereo) pieInWorld(false);
             if (frame.shouldRender && g_appSpace) {
                 if (!stereo && g_renderingEye >= 0) resetStereo();
                 bool scene = false;
                 if (stereo) {
-                    if (renderStereo(backbuffer, desc, frame.predictedDisplayTime, projection, views)) {
+                    const bool casTrace = camera::casActive();
+                    const bool stereoDrawn = renderStereo(backbuffer, desc, frame.predictedDisplayTime, projection, views);
+                    if (casTrace && !stereoDrawn) {
+                        static int casNone = 0;
+                        if (casNone++ < 40) LOG("CAS present: stereo has no picture pair to submit (a layer-less frame)");
+                    }
+                    if (stereoDrawn) {
                         add(&projection);
                         if (g_bodyLayerReady) add(&g_bodyProjection);
                         scene = true;
@@ -180,6 +196,8 @@ int onFrame(ID3D11Texture2D* backbuffer, HWND window, bool ownMirror) {
                         if (hudSleepLayer(hud::texture(), sleepQuad)) add(&sleepQuad);
                         // The lot's name and traits while the eyes are held shut for a load.
                         if (hudLotIntroLayer(lotQuad)) add(&lotQuad);
+                        // The work card (your Sim is at work, eyes shut).
+                        if (hudWorkLayer(hud::texture(), workQuad)) add(&workQuad);
                         if ((showPie || showPhone || showObject || showWrist || showPanel) && renderUiPanel(uiQuad)) {
                             bool phoneIn3d = showPhone && phone3d::drawnRecently();
                             if (showPhone && !phoneIn3d && !g_tablet) {
@@ -326,12 +344,16 @@ int onFrame(ID3D11Texture2D* backbuffer, HWND window, bool ownMirror) {
         }
         linkTick(tick, waitMs + endMs, stalledSince != 0, onset);
         gpuload::yieldToStreamer(g_config.gpuYield);
-        if (g_session && !g_exitRequested && stalledSince && tick - stalledSince > 12000) {
-            LOG("Headset link stalled for 12 s (%.0f ms per frame); ending the session", waitMs + endMs);
+        // The first minute of a session starts while the lot is still loading, which starves Virtual Desktop's
+        // streamer for tens of seconds (865 log: 41 s of 0.3-2.5 s frames, then it recovered by itself; ending the
+        // session at 12 s only made it start over). Give that minute 45 s.
+        const ULONGLONG stallLimit = (tick - g_sessionCreatedTick < 60000) ? 45000 : 12000;
+        if (g_session && !g_exitRequested && stalledSince && tick - stalledSince > stallLimit) {
+            LOG("Headset link stalled for %llu s (%.0f ms per frame); ending the session", stallLimit / 1000, waitMs + endMs);
             stalledSince = 0;
             stalledFrames = 0;
             requestSessionEnd(backoff);
-            linkLost("stalled for 12 s");
+            linkLost("stalled too long");
             if (backoff < 60000) backoff *= 2;
             setStatusNote("headset link lost; reconnecting");
         }
@@ -372,6 +394,7 @@ int onFrame(ID3D11Texture2D* backbuffer, HWND window, bool ownMirror) {
             } else if (asked && firstPerson && !state) {
                 state = 1;
                 since = tick;
+                g_buildPhoneHand = g_phoneOut && !g_tablet ? g_phoneHand : -1;  // the tablet comes out in this hand
             }
             if (state == 1 && tick - since > 3000) {
                 LOG("Build/buy eyes: no switch 3 s after the build button, opening");
@@ -389,6 +412,7 @@ int onFrame(ID3D11Texture2D* backbuffer, HWND window, bool ownMirror) {
                     LOG("Build/buy eyes: %s %.1f s after the switch (%d slow frames, worst %.0f ms)",
                         done ? "steady" : "still not steady, opening anyway", (tick - since) / 1000.0, slow, worst);
                     state = 0;
+                    g_tabletOpenHand = g_buildPhoneHand.exchange(-1);
                 }
             }
             eyelids::setTransition(state != 0);
@@ -471,7 +495,8 @@ void setMode(Mode mode) {
     g_recenterRequested = true;
 }
 
-Mode mode() { return static_cast<Mode>(g_mode.load()); }
+// Create a Sim draws with your eyes whatever the mode is (the menus run in the flat screen mode): camera::casActive.
+Mode mode() { return camera::casActive() ? Mode::Stereo : static_cast<Mode>(g_mode.load()); }
 
 std::string status() {
     std::lock_guard<std::mutex> lock(g_statusMutex);

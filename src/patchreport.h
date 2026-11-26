@@ -12,9 +12,13 @@ namespace s4vr::patchreport {
 void init(const std::wstring& dir);
 
 // An unrecognised game build is about to be tried. False (safe mode for this run) if the last such run did not
-// get 120 s in or end cleanly, i.e. probably crashed: one run later it tries again. The marker file is removed
+// crashed (a run you closed does not count): one run later it tries again. The marker file is removed
 // after 120 s and at shutdown.
 bool armUnknownBuild();
+
+// The crash recorder saw a fatal exception: the marker now says CRASH, so the next run is in safe mode. A marker
+// without it (game closed by the user) is ignored.
+void markCrash();
 
 // After the address table has resolved: rows, features.
 void tableDone();

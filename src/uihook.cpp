@@ -11,6 +11,7 @@
 #include "camera.h"
 #include "facehide.h"
 #include "framemap.h"
+#include "gputimeline.h"
 #include "shadowreuse.h"
 #include "addrs.h"
 #include "gameaddr.h"
@@ -197,14 +198,19 @@ void setTargets(SetTargetsFn original, ID3D11DeviceContext* context, UINT count,
     shadowreuse::bound(context, count, views, depth);
     facehide::targets(context, sceneDepthBound(depth));
     if (!t_inRender && depth && views && count && views[0]) learnScene(views[0], depth);
-    if (!depth)
+    if (!depth) {
         framemap::mark(framemap::ColourBind, static_cast<int>(count));
-    else if (!views || !count || !views[0])
+        gputimeline::bind(context, gputimeline::Colour);
+    } else if (!views || !count || !views[0]) {
         framemap::mark(framemap::DepthOnlyBind, static_cast<int>(count));
-    else if (views[0] == g_sceneTarget.load(std::memory_order_relaxed))
+        gputimeline::bind(context, gputimeline::ShadowMap);
+    } else if (views[0] == g_sceneTarget.load(std::memory_order_relaxed)) {
         framemap::mark(framemap::SceneBind, static_cast<int>(count));
-    else
+        gputimeline::bind(context, gputimeline::Scene);
+    } else {
         framemap::mark(framemap::OtherBind, static_cast<int>(count));
+        gputimeline::bind(context, gputimeline::OtherDepth);
+    }
     if (g_rendering.load(std::memory_order_relaxed) && context == t_context && t_ui && views && count) {
         ID3D11RenderTargetView* swapped[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT];
         if (count <= D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT && swapIn(count, views, swapped)) {
@@ -277,7 +283,10 @@ void senseLate(ID3D11DeviceContext* context) {
 }
 
 // Our phone into the finished 3D view, before the UI goes on top (or elsewhere).
+std::atomic<bool> g_lensPass{false};  // the phone lens' own pass: none of our 3D pieces in it
+
 void drawPhone(ID3D11DeviceContext* context) {
+    if (g_lensPass.load(std::memory_order_acquire)) return;  // the phone, panels, pie and the rest are not in the camera's picture
     ID3D11RenderTargetView* view = nullptr;
     ID3D11DepthStencilView* depth = nullptr;
     {
@@ -699,6 +708,8 @@ ID3D11Texture2D* onPresent(ID3D11Texture2D* backbuffer, bool enabled) {
     g_enabled.store(enabled && g_contextHooked.load(), std::memory_order_release);
     return result;
 }
+
+void setLensPass(bool on) { g_lensPass.store(on, std::memory_order_release); }
 
 void beginSecondPass() {
     g_phonePending.store(true, std::memory_order_relaxed);

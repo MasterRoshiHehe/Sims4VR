@@ -1,3 +1,5 @@
+// Tick the current OpenXR session was created (19_present_control.inc: the lot may still be loading).
+static ULONGLONG g_sessionCreatedTick = 0;
 // ---------------------------------------------------------------------------
 // Session
 
@@ -229,6 +231,7 @@ static bool createSession(ID3D11Device* device) {
     }
     attachActions();
     LOG("OpenXR session created");
+    g_sessionCreatedTick = GetTickCount64();
     return true;
 }
 

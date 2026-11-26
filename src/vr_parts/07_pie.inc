@@ -37,6 +37,34 @@ struct WorldClick {
     ULONGLONG tick = 0;
 };
 static WorldClick g_lastWorldClick;
+// The click the open pie answers. A pick on it that makes the script build another pie (influence.py: "Influence to..."
+// opens that Sim's pie) has no world click of its own: the new pie opens where this one was (closePie, picked).
+static WorldClick g_pieClick;
+
+// A click on a TV (pie.py setPieTv, user 2026-10-28): the pie then hovers in front of its screen, 3x as big. World
+// units; taken by openPie within 8 s. g_pieAtTv: the open pie is that one.
+static std::mutex g_pieTvMutex;
+static float g_pieTvAnchor[6] = {};
+static ULONGLONG g_pieTvAt = 0;
+static bool g_pieAtTv = false;
+static float g_pieTvWorld[6] = {};  // the open TV pie's anchor, kept in the world (it stays put as you walk)
+static bool g_pieTvFlip = false;    // facing the other way round (you were behind the screen)
+static XrVector3f worldToApp(const camera::View& view, const float* w, bool direction);  // 11_object_menus.inc
+// The TV pie's pose in app space from its world anchor with this frame's camera (it stays put as you walk).
+static bool placeTvPie(const camera::View& view, const float* a, bool flip, XrVector3f& at, XrVector3f& x,
+                       XrVector3f& y, XrVector3f& z) {
+    const XrVector3f c = worldToApp(view, a, false);
+    XrVector3f n = worldToApp(view, a + 3, true);
+    n.y = 0;  // upright, whatever the screen's tilt
+    if (!(dot3(n, n) > 1e-4f)) return false;
+    n = normalize3(n);
+    if (flip) n = {-n.x, -n.y, -n.z};
+    z = n;
+    x = normalize3(cross3(XrVector3f{0, 1, 0}, z));
+    y = cross3(z, x);
+    at = {c.x + n.x * g_config.pieTvOffset, c.y, c.z + n.z * g_config.pieTvOffset};
+    return true;
+}
 
 // A finger near the pie: the laser marker shows where it would press, without the beam.
 static bool g_tipOnly = false;
@@ -51,6 +79,11 @@ static std::atomic<int> g_clickHand{-1};
 static std::atomic<ULONGLONG> g_clickHandTick{0};
 static std::atomic<bool> g_pieShown{false};
 
+void setPieTv(const float* v) {
+    std::lock_guard<std::mutex> lock(g_pieTvMutex);
+    if (v) std::memcpy(g_pieTvAnchor, v, sizeof(g_pieTvAnchor));
+    g_pieTvAt = v ? GetTickCount64() : 0;
+}
 void pieOpened(int items) {
     if (items > 0) g_pieOpenRequest = true;
 }
@@ -97,10 +130,16 @@ static void closePie(const char* why) {
         static int logged = 0;
         if (logged++ < 20) LOG("Pie menu at hand: the popup's answers closed unpicked (%s): its buttons back on the card", why);
     }
+    if (std::strcmp(why, "picked on the pie") == 0 && g_pieClick.point.x == g_pieClick.point.x && g_pieClick.tick) {
+        g_lastWorldClick = g_pieClick;
+        g_lastWorldClick.valid = true;
+        g_lastWorldClick.tick = GetTickCount64();
+    }
     g_pieDialog = false;
     g_pieOurs = false;
     g_piePalm = -1;
     g_piePalmUp = g_piePalmFist = false;
+    g_pieAtTv = false;
     g_piePhone = false;
     g_pie.active = false;
     g_pieShown.store(false, std::memory_order_relaxed);
@@ -169,8 +208,34 @@ static bool openPie(const XrVector3f& head) {
     g_pie.y = y;
     g_pie.z = z;
     g_pie.pose = {fromAxes(x, y, z), {head.x + dir.x * d, head.y + dir.y * d, head.z + dir.z * d}};
-    g_pie.width = g_config.pieWidth;
-    g_pie.height = g_config.pieWidth * ch / cw;
+    g_pieAtTv = false;
+    float tvAnchor[6];
+    bool tvClick = false;
+    {
+        std::lock_guard<std::mutex> lock(g_pieTvMutex);
+        tvClick = g_pieTvAt && GetTickCount64() - g_pieTvAt < 8000;
+        if (tvClick) std::memcpy(tvAnchor, g_pieTvAnchor, sizeof(tvAnchor));
+        g_pieTvAt = 0;
+    }
+    camera::View tvView;
+    if (tvClick && g_config.pieTvFront && camera::lastView(tvView)) {
+        // Kept in the world: placeTvPie puts it in app space each frame (user 2026-10-28: it moved as you walked).
+        std::memcpy(g_pieTvWorld, tvAnchor, sizeof(g_pieTvWorld));
+        XrVector3f at, tx, ty, tz;
+        g_pieTvFlip = false;
+        if (placeTvPie(tvView, g_pieTvWorld, false, at, tx, ty, tz)) {
+            g_pieTvFlip = dot3(tz, sub3(head, at)) < 0;  // you are behind it: face you
+            if (placeTvPie(tvView, g_pieTvWorld, g_pieTvFlip, at, tx, ty, tz)) {
+                g_pie.x = tx;
+                g_pie.y = ty;
+                g_pie.z = tz;
+                g_pie.pose = {fromAxes(tx, ty, tz), at};
+                g_pieAtTv = true;
+            }
+        }
+    }
+    g_pie.width = g_config.pieWidth * (g_pieAtTv ? g_config.pieTvSize : 1.0f);
+    g_pie.height = g_pie.width * ch / cw;
     g_pie.x0 = x0;
     g_pie.y0 = y0;
     g_pie.cw = cw;
@@ -193,8 +258,8 @@ static bool openPie(const XrVector3f& head) {
     g_pieCentre[1] = std::max(0, std::min(H - 1, static_cast<int32_t>(click.v * H)));
     static int logged = 0;
     if (logged++ < 20)
-        LOG("Pie menu at hand: opened %.2f m away (click %.0f m away), UI %dx%d at %d,%d of %dx%d", d, distance, cw,
-            ch, x0, y0, W, H);
+        LOG("Pie menu at hand: opened %.2f m away (click %.0f m away), UI %dx%d at %d,%d of %dx%d%s", d, distance, cw,
+            ch, x0, y0, W, H, g_pieAtTv ? ", hovering in front of the TV" : "");
     return true;
 }
 

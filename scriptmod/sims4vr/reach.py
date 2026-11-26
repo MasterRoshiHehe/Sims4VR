@@ -242,7 +242,7 @@ def _verdict(sim, aop, quiet=False):
     if d is not None and _is_computer(target):
         try:
             from sims4vr import claude
-            if claude._affordance is not None and aop.affordance is claude._affordance:
+            if getattr(aop.affordance, 'vr_spec', None) is not None:
                 # Open Claude works standing (user 2026-10-15 01:56Z), as near as it stays open.
                 return (None, d) if d <= claude.CLOSE_DISTANCE else (FAR, d)
         except Exception as e:

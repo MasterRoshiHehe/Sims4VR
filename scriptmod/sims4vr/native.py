@@ -207,6 +207,11 @@ def set_sim_level(level):
         _mod.set_sim_level(level)
 
 
+def player_teleport(x, y, z):
+    if _mod is not None:
+        _mod.player_teleport(x, y, z)
+
+
 def set_floor(y):
     if _mod is not None:
         _mod.set_floor(y)
@@ -219,7 +224,14 @@ def photo_probe(lines):
 
 def photo_session(on):
     if _mod is not None:
-        _mod.photo_session(1 if on else 0)
+        _mod.photo_session(int(on))
+
+
+def photo_capture(ms):
+    """Every frame is the phone lens' picture for `ms` ms (the camera app's shutter); 0 ends it."""
+    fn = _optional('photo_capture')
+    if fn is not None:
+        fn(int(ms))
 
 
 def on_gameplay(playing):
@@ -253,6 +265,19 @@ def walk_input():
     return None
 
 
+def tele_query():
+    """The teleport spot waiting to be checked: (seq, x, z) in the world, or None."""
+    if _mod is not None:
+        return _mod.tele_query()
+    return None
+
+
+def tele_answer(seq, ok, floor_y):
+    """Answer tele_query: ok 1/0 and the floor height at the spot."""
+    if _mod is not None:
+        _mod.tele_answer(seq, ok, floor_y)
+
+
 # Developer probe helpers (see probe.py)
 def dev_probe():
     return _mod is not None and _mod.dev_probe() == 1
@@ -276,6 +301,23 @@ def rtti_name(address):
 
 def object_ptr(object_id):
     return _mod.object_ptr(object_id)
+
+
+def ragdoll_start(sim_id, vx=0.0, vy=0.0, vz=0.0, limp_seconds=4.0):
+    """The Sim falls as a ragdoll (docs/RAGDOLL.md) along that blow (m/s, world; all zero: along the last hit your
+    hand gave it) and blends back after limp_seconds (0: until ragdoll_release). True if it started."""
+    try:
+        return bool(_mod.ragdoll_start(sim_id, vx, vy, vz, limp_seconds))
+    except Exception:
+        return False
+
+
+def ragdoll_release(sim_id):
+    """Its ragdoll blends back to the game's pose."""
+    try:
+        _mod.ragdoll_release(sim_id)
+    except Exception:
+        pass
 
 
 def joint(object_id, name):
@@ -337,6 +379,17 @@ def pie_menu(items):
             fn(int(items))
 
 
+def pie_tv(centre=None, normal=None):
+    """The next pie (pie_menu) is for a click on a TV: its screen centre and outward normal (world units) so the
+    DLL hovers the pie in front of it; no arguments: not a TV."""
+    fn = _optional('pie_tv')
+    if fn is not None:
+        if centre is None:
+            fn()
+        else:
+            fn(*(tuple(float(v) for v in centre) + tuple(float(v) for v in normal)))
+
+
 def set_sleeping(sleeping):
     """Close the eyelids over the view (the Sim you are in sleeps or naps)."""
     fn = getattr(_mod, 'set_sleeping', None)  # absent in a DLL older than the script
@@ -356,6 +409,13 @@ def set_eyes_held(held):
     fn = _optional('set_eyes_held')  # absent in a DLL older than the script
     if fn is not None:
         fn(bool(held))
+
+
+def work_card(packed):
+    """The card over closed eyes while your Sim is at work (work.py); b'': gone."""
+    fn = _optional('work_card')  # absent in a DLL older than the script
+    if fn is not None:
+        fn(bytes(packed))
 
 
 def lot_intro(packed):
@@ -413,6 +473,15 @@ def hud_balloon(sim, picture, overlay, category, balloon_type, priority, duratio
     if fn is not None:
         fn(int(sim) & 0xffffffffffffffff, int(picture) & 0xffffffffffffffff, int(overlay) & 0xffffffffffffffff,
            int(category) & 0xffffffffffffffff, int(balloon_type), int(priority), int(duration_ms))
+
+
+def hud_balloon_text(sim, text, balloon_type=1, priority=9, duration_ms=4500):
+    """A speech bubble with words over a Sim (influence.py); False with an older DLL."""
+    fn = _optional('hud_balloon_text')
+    if fn is None:
+        return False
+    fn(int(sim) & 0xffffffffffffffff, str(text), int(balloon_type), int(priority), int(duration_ms))
+    return True
 
 
 def hud_skillbar(sim, icon, start, end, current, rate, level, max_level, hide):
@@ -499,6 +568,13 @@ def phone_notes(packed):
 def phone_calendar(packed):
     """The game's calendar for the phone's Calendar app (phonecal.py)."""
     fn = _optional('phone_calendar')
+    if fn is not None:
+        fn(bytes(packed))
+
+
+def phone_call(packed):
+    """The phone's call screens (phonecall.py)."""
+    fn = _optional('phone_call')
     if fn is not None:
         fn(bytes(packed))
 
@@ -634,6 +710,22 @@ def claude_screen(on, centre=(0, 0, 0), normal=(0, 0, 1), up=(0, 1, 0), width=0.
            str(exe))
 
 
+def window_screen(slot, on, centre=(0, 0, 0), normal=(0, 0, 1), up=(0, 1, 0), width=0.0, height=0.0, exe='', title='',
+                  fps=30, max_width=1920, interactive=0):
+    """A desktop app's window on a screen (claudescreen.cpp; slot 1 = Discord, discord.py); on again changes only the options."""
+    fn = _optional('window_screen')
+    if fn is not None:
+        fn(int(slot), 1 if on else 0, *(float(v) for v in tuple(centre) + tuple(normal) + tuple(up)), float(width),
+           float(height), str(exe), str(title), int(fps), int(max_width), int(interactive))
+
+
+def discord_audio(mode):
+    """Discord's sound (discordaudio.cpp): bit 0 mutes it while it isn't on a screen, bit 1 places it at the screen."""
+    fn = _optional('discord_audio')
+    if fn is not None:
+        fn(int(mode))
+
+
 def sims_forever_surface(nx=0, ny=0, depths=()):
     """The screen's shape for Sims 1's picture (screenmesh.py): an nx x ny grid
     of depths behind its front (world units, rows from the bottom left); 0 x 0
@@ -728,6 +820,38 @@ def walk_pose():
     return None
 
 
+_rec = [0.0, True, True]  # when the [logging] flags were read, recorder, why
+
+
+def _logging_flags():
+    now = time.monotonic()
+    if now - _rec[0] > 3.0:
+        _rec[0] = now
+        _rec[1] = setting_flag('logging', 'recorder', True)
+        _rec[2] = setting_flag('logging', 'why', True)
+    return _rec
+
+
+def trace(text):
+    """A line for the flight recorder only (sims4vr.log never gets it; a mark, a level change or the menu's
+    "Dump trace now" writes the last seconds to sims4vr_trace_N.log)."""
+    if _logging_flags()[1]:
+        dll_log('trace: ' + str(text))
+
+
+def why(text):
+    """A decision line with its reason ("stairs: left the flight: ..."): in sims4vr.log, in the recorder and in
+    the next mark. Menu: Options > Logging > Decision (why) lines."""
+    if _logging_flags()[2]:
+        dll_log('why: ' + str(text))
+
+
+def dump_trace(reason):
+    """Writes the flight recorder's last seconds to a trace file (at most one per 3 s)."""
+    if _logging_flags()[1]:
+        dll_log('dump: ' + str(reason))
+
+
 def dll_log(text):
     """A line in sims4vr.log, which has times (to line up with the DLL's lines)."""
     fn = _optional('dll_log')
@@ -771,15 +895,25 @@ def running():
         return False
 
 
+_setting_cache = {}  # (section, key) -> (time read, text)
+_SETTING_TTL = 1.0   # s: a menu change shows within this; the native read costs ~40 us (30k calls = 1.2 s in a 60 s profile)
+
+
 def setting(section, key, default=None):
-    """A value from sims4vr.ini as text, or default if it is not set."""
+    """A value from sims4vr.ini as text, or default if it is not set. Re-read at most once a second per key."""
     fn = _optional('setting')
     if fn is None:
         return default
-    try:
-        value = fn(section, key).strip()
-    except Exception:
-        return default
+    now = time.perf_counter()
+    hit = _setting_cache.get((section, key))
+    if hit is not None and now - hit[0] < _SETTING_TTL:
+        value = hit[1]
+    else:
+        try:
+            value = fn(section, key).strip()
+        except Exception:
+            return default
+        _setting_cache[(section, key)] = (now, value)
     return value if value else default
 
 
@@ -806,12 +940,32 @@ def hand_event():
     return fn() if fn is not None else None
 
 
+def knock_event():
+    """(object id, type 0 door / 1 window, hand, m/s) of the oldest knock that played; None if none (knock.py)."""
+    fn = _optional('knock_event')
+    return fn() if fn is not None else None
+
+
 def high_five(sim_id, side, seconds):
     """That Sim raises a hand toward your raised `side` hand (0 left, 1 right)
     for `seconds` (0 withdraws); your palm meeting it is touch event kind 7."""
     fn = _optional('high_five')
     if fn is not None:
         fn(int(sim_id), int(side), float(seconds))
+
+
+def influence_look(sim_id, eyes_within=0.6, head_from=1.5):
+    """That Sim (influence.py) looks where your laser ends: eyes only within `eyes_within` metres of
+    their eyes, the head turning from `head_from`. sim_id 0 lets them go."""
+    fn = _optional('influence_look')
+    if fn is not None:
+        fn(int(sim_id), float(eyes_within), float(head_from))
+
+
+def laser_point():
+    """(x, y, z, age_ms) where your laser ends in the world, or None (no laser, or an older DLL)."""
+    fn = _optional('laser_point')
+    return fn() if fn is not None else None
 
 
 def set_touch_restricted(ids):
@@ -890,6 +1044,54 @@ def hands():
     return fn() if fn is not None else None
 
 
+def dance():
+    """Your real body over the last 4 s (dance.cpp): (energy m/s, rhythm 0..1, bpm, walking 0/1),
+    or None (not first person, not tracked yet, or an older DLL)."""
+    fn = _optional('dance')
+    try:
+        return fn() if fn is not None else None
+    except Exception:
+        return None
+
+
+def switch_click(at):
+    """Plays the light switch click (the user's sounds\\objects\\lightswitch.wav) at `at`, metres
+    from the eyes (x right, y up, z behind). False without the sound or an older DLL."""
+    fn = _optional('switch_click')
+    try:
+        return bool(fn(float(at[0]), float(at[1]), float(at[2]))) if fn is not None else False
+    except Exception:
+        return False
+
+
+def ring_wav(n, at, notification=False):
+    """The phone's own ringtone n (the user's sounds\\ringtones, name order) at `at`, metres from the eyes (x right,
+    y up, z behind). False without it or an older DLL."""
+    fn = _optional('ring_wav')
+    try:
+        return bool(fn(int(n), float(at[0]), float(at[1]), float(at[2]), 1 if notification else 0)) if fn is not None else False
+    except Exception:
+        return False
+
+
+def elevator_sound(start, from_seconds=0.0):
+    """The elevator ride's sound (sounds\\elevator\\Elevator.wav) above your head, 3D; False without the file or an older DLL."""
+    fn = _optional('elevator_sound')
+    try:
+        return bool(fn(int(from_seconds * 1000) if start else -1)) if fn is not None else False
+    except Exception:
+        return False
+
+
+def ring_stop():
+    fn = _optional('ring_stop')
+    if fn is not None:
+        try:
+            fn()
+        except Exception:
+            pass
+
+
 def haptic(hand, amplitude, seconds):
     fn = _optional('haptic')
     if fn is not None:
@@ -915,3 +1117,36 @@ def control_event():
     """Controller shortcut: 1 switch first person / game camera, 2 next Sim, 0 none."""
     fn = _optional('control_event')
     return fn() if fn is not None else 0
+
+
+def drone_start(x, y, z):
+    """First person: the camera leaves the Sim and flies from here (world, metres)."""
+    fn = _optional('drone_start')
+    if fn is None:
+        return False
+    fn(float(x), float(y), float(z))
+    return True
+
+
+def drone_stop():
+    fn = _optional('drone_stop')
+    if fn is not None:
+        fn()
+
+
+def drone_limits(lowest, highest):
+    fn = _optional('drone_limits')
+    if fn is not None:
+        fn(float(lowest), float(highest))
+
+
+def drone_pose():
+    """(x, y, z, speed, land_asked) of the flight point, or None when not flying."""
+    fn = _optional('drone_pose')
+    return fn() if fn is not None else None
+
+
+def drone_configure(speed, lift_speed, smoothing, boost):
+    fn = _optional('drone_configure')
+    if fn is not None:
+        fn(float(speed), float(lift_speed), float(smoothing), float(boost))

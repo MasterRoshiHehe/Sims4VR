@@ -56,6 +56,11 @@ def stop():
     _voice_sim = None
     native.set_voice_sim(0)
     _phone('put_away', 'left the lot')
+    try:
+        from sims4vr import work
+        work.reset()
+    except Exception as e:
+        native._log('controls: work reset failed: {!r}'.format(e))
 
 
 def _phone(what, *args):
@@ -157,6 +162,33 @@ def _fill_needs():
         return
     tracker.set_all_commodities_to_best_value(visible_only=True)
     native._log('controls: filled the needs of {} {}'.format(sim_info.first_name, sim_info.last_name))
+
+
+def _fill_nearby_needs():
+    """Every other Sim within [cheats] fill_radius metres of your Sim gets all
+    needs filled (user 2026-10-28 13:56Z, debug menu Testing cheats and phone
+    Cheats); the same call as Fill needs."""
+    you = services.get_active_sim()
+    if you is None:
+        native._log('controls: fill nearby needs: no Sim')
+        return
+    try:
+        radius = max(0.5, float(native.setting('cheats', 'fill_radius', '3') or 3))
+    except Exception:
+        radius = 3.0
+    here = you.position
+    count = 0
+    for sim in services.sim_info_manager().instanced_sims_gen():
+        if sim is you:
+            continue
+        try:
+            if (sim.position - here).magnitude() > radius:
+                continue
+            sim.sim_info.commodity_tracker.set_all_commodities_to_best_value(visible_only=True)
+            count += 1
+        except Exception as e:
+            native._log('controls: fill nearby needs: {} failed: {!r}'.format(sim.sim_info.first_name, e))
+    native._log('controls: filled the needs of {} Sims within {:.1f} m'.format(count, radius))
 
 
 def _everyone_feels(love):
@@ -290,8 +322,18 @@ def _tick(_handle):
         _build_buy()
         from sims4vr import phonesim
         phonesim.tick()
+        from sims4vr import physapp
+        physapp.tick()
         from sims4vr import phonesound
         phonesound.tick()
+        from sims4vr import phonecall
+        phonecall.tick()
+        from sims4vr import outfit
+        outfit.tick()
+        from sims4vr import work
+        work.tick()
+        from sims4vr import photowatch
+        photowatch.tick()
         for _ in range(4):
             what = native.control_event()
             if what == 1:
@@ -321,6 +363,9 @@ def _tick(_handle):
             elif 40 <= what <= 43:
                 from sims4vr import hudinfo
                 hudinfo.dismiss_want(what - 40)
+            elif 62 <= what <= 69:
+                from sims4vr import needclick
+                needclick.solve(what - 62)
             elif 50 <= what <= 59:
                 from sims4vr import objmenu
                 objmenu.answer_popup(what - 50)
@@ -341,6 +386,15 @@ def _tick(_handle):
             elif what in (83, 84):
                 from sims4vr import notebook
                 notebook.send() if what == 83 else notebook.clear()
+            elif what == 80:
+                from sims4vr import phonecall
+                phonecall.mute_ring()
+            elif what == 88:
+                from sims4vr import phonecall
+                phonecall.answer()
+            elif what == 89:
+                from sims4vr import phonecall
+                phonecall.hang_up()
             elif what == 82:
                 from sims4vr import nophone
                 nophone.call_check()
@@ -371,10 +425,25 @@ def _tick(_handle):
             elif 6000000 <= what < 7000000:
                 from sims4vr import objmenu
                 objmenu.list_control(what - 6000000)
+            elif 8400000 <= what < 8500000:
+                from sims4vr import physapp
+                physapp.control(what - 8400000)
+            elif 8810000 <= what < 8820000:
+                from sims4vr import photowatch
+                photowatch.view(what - 8810000)
+            elif 8800000 <= what < 8800100:
+                from sims4vr import photowatch
+                photowatch.control(what - 8800000)
+            elif 8700000 <= what < 8800000:
+                from sims4vr import work
+                work.control(what - 8700000)
+            elif 8600000 <= what < 8700000:
+                from sims4vr import outfit
+                outfit.control(what - 8600000)
             elif 8100000 <= what < 8200000:
                 from sims4vr import phonesim
                 phonesim.contact_pie(what - 8100000)
-            elif 8300000 <= what < 8300002:
+            elif 8300000 <= what < 8300003:
                 from sims4vr import phonesim
                 phonesim.contact_menu(what - 8300000)
             elif 8200000 <= what < 8300000:
@@ -425,10 +494,12 @@ def _tick(_handle):
                 objmenu.answer_picker(what - 1000)
             elif what in (14, 15):
                 _everyone_feels(what == 15)
-            elif what in (5, 7, 8, 10):
+            elif what in (5, 7, 8, 10, 16):
                 _testing_cheats(True)  # the testing buttons turn testing cheats on too
                 if what == 5:
                     _fill_needs()
+                elif what == 16:
+                    _fill_nearby_needs()
                 elif what == 7:
                     _console('motherlode')
                 elif what == 8:

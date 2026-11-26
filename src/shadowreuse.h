@@ -12,6 +12,12 @@ namespace s4vr::shadowreuse {
 void install(ID3D11Device* device);  // once; hooks the contexts' draw calls
 void setOn(bool on);                 // live, from the settings
 bool on();
+// Paired eyes (alternate-eye rendering, [stereo] pair_shadows): the right eye of a pair reuses the left eye's sun
+// shadow map as the real second pass does. camera.cpp says which picture it is; the settings switch it.
+void setPairs(bool on);
+void pairSecond(bool second);
+// The current pass leaves out its sun shadow map work (either kind of second pass).
+bool second();
 // uihook.cpp: a context's render targets were bound (before the game's call goes on).
 void bound(ID3D11DeviceContext* context, UINT count, ID3D11RenderTargetView* const* views,
            ID3D11DepthStencilView* depth);

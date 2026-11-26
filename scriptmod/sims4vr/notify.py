@@ -18,6 +18,7 @@ To the DLL (native.phone_notes), records split by 0x1e, fields by 0x1f:
   "notes" \x1f <unread>
   "note"  \x1f <id> \x1f <read 0/1> \x1f <picture> \x1f <title json> \x1f <text json> \x1f <time text> \x1f <style>
           \x1f <buttons: their text json split by 0x1d, empty when none or answered>
+          \x1f <group: 0 about your Sim, 1 about other Sims, 2 system and mods (bills, mod notices); the list's tabs>
 <style> = the game's background (NotificationView.SetBackgroundFrame): 0 standard
 (blue), 1 player (green), 2 critical (orange), 3 special moment (purple); +4
 for its "_strip" frame (the notification has a secondary icon).
@@ -29,6 +30,10 @@ delete one (the wall's DeleteButton), 10000000 + id * 8 + k = its k-th button
 the game's notification button answers it (ui_dialog_service().dialog_respond
 with the button's choice id) while the game still waits for the answer.
 """
+import time
+
+import time
+
 from sims4vr import hooks, native
 
 _MAX = 60
@@ -52,6 +57,73 @@ def _log_error(where, e):
     _errors += 1
     if _errors <= 10:
         native._log('notify: {} failed: {!r}'.format(where, e))
+
+
+# Which notifications show live in front of you (user 2026-10-28): [phone] notes_live (all), notes_live_<category>
+# (the phone's Notifications page and the debug menu), notes_hide_startup + notes_startup_seconds (script mods' notices
+# while a lot loads). One that doesn't show live is not sent to the game's UI at all (no card, no client sound); it
+# still lands on the phone (list, bell, answers) and plays its sound from the phone (phonesound.on_notification).
+_zone = None      # the lot the startup window counts from
+_zone_t0 = None   # when it began (None: no controls tick has seen a lot yet = still starting up)
+_origins = {}     # script mod file -> its name
+
+
+def _mod_origin():
+    """The script mod that raised this notification: (category, name) from the nearest caller in a Mods ...ts4script
+    file, or None for the game's own. Ours (sims4vr, claude*) are category 'claude'."""
+    import sys
+    frame = sys._getframe(1)
+    for _ in range(60):
+        if frame is None:
+            break
+        path = frame.f_code.co_filename or ''
+        low = path.lower().replace('/', '\\')
+        if '.ts4script' in low or low.endswith('.zip') or '.zip\\' in low:
+            name = _origins.get(path)
+            if name is None:
+                parts = [p for p in low.split('\\') if '.ts4script' in p or p.endswith('.zip')]
+                name = parts[0].rsplit('.', 1)[0] if parts else low
+                _origins[path] = name
+            return ('claude' if name.startswith(('claude', 'sims4vr')) else 'mod'), name
+        frame = frame.f_back
+    return None
+
+
+def _category(dialog, origin):
+    if origin is not None:
+        return origin[0]
+    try:
+        if int(getattr(dialog, 'urgency', 0)) == 1:
+            return 'urgent'
+        if int(getattr(dialog, 'visual_type', 0)) == 2:
+            return 'moment'
+        if int(getattr(dialog, 'information_level', 1)) == 0:
+            return 'player'
+    except Exception as e:
+        _log_error('the category', e)
+    return 'sim'
+
+
+def _in_startup():
+    try:
+        seconds = float(native.setting('phone', 'notes_startup_seconds', '120'))
+    except (TypeError, ValueError):
+        seconds = 120.0
+    return _zone_t0 is None or time.monotonic() - _zone_t0 < seconds
+
+
+def _live(dialog):
+    """(shows live?, category, mod name or '') for a notification about to be shown."""
+    origin = None
+    try:
+        origin = _mod_origin()
+    except Exception as e:
+        _log_error('the origin', e)
+    category = _category(dialog, origin)
+    live = native.setting_flag('phone', 'notes_live', True) and native.setting_flag('phone', 'notes_live_' + category, True)
+    if live and origin is not None and native.setting_flag('phone', 'notes_hide_startup', True) and _in_startup():
+        live = False
+    return live, category, origin[1] if origin else ''
 
 
 def _sim_ids(msg):
@@ -96,7 +168,8 @@ def _style(dialog, msg):
     return style
 
 
-def _record(dialog, msg):
+def _record(dialog, msg, held=None):
+    """Keep a notification; held = (category, mod name) when it was kept off the game's UI (phone only)."""
     global _next_id
     import services
     from sims4vr import objmenu, hudinfo
@@ -134,14 +207,22 @@ def _record(dialog, msg):
                 buttons.append((objmenu._loc(c.text) if c.HasField('text') else '{}', c.choice_id))
     except Exception as e:
         _log_error('buttons', e)
-    note = {'id': _next_id, 'title': title, 'text': text, 'picture': picture or 0, 'sims': sims,
+    group = 2  # the phone list's tabs: 0 about your Sim, 1 about other Sims, 2 system (bills, mods, ...)
+    try:
+        if _mod_origin() is None and sims:
+            you = services.active_sim_info()
+            group = 0 if you is not None and you.id in sims else 1
+    except Exception as e:
+        _log_error('the group', e)
+    note = {'id': _next_id, 'group': group, 'title': title, 'text': text, 'picture': picture or 0, 'sims': sims,
             'read': False, 'time': _time_text(), 'style': _style(dialog, msg),
             'dialog': getattr(dialog, 'dialog_id', 0), 'buttons': buttons[:8]}
     _next_id += 1
     _notes.append(note)
     del _notes[:-_MAX]
-    _log('#{} {} Sim(s) {}, picture {:x}'.format(note['id'], len(sims), sims, note['picture']))
-    if len(sims) == 1:
+    _log('#{} {} Sim(s) {}, picture {:x}{}'.format(note['id'], len(sims), sims, note['picture'],
+                                                  ', phone only ({} {})'.format(*held) if held else ''))
+    if len(sims) == 1 and not held:
         _maybe_over(note, sims[0])
     send()
 
@@ -192,11 +273,19 @@ def _place():
 
 def poll():
     """Controls tick: the card over a head follows it."""
+    global _zone, _zone_t0
     if _over is not None:
         try:
             _place()
         except Exception as e:
             _log_error('placing the card', e)
+    try:  # the startup window of a lot (script mods' notices while it loads)
+        import services
+        zone = services.current_zone_id()
+        if zone != _zone:
+            _zone, _zone_t0 = zone, time.monotonic()
+    except Exception:
+        pass
 
 
 def send():
@@ -206,8 +295,9 @@ def send():
     records = ['notes\x1f{}'.format(unread)]
     for n in reversed(_notes):
         buttons = '\x1d'.join(text for text, _ in n['buttons']) if _waiting(n) else ''
-        records.append('note\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}'.format(
-            n['id'], 1 if n['read'] else 0, n['picture'], n['title'], n['text'], n['time'], n.get('style', 0), buttons))
+        records.append('note\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}'.format(
+            n['id'], 1 if n['read'] else 0, n['picture'], n['title'], n['text'], n['time'], n.get('style', 0), buttons,
+            n.get('group', 2)))
     native.phone_notes('\x1e'.join(records).encode('utf-8'))
 
 
@@ -264,18 +354,48 @@ def clear():
 def _wrap():
     from ui.ui_dialog_notification import UiDialogNotification
 
-    def distribute_dialog(original, self, dialog_type, dialog_msg, **kwargs):
-        result = original(self, dialog_type, dialog_msg, **kwargs)
+    def show_dialog(original, self, *args, **kwargs):
+        # Decided here, before the game plays the notification's own sting (head-centred): one kept off the game's UI
+        # (not live) gets that sting from the phone instead (phonesound.on_notification).
+        sting = None
         try:
-            _record(self, dialog_msg)
+            self._s4vr_held = None
+            self._s4vr_sting = 0
+            if hooks.in_first_person():
+                live, category, name = _live(self)
+                if not live:
+                    self._s4vr_held = (category, name)
+                # One sound per notification (user 2026-10-28): the game's tuned sting is held back, always (a live one
+                # keeps the UI's own sound, a phone-only one plays one from the phone).
+                sting = getattr(self, 'audio_sting', None)
+                if sting is not None:
+                    try:
+                        self._s4vr_sting = int(sting(None).sound_id)
+                    except Exception as e:
+                        _log_error('the sting', e)
+                    self.audio_sting = None
+        except Exception as e:
+            _log_error('deciding live or phone only', e)
+        try:
+            return original(self, *args, **kwargs)
+        finally:
+            if sting is not None:
+                self.audio_sting = sting
+
+    def distribute_dialog(original, self, dialog_type, dialog_msg, **kwargs):
+        held = getattr(self, '_s4vr_held', None)
+        result = None if held else original(self, dialog_type, dialog_msg, **kwargs)
+        try:
+            _record(self, dialog_msg, held)
         except Exception as e:
             _log_error('keeping a notification', e)
         try:
             from sims4vr import phonesound
-            phonesound.on_notification()
+            phonesound.on_notification(held is not None, getattr(self, '_s4vr_sting', 0))
         except Exception as e:
             _log_error('the notification tone', e)
         return result
+    hooks.hook('notify_show', UiDialogNotification, 'show_dialog', show_dialog)
     hooks.hook('notify', UiDialogNotification, 'distribute_dialog', distribute_dialog)
 
 

@@ -50,8 +50,12 @@ add_library(sims4vr SHARED
     src/handshape.cpp
     src/bodyshape.cpp
     src/camera.cpp
+    src/drone.cpp
     src/player.cpp
     src/collide.cpp
+    src/knock.cpp
+    src/foliagepatch.cpp
+    src/foliagepush.cpp
     src/meshshape.cpp
     src/modelparse.cpp
     src/worldscenery.cpp
@@ -70,6 +74,7 @@ add_library(sims4vr SHARED
     src/eyelids.cpp
     src/facehide.cpp
     src/godhands.cpp
+    src/casbody.cpp
     src/framecost.cpp
     src/hitch.cpp
     src/simcache.cpp
@@ -81,6 +86,7 @@ add_library(sims4vr SHARED
     src/touch.cpp
     src/grab.cpp
     src/gesture.cpp
+    src/dance.cpp
     src/d3d9_hook.cpp
     src/d3d11_hook.cpp
     src/log.cpp
@@ -90,6 +96,7 @@ add_library(sims4vr SHARED
     src/pointer.cpp
     src/gamepad.cpp
     src/gpuload.cpp
+    src/gputimeline.cpp
     src/othermods.cpp
     src/nearplane.cpp
     src/uihook.cpp
@@ -98,6 +105,7 @@ add_library(sims4vr SHARED
     src/nodim.cpp
     src/phone3d.cpp
     src/trail.cpp
+    src/teleport.cpp
     src/renderscale.cpp
     src/gameaddr.cpp
     src/rtti.cpp
@@ -106,9 +114,12 @@ add_library(sims4vr SHARED
     src/settings.cpp
     src/simsforever.cpp
     src/claudescreen.cpp
+    src/linearboard.cpp
+    src/discordaudio.cpp
     src/simsforever_sound.cpp
     src/sharpen.cpp
     src/fsr.cpp
+    src/monitorfit.cpp
     src/bodylayer.cpp
     src/eyealign.cpp
     src/vr.cpp
@@ -144,11 +155,17 @@ set_source_files_properties(${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/im
 # Set by tools/release.sh (-DS4VR_BUILD_VERSION=0.13.270 -DS4VR_BUILD_COMMIT=abc1234); first line of sims4vr.log.
 set(S4VR_BUILD_VERSION "dev" CACHE STRING "Version string written to the log")
 set(S4VR_BUILD_COMMIT "none" CACHE STRING "Git commit written to the log")
+# tools/release.sh --public: Developer options (the debug menu's testing rows) default to off; otherwise on.
+option(S4VR_PUBLIC "Public release build" OFF)
+if(S4VR_PUBLIC)
+    target_compile_definitions(sims4vr PRIVATE S4VR_PUBLIC=1)
+endif()
 target_compile_definitions(sims4vr PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE
     S4VR_BUILD_VERSION="${S4VR_BUILD_VERSION}" S4VR_BUILD_COMMIT="${S4VR_BUILD_COMMIT}")
 # No d3d11: its functions come from System32 at runtime (d3d11_hook.cpp), so a d3d11.dll
 # overlay in the game folder is never loaded on the mod's account.
-target_link_libraries(sims4vr PRIVATE dxgi ole32 windowscodecs gdi32 pdh winmm)
+# winhttp crypt32 gdiplus: the Linear board (linearboard.cpp: HTTPS to Linear, the key kept encrypted, its drawing).
+target_link_libraries(sims4vr PRIVATE dxgi ole32 windowscodecs gdi32 pdh winmm winhttp crypt32 gdiplus)
 if(MSVC)
     target_compile_options(sims4vr PRIVATE /W4 /permissive-)
     set_property(TARGET sims4vr PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")

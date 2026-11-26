@@ -14,6 +14,8 @@
 #include "MinHook.h"
 #include "addrs.h"
 #include "gameaddr.h"
+#include "camera.h"
+#include "eyelids.h"
 #include "hud.h"
 #include "log.h"
 #include "vr.h"
@@ -62,6 +64,14 @@ struct ServiceCall {
 };
 std::mutex g_serviceMutex;
 std::vector<ServiceCall> g_services;
+// Services asked for their answer (serviceQuery), and the answers not taken yet (g_serviceMutex).
+struct ServiceQuery {
+    int ticket;
+    std::string name, json;
+};
+std::vector<ServiceQuery> g_queries;
+std::vector<std::pair<int, std::string>> g_answers;
+int g_tickets = 0;
 std::atomic<bool> g_watchFocus{false}, g_textFocus{false};
 bool g_focusProbeFailed = false;  // UI thread only
 std::string g_focusText;          // UI thread only
@@ -307,6 +317,58 @@ void sendServices() {
     }
 }
 
+// serviceQuery's calls, each with its answer: an object or array as AS3's JSON.stringify writes it.
+void sendQueries() {
+    std::vector<ServiceQuery> queries;
+    {
+        std::lock_guard<std::mutex> lock(g_serviceMutex);
+        queries.swap(g_queries);
+    }
+    if (queries.empty()) return;
+    Held comms, parser;
+    const bool found = definition("olympus.io.CommunicationManager", comms);
+    const bool canParse = found && definition("JSON", parser);
+    std::vector<std::pair<int, std::string>> answers;
+    for (const ServiceQuery& q : queries) {
+        std::string answer;
+        bool sent = false;
+        uint32_t got = kUndefined;
+        if (found) {
+            Held payload, result, json;
+            bool parsed = false;
+            if (!q.json.empty() && canParse) {
+                Value arg;
+                arg.type = kString;
+                arg.data = const_cast<char*>(q.json.c_str());
+                parsed = callMember(parser.v, "parse", &arg, 1, &payload) && payload.ok();
+            }
+            Value args[2];
+            args[0].type = kString;
+            args[0].data = const_cast<char*>(q.name.c_str());
+            if (parsed) args[1] = payload.v;
+            sent = callMember(comms.v, "CallGameService", args, parsed ? 2 : 1, &result);
+            got = kind(result.v);
+            if (sent && got == kString) {
+                answer = text(result.v);
+            } else if (sent && (got == kObject || got == kArray) && canParse &&
+                       callMember(parser.v, "stringify", &result.v, 1, &json)) {
+                answer = text(json.v);
+            } else if (sent && (got == kNumber || got == kInt || got == kUInt)) {
+                char buffer[40];
+                std::snprintf(buffer, sizeof buffer, "%.17g", number(result.v));
+                answer = buffer;
+            }
+        }
+        static int logged = 0;
+        if (logged++ < 40)
+            LOG("Service query %s(%s): %s, answer type %u, %zu bytes", q.name.c_str(), q.json.c_str(),
+                !found ? "not sent (CommunicationManager not found)" : sent ? "sent" : "NOT sent", got, answer.size());
+        answers.emplace_back(q.ticket, std::move(answer));
+    }
+    std::lock_guard<std::mutex> lock(g_serviceMutex);
+    for (auto& a : answers) g_answers.push_back(std::move(a));
+    if (g_answers.size() > 32) g_answers.erase(g_answers.begin(), g_answers.end() - 32);
+}
 
 void closeGameUi(int what) {
     Held comms;
@@ -402,6 +464,7 @@ void poll() {
     if (g_hidePie.exchange(false)) hideGamePie();
     if (int which = g_gameTray.exchange(-1); which >= 0) gameTray(which);
     sendServices();
+    sendQueries();
     if (int what = g_closeGameUi.exchange(0)) closeGameUi(what);
     int pressed = g_press.exchange(-1);
     static int tick = 0;
@@ -452,6 +515,9 @@ void poll() {
             LOG("Client dialog '%s': actions type %u, length %d, %zu buttons read", id.c_str(), kind(actions.v), count,
                 labels.size());
     }
+    // The game starts saving: the view stalls for seconds and goes cross-eyed (user 2026-11-01). Python only shuts the eyes
+    // when the save step starts, ~6 s later (844b: dialog 17:29:32, "held shut" 17:29:38), so shut them now.
+    if (id == "SavingDialogId" && camera::bodyActive()) eyelids::setSaveWait(true);
     if (!why && title.empty() && prompt.empty()) why = "no texts";
     if (!why && labels.empty() && count != 0) why = "no buttons";  // none at all (Saving...): shown as it is
     if (why) {
@@ -525,6 +591,25 @@ bool gameService(const char* name, const char* json, bool uiMessage) {
     return true;
 }
 
+int serviceQuery(const char* name, const char* json) {
+    if (!g_update || !name || !*name) return 0;
+    std::lock_guard<std::mutex> lock(g_serviceMutex);
+    if (g_queries.size() >= 16) return 0;
+    const int ticket = ++g_tickets;
+    g_queries.push_back({ticket, name, json ? json : ""});
+    return ticket;
+}
+
+bool serviceResult(int ticket, std::string& out) {
+    std::lock_guard<std::mutex> lock(g_serviceMutex);
+    for (auto it = g_answers.begin(); it != g_answers.end(); ++it) {
+        if (it->first != ticket) continue;
+        out = std::move(it->second);
+        g_answers.erase(it);
+        return true;
+    }
+    return false;
+}
 
 bool closeGameDialog(bool picker) {
     if (!g_update) return false;

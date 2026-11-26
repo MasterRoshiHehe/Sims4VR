@@ -18,6 +18,12 @@ While Claude is on a screen, no other Sim gets options on that object
 TVs offer it too while [claude] tvs is on (debug menu: Menus > Open Claude
 on TVs too; user 2026-10-14 23:53Z), from wherever you are.
 
+Objects with more than one screen (a DJ station's three monitors, a karaoke
+system's big screen and lyrics screen; screenmesh.names) list their screens
+in a sub pie menu under "Open Claude" (user 2026-10-28); with one screen there
+is none. discord.py does the same for Discord, from the same factory
+(make_affordance).
+
 Switch: [claude] on in sims4vr.ini; [claude] exe = where claude.exe is when
 it isn't in the usual place (empty: %LOCALAPPDATA%\\AnthropicClaude).
 """
@@ -28,7 +34,10 @@ TV_CLOSE_DISTANCE = 10.0  # a TV is used from the sofa
 GUID = 0x5653434C41554445  # our interaction's id (not in the game's tuning)
 
 _open = None  # the computer's id while Claude is on its screen
+_open_index = 0  # which of its screens
 _affordance = None
+_offered_logged = set()  # (app, object definition) already logged as offered
+_specs = []  # every app made by make_affordance (Claude, Discord): their options are listed on screen objects
 _wrapped = False
 _logs = 0
 
@@ -74,11 +83,10 @@ def _is_computer(obj):
 _asking = False  # remote._is_tv lists the TV's options itself: no asking again from inside that
 
 
-def _is_tv(obj):
-    """A TV, when the debug menu's "Open Claude on TVs too" is on ([claude] tvs;
-    user 2026-10-14 23:53Z)."""
+def tv_object(obj):
+    """A TV (an object you can watch)."""
     global _asking
-    if _asking or obj is None or not native.setting_flag('claude', 'tvs', False):
+    if _asking or obj is None:
         return False
     _asking = True
     try:
@@ -90,26 +98,66 @@ def _is_tv(obj):
         _asking = False
 
 
+def _is_tv(obj):
+    """A TV, when the debug menu's "Open Claude on TVs too" is on ([claude] tvs;
+    user 2026-10-14 23:53Z)."""
+    return native.setting_flag('claude', 'tvs', False) and tv_object(obj)
+
+
+def screen_count(obj):
+    """How many screens the object's model has (screenmesh.py); 0 when it has none we can see."""
+    if obj is None:
+        return 0
+    try:
+        from sims4vr import screenmesh
+        return screenmesh.count(obj)
+    except Exception:
+        return 0
+
+
 def _offered_on(obj):
-    return _is_computer(obj) or _is_tv(obj)
+    """Claude: computers, TVs when [claude] tvs is on, and other objects with a screen (a DJ station, a karaoke system)."""
+    if _is_computer(obj) or _is_tv(obj):
+        _want_dump(obj)
+        return True
+    return not tv_object(obj) and screen_count(obj) > 0
 
 
-def _show(obj):
-    global _open
+def _want_dump(obj):
+    """A computer or TV: if its model shows no screen mesh, the log lists the model's meshes (screenmesh._dump)."""
+    try:
+        from sims4vr import screenmesh
+        screenmesh.want_dump(obj)
+    except Exception:
+        pass
+
+
+def any_screen(obj):
+    """Discord: every object with a screen."""
+    if _is_computer(obj) or tv_object(obj):
+        _want_dump(obj)
+        return True
+    return screen_count(obj) > 0
+
+
+def _show(obj, index=0):
+    global _open, _open_index
     from sims4vr import simsforever
-    centre, normal, up, width, height, video = simsforever._screen(obj)
+    centre, normal, up, width, height, video = simsforever._screen(obj, index)
     shape = None
     if video:
         try:
             from sims4vr import screenmesh
-            shape = screenmesh.surface(obj)
+            shape = screenmesh.surface(obj, index)
         except Exception as e:
             _log('screen shape failed: {!r}'.format(e))
     native.sims_forever_surface(*(shape or (0, 0, ())))
     native.claude_screen(True, centre, normal, up, width, height,
                          native.setting('claude', 'exe', '') or '')
     _open = getattr(obj, 'id', None)
-    _log('open on {}: screen at {}, {:.2f} x {:.2f}'.format(obj, tuple(round(v, 2) for v in centre), width, height))
+    _open_index = index
+    _log('open on {} (screen {}): screen at {}, {:.2f} x {:.2f}'.format(
+        obj, index + 1, tuple(round(v, 2) for v in centre), width, height))
 
 
 def close(why):
@@ -121,30 +169,33 @@ def close(why):
     _log('closed ({})'.format(why))
 
 
-def toggle(obj):
+def toggle(obj, index=None):
     obj = _owner(obj)
     if obj is None:
         return
-    if _open is not None and _open == getattr(obj, 'id', None):
+    shown = _open is not None and _open == getattr(obj, 'id', None)
+    if shown and (index is None or index == _open_index):
         close('you picked Close Claude')
         return
     from sims4vr import simsforever
     if simsforever._shown is not None:
         _log('Sims Forever is on the screen; Claude not opened')
         return
-    _show(obj)
+    try:
+        from sims4vr import discord, linearboard
+        if discord.shown_on(obj, index or 0):
+            _log('Discord is on that screen; Claude not opened')
+            return
+        if linearboard.shown_on(obj, index or 0):
+            _log('the Linear board is on that screen; Claude not opened')
+            return
+    except Exception:
+        pass
+    _show(obj, index or 0)
 
 
-def tick(sim):
-    """simsforever.py's tick (every 0.5 s in first person): closes Claude when
-    you walked away from the computer or it's gone."""
-    if _open is None:
-        return
-    import services
-    obj = services.object_manager().get(_open)
-    if obj is None or sim is None:
-        close('the computer is gone' if obj is None else 'not in first person')
-        return
+def too_far(sim, obj):
+    """True when `sim` is farther from the screen object than it stays open (computers: CLOSE_DISTANCE, else TV_CLOSE_DISTANCE)."""
     try:
         from sims4vr import reach
         d = reach._distance(sim, obj)
@@ -153,15 +204,58 @@ def tick(sim):
     if d is None:
         p, q = sim.position, obj.position
         d = ((p.x - q.x) ** 2 + (p.z - q.z) ** 2) ** 0.5
-    limit = CLOSE_DISTANCE if _is_computer(obj) else TV_CLOSE_DISTANCE
-    if d > limit:
+    return d if d > (CLOSE_DISTANCE if _is_computer(obj) else TV_CLOSE_DISTANCE) else None
+
+
+def tick(sim):
+    """simsforever.py's tick (every 0.5 s in first person): closes Claude (and Discord) when
+    you walked away from the screen or it's gone."""
+    try:
+        from sims4vr import discord
+        discord.tick(sim)
+    except Exception as e:
+        _log('discord tick failed: {!r}'.format(e))
+    try:
+        from sims4vr import linearboard
+        linearboard.tick(sim)
+    except Exception as e:
+        _log('linear board tick failed: {!r}'.format(e))
+    if _open is None:
+        return
+    import services
+    obj = services.object_manager().get(_open)
+    if obj is None or sim is None:
+        close('the computer is gone' if obj is None else 'not in first person')
+        return
+    d = too_far(sim, obj)
+    if d is not None:
         close('you walked {:.1f} m away from the screen'.format(d))
 
 
-def _make_affordance():
-    """Our "Open Claude" interaction: a copy of one of the game's immediate
+# The pie's categories of our own (a sub menu listing a screen object's screens): ids no tuned category uses;
+# pie.py lists them with the name given here. Per app one while it is off and one while it is on.
+class _Category:
+    def __init__(self, key):
+        self.guid64 = key
+
+
+def claude_spec():
+    return {
+        'label': 'Claude', 'name': 'vr_OpenClaude', 'guid': GUID,
+        'category_idle': 0x5653434C43410001, 'category_open': 0x5653434C43410002,
+        'logo_id': 0x4C4F474F434C4400,
+        'offered': _offered_on, 'toggle': toggle,
+        'state': lambda obj: (_open is not None and getattr(obj, 'id', None) == _open, _open_index),
+    }
+
+
+def make_affordance(spec):
+    """An "Open <app>" interaction: a copy of one of the game's immediate
     interactions (so every tuned value it needs exists) with its own test,
-    name and action."""
+    name and action. A screen object with several screens gets one pick per
+    screen in a sub menu named after the app; one screen: the plain pick.
+    spec: label, name, guid, category_idle / category_open (pie category ids),
+    offered(obj), toggle(obj, index), state(obj) -> (open here, which screen)."""
     import services
     import sims4.resources
     from event_testing.results import TestResult
@@ -170,6 +264,12 @@ def _make_affordance():
     from sims4.localization import LocalizationHelperTuning
     from sims4.utils import flexmethod
     from singletons import DEFAULT
+
+    from sims4vr import pie
+    label = spec['label']
+    pie.custom_categories[spec['category_idle']] = 'Open ' + label
+    pie.custom_categories[spec['category_open']] = label + ' screen'
+    pie.custom_category_icons[spec['category_idle']] = pie.custom_category_icons[spec['category_open']] = spec['logo_id']
 
     manager = services.get_instance_manager(sims4.resources.Types.INTERACTION)
     # A plain one (tuned straight from ImmediateSuperInteraction, no script class of
@@ -193,8 +293,11 @@ def _make_affordance():
             fallback = cls
     base = base or fallback
     if base is None:
-        _log('no immediate interaction to build on; no Open Claude option')
+        _log('no immediate interaction to build on; no Open {} option'.format(label))
         return None
+
+    def screens(obj):
+        return max(1, screen_count(obj)) if obj is not None else 1
 
     @flexmethod
     def test(cls, inst, target=DEFAULT, context=DEFAULT, **kwargs):
@@ -206,11 +309,11 @@ def _make_affordance():
             sim = _fp_sim()
             if sim is None or context is None or context.sim is not sim:
                 return _tested(TestResult(False, 'VR first person only'), target)
-            if not _offered_on(_owner(target)):
-                return _tested(TestResult(False, 'not a computer'), target)
+            if not spec['offered'](_owner(target)):
+                return _tested(TestResult(False, 'not a screen'), target)
             return _tested(TestResult.TRUE, target)
         except Exception as e:
-            return _tested(TestResult(False, 'Open Claude test failed: {!r}'.format(e)), target)
+            return _tested(TestResult(False, 'Open {} test failed: {!r}'.format(label, e)), target)
 
     @flexmethod
     def _get_name(cls, inst, target=DEFAULT, context=DEFAULT, **kwargs):
@@ -218,12 +321,47 @@ def _make_affordance():
         if target is DEFAULT and inst is not None:
             target = inst.target
         obj = _owner(target)
-        shown = _open is not None and obj is not None and getattr(obj, 'id', None) == _open
-        return LocalizationHelperTuning.get_raw_text('Close Claude' if shown else 'Open Claude')
+        shown, current = spec['state'](obj) if obj is not None else (False, 0)
+        index = kwargs.get('screen')
+        if index is None:
+            return LocalizationHelperTuning.get_raw_text(('Close ' if shown else 'Open ') + label)
+        try:
+            from sims4vr import screenmesh
+            names = screenmesh.names(obj)
+            text = names[index] if index < len(names) else 'Screen {}'.format(index + 1)
+        except Exception:
+            text = 'Screen {}'.format(index + 1)
+        return LocalizationHelperTuning.get_raw_text(('Close: ' if shown and index == current else '') + text)
+
+    @classmethod
+    def get_pie_menu_icon_info(cls, *args, **kwargs):
+        """The app's logo in the pie: a made-up icon resource the VR pie draws from the HUD atlas (hud.cpp ownLogo)."""
+        import sims4.resources
+        from distributor.shared_messages import IconInfoData
+        key = sims4.resources.Key(sims4.resources.Types.PNG, spec['logo_id'], 0)
+        return IconInfoData(icon_resource=key)
+
+    @classmethod
+    def get_pie_menu_category(cls, **kwargs):
+        if kwargs.get('screen') is None:
+            return None
+        return _Category(spec['category_open'] if kwargs.get('shown') else spec['category_idle'])
+
+    @classmethod
+    def potential_interactions(cls, target, context, **kwargs):
+        obj = _owner(target)
+        n = screens(obj)
+        if n <= 1:
+            yield cls.generate_aop(target, context, **kwargs)
+            return
+        shown = bool(spec['state'](obj)[0])
+        for index in range(n):
+            yield cls.generate_aop(target, context, screen=index, shown=shown, **kwargs)
 
     def _run_interaction_gen(self, timeline):
         try:
-            toggle(self.target)
+            index = (getattr(self, '_kwargs', None) or {}).get('screen')
+            spec['toggle'](self.target, index)
         except Exception as e:
             _log('opening failed: {!r}'.format(e))
         return True
@@ -232,6 +370,9 @@ def _make_affordance():
     attrs = {
         'test': test,
         '_get_name': _get_name,
+        'get_pie_menu_category': get_pie_menu_category,
+        'get_pie_menu_icon_info': get_pie_menu_icon_info,
+        'potential_interactions': potential_interactions,
         '_run_interaction_gen': _run_interaction_gen,
         'allow_autonomous': False,
         'allow_user_directed': True,
@@ -239,15 +380,18 @@ def _make_affordance():
         # kept the base's Locking category: Open Claude sat in that submenu, if it showed at all).
         'category': None,
         'category_on_forwarded': None,
-        'guid64': GUID,
+        'guid64': spec['guid'],
         # Nothing of the base's own results: v0.13.101-v0.13.131 kept the outcome of
         # Computer_Locking_LockForEveryone_ButButler, so every Open Claude locked the
         # computer for everyone but a butler (your Sim too: the pie shrank to a few options).
         'outcome': InteractionOutcomeNone(),
         'basic_extras': (),
     }
-    affordance = type('vr_OpenClaude', (base,), attrs)
-    _log('Open Claude built on {} (its pie category was {})'.format(base.__name__, getattr(base, 'category', None)))
+    affordance = type(spec['name'], (base,), attrs)
+    affordance.vr_spec = spec
+    _specs.append(spec)
+    spec['affordance'] = affordance
+    _log('Open {} built on {} (its pie category was {})'.format(label, base.__name__, getattr(base, 'category', None)))
     return affordance
 
 
@@ -267,29 +411,42 @@ def _wrap_affordances():
 
     @flexmethod
     def super_affordances(cls, inst, *args, **kwargs):
-        if inst is not None and _open is not None and getattr(inst, 'id', None) == _open:
-            # The screen showing Claude is yours alone: other Sims get no options
+        if inst is not None and any(spec['state'](inst)[0] for spec in _specs):
+            # The screen showing Claude (or Discord) is yours alone: other Sims get no options
             # on it (autonomy included) while it's open (user 2026-10-15 00:53Z).
             context = args[0] if args else kwargs.get('context')
             sim = getattr(context, 'sim', None)
             if sim is not None and sim is not _fp_sim():
-                _note('locked', '{} kept off {} (Claude is on it)'.format(sim, inst), 10)
+                _note('locked', '{} kept off {} (a screen app is on it)'.format(sim, inst), 10)
                 return
         yield from raw.__get__(inst, cls)(*args, **kwargs)
         try:
             # Only the Sim you are in can pick it (its test says so), so every
             # other Sim's autonomy, which asks all objects all the time, stops
             # here before the computer check (perf, coordinator 2026-10-17).
-            if inst is None or _affordance is None:
+            if inst is None or not _specs:
                 return
             context = args[0] if args else kwargs.get('context')
             fp = body.following()
             if not fp or getattr(getattr(context, 'sim', None), 'id', None) != fp:
                 return
-            if _offered_on(inst):
-                _note('offered', 'offered on {} (for {}, shift {})'.format(
-                    inst, getattr(context, 'sim', None), getattr(context, 'shift_held', None)), 6)
-                yield _affordance
+            for spec in _specs:
+                if not spec['offered'](inst):
+                    text = str(inst).lower()
+                    key = (spec['label'], text.split(':')[0], 'not')
+                    if key not in _offered_logged and len(_offered_logged) < 80 and \
+                            any(w in text for w in ('musicproduction', 'dj', 'videostation', 'video_station', 'karaoke', 'mixing')):
+                        _offered_logged.add(key)
+                        _log('{} NOT offered on {}: computer {}, tv {}, screens {}'.format(
+                            spec['label'], inst, _is_computer(inst), tv_object(inst), screen_count(inst)))
+                if spec['offered'](inst):
+                    _note('offered', 'offered on {} (for {}, shift {})'.format(
+                        inst, getattr(context, 'sim', None), getattr(context, 'shift_held', None)), 6)
+                    key = (spec['label'], getattr(getattr(inst, 'definition', None), 'id', None))
+                    if key not in _offered_logged and len(_offered_logged) < 60:
+                        _offered_logged.add(key)
+                        _log('{} offered on {} ({} screens)'.format(spec['label'], inst, screen_count(inst)))
+                    yield spec['affordance']
         except Exception:
             pass
 
@@ -302,7 +459,7 @@ def _wrap_affordances():
             before = len(self)
             result = add_aop(self, aop, *args, **kwargs)
             try:
-                if _affordance is not None and aop.affordance is _affordance:
+                if getattr(aop.affordance, 'vr_spec', None) is not None:
                     _note('added', 'pie on {}: {} ({}; menu has {} options)'.format(
                         aop.target, 'added' if len(self) > before else 'left out',
                         getattr(result, 'reason', result), len(self)))
@@ -375,12 +532,23 @@ def _unlock_computers():
 
 def start():
     global _affordance
-    if not native.setting_flag('claude', 'on', True) or native._optional('claude_screen') is None:
+    if native._optional('claude_screen') is None:
         return
     try:
-        if _affordance is None:
-            _affordance = _make_affordance()
-        _wrap_affordances()
+        if native.setting_flag('claude', 'on', True) and _affordance is None:
+            _affordance = make_affordance(claude_spec())
+        try:
+            from sims4vr import discord
+            discord.start()
+        except Exception as e:
+            _log('Open Discord not set up: {!r}'.format(e))
+        try:
+            from sims4vr import linearboard
+            linearboard.start()
+        except Exception as e:
+            _log('Open Linear board not set up: {!r}'.format(e))
+        if _specs:
+            _wrap_affordances()
     except Exception as e:
         _log('no Open Claude option: {!r}'.format(e))
     try:
@@ -391,3 +559,13 @@ def start():
 
 def stop():
     close('first person ended')
+    try:
+        from sims4vr import discord
+        discord.stop()
+    except Exception:
+        pass
+    try:
+        from sims4vr import linearboard
+        linearboard.stop()
+    except Exception:
+        pass

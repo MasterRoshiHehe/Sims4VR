@@ -22,9 +22,10 @@ const Names kNames[kModCount][2] = {
      {L"claudesound.dll", "claudesound_get", "claudesound_set"}},
     {},  // Claude Performance: a script mod
     {{L"claudebustinout.dll", "cbo_get", "cbo_set"}, {}},
+    {{L"claudelighting.dll", "crl_get", "crl_set"}, {L"claudeinteriordarkness.dll", "cid_get", "cid_set"}},
 };
 // Each DLL mod's menu export (nullptr: none).
-const char* const kMenuNames[kModCount] = {"ibp_menu", "esc_menu", nullptr, "cbo_menu"};
+const char* const kMenuNames[kModCount] = {"ibp_menu", "esc_menu", nullptr, "cbo_menu", "crl_menu"};
 
 std::atomic<int> g_scriptMods{0};
 
@@ -58,6 +59,8 @@ const wchar_t* menu(Mod mod) {
     for (const Names& file : kNames[mod])
         if (HMODULE m = file.file ? GetModuleHandleW(file.file) : nullptr)
             if (auto fn = reinterpret_cast<MenuFn>(GetProcAddress(m, kMenuNames[mod]))) return fn();
+            else if (mod == kRealisticLighting)  // its release before the rename (Claude Interior Darkness 0.1-0.2)
+                if (auto old = reinterpret_cast<MenuFn>(GetProcAddress(m, "cid_menu"))) return old();
     return nullptr;
 }
 

@@ -535,7 +535,8 @@ def _contact_page(sim_info, records):
     try:
         # Call and Text (user 2026-10-25 02:07Z): how many of the phone's Social entries the game offers with them.
         offers = _offers(target)
-        records.append('cdo\x1f{}\x1f{}'.format(sum(1 for o in offers if o[2] == 0), sum(1 for o in offers if o[2] == 1)))
+        records.append('cdo\x1f{}\x1f{}\x1f{}'.format(sum(1 for o in offers if o[2] == 0), sum(1 for o in offers if o[2] == 1),
+                                                       1 if _has_care(target) else 0))
     except Exception as e:
         _log_error('social entries', e)
     from relationships.relationship_enums import RelationshipTrackType
@@ -663,7 +664,7 @@ def _offers(target):
         if gen is not None:
             try:
                 offered = any((getattr(c, 'sim_id', None) or getattr(getattr(c, 'sim_info', None), 'sim_id', None)) == target.id
-                              for c in gen(None, aop.target, item.context, **dict(aop.interaction_parameters)))
+                              for c in gen(aop.target, item.context, **dict(aop.interaction_parameters)))
             except Exception as e:
                 _log_error('a Social entry\'s Sims', e)
         if offered:
@@ -673,6 +674,28 @@ def _offers(target):
     return out
 
 
+def _has_care(target):
+    """Whether the game's skewer pie holds Care for self for this Sim (a household Sim off the lot): one of the default /
+    tuned away actions passes its own test (SimInfo._generate_default_away_action_aop, _generate_away_action_affordances)."""
+    import services
+    from interactions.context import InteractionContext, InteractionSource
+    from interactions.priority import Priority
+    active = services.active_sim_info()
+    if target is None or active is None or target.household is not active.household:
+        return False
+    client = services.client_manager().get_first_client()
+    ctx = InteractionContext(None, InteractionSource.PIE_MENU, Priority.High, client=client)
+    aops = [target._generate_default_away_action_aop(ctx)]
+    aops.extend(target._generate_away_action_affordances(ctx))
+    for aop in aops:
+        try:
+            if aop.test(ctx):
+                return True
+        except Exception as e:
+            _log_error('an away action', e)
+    return False
+
+
 def contact_menu(kind):
     """Call (0) or Text (1) on a contact's page (user 2026-10-25 02:07Z): the entries the game offers with them as
     our pie in front of the phone (the DLL put its click there); a pick runs it for them (select_own)."""
@@ -680,6 +703,11 @@ def contact_menu(kind):
     from sims4vr import pie
     target = services.sim_info_manager().get(_contact) if _contact is not None else None
     if target is None:
+        return
+    if kind == 2:
+        # Care for self: the game's own pie for a click on the Sim's skewer (PICK_SKEWER: SimInfo.sim_skewer_affordance_gen,
+        # its categories and sub menus), drawn like any pie of the game's, a pick answered by the game.
+        pie.open_skewer(target)
         return
     offers = [o for o in _offers(target) if o[2] == kind]
     if not offers:
@@ -695,30 +723,56 @@ def contact_action(node):
     from sims4vr import phoneapp
     if _contact is None:
         return
-    _auto_pick = [_contact, time.monotonic() + 20.0]
+    _auto_pick = [_contact, time.monotonic() + 20.0, False]
     native._log('phonesim: contact action {} for sim {}'.format(node, _contact))
     phoneapp.select(node)
 
 
 def auto_pick_option(dialog):
     """objmenu's dialog_show: the option of the contact's row in this Sim picker, if a Contacts action waits for one."""
-    global _auto_pick
+    global _auto_pick, _contact_note
     import time
     if _auto_pick is None:
         return None
-    if time.monotonic() > _auto_pick[1]:
+    rows = getattr(dialog, 'picker_rows', None)
+    now = time.monotonic()
+    if not rows:
+        # A Contacts action (Text, Call) waits for its Sim picker, but this dialog has no rows to answer from: never the
+        # vanilla popup (user 2026-10-28, mark: "select sim" on the 2D UI after Text). Say what it is, close it.
+        if now > _auto_pick[1]:
+            _auto_pick = None
+            return None
+        native._log('phonesim: a {} for the contact action has no rows (attributes: {}), cancelled'.format(
+            type(dialog).__name__, sorted(k for k in dir(dialog) if 'row' in k.lower() or 'pick' in k.lower())[:12]))
+        _contact_note = [_contact_name(_auto_pick[0]), now + 5.0]
+        _auto_pick = None
+        send(fresh=True, contacts=True)
+        return 'cancel'
+    if _auto_pick[2]:
+        # The contact is picked already: a later Sim picker of that call (the post-call "Invite over to current lot", queued
+        # by the game until the phone is put away, so the window is long) is closed, nobody else is invited (user 2026-10-28).
+        if now > _auto_pick[1]:
+            _auto_pick = None
+            return None
+        try:
+            from ui.ui_dialog import PhoneRingType
+            if dialog.get_phone_ring_type() == PhoneRingType.NO_RING:
+                return None  # the game queues this one for the phone; a picker of your own stays yours
+        except Exception:
+            pass
+        native._log('phonesim: a second Sim picker after the contact\'s action, cancelled ({} rows)'.format(len(rows)))
+        return 'cancel'
+    if now > _auto_pick[1]:
         _auto_pick = None
         return None
-    rows = getattr(dialog, 'picker_rows', None)
-    if not rows:
-        return None
-    target, _auto_pick = _auto_pick[0], None
+    target = _auto_pick[0]
     for row in rows:
         if getattr(row, 'sim_id', None) == target or getattr(row, 'tag', None) == target:
+            _auto_pick = [target, now + 600.0, True]
             return row.option_id
+    _auto_pick = None
     # The game doesn't offer this action with them (e.g. a phone chat with someone right here): no picker at
     # all (user 2026-10-25 02:02Z: never the "choose a Sim" popup), a note on their page instead.
-    global _contact_note
     _contact_note = [_contact_name(target), time.monotonic() + 5.0]
     native._log('phonesim: the picker has no row for sim {} ({} rows), cancelled'.format(target, len(rows)))
     send(fresh=True, contacts=True)
@@ -734,6 +788,38 @@ def _contact_name(sim_id):
     return info.first_name if info is not None else 'them'
 
 
+_photo_defs = None  # {definition id: portrait?} of the game's photo object definitions (crafting/photography.py)
+
+
+def _photo_kind(obj):
+    """True / False (portrait / landscape) for a photo object the camera made, else None."""
+    global _photo_defs
+    try:
+        if _photo_defs is None:
+            from crafting.photography import Photography
+            _photo_defs = {}
+            for name in ('SMALL', 'MEDIUM', 'LARGE'):
+                for orientation in ('PORTRAIT', 'LANDSCAPE'):
+                    definition = getattr(Photography, '{}_{}_OBJ_DEF'.format(name, orientation), None)
+                    if definition is not None:
+                        _photo_defs[definition.id] = orientation == 'PORTRAIT'
+        return _photo_defs.get(obj.definition.id)
+    except Exception:
+        return None
+
+
+def _photo_time(stamp):
+    """A photo's time stamp for the Photos app: epoch seconds as a date, anything else as it is."""
+    text = str(stamp or '').strip()
+    if text.isdigit() and len(text) >= 9:
+        import time
+        try:
+            return time.strftime('%d %b %Y  %H:%M', time.localtime(int(text) if len(text) < 12 else int(text) / 1000))
+        except Exception:
+            return ''
+    return text
+
+
 def _inventory_list(sim_info, records):
     from sims4vr import hudinfo
     from distributor.shared_messages import create_icon_info_msg
@@ -746,6 +832,7 @@ def _inventory_list(sim_info, records):
         from sims4.localization import LocalizationHelperTuning
     except Exception:
         LocalizationHelperTuning = None
+    photo_number = 0
     for obj in list(inventory.visible_storage)[:120]:
         try:
             picture = hudinfo._picture(create_icon_info_msg(obj.get_icon_info_data()))
@@ -766,6 +853,18 @@ def _inventory_list(sim_info, records):
             len(_inventory), picture, name, obj.stack_count(), int(getattr(obj, 'current_value', 0) or 0), favorite,
             int(bool(getattr(obj, 'non_deletable_by_user', False)))))
         _inventory.append(obj.id)
+        portrait = _photo_kind(obj)
+        if portrait is not None:  # a photo the Sim took: also in the Photos app, as its own picture
+            stamp, texture = '', 0
+            try:
+                from sims4vr import photowatch
+                stamp = _photo_time(getattr(obj.canvas_component, 'time_stamp', ''))
+                texture = int(obj.canvas_component.painting_state.texture_id or 0)
+                photo_picture = texture if texture and photowatch.want_icon(texture) else picture
+            except Exception:
+                photo_picture = picture
+            photo_number += 1
+            records.append('pho\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}'.format(len(_inventory) - 1, photo_picture, 'Photo {}'.format(photo_number), int(portrait), stamp))
 
 
 _SIMOLOGY_TYPES = (0, 1, 5, 6, 10, 12, 25, 28, 29, 30)  # SimTraitsPanel's order: personality, gameplay, ghost, aspiration,
@@ -1173,6 +1272,15 @@ def tick():
                     phone._make_prop()
         except Exception as e:
             _log_error('Play as', e)
+    if _switch[2]:
+        # first person follows the active Sim from camera updates alone, which the game may not send
+        # while it moves the camera to the new Sim: follow it here every tick (the log showed it
+        # still on the old Sim 17 s later)
+        try:
+            from sims4vr import body
+            body.tick()
+        except Exception as e:
+            _log_error('Play as follow', e)
     if elapsed >= 1.6:
         _switch = None
         native.set_eyes_held(False)
@@ -1205,6 +1313,11 @@ def send(fresh=False, contacts=False):
                     part(sim_info, records)
                 except Exception as e:
                     _log_error(part.__name__, e)
+            try:
+                from sims4vr import physapp
+                physapp.records(records)
+            except Exception as e:
+                _log_error('the Body Physics app', e)
             try:
                 _aspiration(sim_info, records)
             except Exception as e:

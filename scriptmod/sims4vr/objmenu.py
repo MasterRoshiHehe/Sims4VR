@@ -49,6 +49,9 @@ _escaped = 0.0  # when Escape went to the picker after walking away
 
 WALK_AWAY = 2.0     # m from the front face (flat) that closes a front picker
 WATCH_TICK = 0.25   # s
+GATE_TICK = 0.05    # s: hands polled this often while a fridge waits for its door
+GATE_NEAR = 0.2     # m: a hand this close to the fridge's face can grab its handle
+GATE_PULL = 0.25    # m: default for [body] fridge_door_pull, how far you pull the handle to open the door
 ESCAPE_WAIT = 1.5   # s for the game's picker to answer Escape
 NEAR_SIM = 5.0      # m: a popup about a Sim this near (same floor and room) shows beside it
 POPUP_TICK = 0.25   # s: the Sim's head followed this often while its popup shows
@@ -60,6 +63,10 @@ _popup_alarm = None
 _last_msg = None        # the UiDialogMessage the last dialog_show sent the client
 _popup_choices = []     # the choice ids of the popup card's buttons, in order
 _chat_buttons = False   # the asking Sim's popup shows its buttons (its answers' pie closed unpicked)
+_popup_pos = None       # (dialog id, head position): where the popup beside a Sim was placed
+_last_shown = None      # the dialog id dialog_show saw last (_close_on_game_ui)
+_gate = None            # a fridge picker held back until you open its door: dict (see _hold_fridge)
+_gate_alarm = None
 _picker_rows = []       # the option ids of the picker card's rows, in the order sent (the DLL answers with an index)
 
 
@@ -326,7 +333,7 @@ def _rotate(q, v):
     return (v[0] + w * tx + (y * tz - z * ty), v[1] + w * ty + (z * tx - x * tz), v[2] + w * tz + (x * ty - y * tx))
 
 
-def _front(obj, tv=False):
+def _front(obj, tv=False, index=0):
     """Centre of the object's front face (a TV's video screen if its model has
     one), its outward normal, its up axis, width and height (world units),
     and whether it is the video screen."""
@@ -336,7 +343,7 @@ def _front(obj, tv=False):
         # 22:54Z: laptops' lids, every computer and TV).
         try:
             from sims4vr import screenmesh
-            exact = screenmesh.screen(obj)
+            exact = screenmesh.screen(obj, index)
         except Exception as e:
             exact = None
             _log('screen shape of {} failed: {!r}'.format(obj, e))
@@ -405,14 +412,107 @@ def _show(dialog):
     kind = (VIDEO if video else SCREEN) if tv else DOOR
     global _picker_request
     _picker_request = (kind, centre, normal, up, width, height)
-    native.set_object_menu(kind, centre, normal, up, width, height)
     _shown = getattr(dialog, 'dialog_id', None)
+    if kind == DOOR and _shown is not None and native.setting_flag('body', 'fridge_door', True):
+        _hold_fridge(dialog, obj, centre, normal, up, width, height)
+    else:
+        native.set_object_menu(kind, centre, normal, up, width, height)
     _refresh_clock()
     if kind == DOOR and _shown is not None:
         _watch_walk_away(_shown, centre, sim)
     _log('{} on {} ({}): face at {}, facing {}, {:.2f} x {:.2f}'.format(
         type(dialog).__name__, obj, {DOOR: 'front', SCREEN: 'screen (guessed)', VIDEO: 'video screen'}[kind],
         tuple(round(v, 2) for v in centre), tuple(round(v, 2) for v in normal), width, height))
+
+
+def _hold_fridge(dialog, obj, centre, normal, up, width, height):
+    """A fridge's recipe picker waits (nothing drawn) until you open the door yourself:
+    grip and trigger at its handle (either edge of the front, as for doors), then pull the
+    handle back toward you [body] fridge_door_pull metres. The fridge model has no door
+    state or portal (its door is only part of the Sim's get/put animation), so the door
+    itself stays shut on screen; the picker card then appears on the front."""
+    global _gate, _gate_alarm
+    _stop_gate()
+    n = math.hypot(normal[0], normal[2]) or 1.0
+    _gate = {'id': getattr(dialog, 'dialog_id', None), 'dialog': dialog, 'msg': _last_msg,
+             'args': (DOOR, centre, normal, up, width, height), 'n': (normal[0] / n, normal[2] / n),
+             'held': [None, None]}
+    import alarms
+    import clock
+    _gate_alarm = alarms.add_alarm_real_time(_owner, clock.interval_in_real_seconds(GATE_TICK), _gate_tick, repeating=True)
+    _log('{}: waits for you to open the door by its handle ({:.2f} m pull)'.format(obj, _gate_pull()))
+
+
+def _gate_pull():
+    try:
+        return max(0.05, float(native.setting('body', 'fridge_door_pull', GATE_PULL)))
+    except Exception:
+        return GATE_PULL
+
+
+def _stop_gate():
+    global _gate, _gate_alarm
+    _gate = None
+    if _gate_alarm is not None:
+        try:
+            import alarms
+            alarms.cancel_alarm(_gate_alarm)
+        except Exception:
+            pass
+        _gate_alarm = None
+
+
+def _gate_tick(_handle):
+    global _last_msg
+    g = _gate
+    try:
+        if g is None or g['id'] != _shown:
+            _stop_gate()
+            return
+        snap = native.hands()
+        if snap is None:
+            return
+        head = snap[0]
+        _kind, centre, normal, _up, width, height = g['args']
+        nx, nz = g['n']
+        try:
+            reach = max(0.1, float(native.setting('body', 'door_handle_reach', 0.5)))
+        except Exception:
+            reach = 0.3
+        base = centre[1] - height / 2
+        for side in (0, 1):
+            hand = snap[3 + side]
+            held = g['held'][side]
+            if not hand[0] or hand[3] < 0.35 or hand[4] < 0.35 or hand[5]:
+                g['held'][side] = None
+                continue
+            px, py, pz = hand[1]
+            rel = (px - head[0]) * nx + (pz - head[2]) * nz  # your arm along the face's normal, from your head
+            if held is None:
+                if hand[3] < 0.5 or hand[4] < 0.5:
+                    continue
+                d = (px - centre[0]) * nx + (pz - centre[2]) * nz
+                lat = abs((px - centre[0]) * -nz + (pz - centre[2]) * nx)
+                if abs(d) > GATE_NEAR or lat > width / 2 + 0.1 or lat < width / 2 - reach \
+                        or not (base + 0.3 < py < base + max(height, 0.6)):
+                    continue
+                g['held'][side] = rel
+                native.haptic(side, 0.15, 0.04)
+                continue
+            if rel - held < _gate_pull():
+                continue
+            native.haptic(side, 0.3, 0.05)
+            _log('fridge door opened by hand {} ({:.2f} m pull): showing the picker'.format('RL'[side], rel - held))
+            args, dialog, msg = g['args'], g['dialog'], g['msg']
+            _stop_gate()
+            native.set_object_menu(*args)
+            if msg is not None:
+                _last_msg = msg
+            _send_picker_content(dialog)
+            return
+    except Exception as e:
+        _stop_gate()
+        _log('fridge door gate failed: {!r}'.format(e))
 
 
 def _check_gone(service):
@@ -426,6 +526,7 @@ def _check_gone(service):
         pass
     _shown = None
     _stop_watch()
+    _stop_gate()
     global _picker_request, _picker_rows
     _picker_request = None
     _picker_rows = []
@@ -583,13 +684,21 @@ def _head(sim):
 
 
 def _send_popup():
+    global _popup_pos
     if _popup is None:
         return
     kind, sim_id = _popup[1], _popup[2]
     if kind == POPUP_SIM:
+        # Placed beside the Sim once and then kept still (user 2026-10-29: a card moving with the Sim's animation is
+        # hard to use); the position is re-sent as it was.
+        if _popup_pos is not None and _popup_pos[0] == _popup[0]:
+            native.set_object_menu(POPUP_SIM, _popup_pos[1])
+            return
         sim = _sim_instance(sim_id)
         if sim is not None:
-            native.set_object_menu(POPUP_SIM, _head(sim))
+            head = _head(sim)
+            _popup_pos = (_popup[0], head)
+            native.set_object_menu(POPUP_SIM, head)
             return
     native.set_object_menu(POPUP_FRONT)
 
@@ -604,20 +713,38 @@ def _is_popup(service, dialog):
         from ui.ui_dialog import PhoneRingType
         if dialog.DIALOG_MSG_TYPE == Consts_pb2.MSG_UI_NOTIFICATION_SHOW:
             return False
-        if dialog.get_phone_ring_type() != PhoneRingType.NO_RING:
-            return False
+        if dialog.get_phone_ring_type() != PhoneRingType.NO_RING and not (
+                _is_picker(dialog) and native.setting_flag('ui', 'ring_pickers_3d', True)):
+            return False  # (a Sim picker the game rings the phone for, such as the post-call "Invite over to current lot", is a card)
     except Exception as e:
         _log('popup type check failed: {!r}'.format(e))
         return False
     return service.get_dialog(getattr(dialog, 'dialog_id', None)) is dialog
 
 
+def _log_unhandled(service, dialog, why):
+    """Which dialog class got no card and why (mod popups: user 2026-10-28), when the game holds it modal."""
+    try:
+        if not service.has_active_modal_dialogs():
+            return
+        from protocolbuffers import Consts_pb2
+        _log('modal dialog without a card ({}): {} ring {} msg type {} (notification {}), registered {}, picker {}, module {}'.format(
+            why, type(dialog).__name__, dialog.get_phone_ring_type(), dialog.DIALOG_MSG_TYPE,
+            dialog.DIALOG_MSG_TYPE == Consts_pb2.MSG_UI_NOTIFICATION_SHOW,
+            service.get_dialog(getattr(dialog, 'dialog_id', None)) is dialog, _is_picker(dialog),
+            type(dialog).__module__))
+    except Exception as e:
+        _log('unhandled dialog report failed: {!r}'.format(e))
+
+
 def _show_popup(service, dialog):
     global _popup
     if not native.setting_flag('ui', 'popups_3d', True) or not _is_popup(service, dialog):
+        _log_unhandled(service, dialog, 'not a popup card candidate')
         return
     you = _first_person_sim()
     if you is None:
+        _log_unhandled(service, dialog, 'no first person Sim')
         return
     other = _popup_sim(dialog, you)
     _popup = (dialog.dialog_id, POPUP_SIM if other is not None else POPUP_FRONT,
@@ -699,6 +826,52 @@ def _travel_popup(dialog, zone_id):
     return None
 
 
+_shown_logs = [0]
+_dump_logs = [0]
+
+
+def _dialog_sims(dialog):
+    """Sim ids a dialog is about when owner / target hold none: any Sim or SimInfo among its attributes (one level
+    into lists, tuples and sets), logging what the dialog holds a few times (diagnosing a mod's dialog)."""
+    found = set()
+    try:
+        values = list(vars(dialog).items())
+    except Exception:
+        values = []
+    for name, value in values:
+        items = value if isinstance(value, (list, tuple, set, frozenset)) else (value,)
+        for item in items:
+            sim_id = getattr(item, 'sim_id', None)
+            if isinstance(sim_id, int) and sim_id:
+                found.add(sim_id)
+            elif name.lower().endswith('sim_id') and isinstance(item, int) and item:
+                found.add(item)
+    if _dump_logs[0] < 6 and not found:
+        _dump_logs[0] += 1
+        try:
+            _log('dialog holds no Sim: {} attributes {}'.format(
+                type(dialog).__name__, ', '.join('{}={}'.format(k, type(v).__name__) for k, v in values)[:600]))
+        except Exception:
+            pass
+    return found
+
+
+def _dialog_text(dialog):
+    try:
+        return str(getattr(dialog, 'text', None) or getattr(dialog, '_text', None))[:120]
+    except Exception:
+        return '?'
+
+
+def _shown_note(dialog, why, ids):
+    """A popup the filter let through, with why (diagnosing "not me" boxes that still show)."""
+    if _shown_logs[0] < 60:
+        _shown_logs[0] += 1
+        _log('popup shown, not filtered ({}): {} owner {} target {} ids {} text {}'.format(
+            why, type(dialog).__name__, getattr(getattr(dialog, 'owner', None), 'sim_id', None),
+            getattr(dialog, '_target_sim_id', None), sorted(ids), _dialog_text(dialog)))
+
+
 def _others_decide(dialog, zone_id=None):
     """First person, [ui] others_decide (debug menu): a decision popup about
     Sims that don't include yours is answered by the game at once with one of
@@ -718,7 +891,10 @@ def _others_decide(dialog, zone_id=None):
         return None
     owner = getattr(dialog, 'owner', None)
     ids = {getattr(owner, 'sim_id', None), getattr(dialog, '_target_sim_id', None)} - {None, 0}
+    if not ids:
+        ids = _dialog_sims(dialog)  # a mod's dialog (TurboLib's _UiDramaDialog, WickedWhims) keeps its Sims elsewhere
     if not ids or getattr(you, 'sim_id', None) in ids:
+        _shown_note(dialog, 'no Sim' if not ids else 'includes you', ids)
         return None
     from ui.ui_dialog import ButtonType, UiDialogResponse
     answers = []
@@ -727,11 +903,19 @@ def _others_decide(dialog, zone_id=None):
         if rid is None or rid == ButtonType.DIALOG_RESPONSE_NO_RESPONSE:
             continue
         if getattr(response, 'ui_request', 0) not in (0, UiDialogResponse.UiDialogUiRequest.NO_REQUEST):
+            _shown_note(dialog, 'a button opens game UI', ids)
             return None
         if rid not in answers:
             answers.append(rid)
     if len(answers) < 2:
-        return None  # nothing to decide (an OK)
+        # Nothing to decide (an OK) about Sims that don't include yours: dismissed, never shown (user 2026-10-29:
+        # "not me" interaction boxes between other Sims).
+        if len(answers) == 1 and native.setting_flag('ui', 'others_dismiss_ok', True):
+            _log('popup about other Sims ({}) dismissed: {} ({})'.format(
+                ', '.join(str(i) for i in ids), answers[0], type(dialog).__name__))
+            return answers[0]
+        _shown_note(dialog, 'no answer to give', ids)
+        return None
     travel = _travel_popup(dialog, zone_id)
     if travel is not None:
         if ButtonType.DIALOG_RESPONSE_CANCEL not in answers:
@@ -741,11 +925,21 @@ def _others_decide(dialog, zone_id=None):
         _log('travel popup about other Sims ({}) answered no ({}, {})'.format(
             ', '.join(str(i) for i in ids), travel, type(dialog).__name__))
         return ButtonType.DIALOG_RESPONSE_CANCEL
-    import random
-    answer = random.choice(answers)
-    _log('popup about other Sims ({}) answered at random: {} of {} answers ({})'.format(
-        ', '.join(str(i) for i in ids), answer, len(answers), type(dialog).__name__))
-    return answer
+    # Never a yes: a random pick once accepted a proposal (user 2026-10-29: engaged to the housekeeper without a prompt).
+    # Only a refusal is answered for other Sims (Cancel / No), whoever they are; a dialog that has none is shown.
+    # Household members too (user 2026-10-29 04:33Z: popups about two other Sims asking each other reached me: a
+    # popup that does not include the Sim you play never shows, it is refused for them).
+    for name in ('DIALOG_RESPONSE_CANCEL', 'DIALOG_RESPONSE_NO'):
+        refusal = getattr(ButtonType, name, None)
+        if refusal is not None and refusal in answers:
+            _log('popup about other Sims ({}) refused for them: {} ({})'.format(
+                ', '.join(str(i) for i in ids), name, type(dialog).__name__))
+            return refusal
+    # No Cancel / No among the answers (a mod's own buttons, e.g. TurboLib's _UiDramaDialog for a WickedWhims move):
+    # answered as a cancel, which closes it without choosing any of its answers (user 2026-10-29: never shown).
+    _log('popup about other Sims ({}) dismissed as a cancel ({}, answers {}, text {!r})'.format(
+        ', '.join(str(i) for i in ids), type(dialog).__name__, answers, _dialog_text(dialog)))
+    return ButtonType.DIALOG_RESPONSE_CANCEL
 
 
 def _send_popup_content(dialog):
@@ -956,7 +1150,19 @@ def _close_on_game_ui(dialog_id, what):
         close = Dialog_pb2.UiDialogCloseRequest()
         close.dialog_id = dialog_id
         Distributor.instance().add_event(Consts_pb2.MSG_UI_DIALOG_CLOSE, close)
-        # The message alone left them open (user 19:22Z): the DLL closes the game's widget too.
+        # The message alone left them open (user 19:22Z): the DLL closes the game's widget too. Not when answering
+        # opened the next dialog (WickedWhims menus: the pick shows the sub menu inside dialog_respond): that close
+        # would cancel the new one and the mod would reopen its main menu (user 2026-10-29: "just refreshes").
+        newer = False
+        try:
+            import services
+            newer = _last_shown not in (None, dialog_id) and \
+                services.ui_dialog_service().get_dialog(_last_shown) is not None
+        except Exception:
+            newer = False
+        if newer:
+            _log('{} answered on our card: the next dialog {} is open, the game UI left alone'.format(what, _last_shown))
+            return
         native.close_game_dialog('picker' in what)
         _log('{} answered on our card: closed on the game UI too'.format(what))
     except Exception as e:
@@ -1242,12 +1448,20 @@ def _wrap():
     from ui.ui_dialog_service import UiDialogService
 
     def dialog_show(original_show, self, dialog, *args, **kwargs):
+        global _last_shown
+        _last_shown = getattr(dialog, 'dialog_id', None)
         try:
             if _map_shown(dialog):
                 return original_show(self, dialog, *args, **kwargs)
         except Exception as e:
             _log('map view check failed: {!r}'.format(e))
         # A Social action from a Contacts page (phonesim.contact_action): its Sim picker answered with that Sim.
+        try:
+            if _is_picker(dialog):
+                _log('picker {} ring {}, {} rows'.format(type(dialog).__name__, dialog.get_phone_ring_type(),
+                                                       len(getattr(dialog, 'picker_rows', None) or ())))
+        except Exception:
+            pass
         try:
             from sims4vr import phonesim
             pick = phonesim.auto_pick_option(dialog)
@@ -1329,9 +1543,11 @@ def _wrap():
                     del dialog.build_msg
                 except Exception:
                     pass
+        if _gate is not None and _gate['id'] == getattr(dialog, 'dialog_id', None):
+            _gate['msg'] = _last_msg  # the message the card is drawn from, once the door opens
         try:
             if _shown is not None and _shown == getattr(dialog, 'dialog_id', None) and _picker_request is not None \
-                    and _picker_request[0] == DOOR:
+                    and _picker_request[0] == DOOR and _gate is None:
                 _send_picker_content(dialog)
         except Exception as e:
             _log('the picker card failed: {!r}'.format(e))

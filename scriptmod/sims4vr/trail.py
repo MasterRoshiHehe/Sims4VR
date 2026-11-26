@@ -92,6 +92,21 @@ ARRIVE_PUSH_MAX = 5.0  # s: the stick pushed from walking onto the spot is ignor
 FOLLOW_MOVE = 1.0  # m the Sim you walk to moves before the game plans the way to them again (C6)
 RECHECK = 5.0  # m: FollowPath.DISTANCE_TO_RECHECK_INUSE (its tuned value is read when there)
 MAX_POINTS = 256  # trail.cpp kMaxPoints
+RIDE_SECONDS = 3.0  # s: the ride in the dark without the elevator sound (then with a chime)
+RIDE_SHORT_FROM = 20.0  # s into the sound at which the short ride starts it (the travel stops, the ding, the doors)
+RIDE_TELEPORT = 24.0  # s after the sound began: the game's portal runs (its 1 s fade ends at the 25 s door mark)
+RIDE_OPEN = 26.0  # s after the sound began (when the eyes shut) at which the eyes open at the new place (user 2026-10-29:
+                  # Elevator.mp3 is 27 s long, its doors open at 25 s)
+RIDE_GO = 10.0  # s after you stood in the car during which the game's route (the portal) is let through
+RIDE_LIMIT = 8.0  # s: the ride is given up if the game never took you (the sound stops)
+RIDE_JUMP = 3.0  # m of height: the portal took you
+CLIMB_LIMIT = 25.0  # s after you stood at a ladder's foot during which the game's climb is let through
+_climb_sim = None
+_climb_at = -1e9
+_pending_ladder = {}  # Sim id -> the ladder found by _should_hold, taken by _hold_gen
+_ride_go = {}  # Sim id -> when you stood in the elevator
+_pending_ride = {}  # Sim id -> the elevator found by _should_hold, taken by _hold_gen
+_ride = None  # dict(sim, interaction, y0, since, moved) while the ride in the dark runs
 
 
 
@@ -203,14 +218,16 @@ def _stair_points(px, pz, x, z, y0, y1):
         return []
 
 
-def _send_trail(path, nodes):
+def _send_trail(path, nodes, ride=None):
     """C2: the route to the DLL as floor points (trail.cpp draws the footprints).
     Path nodes are where the route turns; a stretch on one level is filled in
     every SAMPLE m with the floor's height there (slopes, steps outside), a
     stretch between levels (stairs) gets the height of each step it crosses."""
     import struct
     try:
-        if len(nodes) < 2:
+        if ride is not None:
+            nodes = nodes[:ride['index']]  # the footprints end at the elevator, not across it
+        if len(nodes) < 2 and ride is None:
             _clear()
             return 0
         surfaces = []
@@ -237,6 +254,9 @@ def _send_trail(path, nodes):
         goal = end.transform.translation
         facing = end.transform.orientation.transform_vector(sims4.math.Vector3.Z_AXIS())
         gy = _floor(goal.x, goal.z, end.routing_surface, goal.y)
+        if ride is not None:
+            goal = sims4.math.Vector3(*ride['entry'])
+            gy = goal.y
         packed = struct.pack('<5f', goal.x, gy, goal.z, facing.x, facing.z)
         packed += b''.join(struct.pack('<3f', *p) for p in points)
         native.trail_set(packed)
@@ -306,6 +326,190 @@ def _watch(_handle):
         _error('checking the footprints', e)
 
 
+def _elevator_ride(path):
+    """The elevator the planned path rides, as dict(index of its node in the path, entry (x, y, z) where you stand
+    in the car, text), or None. [body] trail_elevator."""
+    if not native.setting_flag('body', 'trail_elevator', True):
+        return None
+    try:
+        from routing.portals.portal_data_elevator import _PortalTypeDataElevator
+        manager = services.object_manager()
+        for i, node in enumerate(path.nodes):
+            if not node.portal_object_id:
+                continue
+            obj = manager.get(node.portal_object_id)
+            if obj is None:
+                continue
+            for portal in obj.get_portal_instances():
+                if not isinstance(portal.traversal_type, _PortalTypeDataElevator):
+                    continue
+                # The end of the portal you step into: the one nearest where the route starts (in 3D: the car in
+                # the apartment going down, the shell's end on the street going up, user 2026-10-29).
+                op = obj.position
+                s = path.nodes[0].position
+                best = None
+                for loc in (portal.there_entry, portal.there_exit, portal.back_entry, portal.back_exit):
+                    if loc is None:
+                        continue
+                    d = math.sqrt((loc.position.x - s[0]) ** 2 + (loc.position.y - s[1]) ** 2 + (loc.position.z - s[2]) ** 2)
+                    if best is None or d < best[0]:
+                        best = (d, loc.position)
+                if best is None:
+                    continue
+                q = best[1]
+                p = node.position
+                return dict(index=i, entry=(q.x, q.y, q.z),
+                            text='{} at node {} of {}, portal {}, action {}, node at {:.1f},{:.1f},{:.1f}, car at {:.1f},{:.1f},{:.1f}'.format(
+                                obj, i, len(path.nodes), node.portal_id, getattr(node, 'action', '?'),
+                                p[0], p[1], p[2], q.x, q.y, q.z))
+    except Exception as e:
+        _error('looking for an elevator on the path', e)
+    return None
+
+
+def _ladder_on_path(path, interaction=None):
+    """The ladder the planned path climbs (or descends), as dict(index of the portal's first node, entry (x, y, z)
+    where the climb starts, text), or None. [body] trail_ladder (user 2026-10-29: clicking a ladder showed the
+    footprints up the ladder instead of climbing it)."""
+    if not native.setting_flag('body', 'trail_ladder', True):
+        return None
+    try:
+        from routing.portals.portal_data_ladders import _PortalTypeDataLadders
+        manager = services.object_manager()
+        for i, node in enumerate(path.nodes):
+            if not node.portal_object_id:
+                continue
+            obj = manager.get(node.portal_object_id)
+            if obj is None:
+                continue
+            for portal in obj.get_portal_instances():
+                if not isinstance(portal.traversal_type, _PortalTypeDataLadders) and 'ladder' not in str(obj).lower():
+                    continue
+                p = node.position
+                return dict(index=i, entry=(p[0], p[1], p[2]),
+                            text='{} at node {} of {}, portal {}, action {}, foot at {:.1f},{:.1f},{:.1f}'.format(
+                                obj, i, len(path.nodes), node.portal_id, getattr(node, 'action', '?'), p[0], p[1], p[2]))
+        # The build ladder's climb (buildLadder_ClimbUp_End, user log 2026-10-29): its route has no portal node we
+        # can name, but it is an action on a ladder object that rises or falls between its ends.
+        target = str(getattr(interaction, 'target', '')).lower()
+        name = type(interaction).__name__.lower() if interaction is not None else ''
+        if 'ladder' in target or name.startswith('buildladder'):
+            a, b = path.nodes[0].position, path.nodes[len(path.nodes) - 1].position
+            if abs(b[1] - a[1]) > 1.5:
+                return dict(index=0, entry=(a[0], a[1], a[2]),
+                            text='{} rises {:.1f} m over {} nodes, no portal node'.format(target, b[1] - a[1], len(path.nodes)))
+    except Exception as e:
+        _error('looking for a ladder on the path', e)
+    return None
+
+
+def climbing():
+    """The game is taking you up or down a ladder: the stick must not cancel its route (walk.py)."""
+    sim = _climb_sim
+    if sim is None or time.monotonic() - _climb_at > CLIMB_LIMIT:
+        return False
+    try:
+        return sim.transition_controller is not None
+    except Exception:
+        return False
+
+
+def riding():
+    """The ride in the dark is under way: the eyes stay shut (fades.py) and the stick must not cancel the game's route."""
+    return _ride is not None
+
+
+def _ride_begin(sim, interaction):
+    global _ride
+    import alarms
+    import clock
+    if _ride is not None and _ride['sim'] is sim:
+        return  # already riding (the game planned the route again)
+    now = time.monotonic()
+    start = 0.0 if native.setting_flag('body', 'elevator_long', True) else RIDE_SHORT_FROM
+    sound = native.elevator_sound(True, start)  # sounds\\elevator\\Elevator.wav, above your head in the car
+    _ride = dict(sim=sim, interaction=interaction, y0=sim.position.y, since=now, moved=None, sound=sound, go=None,
+                 go_after=RIDE_TELEPORT - start if sound else 0.0, open_after=RIDE_OPEN - start if sound else RIDE_SECONDS)
+    _tell_eyes()
+    _log('elevator: you stand in the car: eyes shut, {}, the game takes you down'.format(
+        'sound playing from {:.0f} s'.format(start) if sound else 'no sound (sounds/elevator/Elevator.wav missing or an older DLL)'))
+    alarms.add_alarm_real_time(_owner, clock.interval_in_real_seconds(0.1), _ride_tick, repeating=True)
+
+
+def _tell_eyes():
+    """Shut while the ride runs: held (no time limit; covered ones open after 5 s, user 2026-10-29), then released."""
+    try:
+        native.set_eyes_held(_ride is not None)
+        from sims4vr import fades
+        fades._tell()
+    except Exception as e:
+        _error('telling the eyes', e)
+
+
+def ride_update():
+    """walk.py every tick (the alarm below may not run): the same check."""
+    if _ride is not None:
+        _ride_tick(None)
+
+
+def _ride_tick(handle):
+    """The portal took you (height jumped): the walk on to the street is cancelled, you stand where the car lets
+    out; the eyes open after RIDE_SECONDS from the start with the chime."""
+    global _ride
+    r = _ride
+    if r is None:
+        _cancel_alarm(handle)
+        return
+    try:
+        now = time.monotonic()
+        sim, interaction = r['sim'], r['interaction']
+        from sims4vr import halt
+        gone = not halt.first_person(sim) or getattr(interaction, 'is_finishing', False)
+        if r['moved'] is None and abs(sim.position.y - r['y0']) > RIDE_JUMP:
+            r['moved'] = now
+            _log('elevator: arrived {:.1f} s after you stepped in'.format(now - r['since']))
+            if not getattr(interaction, 'is_finishing', False):
+                interaction.cancel(_finishing_type(), 'VR: the elevator ride is over')
+        end = None
+        if (r['moved'] is not None or r['go'] is not None) and now - r['since'] >= r['open_after']:
+            end = 'chime' if not r['sound'] else 'doors open'
+        elif now - r['since'] >= r['open_after'] + 8.0:
+            end = 'the doors opened late'  # whatever happened to the portal, the eyes open
+        elif r['moved'] is None and (gone or now - r['since'] > 60.0 or
+                                      (r['go'] is not None and now - r['go'] > RIDE_LIMIT)):
+            end = 'the game never took you'
+        if end is not None:
+            _ride = None
+            _cancel_alarm(handle)
+            _tell_eyes()
+            if end == 'chime':
+                from sims4vr import phonesound
+                native.ring_wav(3, phonesound.WAV_AT, True)  # Success.wav
+            elif end != 'doors open':
+                if end != 'the doors opened late':
+                    native.elevator_sound(False)
+                _log('elevator: ride ended: ' + end)
+    except Exception as e:
+        _ride = None
+        _cancel_alarm(handle)
+        native.elevator_sound(False)
+        _tell_eyes()
+        _error('the elevator ride', e)
+
+
+def _cancel_alarm(handle):
+    try:
+        import alarms
+        alarms.cancel_alarm(handle)
+    except Exception:
+        pass
+
+
+def _finishing_type():
+    from interactions.interaction_finisher import FinishingType
+    return FinishingType.USER_CANCEL
+
+
 def _should_hold(agent, path, interaction):
     """The reason to hold (text) or None: walk as the game would."""
     if interaction is None or not getattr(agent, 'is_sim', False) or not _on():
@@ -314,8 +518,8 @@ def _should_hold(agent, path, interaction):
     if not halt.first_person(agent) or not halt._picked(interaction):
         return None
     try:
-        from sims4vr import carried
-        if carried.active():
+        from sims4vr import carried, swim
+        if carried.active() or swim.is_swim_interaction(interaction):
             return None
     except Exception:
         pass
@@ -330,6 +534,32 @@ def _should_hold(agent, path, interaction):
     import routing
     if path is None or path.status != routing.Path.PLANSTATUS_READY or path.is_route_fail():
         return None
+    ride = _elevator_ride(path)
+    if ride is not None:
+        # The footprints would cross the elevator as a straight line through the
+        # walls, to a spot 50 m below that you cannot walk to (user 2026-10-28).
+        # The trail leads to the car; once you stand in it the game's route (the
+        # portal) goes on while the eyes stay shut (user 2026-10-29: no running
+        # to it by itself and an instant jump). [body] elevator_ride off: the
+        # game takes you all the way, as for ladders (carried.py).
+        if time.monotonic() - _ride_go.get(agent.id, -1e9) < RIDE_GO or \
+                not native.setting_flag('body', 'elevator_ride', True):
+            _log('elevator on the route ({}): not held, the game takes you'.format(ride['text']))
+            return None
+        _pending_ride[agent.id] = ride
+        return 'elevator, ' + ride['text']
+    ladder = _ladder_on_path(path, interaction)
+    if ladder is not None:
+        # The footprints lead to the ladder's foot; there the game's route goes on up its own climb animation.
+        global _climb_sim, _climb_at
+        you = _you(agent)
+        ex, ey, ez = ladder['entry']
+        if math.hypot(you[0] - ex, you[2] - ez) <= max(_arrive_radius(False), 1.0) and abs(you[1] - ey) <= ARRIVE_HEIGHT:
+            _climb_sim, _climb_at = agent, time.monotonic()
+            _log('ladder on the route ({}): not held, the game climbs it with you'.format(ladder['text']))
+            return None
+        _pending_ladder[agent.id] = ladder
+        return 'ladder, ' + ladder['text']
     try:
         length = path.length()
     except Exception:
@@ -596,11 +826,16 @@ def _hold_gen(timeline, sim, path, interaction, why, callback_fn=None):
     end = path.final_location
     goal = end.transform.translation
     level = getattr(end.routing_surface, 'secondary_id', 0)
-    hold = dict(interaction=interaction, goal=(goal.x, goal.y, goal.z), level=level,
-                nodes=_nodes(path), started=time.monotonic())
+    ride = _pending_ride.pop(sim.id, None)
+    ladder = _pending_ladder.pop(sim.id, None)
+    hold = dict(interaction=interaction,
+                goal=ride['entry'] if ride is not None else ladder['entry'] if ladder is not None else (goal.x, goal.y, goal.z),
+                level=level, nodes=_nodes(path), started=time.monotonic())
+    if ladder is not None:
+        hold['nodes'] = hold['nodes'][:ladder['index'] + 1]  # the footprints end at the ladder's foot
     drop_walk_to('another action walks you')
     _holds[sim.id] = hold
-    drawn = _send_trail(path, hold['nodes'])
+    drawn = _send_trail(path, hold['nodes'], ride)
     _log('waiting {} goal {:.2f},{:.2f},{:.2f} level {} ({} away, {} nodes, trail of {} points)'.format(
         interaction, goal.x, goal.y, goal.z, level, why, len(hold['nodes']), drawn))
     outcome = 'ended'
@@ -610,7 +845,7 @@ def _hold_gen(timeline, sim, path, interaction, why, callback_fn=None):
     replans = 0
     planned_length = _length(path)
     recheck = _recheck_distance()
-    check = callback_fn if callback_fn is not None and _may_check(interaction) else None
+    check = callback_fn if callback_fn is not None and ride is None and ladder is None and _may_check(interaction) else None
     other = getattr(interaction, 'target', None)
     if not getattr(other, 'is_sim', False) or other is sim:
         other = None
@@ -639,9 +874,33 @@ def _hold_gen(timeline, sim, path, interaction, why, callback_fn=None):
             you = _you(sim)
             gx, gy, gz = hold['goal']
             arrive = _arrive_radius(bool(getattr(interaction, '_sims4vr_touch', None)))
-            if math.hypot(you[0] - gx, you[2] - gz) <= arrive and abs(you[1] - gy) <= ARRIVE_HEIGHT:
+            height = ARRIVE_HEIGHT
+            if ride is not None:
+                arrive, height = max(arrive, 1.5), 2.5  # the car's spot is only roughly known
+            if ride is not None and hold.get('ride_started'):
+                # In the car: the ride in the dark runs, you cannot move; the game's portal goes at go_after.
+                r = _ride
+                if r is None:
+                    outcome = 'the ride ended before the portal'
+                    return False
+                if time.monotonic() - r['since'] >= r['go_after']:
+                    r['go'] = time.monotonic()
+                    _ride_go[sim.id] = r['go']
+                    controller.derail(DerailReason.CONSTRAINTS_CHANGED, sim)
+                    outcome = 'you stood in the elevator {:.0f} s: the game takes you'.format(r['go_after'])
+                    return False
+                slept = yield from run_child(timeline, elements.SoftSleepElement(clock.interval_in_real_seconds(TICK)))
+                if not slept:
+                    outcome = 'stopped by the game'
+                    return False
+                continue
+            if math.hypot(you[0] - gx, you[2] - gz) <= arrive and abs(you[1] - gy) <= height:
                 _arrived_at = time.monotonic()
                 _arrive(sim)
+                if ride is not None:
+                    hold['ride_started'] = True
+                    _ride_begin(sim, interaction)
+                    continue
                 controller.derail(DerailReason.CONSTRAINTS_CHANGED, sim)
                 outcome = 'you arrived: carried on'
                 return False
@@ -678,7 +937,15 @@ def _hold_gen(timeline, sim, path, interaction, why, callback_fn=None):
                     drawn_from = you
                     planned_length = _length(new_path)
                     replans += 1
-                    points = _send_trail(new_path, _nodes(new_path))
+                    new_nodes = _nodes(new_path)
+                    if ride is not None:
+                        ride = _elevator_ride(new_path) or ride
+                        hold['goal'] = ride['entry']
+                    elif ladder is not None:
+                        ladder = _ladder_on_path(new_path, interaction) or ladder
+                        hold['goal'] = ladder['entry']
+                        new_nodes = new_nodes[:ladder['index'] + 1]
+                    points = _send_trail(new_path, new_nodes, ride)
                     if replans <= 5 or replans % 20 == 0:
                         _log('trail planned again from {:.1f},{:.1f} ({} points; {} so far)'.format(
                             you[0], you[2], points, replans))
@@ -696,12 +963,29 @@ def _hold_gen(timeline, sim, path, interaction, why, callback_fn=None):
         _log('{} {} after {:.0f} s'.format(outcome, interaction, time.monotonic() - hold['started']))
 
 
+def _log_elevator_route(agent, path, interaction, why):
+    """One line about every route of an Elevator_ action: what the path holds and whether it was held."""
+    try:
+        name = type(interaction).__name__
+        if not name.startswith('Elevator'):
+            return
+        from sims4vr import halt
+        portals = ['{}:{}/{}'.format(i, n.portal_object_id, n.portal_id) for i, n in enumerate(path.nodes) if n.portal_object_id]
+        s = path.nodes[0].position if len(path.nodes) else None
+        _log('route of {}: held {!r}; first person {}, picked {}; path status {}, {} nodes, portals {}, starts {}'.format(
+            name, why, halt.first_person(agent), halt._picked(interaction), getattr(path, 'status', '?'), len(path.nodes), portals,
+            '{:.1f},{:.1f},{:.1f}'.format(s[0], s[1], s[2]) if s is not None else '-'))
+    except Exception as e:
+        _error('logging an elevator route', e)
+
+
 def _do_route(original, timeline, agent, path, *args, **kwargs):
     why = None
     try:
         why = _should_hold(agent, path, kwargs.get('interaction'))
     except Exception as e:
         _error('the hold check', e)
+    _log_elevator_route(agent, path, kwargs.get('interaction'), why)
     if why is None:
         result = yield from original(timeline, agent, path, *args, **kwargs)
         return result
@@ -860,8 +1144,17 @@ def _walk_to_gen(timeline, token):
 
 
 def forget():
+    global _ride
+    native.elevator_sound(False)
     _stopped.clear()
     _holds.clear()
+    _ride = None
+    _tell_eyes()
+    _ride_go.clear()
+    _pending_ride.clear()
+    _pending_ladder.clear()
+    global _climb_sim
+    _climb_sim = None
 
 
 try:

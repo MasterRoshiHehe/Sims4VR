@@ -186,14 +186,25 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
                 }
             }
         }
-        // The hand holding the phone (or the settings menu) picks nothing up.
+        // A note on the Linear scrumboard taken off by a hand closing on it (13b_tv_screen.inc updateBoardGrab).
+        {
+            static float gripWas[2] = {0, 0};
+            updateBoardGrab(hands, gripWas, head);
+            for (int i = 0; i < 2; ++i) gripWas[i] = hands[i].grip;
+        }
+        // The hand holding the phone (or the settings menu, or a note off the scrumboard) picks nothing up.
         armik::Hand grabHands[2] = {hands[0], hands[1]};
+        if (g_boardHold.hand >= 0) grabHands[g_boardHold.hand].grip = 0;
         if (g_noteDrag.hand >= 0 && !g_noteDrag.laser) grabHands[g_noteDrag.hand].grip = 0;
         if (g_phoneOut) grabHands[g_phoneHand].grip = 0;
         if (g_bookOut) grabHands[g_bookHand].grip = 0;
         if (g_settingsDrag.hand >= 0 && !g_settingsDrag.laser) grabHands[g_settingsDrag.hand].grip = 0;
         grab::update(grabHands, trigger, indexOut, head, firstPerson, g_config.grab);
         gesture::update(head, firstPerson);
+        {  // dancing in real life (dance.cpp): your head and hands, not the Sim's
+            const XrVector2f walkStick = stickState(0);
+            dance::update(hands, head, std::fabs(walkStick.x) + std::fabs(walkStick.y), firstPerson);
+        }
         for (int i = 0; i < 2; ++i) {
             float amplitude = 0, seconds = 0;
             if (grab::takeHaptic(i, amplitude, seconds)) buzz(i, amplitude, seconds);
@@ -207,6 +218,7 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
         for (int i = 0; i < 2; ++i) closed[i] = closed[i] ? hands[i].grip > 0.35f : hands[i].grip > 0.6f;
         const bool phoneWasOut = g_phoneOut;
         // Into or out of build/buy with it out: put away (it comes back as the other).
+        syncSlots();
         const bool tabletNow = g_buildBuy && g_config.tablet;
         // A phone call of your Sim keeps the phone in its hand (opening the hand doesn't put it away); every
         // 2 s the script is asked whether the call still runs (nophone.call_check).
@@ -219,11 +231,14 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
                 grab::pushControl(82);
             }
         }
-        if (callHold && !g_phoneOut && head.valid) {
+        if (const int want = g_tabletOpenHand.exchange(-1); want >= 0 && tabletNow && firstPerson && !g_phoneOut &&
+                                                          head.valid && hands[want].valid) {
+            phoneOpen(want);  // eyes open in build mode: the tablet is in the hand that held the phone
+        } else if (callHold && !g_phoneOut && head.valid) {
             phoneOpen(1);  // the call brings the phone out in your right hand
         } else if (g_phoneOut && !callHold &&
                    ((closed[g_phoneHand] && !closedWas[g_phoneHand] && hands[g_phoneHand].valid && head.valid &&
-                     atRightHip(hands[g_phoneHand], g_phoneHand, head) && !g_sims1Phone.on) ||
+                     atSlot(slotFor(g_tablet ? 1 : 0), hands[g_phoneHand], g_phoneHand, head) && !g_sims1Phone.on) ||
                     !firstPerson || !g_config.phone || g_tablet != tabletNow)) {
             const bool atHip = firstPerson && g_config.phone && g_tablet == tabletNow;
             if (atHip) buzz(g_phoneHand, 0.3f, 0.04f);  // put back at the hip: a small buzz (user 2026-10-23)
@@ -231,16 +246,35 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
         } else if (!g_phoneOut && !callHold && firstPerson && g_config.phone && head.valid) {
             for (int i : {1, 0}) {
                 if (closed[i] && !closedWas[i] && hands[i].valid && !grab::holding(i) && !armik::holding(i) &&
-                    !(g_bookOut && g_bookHand == i) && atRightHip(hands[i], i, head)) {
+                    !(g_bookOut && g_bookHand == i) && atSlot(slotFor(tabletNow ? 1 : 0), hands[i], i, head)) {
                     phoneOpen(i);
                     break;
+                }
+            }
+        }
+        // Pass the phone (user 2026-11-04): the free hand closes its grip next to the holding hand while that one
+        // is open: the phone moves to the free hand (mirrored frame), the old hand lets go.
+        bool passedNow = false;  // this frame's grip was the pass, not the screen button
+        if (g_config.phonePass && g_phoneOut && phoneWasOut && !g_tablet && !g_sims1Phone.on && firstPerson) {
+            const int from = g_phoneHand, to = from ^ 1;
+            if (closed[to] && !closedWas[to] && !closed[from] && hands[to].valid && hands[from].valid && !grab::holding(to) &&
+                !armik::holding(to) && !(g_bookOut && g_bookHand == to)) {
+                const float dx = hands[to].position.x - hands[from].position.x, dy = hands[to].position.y - hands[from].position.y,
+                            dz = hands[to].position.z - hands[from].position.z;
+                if (dx * dx + dy * dy + dz * dz < g_config.phonePassReach * g_config.phonePassReach) {
+                    g_phoneHand = to;
+                    passedNow = true;
+                    closed[from] = false;
+                    buzz(to, 0.4f, 0.05f);
+                    buzz(from, 0.2f, 0.03f);
+                    LOG("Phone: passed from the %s hand to the %s hand", from ? "right" : "left", to ? "right" : "left");
                 }
             }
         }
         // The phone's screen wakes with the holding hand's grip (user 2026-10-24 02:26Z: grip, not trigger),
         // pressed away from the hip, with a buzz on that controller.
         if (g_phoneAsleep && (!g_phoneOut || g_tablet ||
-                              (phoneWasOut && closed[g_phoneHand] && !closedWas[g_phoneHand]))) {
+                              (phoneWasOut && !passedNow && closed[g_phoneHand] && !closedWas[g_phoneHand]))) {
             g_phoneAsleep = false;
             g_phoneWokeAt = g_phoneOut ? GetTickCount64() : 0;
             hud::setPhoneAsleep(false);
@@ -249,7 +283,7 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
                 grab::pushControl(7100200);  // phonesound.click: the phone's beep
                 LOG("Phone: screen on (grip of the hand holding it)");
             }
-        } else if (!g_phoneAsleep && g_phoneOut && !g_tablet && !g_sims1Phone.on && phoneWasOut && closed[g_phoneHand] &&
+        } else if (!g_phoneAsleep && g_phoneOut && !g_tablet && !g_sims1Phone.on && phoneWasOut && !passedNow && closed[g_phoneHand] &&
                    !closedWas[g_phoneHand] && g_phoneWokeAt && GetTickCount64() - g_phoneWokeAt > 300) {
             // Shut off (user 2026-10-24 12:36Z): the same grip again, the reverse of waking it.
             g_phoneAsleep = true;
@@ -257,11 +291,12 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
             hud::setPhoneAsleep(true);
             buzz(g_phoneHand, 0.35f, 0.04f);
             grab::pushControl(7100200);
+            if (hud::phoneCallMode() == 1) grab::pushControl(80);  // phonecall.mute_ring: the rest of the ring is vibration
             LOG("Phone: screen off (grip of the hand holding it)");
         }
         // Your notebook: the same at the LEFT hip.
         if (g_bookOut && ((closed[g_bookHand] && !closedWas[g_bookHand] && hands[g_bookHand].valid && head.valid &&
-                           atLeftHip(hands[g_bookHand], g_bookHand, head)) ||
+                           atSlot(slotFor(2), hands[g_bookHand], g_bookHand, head)) ||
                           !firstPerson || !g_config.book)) {
             const bool atHip = firstPerson && g_config.book;
             if (atHip) buzz(g_bookHand, 0.3f, 0.04f);
@@ -269,7 +304,8 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
         } else if (!g_bookOut && firstPerson && g_config.book && head.valid) {
             for (int i : {0, 1}) {
                 if (closed[i] && !closedWas[i] && hands[i].valid && !grab::holding(i) && !armik::holding(i) &&
-                    !(g_phoneOut && g_phoneHand == i) && atLeftHip(hands[i], i, head)) {
+                    !(g_phoneOut && g_phoneHand == i) && !(g_config.phone && slotFor(2) == slotFor(tabletNow ? 1 : 0)) &&
+                    atSlot(slotFor(2), hands[i], i, head)) {
                     bookOpen(i);
                     break;
                 }
@@ -396,6 +432,60 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
     c.escape = menuButton && (frontPanelShown() || gameMenuOpen());
     const bool cancel = boolState(g_secondaryAction, 0) || boolState(g_secondaryAction, 1);
     XrVector2f left = stickState(0), right = stickState(1);
+    // Laser on the phone's screen: the right stick's up and down scroll its lists (the turn on its sideways stays;
+    // crouch, tilt and zoom on up/down are off while it scrolls). The laser's hit is last frame's (laserPhone).
+    {
+        // Where the phone is, in the headset's frame, for the ringtones and notification sounds (foleyaudio: streamed
+        // at the phone, user 2026-10-29: always 3D): the phone in the hand, else where it hangs at the right hip.
+        if (g_eyeValid[0] && g_eyeValid[1]) {
+            const XrVector3f& e0 = g_eyePose[0].position;
+            const XrVector3f& e1 = g_eyePose[1].position;
+            const XrVector3f head{(e0.x + e1.x) * 0.5f, (e0.y + e1.y) * 0.5f, (e0.z + e1.z) * 0.5f};
+            const XrQuaternionf q = g_eyePose[0].orientation;
+            XrVector3f world;
+            if (g_phoneOut) {
+                world = g_phoneBodyPose.position;
+            } else {
+                XrVector3f ahead = rotate3(q, {0, 0, -1});
+                ahead.y = 0;
+                ahead = dot3(ahead, ahead) > 0.01f ? normalize3(ahead) : XrVector3f{0, 0, -1};
+                const XrVector3f right = cross3(ahead, {0, 1, 0});
+                world = {head.x + right.x * 0.2f, head.y - 0.6f, head.z + right.z * 0.2f};
+            }
+            const XrVector3f rel = sub3(world, head);
+            const XrVector3f local = rotate3(XrQuaternionf{-q.x, -q.y, -q.z, q.w}, rel);
+            const float at[3] = {local.x, local.y, local.z};
+            foleyaudio::setPhoneAt(at);
+            // The elevator ride's sound stays where the car's ceiling was when it started (user 2026-10-29: 3D at the car).
+            static XrVector3f s_elevWorld{};
+            static bool s_elevHave = false;
+            if (foleyaudio::takeElevatorAnchor()) {
+                s_elevWorld = {head.x, head.y + 0.9f, head.z};
+                s_elevHave = true;
+            }
+            if (s_elevHave && foleyaudio::elevatorPlaying()) {
+                const XrVector3f er = rotate3(XrQuaternionf{-q.x, -q.y, -q.z, q.w}, sub3(s_elevWorld, head));
+                const float eat[3] = {er.x, er.y, er.z};
+                foleyaudio::setElevatorAt(eat);
+            }
+        }
+    }
+    g_stickScrollNow = 0;
+    float tabletWheel = 0;
+    if (g_tablet && GetTickCount64() - g_laserTabletSeenAt < 250) {
+        // The build tablet shows the game's own UI: the right stick's up and down are the mouse wheel under the
+        // laser (the item drawer scrolls; user 2026-11-01).
+        const float dz = g_config.phoneStickDeadzone;
+        tabletWheel = std::fabs(right.y) > dz ? right.y : 0.f;
+        right.y = 0;
+    } else if (g_config.phoneStickScroll > 0 && g_phoneSheet.m.active && GetTickCount64() - g_laserPhoneSeenAt < 250) {
+        const float a = std::fabs(right.y), dz = g_config.phoneStickDeadzone;
+        if (a > dz) g_stickScrollNow = -(right.y > 0 ? 1.f : -1.f) * (a - dz) / (1.f - dz) * g_config.phoneStickScroll;
+        // The build tablet shows the game's own UI: the same stick scrolls its lists (the item drawer) as the
+        // mouse wheel under the laser (user 2026-11-01).
+        
+        right.y = 0;
+    }
 
     // The pie menu at your hand: opened for a click into the world in first
     // person, closed when you pick, press Escape, or leave first person.
@@ -446,6 +536,7 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
             }
         }
         g_piePhoneAskedAt = 0;
+        g_pieClick = g_lastWorldClick;
         g_lastWorldClick.valid = false;
     }
     updatePiePalm(time, hands);
@@ -499,6 +590,7 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
         updateObjectMenu(mode() == Mode::Stereo && steadyBody(), headOk, pose);
     }
     updateSims1Screen(mode() == Mode::Stereo && camera::bodyActive());
+    updateTvScreen(mode() == Mode::Stereo && camera::bodyActive());
     // The menus on your left wrist (first person, while no pie menu is open).
     {
         // The game's full UI on your wrist: only with "Both", from the watch's UI button
@@ -554,6 +646,27 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
     // A game popup (first person): the controllers buzz like a phone, two short pulses, again
     // every 5 s while the phone is away (3 rings); with the phone out, only
     // the hand holding it buzzes, once, and its screen is measured again.
+    {
+        // An incoming call (phonecall.py): the ringtone plays from the phone; the controllers buzz instead (or as well)
+        // when the phone is away, its screen is off (the ringtone is muted then), or the phone is on vibrate / without
+        // a ringtone; never in mute mode. Taking the phone out while it rings shows the call.
+        static ULONGLONG callAt = 0;
+        if (hud::phoneCallMode() != 1 || g_config.phoneSoundMode == 2 || !(mode() == Mode::Stereo && camera::bodyActive())) {
+            callAt = 0;
+        } else if (!callAt || now >= callAt) {
+            const bool silentPhone = g_config.phoneSoundMode == 1 || g_config.phoneRingtone == 0;
+            if (!g_phoneOut) {
+                buzz(0, 0.8f, 0.12f);
+                buzz(1, 0.8f, 0.12f);
+                callAt = now + 2200;
+            } else if (g_phoneAsleep || silentPhone) {
+                buzz(g_phoneHand, 0.6f, 0.12f);
+                callAt = now + 900;
+            } else {
+                callAt = now + 900;
+            }
+        }
+    }
     {
         static ULONGLONG pulseAt = 0;
         static int rings = 0, pulse = 0;
@@ -718,13 +831,73 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
         XrVector2f& s = laserHand ? right : left;
         if (trayStick(s, trayDt)) s = {0, 0};
     }
-    c.alt = trayOn(hud::kTrayAlt) && g_traySheet.m.active;
+    c.alt = (trayOn(hud::kTrayAlt) || trayOn(hud::kTrayFreePlace)) && g_traySheet.m.active;
     c.shift = trayOn(hud::kTrayShift) && g_traySheet.m.active;
+    // Flying the drone (drone.h): the left stick flies where you look, the right stick's up/down lifts, A / X lands.
+    // The Sim doesn't walk, crouch or open a pie meanwhile.
+    float droneLift = 0;
+    if (mode() == Mode::Stereo && camera::bodyActive() && drone::active()) {
+        const bool landKey = (boolState(g_primaryAction, 0) && floatState(g_gripAction, 0) < 0.3f) ||
+                             (boolState(g_primaryAction, 1) && floatState(g_gripAction, 1) < 0.3f);
+        updateWalk(left, time);
+        float wx = 0, wz = 0, ws = 0;
+        if (!walkInput(wx, wz, ws)) wx = wz = ws = 0;
+        droneLift = right.y;
+        drone::input(wx, wz, ws, droneLift, landKey);
+        if (landKey) c.rightButton = false;
+        right.y = 0;
+    }
     if (mode() == Mode::Stereo && camera::bodyActive()) {
         // First person: the left stick walks the Sim (Python reads walkInput),
         // in the direction you are looking.
-        updateWalk(left, time);
-        camera::holdBodyTurn(std::sqrt(left.x * left.x + left.y * left.y) > 0.25f);
+        const bool teleMode = g_config.moveMode == 1;
+        if (teleMode) {
+            // Point to teleport (teleport.cpp): the left stick doesn't walk; the aiming stick pushed forward shows
+            // the pointer from its hand, letting go jumps. The stick is spent on it while it is held.
+            updateWalk({0, 0}, time);
+            camera::holdBodyTurn(false);
+            const int hand = g_config.teleStick == 1 ? 1 : 0;
+            XrVector2f& st = hand ? right : left;
+            static bool teleHeld = false;
+            const bool allowed = laserHand < 0 && !g_pie.active && !g_objMenu.active && !(hand == 1 && settings::isOpen());
+            bool held = allowed && st.y > (teleHeld ? 0.3f : 0.6f) && std::fabs(st.x) < (teleHeld ? 0.7f : 0.45f);
+            float origin[3] = {}, dir[3] = {}, feet[3] = {};
+            float pose[8];
+            XrSpaceLocation aimLoc{XR_TYPE_SPACE_LOCATION};
+            const XrSpaceLocationFlags need = XR_SPACE_LOCATION_ORIENTATION_VALID_BIT | XR_SPACE_LOCATION_POSITION_VALID_BIT;
+            camera::View tv;
+            if (held && g_aimSpaces[hand] && XR_SUCCEEDED(xrLocateSpace(g_aimSpaces[hand], g_appSpace, time, &aimLoc)) &&
+                (aimLoc.locationFlags & need) == need && player::pose(pose) && camera::lastView(tv)) {
+                const XrVector3f f = forwardOf(aimLoc.pose.orientation);
+                camera::Vec3 o, d;
+                if (camera::xrToWorld({aimLoc.pose.position.x, aimLoc.pose.position.y, aimLoc.pose.position.z}, o) &&
+                    camera::xrDirectionToWorld({f.x, f.y, f.z}, d)) {
+                    origin[0] = o.x, origin[1] = o.y, origin[2] = o.z;
+                    dir[0] = d.x, dir[1] = d.y, dir[2] = d.z;
+                    feet[0] = pose[0], feet[1] = pose[1], feet[2] = pose[2];
+                    teleport::Options to;
+                    to.style = g_config.teleStyle;
+                    to.maxDistance = g_config.teleDistance;
+                    to.blink = g_config.teleBlink;
+                    to.blinkSeconds = g_config.teleBlinkTime;
+                    to.marker = g_config.teleMarker;
+                    teleport::configure(to);
+                    teleport::update(true, origin, dir, tv.scale, feet);
+                } else {
+                    held = false;
+                }
+            } else {
+                held = false;
+            }
+            if (!held) teleport::update(false, origin, dir, 1.f, feet);
+            if (held && !teleHeld) buzz(hand, 0.15f, 0.03f);
+            teleHeld = held;
+            if (held) st = {0, 0};
+        } else {
+            teleport::stop();
+            updateWalk(left, time);
+            camera::holdBodyTurn(std::sqrt(left.x * left.x + left.y * left.y) > 0.25f);
+        }
         // Right stick turns you (smooth turn): gentle near the centre, fast at the edge.
         // Timed by the frames' display times, so every frame you see is turned
         // by the same step; the PC clock here jitters with xrWaitFrame's return.
@@ -804,7 +977,14 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
         } else if (a > 0.15f) {
             float shaped = (a - 0.15f) / 0.85f;
             shaped *= shaped;
-            g_stickRate = (right.x > 0 ? -1 : 1) * shaped * g_config.bodyTurnRate * 0.0174533f;
+            const float target = (right.x > 0 ? -1 : 1) * shaped * g_config.bodyTurnRate * 0.0174533f;
+            static float eased = 0;
+            if (g_config.turnEase > 0.01f && dt > 0) {
+                eased += (target - eased) * (1.f - std::exp(-dt / (g_config.turnEase * 0.3f)));
+                g_stickRate = eased;
+            } else {
+                eased = g_stickRate = target;
+            }
             camera::turnBody(g_stickRate * dt);
             benchmark::turned(g_stickRate * dt);
         }
@@ -838,7 +1018,7 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
         c.panY = left.y;
     }
     c.rotate = -right.x;  // push right to turn the view right
-    c.zoom = right.y;
+    c.zoom = tabletWheel != 0 ? tabletWheel : right.y;
     c.turnSpeed = g_config.turnSpeed;
 
     XrSpaceLocation aim{XR_TYPE_SPACE_LOCATION};
@@ -859,9 +1039,15 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
         c.leftButton = c.rightButton = false;
         c.hasTarget = false;
     }
+    // A finger on the Linear board on a TV or computer (13b_tv_screen.inc pokeTv) moves its cards.
+    const bool pokingTv = !pokingSims1 && laserHand < 0 && !g_pie.active && !g_objMenu.active && pokeTv(hands, triggerDown);
+    if (pokingTv) {
+        c.leftButton = c.rightButton = false;
+        c.hasTarget = false;
+    }
     // The pie on a palm: the other hand's finger pokes it.
     const bool pieHands[2] = {g_piePalm != 0, g_piePalm != 1};
-    bool poking = pokingSims1 || (laserHand < 0 && ((g_pie.active && (g_pie.own ? pokeHud(g_hud[kHudPie], hands, pieHands)
+    bool poking = pokingSims1 || pokingTv || (laserHand < 0 && ((g_pie.active && (g_pie.own ? pokeHud(g_hud[kHudPie], hands, pieHands)
                                                                                : pokeSheet(g_pie, hands, bothHands, triggerDown, pulled, c,
                                                                                            camera::bodyActive()))) ||
                                     (g_traySheet.m.active && pokeTray(hands, freeHand)) ||
@@ -949,7 +1135,19 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
         // A / X as its right button.
         const bool claudeWorldClick = onScreen && claudescreen::on() && c.rightButton;
         g_laserOnClaude = onScreen && claudescreen::on() && !claudeWorldClick;
-        const bool onSims1 = onScreen && !claudeWorldClick;
+        // Discord on a TV (its own picture, clicked only when [discord] interactive): the trigger is its left
+        // button; A / X reaches the TV itself, so its pie (Close Discord) opens.
+        XrVector3f tvHit{};
+        float tu = 0, tv = 0;
+        const bool onTvPic = !onScreen && !settingsDragged && !onSettings && !onPalm && !g_pie.active && !g_objMenu.active &&
+                             hitTv(o, d, tvHit, tu, tv);
+        const bool tvWorldClick = onTvPic && c.rightButton;
+        const bool onTv = onTvPic && !tvWorldClick;
+        const bool onSims1 = (onScreen && !claudeWorldClick) || onTv;
+        if (tvWorldClick) {
+            c.leftButton = true;
+            c.rightButton = false;
+        }
         if (claudeWorldClick) {
             c.leftButton = true;
             c.rightButton = false;
@@ -1013,6 +1211,7 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
                     }
                 } else if (g_phone.active && g_phone.solid) {
                     // The tablet: all of it is in front of the world.
+                    g_laserTabletSeenAt = now;
                     onPanel = true;
                     onPie = g_uiAlphaUnderLaser > kPieOpaque;
                     onTabletBlank = !onPie;
@@ -1044,9 +1243,14 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
         } else if (onSims1) {
             // Sims 1's mouse: the trigger is its left button, A / X its right (Claude: the trigger only).
             g_laserFrom = o;
-            g_laserTo = panelHit;
             g_laserValid = true;
-            sims1Mouse(pu, pv, (c.leftButton ? 1 : 0) | (c.rightButton ? 2 : 0));
+            if (onTv) {
+                g_laserTo = tvHit;
+                tvMouse(tu, tv, c.leftButton ? 1 : 0);
+            } else {
+                g_laserTo = panelHit;
+                sims1Mouse(pu, pv, (c.leftButton ? 1 : 0) | (c.rightButton ? 2 : 0));
+            }
             c.leftButton = c.rightButton = false;
         } else if (onSettings) {
             // Nothing behind the settings menu gets the trigger, until it is let go.
@@ -1207,23 +1411,66 @@ static void updateControls(XrTime time, const D3D11_TEXTURE2D_DESC& desc) {
         constexpr ULONGLONG kWorldClickMs = 80, kWorldHoldMs = 300;
         static bool rawWas = false, worldPress = false;
         static ULONGLONG worldPressAt = 0;
-        static float pressU = 0, pressV = 0;
+        static float pressU = 0, pressV = 0, nudgeU = 0;
+        static bool dragOut = false;  // build mode: the laser left the press's dead zone, so the press follows it (a drag)
         // Build/buy: holds are the tools' own drags (roof handles, walls,
         // moving an object), so the press stays down as long as the trigger
         // (user 2026-10-26: roof arrows could not be held to resize).
+        // In build mode (first person) the trigger is a click, not a hold (user 2026-11-01: a held press on a
+        // placed object went straight into the game's drag-to-rotate; now it picks the object up to move, and the
+        // laser hand's stick turns it).
+        const int trayTab = hud::trayCategory();
+        const bool objectsTab = g_buildBuy && trayTab == 0;  // any other tab, or the tray closed, keeps the held press (terrain spray, walls, roofs)
         const bool raw = c.leftButton;
-        if (!raw) {
+        // Build mode: the click comes after the mouse has hovered the spot 150 ms (the first click used to select and
+        // drop at once: the game had not picked the object under the mouse yet) and lasts 100 ms (a longer press
+        // turns into the game's hold-to-rotate), whether or not the trigger is still down by then.
+        const ULONGLONG kBuildHoverMs = static_cast<ULONGLONG>(g_config.tabletClickHover);
+        const ULONGLONG kBuildPressMs = g_config.tabletClickPress > 0 ? static_cast<ULONGLONG>(g_config.tabletClickPress) : 100000ull;  // 0: until the trigger is let go
+        const bool pressHeld = g_config.tabletClickPress <= 0;
+        if (!raw && !(g_buildBuy && !pressHeld && worldPress && now - worldPressAt <= kBuildHoverMs + kBuildPressMs)) {
             worldPress = false;
-        } else if (!rawWas && onWorld && !onPie && camera::bodyActive() && !g_buildBuy) {
+        } else if (!raw) {
+            // latched build-mode click, still running
+        } else if (!rawWas && onWorld && !onPie && camera::bodyActive() && (!g_buildBuy || objectsTab)) {
             worldPress = true;
             worldPressAt = now;
             pressU = c.u;
             pressV = c.v;
+            dragOut = false;
         }
         rawWas = raw;
-        if (worldPress && now - worldPressAt > kWorldClickMs) c.leftButton = false;
-        if (worldPressAt && now - worldPressAt < kWorldHoldMs && camera::bodyActive() && c.hasTarget && !onPie) {
-            c.u = pressU;
+        // Build mode: a longer press (user 2026-11-01: picks mostly selected and dropped at once; the game's pick lags).
+        if (worldPress && g_buildBuy) {
+            const ULONGLONG age = now - worldPressAt;
+            c.leftButton = pressHeld ? raw && age >= kBuildHoverMs : age >= kBuildHoverMs && age <= kBuildHoverMs + kBuildPressMs;
+            // While it hovers the mouse is nudged a pixel back and forth, so the game gets move events over the
+            // object and refreshes its pick (a click on a mouse that only rested there selected and dropped it).
+            static int nudge = 0;
+            nudgeU = age < kBuildHoverMs ? ((++nudge & 1) ? 0.0004f : 0.0f) : 0.0f;
+            static bool clickLogged = false;
+            if (c.leftButton != clickLogged) {
+                clickLogged = c.leftButton;
+                LOG("Build click: mouse %s at %.4f %.4f, %llu ms after the trigger", c.leftButton ? "down" : "up", c.u, c.v,
+                    static_cast<unsigned long long>(age));
+            }
+            if (!raw && (pressHeld || age > kBuildHoverMs + kBuildPressMs)) worldPress = false;
+        } else if (worldPress && now - worldPressAt > kWorldClickMs) {
+            c.leftButton = false;
+        }
+        // Build mode: the game turns a press into a drag (and so into rotating the object) once the mouse has moved
+        // more than ~7 px since it went down (1.128 exe, tool tick FUN_140b39940: squared distance > 50). A hand's
+        // shake does that in a moment, so the mouse stays put while the button is down until the laser has gone a
+        // deliberate 2 % of the view from where the press began.
+        if (g_buildBuy && worldPress && c.hasTarget && !dragOut &&
+            std::hypot(c.u - pressU, (c.v - pressV) * 1.07f) > 0.02f) {
+            dragOut = true;
+            LOG("Build click: the laser left the press's dead zone: it drags now");
+        }
+        const bool deadZone = g_buildBuy && worldPress && raw && !dragOut;
+        if (worldPressAt && (deadZone || now - worldPressAt < (g_buildBuy ? 600 : kWorldHoldMs)) && !dragOut &&
+            camera::bodyActive() && c.hasTarget && !onPie) {
+            c.u = pressU + nudgeU;
             c.v = pressV;
         }
     }

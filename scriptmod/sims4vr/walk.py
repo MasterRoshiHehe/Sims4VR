@@ -42,7 +42,7 @@ import terrain
 
 from interactions.utils.interaction_liabilities import ANIMATION_CONTEXT_LIABILITY
 
-from sims4vr import carried, collide, doors, follow, halt, hint, native, outdoors, scripted, stairs, stride, trail
+from sims4vr import carried, collide, doors, drone, follow, halt, hint, native, outdoors, scripted, stairs, stride, swim, trail
 from sims4vr import hooks
 from sims4vr import livedrag  # noqa: F401  (no live-mode pick-up in first person)
 
@@ -90,6 +90,7 @@ _body_view_kinds = {}  # affordance: listed or not
 _held = ()
 _surface = None  # the level you walk on (the game's idea of it lags while you climb)
 _flight = None  # the flight of stairs you were on last tick
+_follow_surface = None  # the level the simulation's Sim followed you on last on the steps (a mid-flight exit keeps it)
 _follow = [0.0, None]  # on the steps: when the simulation's Sim last followed you, and its level then
 STAIR_FOLLOW_EVERY = 0.25  # seconds between moves of the simulation's Sim along a flight
 STAIR_FOLLOW_DISTANCE = 0.1  # metres you move on the steps before it follows
@@ -133,6 +134,7 @@ def stop():
     stairs.forget()
     collide.forget()
     carried.forget()
+    drone.forget()
     sim = services.get_active_sim()
     if sim is not None:
         stride.stop(sim)
@@ -216,6 +218,146 @@ def _too_deep(x, z, level, here):
     return depth > WATER_DEEP and depth >= here
 
 
+_tele_plan = None  # (x, z, y, surface, time) of the last open spot answered: where a jump arrives
+TELE_END_OUT = 0.35  # metres past a flight's end where a jump through it lands/starts
+
+
+def _tele_clear(a, b, surface, context):
+    return bool(routing.ray_test(_location(a[0], a[1], a[2], surface), _location(b[0], b[1], b[2], surface), context))
+
+
+def _tele_floor(x, z, surface):
+    return terrain.get_terrain_height(x, z, routing_surface=surface)
+
+
+def _tele_ends(f):
+    """The two ends of a flight: (point just outside the end, floor height, level), bottom then top."""
+    return (((f.bx - f.dx * TELE_END_OUT, f.bz - f.dz * TELE_END_OUT), f.h0, f.low),
+            ((f.bx + f.dx * (f.run + TELE_END_OUT), f.bz + f.dz * (f.run + TELE_END_OUT)), f.h1, f.high))
+
+
+def _tele_via_stairs(sim, start, tx, tz, rise, depth=2):
+    """A way to (tx, tz) through up to `depth` flights of stairs: start is (x, y, z, level). Each flight is entered
+    at an end you can see from where you are, on that end's level, and left at the other end. Returns
+    (ty, level) or None. The spot may also be on the steps themselves."""
+    x, y, z, surface = start
+    context = sim.routing_context
+    key = stairs.surface_key(surface)
+    for f in stairs.flights():
+        ends = _tele_ends(f)
+        for i in (0, 1):
+            (ex, ez), eh, esurf = ends[i]
+            if stairs.surface_key(esurf) != key or abs(eh - y) > 0.8:
+                continue
+            if not _tele_clear((x, y, z), (ex, eh, ez), surface, context):
+                continue
+            (ox, oz), oh, osurf = ends[1 - i]
+            # On the steps themselves.
+            s, l = f.coords(tx, tz)
+            if 0.0 < s < f.run and abs(l) < f.half_w:
+                return f.height(s), (osurf if abs(f.height(s) - oh) < abs(f.height(s) - eh) else esurf)
+            ty = _tele_floor(tx, tz, osurf)
+            if abs(ty - oh) <= rise and _tele_clear((ox, oh, oz), (tx, ty, tz), osurf, context):
+                return ty, osurf
+            if depth > 1:
+                found = _tele_via_stairs(sim, (ox, oh, oz, osurf), tx, tz, rise, depth - 1)
+                if found is not None:
+                    return found
+    return None
+
+
+def _tele_check(sim, px, py, pz):
+    """Point-to-teleport (teleport.cpp, [controls] move_mode 1): the DLL asks whether you may jump to a spot. Open
+    when the straight line from your feet to it is clear on the navmesh (no wall, closed-off area or edge of the
+    lot between), its floor is within [teleport] max_rise of yours, and it is not on deep water. Stairs are a
+    portal the navmesh line does not cross, so with [teleport] other_levels the way may lead through up to two
+    flights (each entered at an end you can see, left at the other): onto the steps, over a small stair, or to
+    another floor of the lot. The answer carries the floor height there; the DLL also checks furniture."""
+    global _tele_plan
+    q = native.tele_query()
+    if q is None:
+        return
+    seq, tx, tz = q
+    ok = False
+    ty = py
+    try:
+        surface = _surface_of(sim)
+        rise = float(native.setting('teleport', 'max_rise', '1.0'))
+        other = native.setting_flag('teleport', 'other_levels', True)
+        if surface.type != routing.SurfaceType.SURFACETYPE_POOL:
+            ty = _tele_floor(tx, tz, surface)
+            plan = None
+            if abs(ty - py) <= rise and stairs.flight_under(tx, ty, tz) is None and _tele_clear(
+                    (px, py, pz), (tx, ty, tz), surface, sim.routing_context):
+                ok, plan = True, surface
+            elif other:
+                found = _tele_via_stairs(sim, (px, py, pz, surface), tx, tz, rise)
+                if found is not None:
+                    ty, plan = found
+                    ok = True
+            if ok and _water_depth(tx, tz, getattr(plan, 'secondary_id', surface.secondary_id)) > WATER_DEEP:
+                ok = False
+            if ok:
+                _tele_plan = (tx, tz, ty, plan, time.monotonic())
+    except Exception as e:
+        ok = False
+        native._log('walk: teleport check failed: {!r}'.format(e))
+    native.tele_answer(seq, 1 if ok else 0, ty)
+
+
+_void = [None, None, 0.0]  # last spot on the navmesh (x, y, z), since when none was near you, next check
+
+
+def _void_guard(sim, px, py, pz):
+    """Out of bounds: nothing walkable within 0.5 m of you for 1.5 s (a door or gap in the basement walls let you
+    out into the void, user 2026-11-04): you are put back at the last spot that was on the navmesh."""
+    now = time.monotonic()
+    if now < _void[2]:
+        return
+    _void[2] = now + 0.25
+    try:
+        surface = _surface_of(sim)
+        if surface.type == routing.SurfaceType.SURFACETYPE_POOL:
+            _void[1] = None
+            return
+        here = routing.test_point_placement_in_navmesh(surface, sims4.math.Vector3(px, py, pz))
+        near = here or any(routing.test_point_placement_in_navmesh(surface, sims4.math.Vector3(px + dx, py, pz + dz))
+                           for dx, dz in ((0.5, 0), (-0.5, 0), (0, 0.5), (0, -0.5)))
+    except Exception:
+        return
+    if here:
+        _void[0] = (px, py, pz)
+    if near:
+        _void[1] = None
+    elif _void[1] is None:
+        _void[1] = now
+    elif now - _void[1] > 1.5 and _void[0] is not None:
+        x, y, z = _void[0]
+        native._log('walk: out of bounds at {:.2f} {:.2f} {:.2f} (no floor near you for {:.1f} s): put back at {:.2f} {:.2f} {:.2f}'.format(
+            px, py, pz, now - _void[1], x, y, z))
+        _void[1] = None
+        native.player_teleport(x, y, z)
+
+
+def _tele_arrived(sim, pose):
+    """After a jump: your level follows the spot it was answered for (the Sim goes there on the next sync)."""
+    global _tele_plan, _surface, _flight
+    plan = _tele_plan
+    if plan is None:
+        return
+    if time.monotonic() - plan[4] > 10.0:
+        _tele_plan = None
+        return
+    if math.hypot(pose[0] - plan[0], pose[2] - plan[1]) > 0.3 or abs(pose[1] - plan[2]) > 0.6:
+        return
+    _tele_plan = None
+    if stairs.surface_key(plan[3]) != stairs.surface_key(_surface_of(sim)):
+        _surface = plan[3]
+        _flight = None
+        native._log('walk: teleported to level {} ({:.2f} high)'.format(getattr(plan[3], 'secondary_id', '?'), plan[2]))
+    _sync(sim, pose, False, force=True)
+
+
 @native.timed('walk wall check', 0.006)
 def _blocked_mask(sim, x, y, z, on):
     if on is not None:
@@ -224,15 +366,19 @@ def _blocked_mask(sim, x, y, z, on):
     origin = _location(x, y, z, surface)
     context = sim.routing_context
     mask = 0
-    swim_level = None if surface.type == routing.SurfaceType.SURFACETYPE_POOL else surface.secondary_id
+    pool = surface.type == routing.SurfaceType.SURFACETYPE_POOL
+    swim_level = None if pool else surface.secondary_id
     here = _water_depth(x, z, swim_level) if swim_level is not None else 0.0
     for i in range(RAYS):
         a = i * 2 * math.pi / RAYS
         end = _location(x + math.sin(a) * PROBE_DISTANCE, y, z + math.cos(a) * PROBE_DISTANCE, surface)
         if not routing.ray_test(origin, end, context) or (
+                pool and not swim.in_water(x + math.sin(a) * swim.SWIM_EDGE, z + math.cos(a) * swim.SWIM_EDGE,
+                                           surface.secondary_id)) or (  # swimming: the shore is closed (swim.py leaves by the game)
                 swim_level is not None and _too_deep(x + math.sin(a) * PROBE_DISTANCE,
                                                      z + math.cos(a) * PROBE_DISTANCE, swim_level, here)):
             mask |= 1 << i
+    mask = collide.relax(mask, x, y, z, surface)
     for flight in stairs.near(x, y, z, PROBE_DISTANCE + 1.0):
         mask = _stair_mask(mask, flight, x, y, z)
     for passage in doors.passages(sim, x, y, z, PASSAGE_REACH):
@@ -254,7 +400,7 @@ def _stair_mask(mask, f, x, y, z):
     s, l = f.coords(x, z)
     rail = max(0.15, f.half_w - STAIR_RAIL_MARGIN)
     along = math.atan2(f.dx, f.dz)
-    if f.on(x, y, z):
+    if f.on(x, y, z, f is _flight):
         mask = ALL_RAYS
         inward = along + (-math.pi / 2 if l > 0 else math.pi / 2)
         for i in range(RAYS):
@@ -360,6 +506,8 @@ def _floor(sim, x, y, z, f):
         gx, gz = f.slope()
         return (x - f.dx * s, z - f.dz * s, f.h0, gx, gz, min(f.h0, f.h1), max(f.h0, f.h1))
     surface = _surface_of(sim)
+    if surface.type == routing.SurfaceType.SURFACETYPE_POOL:
+        return (x, z, swim.floor_height(x, z, surface, y), 0.0, 0.0) + NO_CLAMP
     key = (round(x * 100), round(z * 100), stairs.surface_key(surface))
     if _floor_cache is not None and _floor_cache[0] == key:
         return _floor_cache[1]
@@ -415,6 +563,8 @@ def _follow_on_steps(sim, pose, f):
                         'none' if high is None else '{:.2f}'.format(high)))
     _follow[0] = now
     _follow[1] = key
+    global _follow_surface
+    _follow_surface = level
     orientation = sims4.math.Quaternion(0.0, math.sin(pose[3] / 2), 0.0, math.cos(pose[3] / 2))
     _move(sim, sims4.math.Vector3(x, y, z), orientation, level)
 
@@ -426,6 +576,10 @@ def _climb(sim, pose, on):
     global _flight, _surface
     x, y, z = pose[0], pose[1], pose[2]
     if on is not None:
+        if _flight is not on:
+            s, l = on.coords(x, z)
+            native.why('stairs: onto {!r}: s {:.2f}/{:.2f}, side {:.2f}, y {:.2f}, ramp {:.2f}'.format(
+                on, s, on.run, l, y, on.height(s)))
         _flight = on
         _follow_on_steps(sim, pose, on)
         return True
@@ -433,14 +587,26 @@ def _climb(sim, pose, on):
         f = _flight
         _flight = None
         _follow[1] = None
-        s, _ = f.coords(x, z)
+        s, l = f.coords(x, z)
         if s >= f.run:
-            new = f.high
+            new, how = f.high, 'out of the top'
         elif s <= 0.0:
-            new = f.low
+            new, how = f.low, 'out of the bottom'
+        elif _follow_surface is not None:
+            # Off the side or off the ramp's height in the middle of the flight: the level the Sim was following
+            # you on stays (the nearest end's height used to send you down or up, whichever end was nearer).
+            new, how = _follow_surface, 'MID-FLIGHT, kept the followed level'
         else:
-            new = f.high if abs(f.h1 - y) < abs(f.h0 - y) else f.low
+            new, how = (f.high if abs(f.h1 - y) < abs(f.h0 - y) else f.low), 'MID-FLIGHT, nearest end'
         changed = stairs.surface_key(new) != stairs.surface_key(_surface_of(sim))
+        low, high = _level_floors(f, x, z)
+        native.why('stairs: left {!r}: {}; s {:.2f}/{:.2f}, side {:.2f}/{:.2f}, y {:.2f}, ramp {:.2f}; floors here low {} '
+                   'high {}; level {} -> {}'.format(
+                       f, how, s, f.run, l, f.half_w, y, f.height(s),
+                       'none' if low is None else '{:.2f}'.format(low), 'none' if high is None else '{:.2f}'.format(high),
+                       getattr(_surface_of(sim), 'secondary_id', '?'), getattr(new, 'secondary_id', '?')))
+        if 'MID' in how:
+            native.dump_trace('stairs: left a flight mid-way')
         if changed:
             _surface = new
             native._log('walk: now on level {} ({:.2f} high)'.format(getattr(new, 'secondary_id', '?'), y))
@@ -711,6 +877,9 @@ def _take_over(sim):
     now = time.monotonic()
     if now - _last_take_over < TAKE_OVER_EVERY:
         return
+    from sims4vr import work
+    if work.active():
+        return  # eyes shut for work: the game walks your Sim to the street (work.py)
     social = halt.social_running(sim)
     if social is not None:
         _last_take_over = now
@@ -806,10 +975,13 @@ def _tick(_handle):
     try:
         from sims4vr import body
         if not body.enabled:
+            drone.forget()
             return
         sim = services.get_active_sim()
         if sim is None:
             return
+        if drone.update(sim):
+            return  # you fly the drone (drone.py): the Sim stands where it is
         _sleep_state(sim)
         from sims4vr import fades
         fades.scene_tick(sim)  # eyes closed while a WickedWhims scene switches animations
@@ -823,6 +995,8 @@ def _tick(_handle):
         from sims4vr import loadshut
         loadshut.update(game, pushing)  # eyes shut and time paused since the load until you can move
         carried.update(sim)
+        trail.ride_update()  # the elevator ride's eyes and timing
+        swim.update(sim)
         # The stick still pushed from walking onto a trail's spot isn't a cancel (trail.py).
         late = trail.arrival_push(pushing)
         if game and pushing and not carried.active() and not late:
@@ -837,7 +1011,9 @@ def _tick(_handle):
         if not (free and not game):
             _surface = sim.routing_surface  # the game moves the Sim: its level is right
             _flight = None
-        on = stairs.flight_under(px, py, pz) if not game else None
+        if free and not game:
+            _tele_arrived(sim, pose)
+        on = stairs.flight_under(px, py, pz, _flight) if not game else None
         moving = bool(free and pose[4])
         mask = 0 if game else _cached_mask(sim, px, py, pz, on, pushing, moving)
         if free and not game:
@@ -847,13 +1023,30 @@ def _tick(_handle):
                     mask = ALL_RAYS  # a hug or kiss with you: the stick doesn't walk you out of it
             except Exception as e:
                 native._log('walk: pair lock failed: {!r}'.format(e))
-        ramp = stairs.ramp(px, py, pz)
+        if free and not game and trail.riding():
+            mask = ALL_RAYS  # the elevator ride: the stick doesn't move you until the doors open (trail.py)
+        ramp = stairs.ramp(px, py, pz, held=_flight)
         native.set_player_state(not game, mask, _floor(sim, px, py, pz, ramp), _flight_sides(ramp))
+        if free and not game:
+            _tele_check(sim, px, py, pz)
+            if ramp is None and on is None and not trail.riding():
+                _void_guard(sim, px, py, pz)
+            else:
+                _void[1] = None
         try:
             # The collision scene (collide.py, phase 1: built and compared with the ray check, not used yet).
             c = _mask_cache
             fresh = c is not None and math.hypot(c[0] - px, c[2] - pz) < 0.05
             collide.update(sim, px, py, pz, _surface_of(sim), free and not game and on is None and fresh, mask)
+            # the DLL's basement view follows the level you walk on; on a flight of steps both its levels show
+            # (1000 + (lower + 8) * 20 + upper + 8), so no wall goes missing while the walk level flips mid-flight
+            lvl = getattr(_surface_of(sim), 'secondary_id', 0)
+            if ramp is not None:
+                lo = getattr(ramp.low, 'secondary_id', lvl)
+                hi = getattr(ramp.high, 'secondary_id', lvl)
+                if -8 <= lo <= hi <= 11:
+                    lvl = 1000 + (lo + 8) * 20 + hi + 8
+            native.set_sim_level(lvl)
         except Exception as e:
             native._log('walk: collision scene failed: {!r}'.format(e))
         if free and not game:
@@ -864,12 +1057,18 @@ def _tick(_handle):
             doors.swing(sim, px, py, pz)
             doors.push(sim, px, py, pz)
             if pushing and on is None:
-                carried.try_start(sim, px, py, pz, stick, _surface_of(sim))
+                if not carried.try_start(sim, px, py, pz, stick, _surface_of(sim)):
+                    swim.try_start(sim, px, py, pz, stick, _surface_of(sim))
         else:
             doors.close_all()  # the game's own routes swing doors as it walks the Sim
         on_stairs = on is not None or (
             ramp is not None and -STAIR_WALK_REACH < ramp.coords(px, pz)[0] < ramp.run + STAIR_WALK_REACH)
         if on_stairs:
+            f = on if on is not None else ramp
+            fs, fl = f.coords(px, pz)
+            native.trace('move: at {:.2f} {:.2f} {:.2f} on={} held={} s={:.2f}/{:.2f} side={:.2f}/{:.2f} ramp_y={:.2f} '
+                         'level={}'.format(px, py, pz, on is not None, on is not None and on is _flight, fs, f.run, fl,
+                                           f.half_w, f.height(fs), getattr(_surface_of(sim), 'secondary_id', '?')))
             _log_stairs(sim, px, py, pz, on, ramp)
         hint.update(sim, px, py, pz)
         follow.update(sim, px, py, pz)

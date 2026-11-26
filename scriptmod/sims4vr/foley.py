@@ -304,6 +304,12 @@ def _tick(_handle):
                     from sims4vr import knockout
                     knockout.hit(_npc(you, event[3], now), event[1], event[2], event[4], event[5] > 0)
                 continue
+            if event[0] == 8:  # a shove (bodygrab.shove judges it; its sound came from the DLL)
+                you = _you()
+                if you is not None:
+                    from sims4vr import bodygrab
+                    bodygrab.shove(you, _npc(you, event[3], now), event[1], event[4], event[5] > 0)
+                continue
             if not _settings['on'] or played >= 3:
                 continue  # drained, not heard
             you = _you()

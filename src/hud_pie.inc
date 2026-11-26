@@ -26,6 +26,7 @@ struct PieContent {
     std::vector<PieItem> items;
     std::map<uint64_t, PieCategory> categories;
     bool resolved = false, valid = false;
+    bool texts = false;  // the labels were resolved when the options came (setPieContent), off the render thread
 };
 // A node of the tree: an item (item >= 0) or a category (its key; More pages are categories too).
 struct PieNode {
@@ -264,6 +265,20 @@ void pieBuild() {
     g_piePressed = false;
 }
 
+// The labels and category names from the game's string tables (pure lookups: safe on any thread).
+static void pieResolveTexts(PieContent& p, int& named) {
+    for (PieItem& it : p.items) {
+        it.label = strings::resolve(it.labelJson);
+        if (!it.disabledJson.empty()) it.disabled = strings::resolve(it.disabledJson);
+        if (!it.label.empty()) ++named;
+    }
+    for (auto& kv : p.categories) {
+        PieCategory& c = kv.second;
+        if (!c.overrideJson.empty()) c.name = strings::resolve(c.overrideJson);
+        if (c.name.empty()) c.name = strings::resolve(c.nameJson);
+    }
+}
+
 void resolvePie() {
     bool fresh = false;
     {
@@ -289,15 +304,10 @@ void resolvePie() {
         g_pieMarker = strings::resolve("{\"hash\": 1540200036}");    // KeysGP.PIE_MENU_CATEGORY_MARKER
     }
     int named = 0;
-    for (PieItem& it : p.items) {
-        it.label = strings::resolve(it.labelJson);
-        if (!it.disabledJson.empty()) it.disabled = strings::resolve(it.disabledJson);
-        if (!it.label.empty()) ++named;
-    }
-    for (auto& kv : p.categories) {
-        PieCategory& c = kv.second;
-        if (!c.overrideJson.empty()) c.name = strings::resolve(c.overrideJson);
-        if (c.name.empty()) c.name = strings::resolve(c.nameJson);
+    if (p.texts) {
+        for (const PieItem& it : p.items) named += it.label.empty() ? 0 : 1;
+    } else {
+        pieResolveTexts(p, named);
     }
     p.valid = named == static_cast<int>(p.items.size());
     if (p.valid) pieBuild();
@@ -616,6 +626,23 @@ void setPieContent(const char* data, size_t size) {
         }
         if (end >= all.size()) break;
     }
+    // The pie is wanted at once (user 2026-11-01: slower than the vanilla pie): resolve its texts here, on the
+    // game's thread, instead of on the render thread's first frame, and have every icon of it asked for now
+    // (hud::missingIcons) instead of only those the first drawn page shows.
+    if (!c.items.empty() && strings::ready()) {
+        int named = 0;
+        pieResolveTexts(c, named);
+        c.texts = true;
+    }
+    {
+        std::vector<uint64_t> warm;
+        for (const PieItem& it : c.items)
+            for (uint64_t id : it.icons) warm.push_back(id);
+        for (const auto& kv : c.categories)
+            if (kv.second.icon) warm.push_back(kv.second.icon);
+        std::lock_guard<std::mutex> lock(g_itemMutex);
+        g_pieWarm.swap(warm);
+    }
     std::lock_guard<std::mutex> lock(g_pieMutex);
     g_pieIn = c;
     g_pieNew = true;
@@ -639,4 +666,8 @@ void clearPie(unsigned serial) {
     g_pieIn = PieContent{};
     g_pieNew = true;
     g_pieState = 0;
+    {
+        std::lock_guard<std::mutex> warm(g_itemMutex);
+        g_pieWarm.clear();
+    }
 }

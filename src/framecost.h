@@ -10,6 +10,11 @@ namespace s4vr::framecost {
 // The game's Present was called (before the VR work in it) / has returned.
 void presentStart();
 void presentEnd();
+// The stick turned the view just now / a sun shadow cascade was fitted / the body was placed (turn profiler:
+// the frame time log has a second line for the pictures drawn while the stick turns).
+void turnNote();
+void shadowFit();
+void bodyPlaced();
 // The game copied the camera it draws with (camera.cpp hookedCopy, main thread).
 void renderCamera();
 // A Sim drawn through your eyes' camera, or another one (shadows, mirrors).

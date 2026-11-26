@@ -39,6 +39,9 @@ bool eyeHeight(float& worldY);
 void setEyesAtBody(bool on);
 // [cas] body_still: the body stands in one calm pose picked in its first 3 s, not the CAS Sim's idle. Live.
 void setStill(bool on);
+// Main thread (singleview.cpp), while CAS is on, before each scene render but the right eye's second one: a new frame.
+// The body is worked out at the frame's first draw and every pass of both eyes draws that same body.
+void newFrame();
 // The second draw reached no mesh for a while (the game queued them for later): leave the view's batch sink out
 // for it (facehide clears view+0x58 around the call).
 bool skipBatch();

@@ -209,6 +209,7 @@ PIECES = [
     ('kAppHousehold', '../art/phone_icons/household.png', 2),
     ('kAppWeather', '../art/phone_icons/weather.png', 2),
     ('kAppWants', '../art/phone_icons/wants.png', 2),
+    ('kAppSoundControl', '../art/phone_icons/sound_control.png', 2),  # Home > Extended Sound Control (make_phone_icons.py)
     ('kTrayBigger', '../art/tray_icons/bigger.png', 1),  # the build tablet's tool tray (tools/make_tray_icons.py)
     ('kTrayCatCheats', '../art/tray_icons/cat_cheats.png', 1),  # the build tablet's tool tray (tools/make_tray_icons.py)
     ('kTrayCatObjects', '../art/tray_icons/cat_objects.png', 1),  # the build tablet's tool tray (tools/make_tray_icons.py)
@@ -330,6 +331,9 @@ PIECES = [
     ('kNbCellOver', 'liveui/art/Notebook/107__CategoryCellView@over.png', 2),
     ('kNbCurl', 'liveui/art/Notebook/130__NotebookPage.png', 1),
     ('kNbPortrait', 'liveui/art/Notebook/126.png', 2),
+    ('kLogoClaude', '../art/logos/claude_pie.png', 1),  # the pie's Claude entry (user 2026-10-28)
+    ('kLogoDiscord', '../art/logos/discord_pie.png', 1),  # the pie's Discord entry (user 2026-10-28)
+    ('kLogoVr', '../art/logos/vr_pie.png', 1),  # every other pie entry the VR mod adds (headset v3, user 2026-11-01)
 ]
 EXTRA = 'tools/hud_art_extra.txt'
 # Arrays of one piece per mood (MOODS order): the frames of a mood sprite,

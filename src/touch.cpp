@@ -137,6 +137,7 @@ void answerLaser(const Request& r, const uint8_t* d, uint64_t self, ULONGLONG no
     g_laserEnd.pickType = type;
     g_laserEnd.objectId = id;
     g_laserEnd.tick = now;
+    for (int i = 0; i < 3; ++i) g_laserEnd.point[i] = r.origin[i] + r.dir[i] * length;
     static uint64_t lastId = ~0ull;
     if (id != lastId && g_laserLogs < 60) {
         ++g_laserLogs;

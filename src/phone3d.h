@@ -72,6 +72,17 @@ void draw(ID3D11DeviceContext* context, ID3D11RenderTargetView* target, ID3D11De
 // Any thread: drawn within the last 200 ms (else vr.cpp shows the flat phone).
 bool drawnRecently();
 
+// The phone's flashlight (user 2026-11-04): a spotlight from the phone's back, drawn as one full-screen pass per
+// eye before the phone (screen space: from the scene depth, so it lights whatever the mod or lighting mods left
+// dark, and needs no game light). Dual-source blend: result = add + dst * mul, so surfaces keep their colour.
+// setFlashlight: every frame from vr.cpp (allowed false: the phone is away, a tablet, Sims 1 on it).
+// brightness: lit surfaces' own colour x(1 + brightness) at the cone's centre next to the phone; fill: plain
+// light added (0..1), so a black surface still shows; range metres; cone the full angle, degrees.
+void setFlashlight(bool allowed, float brightness, float fill, float rangeMetres, float coneDegrees);
+// The header's flashlight button (hud.cpp).
+bool flashlightOn();
+void toggleFlashlight();
+
 // Depth eye (deptheye.h): every piece drawn writes its depth into the scene's
 // (after the near limit's copy), and the depth is copied again after them
 // (nearplane::senseLate). Any thread.
@@ -131,7 +142,7 @@ void setBalloons(const Panel* balloons, int count, ID3D11Texture2D* atlas);
 // Pieces of the game's UI on your arms and around you (first person, vr.cpp
 // "Wrist pieces"): clear panels taking `crop` from the UI texture, drawn after
 // the bubbles; depth-tested, or over the world when onTop. Present thread.
-constexpr int kMaxPieces = 12;
+constexpr int kMaxPieces = 16;  // the HUD's sheets (12 at most at once) and the outfit panel
 void setPieces(const Panel* pieces, int count, ID3D11Texture2D* ui);
 // Render thread, as the pieces are drawn: places the tagged ones again from
 // the joints of the frame being drawn (vr.cpp: the HUD on your arms; up to
@@ -141,7 +152,7 @@ void setPiecePlacer(void (*placer)(Panel* pieces, int count));
 // The notebook in your hand (vr.cpp, first person): flat leaves (a page, the cover, the cover's inside) taking
 // `crop` from `atlas` (the HUD's), clear panels drawn in order, depth-tested. Present thread; count 0: none.
 // Each leaf's place is set again on the render thread by the placer (from the joints of the frame drawn).
-constexpr int kMaxBook = 24;
+constexpr int kMaxBook = 64;
 void setBook(const Panel* leaves, int count, ID3D11Texture2D* atlas);
 void setBookPlacer(void (*placer)(Panel* leaves, int count));
 bool bookDrawnRecently();
@@ -149,6 +160,11 @@ bool bookDrawnRecently();
 // first of the panels. Same terms; `crop` is of Sims 1's frame, which this
 // takes from simsforever::frameView on the render thread.
 void setSims1Screen(const Panel& screen);
+// A second window on a screen at the same time (claudescreen.h slot 1, Discord on a TV): a flat panel
+// at the window's aspect, drawn after Sims 1's, its picture from claudescreen::frameView(slot 1).
+// index 1: the Linear board (claudescreen::kLinear, linearboard.h), the same way; index 2: a note off the Linear
+// scrumboard in your hand (its `crop` another part of the board's picture).
+void setTvScreen(const Panel& screen, int index = 0);
 
 // Game thread (camera.cpp), first person: your arms and hands as segments
 // a..b (world) this thick. The pie menu is drawn in front of everything else

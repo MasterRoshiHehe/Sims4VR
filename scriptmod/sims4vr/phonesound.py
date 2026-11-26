@@ -17,28 +17,26 @@ import time
 
 from sims4vr import hooks, native
 
-RINGTONES = (None, 0x221dea395dfcdfae, 0xc4f531d9d7d156c6, 0x5d51327b9182bc04, 0xab2adaf0c366b4d1, 0x22170b395df6f921,
-             0x90e2d18104edb944, 0x435fa71eee9c0b62, 0x3658c55340bfcdd4, 0xb42cfdf7df7c7d80, 0x84bf16d610f2d690,
-             0xfda9ab45a2178107, 0x4c53dab8e0d1d31e, 0x4e3fccd0de44076d, 0xd7e185ce565e5692, 0x270a91f84325e121,
-             0xc22da5ecb7e5e8c9, 0x3fe7d4f35fdc3b3b, 0xbf8257b951fd20ed, 0x22e03780d6e24c24, 0x768a40c9ee3f0993,
-             0x9fa688c3916f0b9d, 0x14b1fe87fb5820d4, 0xe2370f53df849a36, 0xc4d1e9ba398864a6, 0x7cb78093b4567513,
-             0xf1a70374a8ff49ca, 0xd0500b31764b388a)
-# The game's radio stations (user 2026-10-27 14:28Z: songs, not the jingles), as the stereo plays them: each
-# station's music config holds its songs and the game picks one (re/audio/configs.tsv, mu_stereo_*). Names:
-# None, Pop, Alternative, Electronica, Hip Hop, R&B, Spop, Sim Retro, Classical, Blues, Romance, World, New Age,
-# Singer-Songwriter, Easy Listening, NuDisco, Latin Pop, Island Radio, Summer Strut, Americana, Soul, Metal, Focus,
-# Afrobeats, Batuu Radio, Strange Tunes, Winter Holiday, Spooky
-TEXT_TONES = (None, 0x930fe9ffd1801772, 0x3cd5473d134af89c, 0x4ff5444df03530b2, 0xfda52168fd102d9c,
-              0x76dbf3276cba61be, 0x85688f084e31aad5, 0x8af8b916cf64c646, 0xe40a07dc0168907b)
-# None, Positive (bumper_tns_positive), Neutral, Uh-oh (bumper_tns_negative), Bills Paid, Club (bumper_club_join),
-# Accepted (bumper_enrollment_accepted), Moodlet (sting_buff_gain), Advice (sting_advice_received)
+# Ringtones and notification sounds are our own files only (user 2026-10-29: the game's flat jingles are gone; more
+# files will come). One fixed sound, never a random pick; a call repeats it every RING_REPEAT seconds while its popup
+# is up. The names must match settings.cpp's rows. The ini keys are ringtone_file / text_tone_file, so a choice saved
+# when the list held the game's jingles is ignored (the default applies).
+LOOPS = ()
+# sounds/ringtones' files in name order ignoring case: bustin, Old Phone 1, Old Phone 2, outin
+RINGTONES = (None, 'wav:0', 'wav:1', 'wav:2', 'wav:3')
+# sounds/notifications' files in name order ignoring case: Click, Promo, Slap, Success, Upgrade
+TEXT_TONES = (None, 'note:0', 'note:1', 'note:2', 'note:3', 'note:4')
+RING_DEFAULT, TEXT_DEFAULT = 2, 4  # Old Phone 1, Success
 
-RING_SECONDS = 20.0   # a ringtone song plays this long at most
+RING_SECONDS = 20.0   # a ringing call stops after this long at most
+RING_REPEAT = 3.5     # a ringtone is a short sound: it plays again this often while the call rings
 PREVIEW_SECONDS = 12.0
 
 _playing = None
-_playing_until = 0.0  # when the playing ringtone song stops (0: a short tone, left to end)
-_ring_dialog = None   # the popup it rings for: the song stops when it goes
+_playing_until = 0.0  # when the ringing stops (0: a short tone, played once)
+_ring_id = 0          # the ringtone to repeat
+_ring_next = 0.0      # when it plays again
+_ring_dialog = None   # the popup it rings for: the ringing stops when it goes
 _last = 0.0
 _errors = 0
 
@@ -54,8 +52,8 @@ def _index(key, count, default=1):
     try:
         n = int(float(native.setting('phone', key, str(default))))
     except (TypeError, ValueError):
-        n = 1
-    return n if 0 <= n < count else 0
+        n = default
+    return n if 0 <= n < count else default
 
 
 def _phone_joint():
@@ -72,9 +70,72 @@ def _phone_joint():
     return phone._joint_hash(name)  # the joint hash as the game's (FNV-32 of the lower-case name)
 
 
-def _play(sound_id, seconds=0.0, dialog=None):
-    global _playing, _playing_until, _ring_dialog
+# Where a sound that belongs to the phone is placed in 3D (user 2026-10-28): automatic, the first place in
+# PLACEMENTS that applies (each a (name, applies, joint hash) function pair), joints of the Sim's body the sound is
+# attached to. A new place (wrist ...) = one entry here, put before the ones it should win over.
+def _in_hand():
+    try:
+        from sims4vr import phone
+        return phone.is_out()
+    except Exception:
+        return False
+
+
+def _joint_in_hand():
+    """The phone is out: the hand holding it."""
+    return _phone_joint()
+
+
+def _joint_draw_spot():
+    """The phone is put away: where it is pulled from, the right hip."""
+    from sims4vr import phone
+    return phone._joint_hash('b__R_Thigh__')
+
+
+PLACEMENTS = (('hand', _in_hand, _joint_in_hand), ('draw spot', lambda: True, _joint_draw_spot))
+
+
+def _placement_joint():
+    for _name, applies, joint in PLACEMENTS:
+        if applies():
+            return joint()
+    return _joint_draw_spot()
+
+
+class _Wav:
+    """A ringtone of ours (sounds/ringtones, played by the DLL): stop() as a game sound has."""
+
+    def stop(self):
+        native.ring_stop()
+
+
+# 
+WAV_AT = (0.15, -0.35, -0.25)
+
+
+def _play(sound_id, seconds=0.0, dialog=None, joint=None, repeat=0.0):
+    global _playing, _playing_until, _ring_dialog, _ring_id, _ring_next
     if not sound_id:
+        return
+    if isinstance(sound_id, str) and sound_id.startswith('note:'):
+        # One of our own notification sounds: a short one-shot played by the DLL at the phone.
+        if not native.ring_wav(int(sound_id[5:]), WAV_AT, True):
+            native._log('phonesound: notification sound {} is not in sounds/notifications'.format(sound_id))
+        return
+    if isinstance(sound_id, str):
+        # One of our own ringtones: the DLL plays the whole file (the files are cut to RING_SECONDS), stopped with the call.
+        try:
+            if _playing is not None:
+                _playing.stop()
+        except Exception:
+            pass
+        if not native.ring_wav(int(sound_id[4:]), WAV_AT):
+            native._log('phonesound: ringtone {} is not in sounds/ringtones'.format(sound_id))
+            return
+        _playing = _Wav()
+        _ring_id = 0
+        _playing_until = repeat or 0.0
+        _ring_dialog = dialog
         return
     import services
     from audio.primitive import PlaySound
@@ -87,29 +148,49 @@ def _play(sound_id, seconds=0.0, dialog=None):
             _playing.stop()
     except Exception:
         pass
-    sound = PlaySound(sim, sound_id, joint_name_hash=_phone_joint())
+    sound = PlaySound(sim, sound_id, joint_name_hash=joint if joint is not None else _phone_joint())
     sound.start()
     _playing = sound
-    _playing_until = time.monotonic() + seconds if seconds else 0.0
+    now = time.monotonic()
+    if repeat:  # a ringing call: the same sound again every RING_REPEAT s until its time or popup is over
+        _ring_id, _ring_next = sound_id, now + RING_REPEAT
+        _playing_until = repeat
+    else:
+        _ring_id = 0
+        _playing_until = now + seconds if seconds else 0.0
     _ring_dialog = dialog
+
+
+def stop():
+    """The ringtone stops now (phonecall.py: answered, declined, or the phone's screen turned off)."""
+    global _playing, _playing_until, _ring_dialog, _ring_id
+    try:
+        if _playing is not None:
+            _playing.stop()
+    except Exception:
+        pass
+    _playing, _playing_until, _ring_dialog, _ring_id = None, 0.0, None, 0
 
 
 def tick():
     """controls.py, every tick: a ringtone song stops when its popup is gone or its time is up."""
-    global _playing, _playing_until, _ring_dialog
+    global _playing, _playing_until, _ring_dialog, _ring_id
     if _playing is None or not _playing_until:
         return
     try:
-        done = time.monotonic() > _playing_until
+        now = time.monotonic()
+        done = now > _playing_until
         if not done and _ring_dialog is not None:
             import services
             dialogs = getattr(services.ui_dialog_service(), '_active_dialogs', None)
             done = dialogs is not None and getattr(_ring_dialog, 'dialog_id', None) not in dialogs
+        if not done and _ring_id and now >= _ring_next:
+            _play(_ring_id, dialog=_ring_dialog, repeat=_playing_until)
         if done:
             _playing.stop()
-            _playing, _playing_until, _ring_dialog = None, 0.0, None
+            _playing, _playing_until, _ring_dialog, _ring_id = None, 0.0, None, 0
     except Exception as e:
-        _playing, _playing_until, _ring_dialog = None, 0.0, None
+        _playing, _playing_until, _ring_dialog, _ring_id = None, 0.0, None, 0
         _log_error('stopping the ringtone', e)
 
 
@@ -124,9 +205,13 @@ def _ring(kind, dialog=None):
             return
         _last = now
         if kind == 0:
-            _play(RINGTONES[_index('ringtone', len(RINGTONES))], RING_SECONDS, dialog)
+            tone = RINGTONES[_index('ringtone_file', len(RINGTONES), RING_DEFAULT)]
+            if tone in LOOPS:  # rings by itself until stopped
+                _play(tone, RING_SECONDS, dialog)
+            else:
+                _play(tone, dialog=dialog, repeat=time.monotonic() + RING_SECONDS)
         else:
-            _play(TEXT_TONES[_index('text_tone', len(TEXT_TONES))])
+            _play(TEXT_TONES[_index('text_tone_file', len(TEXT_TONES), TEXT_DEFAULT)])
     except Exception as e:
         _log_error('a tone', e)
 
@@ -173,9 +258,37 @@ def on_popup(dialog):
         _ring(1)
 
 
-def on_notification():
-    """notify.py: a new notification was kept."""
-    _ring(1)
+UI_TNS_INCOMING = 0xEED2F6CC4FDC818E  # ui_tns_incoming: what the game's UI plays when a notification appears
+_note_logs = 0
+
+
+def on_notification(phone_only=False, sting=0):
+    """notify.py: a new notification was kept; one sound each. One that shows live has the game's own (the UI's
+    sound; notify.py held back its sting). One kept off the game's UI (phone only) plays from the phone's place
+    (PLACEMENTS) when notes_sound_phone is on: the game's own sound for it (its sting, else the UI's notification
+    sound) with notes_sound_vanilla, else the selected text tone."""
+    global _note_logs
+    if not phone_only:
+        return
+    global _last
+    try:
+        if (not native.setting_flag('phone', 'notes_sound_phone', True) or not hooks.in_first_person()
+                or _index('sound_mode', 3, 0) != 0):
+            return
+        now = time.monotonic()
+        if now - _last < 1.5:
+            return
+        _last = now
+        if native.setting_flag('phone', 'notes_sound_vanilla', False):
+            sound_id = sting or UI_TNS_INCOMING
+        else:
+            sound_id = TEXT_TONES[_index('text_tone_file', len(TEXT_TONES), TEXT_DEFAULT)]
+        _note_logs += 1
+        if _note_logs <= 12:
+            native._log('phonesound: phone-only notification sound {:x}'.format(sound_id or 0))
+        _play(sound_id, joint=_placement_joint())
+    except Exception as e:
+        _log_error('a notification sound', e)
 
 
 def preview(code):
@@ -183,6 +296,6 @@ def preview(code):
     tones = RINGTONES if kind == 0 else TEXT_TONES
     if 0 <= n < len(tones):
         try:
-            _play(tones[n], PREVIEW_SECONDS if kind == 0 else 0.0)
+            _play(tones[n])  # once: one fixed sound
         except Exception as e:
             _log_error('a preview', e)

@@ -82,7 +82,9 @@ def call_check():
         call = _call
         if call is None or getattr(call, 'is_finishing', True) or getattr(call, 'has_been_reset', False):
             _call = None
-            native.set_call(False)
+            from sims4vr import phonecall
+            if not phonecall.active():  # an answered or running call screen keeps the phone out (phonecall.py)
+                native.set_call(False)
     except Exception as e:
         _call = None
         native.set_call(False)

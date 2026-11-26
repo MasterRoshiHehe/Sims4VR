@@ -298,6 +298,11 @@ def _leave_now_if_asked(sim):
 
 
 def start_following(target):
+    try:
+        from sims4vr import physapp
+        physapp.thaw(target, 'follow')  # a Sim frozen in the Body Physics app: let her follow
+    except Exception:
+        pass
     you = _fp_sim()
     if target is None or you is None or not _can_follow(target, you):
         return
@@ -575,9 +580,10 @@ def update(sim, px, py, pz):
 # The pie options
 
 
-def _make_affordance(label, guid, wanted):
+def _make_affordance(label, guid, wanted, action=None):
     """Like claude.py's Open Claude: a copy of a plain immediate interaction
-    with its own test, name and action. wanted(target): offered on it."""
+    with its own test, name and action. wanted(target, you): offered on it; action(target): what it does
+    (influence.py; Follow me / Dismiss when none)."""
     import services
     import sims4.resources
     from event_testing.results import TestResult
@@ -624,7 +630,9 @@ def _make_affordance(label, guid, wanted):
 
     def _run_interaction_gen(self, timeline):
         try:
-            if guid == GUID_FOLLOW:
+            if action is not None:
+                action(self.target)
+            elif guid == GUID_FOLLOW:
                 start_following(self.target)
             else:
                 dismiss(self.target)
@@ -633,9 +641,17 @@ def _make_affordance(label, guid, wanted):
         return True
         yield
 
+    @classmethod
+    def get_pie_menu_icon_info(cls, *args, **kwargs):
+        """The VR headset icon (pie.VR_ICON_ID; the VR pie draws it from the HUD atlas, hud.cpp kLogoVrId)."""
+        from distributor.shared_messages import IconInfoData
+        from sims4vr import pie
+        return IconInfoData(icon_resource=sims4.resources.Key(sims4.resources.Types.PNG, pie.VR_ICON_ID, 0))
+
     attrs = {
         'test': test,
         '_get_name': _get_name,
+        'get_pie_menu_icon_info': get_pie_menu_icon_info,
         '_run_interaction_gen': _run_interaction_gen,
         'allow_autonomous': False,
         'allow_user_directed': True,
@@ -647,7 +663,7 @@ def _make_affordance(label, guid, wanted):
     }
     if hasattr(base, 'pie_menu_icon'):
         attrs['pie_menu_icon'] = None
-    affordance = type('vr_' + label.replace(' ', ''), (base,), attrs)
+    affordance = type('vr_' + ''.join(c for c in label if c.isalnum()), (base,), attrs)
     _log('{} built on {}'.format(label, base.__name__))
     return affordance
 

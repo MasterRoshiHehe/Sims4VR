@@ -219,13 +219,25 @@ void init(const std::wstring& dir) {
 bool armUnknownBuild() {
     std::lock_guard<std::mutex> lock(g_mutex);
     if (GetFileAttributesW(g_marker.c_str()) != INVALID_FILE_ATTRIBUTES) {
+        // Only a run the crash recorder saw die counts; one you closed (window, alt-F4, kill) leaves a plain marker.
+        char text[16] = {};
+        if (FILE* in = _wfopen(g_marker.c_str(), L"r")) {
+            std::fread(text, 1, 5, in);
+            std::fclose(in);
+        }
+        const bool crashed = std::strncmp(text, "CRASH", 5) == 0;
         DeleteFileW(g_marker.c_str());
+        if (!crashed) {
+            logLine("unrecognised build: the last run was closed without a crash; normal mode");
+            goto arm;
+        }
         logLine("unrecognised build: the last run on one did not get 120 s in or end cleanly (crash?): safe mode this run "
                 "(only what needs no table); the next run tries again");
         g_lines[2].push_back("SAFE MODE: the last run on an unrecognised build did not get 120 s in or end cleanly");
         writeFile();
         return false;
     }
+arm:
     FILE* f = _wfopen(g_marker.c_str(), L"w");
     if (f) {
         std::fputs("an unrecognised-build run is in progress; deleted after 120 s or at a clean shutdown\n", f);
@@ -317,6 +329,15 @@ void hookEnabled(void* target, int status) {
             }
     }
     if (status != MH_OK) note("note", "MinHook: enable %s at %s failed", MH_StatusToString(static_cast<MH_STATUS>(status)), rvaText(target).c_str());
+}
+
+void markCrash() {
+    if (!g_armed || g_marker.empty()) return;
+    HANDLE h = CreateFileW(g_marker.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return;
+    DWORD n = 0;
+    WriteFile(h, "CRASH\n", 6, &n, nullptr);
+    CloseHandle(h);
 }
 
 void shutdown() {

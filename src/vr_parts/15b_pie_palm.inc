@@ -19,7 +19,7 @@ static void choosePiePalm(const armik::Hand hands[2]) {
     else if (g_config.pieMode == 2 && g_piePalmNext >= 0 && now - g_piePalmNextAt < 3000)
         palm = g_piePalmNext;
     g_piePalmNext = -1;
-    if (palm < 0) return;
+    if (palm < 0 || g_pieAtTv) return;  // a TV's pie stays on the TV
     const char* why = !g_pie.own                             ? "the game's pie (cut out) stays in front"
                       : !hands[palm].valid                   ? "that hand isn't tracked"
                       : g_phoneOut && g_phoneHand == palm    ? "the phone is in that hand"

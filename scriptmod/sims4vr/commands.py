@@ -44,6 +44,11 @@ except Exception as e:
     native._log('no game phone unavailable: {!r}'.format(e))
 
 try:
+    from sims4vr import phonecall  # noqa: F401
+except Exception as e:
+    native._log('phone call screens unavailable: {!r}'.format(e))
+
+try:
     from sims4vr import saving  # noqa: F401
 except Exception as e:
     native._log('save hook unavailable: {!r}'.format(e))
@@ -68,6 +73,11 @@ try:
     from sims4vr import objmenu  # noqa: F401
 except Exception as e:
     native._log('menus on objects unavailable: {!r}'.format(e))
+
+try:
+    from sims4vr import outfit  # noqa: F401  (Plan Outfit in the room, first person)
+except Exception as e:
+    native._log('outfit planning in the room unavailable: {!r}'.format(e))
 
 try:
     from sims4vr import camwatch

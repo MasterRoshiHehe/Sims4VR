@@ -367,6 +367,15 @@ void hookedUpdater(void* manager) {
 
 }  // namespace
 
+float stageScale() {
+    if (!g_uiObject) return 0;
+    void* ui = g_uiObject();
+    if (!ui) return 0;
+    using ScaleFn = float (*)(void*);
+    const float scale = (*reinterpret_cast<ScaleFn*>(*reinterpret_cast<uint8_t**>(ui) + 200))(ui);
+    return scale > 0.05f && scale < 20 ? scale : 0;
+}
+
 bool install() {
     if (gameaddr::dx9()) return false;
     void* updater = addrs::fn("Updater");
