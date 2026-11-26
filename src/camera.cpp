@@ -3758,6 +3758,12 @@ bool eyeAt(float out[3]) {
     return true;
 }
 
+bool skipOwnBodyInWater(const void* camera) {
+    if (g_config.waterShowBody || !camera || !bodyActive()) return false;
+    const uintptr_t at = reinterpret_cast<uintptr_t>(camera);
+    return at == g_waterCamera[0].load(std::memory_order_relaxed) || at == g_waterCamera[1].load(std::memory_order_relaxed);
+}
+
 bool yourEyeCamera(const void* camera) {
     if (!camera) return false;
     if (reinterpret_cast<uintptr_t>(camera) == g_writtenCamera.load(std::memory_order_acquire)) return true;

@@ -383,6 +383,7 @@ struct Config {
     float outdoorFloor = 0.15f;  // first person: the least outdoor sound heard inside (0..1)
     float mirrorInterior = 10;  // max metres a mirror in a room renders (0: the game's 15)
     float mirrorExterior = 50;  // ... outdoors (0: the game's 100)
+    bool waterShowBody = false;  // pools: draw your own Sim in the water reflection (smeared arm halo, GLA-120)
     bool waterClip = true;  // pools: keep the game's clip at the water plane (nothing below the water is reflected)
     bool waterOnePlane = true;  // pools: reflect in the heaviest lot water's plane, not the mean of all in view
     bool mirrorClip = true;   // first person lopsided eye: keep the game's clip at the mirror glass

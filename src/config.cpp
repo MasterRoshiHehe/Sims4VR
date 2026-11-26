@@ -300,6 +300,7 @@ Config loadConfig(const std::wstring& ini) {
     c.monitorZoom = std::clamp(readFloat(ini, "stereo", "monitor_zoom", 1.4f), 1.0f, 3.0f);
     c.monitorFit = std::clamp(static_cast<int>(readInt(ini, "stereo", "monitor_fit", 1)), 0, 2);
     c.mirrorClip = readInt(ini, "stereo", "mirror_clip", 1) != 0;
+    c.waterShowBody = readInt(ini, "stereo", "water_show_body", 0) != 0;
     c.waterClip = readInt(ini, "stereo", "water_clip", 1) != 0;
     c.waterOnePlane = readInt(ini, "stereo", "water_one_plane", 1) != 0;
     c.reflectionsOff = readInt(ini, "stereo", "reflections_off", 0) != 0;
