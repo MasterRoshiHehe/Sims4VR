@@ -622,6 +622,7 @@ static bool renderStereo(ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_DESC
     if (havePicture && rendered.eye == 2) {
         g_lensPictureAt = GetTickCount64();
         storeViewfinder(backbuffer, desc);  // the phone lens' picture: onto the phone's screen, not to an eye
+        if (!g_ownMirror) steadyMirror(backbuffer, desc, 2);  // the monitor keeps the eye view, not the lens frame (GLA-121)
         havePicture = false;
     }
     static int casTraces = 0, casSeen = 0;

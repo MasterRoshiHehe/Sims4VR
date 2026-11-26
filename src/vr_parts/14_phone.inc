@@ -456,7 +456,7 @@ static void updatePhone(const armik::Hand& hand, int side) {
         }
     }
     if (photoView) {
-        placeTray(p3, menuCentre, x, y2, z2, menuW, menuH);  // the camera app's buttons over the picture (hud_buildtray.inc)
+        placeTray(p3, menuCentre, x, y2, z2, menuW, menuH, true);  // the camera app's buttons over the picture (hud_buildtray.inc)
         p3.wallpaper = false;
         p3.edges = false;
         phone3d::setPhone(p3, g_viewfinder, hud::texture());
