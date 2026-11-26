@@ -19,6 +19,9 @@ cork board with paper notes pinned on it, over the art's front. Close a hand on 
 carry it, and open the hand at the board to pin it in another column (moved in Linear); open it away from the
 board and the note goes back. Taps, the laser and the details card work as on a screen.
 
+Our own object for it (GLA-125): the "Linear Scrumboard" in Buy mode (Decorations), a cork board on an oak stand
+(Mods\\sims4vr_linearscrumboard.package); the same "Open Linear scrumboard" puts the board on its cork.
+
 Switches: [linear] on and [linear] cork in sims4vr.ini (debug menu: Options > Interface > Pickers on objects).
 """
 from sims4vr import claude, native
@@ -27,6 +30,12 @@ SLOT = 2  # claudescreen::kLinear
 GUID = 0x5653434C4C494E45
 CORK_GUID = 0x5653434C4C494E46
 MIN_ART = 0.3  # metres: smaller wall art is no board
+# Our own object (tools/cc/build_corkboard.py, GLA-125): the "Linear Scrumboard", a cork board on an oak stand
+# (Buy > Decorations, 150). Its definition id and the board's front in the object's space (metres, +z = front):
+# the frame's outer edges, the picture just in front of the frame.
+STAND_ID = 0xC715BC4CD06CAD43
+STAND_BOARD = (-0.46, 0.77, 0.46, 1.45)  # x0 y0 x1 y1
+STAND_FRONT_Z = 0.016
 
 _cork = False  # the board is the scrumboard on wall art (else on a screen)
 _cork_affordance = None
@@ -54,6 +63,23 @@ def _options():
     done_days = int(float(native.setting('linear', 'done_days', 14) or 14))
     canceled = 1 if native.setting_flag('linear', 'canceled', False) else 0
     return team, 'done_days={};canceled={};mode={}'.format(done_days, canceled, 'cork' if _cork else 'screen'), poll, width
+
+
+def is_stand(obj):
+    """Our Linear Scrumboard object (a cork board on a stand)."""
+    return getattr(getattr(obj, 'definition', None), 'id', None) == STAND_ID
+
+
+def _stand_front(obj):
+    from sims4vr import objmenu
+    t = obj.transform
+    p, o = t.translation, t.orientation
+    q = (o.x, o.y, o.z, o.w)
+    scale = getattr(obj, 'scale', 1.0) or 1.0
+    x0, y0, x1, y1 = STAND_BOARD
+    r = objmenu._rotate(q, ((x0 + x1) / 2 * scale, (y0 + y1) / 2 * scale, STAND_FRONT_Z * scale))
+    return ((p.x + r[0], p.y + r[1], p.z + r[2]), objmenu._rotate(q, (0.0, 0.0, 1.0)),
+            objmenu._rotate(q, (0.0, 1.0, 0.0)), (x1 - x0) * scale, (y1 - y0) * scale)
 
 
 def is_wall_art(obj):
@@ -87,6 +113,8 @@ def is_wall_art(obj):
 def _place(obj, index):
     """Where the board goes: a screen's picture area, or wall art's front."""
     if _cork:
+        if is_stand(obj):
+            return _stand_front(obj)
         from sims4vr import objmenu
         return objmenu._front(obj)[:5]
     from sims4vr import simsforever
@@ -191,7 +219,7 @@ def cork_spec():
         'category_idle': 0x5653434C4C490003, 'category_open': 0x5653434C4C490004,
         'logo_id': 0x4C4F474F434C4403,
         'offered': lambda obj: native.setting_flag('linear', 'on', True) and native.setting_flag('linear', 'cork', True)
-        and is_wall_art(obj),
+        and (is_stand(obj) or is_wall_art(obj)),
         'toggle': toggle_cork,
         'state': lambda obj: (_open is not None and _cork and getattr(obj, 'id', None) == _open, 0),
     }

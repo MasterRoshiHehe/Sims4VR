@@ -189,6 +189,8 @@ add_custom_command(TARGET sims4vr POST_BUILD
     COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/build_nofade.py ${CMAKE_SOURCE_DIR}/data/fade_default.simdata
             ${CMAKE_SOURCE_DIR}/data/fade_minspec.simdata ${CMAKE_SOURCE_DIR}/data/dof_default.simdata
             ${PACKAGE_DIR}/sims4vr_nofade.package
+    # The Linear Scrumboard CC object (GLA-125; needs numpy + Pillow).
+    COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/cc/build_corkboard.py ${PACKAGE_DIR}/sims4vr_linearscrumboard.package
     COMMAND ${CMAKE_COMMAND} -E touch ${PACKAGE_DIR}/sims4vr_probe.py)
 
 # Sims Forever's 32-bit parts (Sims 1 is 32-bit): sf_launch.exe and sf_hook.dll.
