@@ -733,6 +733,7 @@ std::vector<Row> makeRows() {
         cheats,
         cheatPies,
         button(L"Fill needs", 5),                        // the played Sim's needs to full
+        button(L"Set needs to 50%", 17),                 // controls.py _half_needs: midpoint of every visible need
         button(L"Motherlode (+50,000 simoleons)", 7),    // motherlode
         button(L"Move objects on", 8),                   // bb.moveobjects on
         button(L"CAS full edit mode", 10),               // cas.fulleditmode

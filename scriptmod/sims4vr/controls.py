@@ -164,6 +164,28 @@ def _fill_needs():
     native._log('controls: filled the needs of {} {}'.format(sim_info.first_name, sim_info.last_name))
 
 
+def _half_needs():
+    """The played Sim's visible needs to 50% of their bar (midpoint of each
+    stat's min..max, user 2026-11-26, debug menu Fill needs to 50%), for testing
+    need-based things; same stat walk as set_all_commodities_to_best_value."""
+    sim_info = services.active_sim_info()
+    tracker = getattr(sim_info, 'commodity_tracker', None) if sim_info is not None else None
+    if tracker is None:
+        native._log('controls: needs to 50%: no Sim')
+        return
+    count = 0
+    for stat_type in list(tracker.get_all_commodity_classes()):
+        try:
+            stat = tracker.get_statistic(stat_type)
+            if stat is None or stat.is_ranked or not stat.is_visible:
+                continue
+            tracker.set_value(stat_type, (stat_type.min_value + stat_type.max_value) / 2)
+            count += 1
+        except Exception as e:
+            native._log('controls: needs to 50%: {} failed: {!r}'.format(stat_type, e))
+    native._log('controls: set {} needs of {} {} to 50%'.format(count, sim_info.first_name, sim_info.last_name))
+
+
 def _fill_nearby_needs():
     """Every other Sim within [cheats] fill_radius metres of your Sim gets all
     needs filled (user 2026-10-28 13:56Z, debug menu Testing cheats and phone
@@ -494,10 +516,12 @@ def _tick(_handle):
                 objmenu.answer_picker(what - 1000)
             elif what in (14, 15):
                 _everyone_feels(what == 15)
-            elif what in (5, 7, 8, 10, 16):
+            elif what in (5, 7, 8, 10, 16, 17):
                 _testing_cheats(True)  # the testing buttons turn testing cheats on too
                 if what == 5:
                     _fill_needs()
+                elif what == 17:
+                    _half_needs()
                 elif what == 16:
                     _fill_nearby_needs()
                 elif what == 7:
