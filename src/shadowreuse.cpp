@@ -130,6 +130,16 @@ void STDMETHODCALLTYPE hDrawIndirect(ID3D11DeviceContext* c, ID3D11Buffer* b, UI
     if (!skip(c)) g_drawIndirect[I](c, b, o);
 }
 
+void* g_target[2][6] = {};
+bool g_shared[6] = {};
+// The first context's original for call k, for a call both contexts share.
+void* otherOriginal(int k) {
+    void** o[6] = {reinterpret_cast<void**>(&g_drawIndexed[0]), reinterpret_cast<void**>(&g_draw[0]),
+                   reinterpret_cast<void**>(&g_drawIndexedInstanced[0]), reinterpret_cast<void**>(&g_drawInstanced[0]),
+                   reinterpret_cast<void**>(&g_drawIndexedIndirect[0]), reinterpret_cast<void**>(&g_drawIndirect[0])};
+    return o[k];
+}
+
 template <int I>
 bool hookSet(void** vtbl) {
     void* detours[6] = {reinterpret_cast<void*>(&hDrawIndexed<I>), reinterpret_cast<void*>(&hDraw<I>),
@@ -141,14 +151,26 @@ bool hookSet(void** vtbl) {
                            reinterpret_cast<void**>(&g_drawIndexedIndirect[I]),
                            reinterpret_cast<void**>(&g_drawIndirect[I])};
     for (int k = 0; k < 6; ++k) {
+        g_target[I][k] = vtbl[kSlots[k]];
         MH_STATUS s = MH_CreateHook(vtbl[kSlots[k]], detours[k], originals[k]);
+        // The immediate and the deferred context can share one implementation for some calls (log 901/910/916:
+        // slot 21 "already created", so the hooks never came on). The first context's hook already covers
+        // that call for both, and its detour tells the contexts apart by pointer, so use its original.
+        if (s == MH_ERROR_ALREADY_CREATED && I == 1 && g_target[0][k] == vtbl[kSlots[k]]) {
+            *originals[k] = *reinterpret_cast<void**>(otherOriginal(k));
+            g_shared[k] = true;
+            continue;
+        }
         if (s != MH_OK) {
-            LOG("Shadow reuse: draw hook %zu failed (%s); off", kSlots[k], MH_StatusToString(s));
+            LOG("Shadow reuse: draw hook %zu failed on the %s context (%s; target %p, immediate %p, deferred %p); off", kSlots[k],
+                I ? "deferred" : "immediate", MH_StatusToString(s), vtbl[kSlots[k]], g_target[0][k], g_target[1][k]);
             return false;
         }
     }
-    for (int k = 0; k < 6; ++k)
+    for (int k = 0; k < 6; ++k) {
+        if (g_shared[k] && I == 1) continue;  // enabled with the first context's hook
         if (MH_EnableHook(vtbl[kSlots[k]]) != MH_OK) return false;
+    }
     return true;
 }
 
