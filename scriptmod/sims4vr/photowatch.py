@@ -140,7 +140,7 @@ def _session(on):
     global _state, _filter, _size, _landscape, _session_on
     _session_on = bool(on)
     if on:
-        _state, _filter, _size, _landscape = None, 0, 1, True
+        _state, _filter, _size, _landscape = None, 0, 2, True
         _ask_state()
     try:
         native.photo_session((2 if _selfie else 1) if on else 0)
@@ -173,7 +173,7 @@ _state = None  # GetPhotographyStateData's answer (dict) once it came
 _state_ticket = 0
 _state_at = 0.0
 _filter = 0
-_size = 1
+_size = 2      # the largest photo size, always (user 2026-11-26)
 _landscape = True
 _shot = None   # (ticket, asked at) of the PhotographyTakePhoto in flight
 _errors = 0
@@ -271,6 +271,14 @@ def control(n):
         _service('PhotographyLeaveMode')
     elif 8 <= n <= 10:
         _size = n - 8
+    elif 20 <= n < 20 + FILTERS:  # the filter strip: exactly this filter
+        _filter = n - 20
+        _service('PhotographySetFilter', {'filter': _filter})
+        _clog('filter {}'.format(_filter))
+    elif n == 40:
+        open_last()
+    elif n in (41, 42):  # the phone turned upright / on its side (13b_build_tray.inc)
+        _landscape = n == 42
 
 
 def tick():
@@ -330,6 +338,7 @@ _learnt = []     # [(type, group)] newest first
 _owned = {}      # texture id -> 'wait' | 'ok' | 'fail': small pictures this module hands the HUD (hud_icon)
 _big_for = 0     # the texture id of the large picture asked for last
 _loaded_logs = 0
+_last_instance = 0   # the instance of the last photo taken (PhotoTaken)
 
 
 def _key_file():
@@ -357,6 +366,8 @@ def _learn(res_key):
     if res_key is None:
         return
     try:
+        global _last_instance
+        _last_instance = int(res_key.instance)
         pair = (int(res_key.type), int(res_key.group))
         native._log('Photo: picture key type {:08x} group {:08x} instance {:016x}'.format(pair[0], pair[1], int(res_key.instance)))
         _read_learnt()
@@ -447,3 +458,16 @@ def _supply():
         _owned[instance] = 'ok' if data else 'fail'
         native.hud_icon(instance, data or b'')
         return
+
+
+def open_last():
+    """The camera app's last-photo button: the last photo taken, large, in the Photos app's viewer."""
+    try:
+        if not _last_instance:
+            return
+        data = picture_bytes(_last_instance)
+        fn = native._optional('photo_view')
+        if data is not None and fn is not None:
+            fn(_last_instance & 0xffffffffffffffff, data)
+    except Exception as e:
+        native._log('Photo: opening the last photo failed: {!r}'.format(e))

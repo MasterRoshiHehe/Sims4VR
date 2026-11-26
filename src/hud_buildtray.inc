@@ -3,6 +3,8 @@
 // in two columns beside them, in the game's dialog art. Toggles light up (Frame.trayLit, bit per TrayTool);
 // rotate / raise / scale repeat while held. Included by hud.cpp.
 
+std::atomic<float> g_cameraAspect{0.5f};
+
 namespace {
 
 struct TrayButton {
@@ -137,69 +139,108 @@ Action drawBuildTray(const Frame& f, int* index) {
 // The phone camera app (a photo session): shutter, zoom, filter, flash, orientation, photo size and Close in the
 // tray's place. Every button is a CameraTool; zoom repeats while held.
 Action drawCameraTray(const Frame& f, int* index) {
-    // No panel: small see-through round buttons over the picture (user 2026-11-02: the big white menu hid it).
+    // The camera app like a phone's: the picture fills the glass, everything floats over it, see-through (user
+    // 2026-11-26). Laid out on the glass' own shape: the crop of kBuildTray that placeTray puts across the glass.
     ImDrawList* d = ImGui::GetBackgroundDrawList();
-    const Rect r = kBuildTray;
+    const Rect full = kBuildTray;
+    const float aspect = g_cameraAspect.load();
+    float w = full.w, h = full.h;
+    if (aspect <= full.w / full.h) w = h * aspect;
+    else h = w / aspect;
+    const ImVec2 o{full.x + (full.w - w) / 2, full.y + (full.h - h) / 2};
     Action action = kNone;
-    auto lit = [&](int tool) { return ((f.trayLit >> (20 + tool - kCamShutter)) & 1) != 0; };
-    // One round button at the centre (cx, cy) in tray pixels; true on the frames it acts (zoom repeats while held).
-    auto circleButton = [&](int tool, const char* label, float cx, float cy, float radius, bool on, bool repeat) {
-        const ImVec2 c{r.x + cx, r.y + cy};
+    auto press = [&](int tool) {
+        action = kBuildTool;
+        if (index) *index = tool;
+    };
+    auto label = [&](ImVec2 c, const char* text, float size, ImU32 colour) {
+        const ImVec2 ts = g_text->CalcTextSizeA(size, FLT_MAX, 0, text);
+        d->AddText(g_text, size, {c.x - ts.x / 2, c.y - ts.y / 2}, colour, text);
+    };
+    // A see-through round button at (cx, cy) in glass pixels.
+    auto circle = [&](int tool, const char* text, float cx, float cy, float radius, bool on) {
+        const ImVec2 c{o.x + cx, o.y + cy};
         ImGui::SetCursorScreenPos({c.x - radius, c.y - radius});
         ImGui::PushID(9300 + tool);
         const bool pressed = ImGui::InvisibleButton("cam", {radius * 2, radius * 2});
-        const bool hover = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
+        const bool hover = ImGui::IsItemHovered() || ImGui::IsItemActive();
         ImGui::PopID();
-        const ImU32 fill = on ? IM_COL32(120, 214, 82, 200) : hover || held ? IM_COL32(255, 255, 255, 120) : IM_COL32(0, 0, 0, 120);
-        d->AddCircleFilled(c, radius, fill, 32);
-        d->AddCircle(c, radius, IM_COL32(255, 255, 255, 230), 32, 3);
-        const float size = std::min(g_text->FontSize * 0.62f, radius * 0.9f);
-        const ImVec2 ts = g_text->CalcTextSizeA(size, FLT_MAX, 0, label);
-        d->AddText(g_text, size, {c.x - ts.x / 2, c.y - ts.y / 2}, kWhite, label);
-        bool act = pressed;
-        if (repeat) {
-            act = false;
-            const ULONGLONG now = GetTickCount64();
-            if (held && ImGui::IsMouseClicked(0)) {
-                g_trayHeld = tool;
-                g_trayRepeatAt = now + 350;
-                act = true;
-            } else if (held && g_trayHeld == tool && now >= g_trayRepeatAt) {
-                g_trayRepeatAt = now + 120;
-                act = true;
-            }
-            if (!held && g_trayHeld == tool) g_trayHeld = -1;
-        }
-        if (act) {
-            action = kBuildTool;
-            if (index) *index = tool;
-        }
+        d->AddCircleFilled(c, radius, hover ? IM_COL32(255, 255, 255, 120) : IM_COL32(0, 0, 0, 110), 32);
+        d->AddCircle(c, radius, on ? IM_COL32(255, 214, 60, 255) : IM_COL32(255, 255, 255, 220), 32, 2.5f);
+        label(c, text, std::min(g_text->FontSize * 0.62f, radius * 0.8f), on ? IM_COL32(255, 214, 60, 255) : kWhite);
+        if (pressed) press(tool);
     };
-    const float w = r.w, h = r.h;
-    circleButton(kCamClose, "X", 50, 50, 34, false, false);
-    circleButton(kCamFlash, "Fl", w / 2, 50, 34, lit(kCamFlash), false);
-    circleButton(kCamOrient, "Rot", w - 50, 50, 34, false, false);
-    circleButton(kCamFilterPrev, "<", 46, h * 0.40f, 34, false, false);
-    circleButton(kCamFilterNext, ">", 46, h * 0.40f + 90, 34, false, false);
-    circleButton(kCamZoomIn, "+", w - 46, h * 0.40f, 34, false, true);
-    circleButton(kCamZoomOut, "-", w - 46, h * 0.40f + 90, 34, false, true);
-    circleButton(kCamSmall, "S", w / 2 - 80, h - 150, 26, lit(kCamSmall), false);
-    circleButton(kCamMedium, "M", w / 2, h - 150, 26, lit(kCamMedium), false);
-    circleButton(kCamLarge, "L", w / 2 + 80, h - 150, 26, lit(kCamLarge), false);
-    // The shutter: a big white ring.
+    // Top: back (leaves the camera) left, home right.
+    circle(kCamClose, "<", 48, 48, 30, false);
+    circle(kCamHome, "Home", w - 48, 48, 30, false);
+    // Zoom chips just above the footer; the front camera has none.
+    const float stripY = h - 84;
+    if (!f.camSelfie) {
+        static const char* kChips[3] = {"1x", "2x", "3x"};
+        for (int k = 0; k < 3; ++k) circle(kCamZoom1 + k, kChips[k], w / 2 + (k - 1) * 70.0f, stripY - 124, 24, f.camZoom == k);
+    }
+    // Footer: last photo bottom left, flip bottom right.
     {
-        const ImVec2 c{r.x + w / 2, r.y + h - 62};
-        ImGui::SetCursorScreenPos({c.x - 56, c.y - 56});
-        ImGui::PushID(9399);
-        const bool pressed = ImGui::InvisibleButton("shutter", {112, 112});
-        const bool down = ImGui::IsItemHovered() || ImGui::IsItemActive();
+        const ImVec2 a{o.x + 30, o.y + stripY - 28}, b{o.x + 86, o.y + stripY + 28};
+        ImGui::SetCursorScreenPos(a);
+        ImGui::PushID(9390);
+        if (ImGui::InvisibleButton("last", {b.x - a.x, b.y - a.y})) press(kCamLastPhoto);
+        const bool hover = ImGui::IsItemHovered();
         ImGui::PopID();
-        d->AddCircle(c, 54, kWhite, 40, 6);
-        d->AddCircleFilled(c, down ? 40.0f : 44.0f, kWhite, 40);
-        if (pressed) {
-            action = kBuildTool;
-            if (index) *index = kCamShutter;
+        d->AddRectFilled(a, b, hover ? IM_COL32(255, 255, 255, 120) : IM_COL32(0, 0, 0, 110), 10);
+        d->AddRect(a, b, kWhite, 10, 0, 2.5f);
+        label({(a.x + b.x) / 2, (a.y + b.y) / 2}, "Last", g_text->FontSize * 0.5f, kWhite);
+    }
+    circle(kCamFlip, "Flip", w - 58, stripY, 30, f.camSelfie);
+    // The strip: the chosen filter is the shutter; the others sit either side and slide as you swipe (left = next),
+    // like Snapchat. Tap a neighbour to pick it, tap the shutter to take the photo.
+    static const char* kNames[kCamFilters] = {"Normal", "Gray", "Sepia", "Vivid", "Muted", "Vignette",
+                                              "Glow",   "Invert", "Warm", "Cool", "Bright", "Dark"};
+    {
+        const float cx = w / 2, spacing = 96;
+        const ImVec2 a{o.x + 100, o.y + stripY - 62}, b{o.x + w - 100, o.y + stripY + 62};
+        ImGui::SetCursorScreenPos(a);
+        ImGui::PushID(9399);
+        ImGui::InvisibleButton("strip", {b.x - a.x, b.y - a.y});
+        static float startX = 0, stepped = 0;
+        static bool dragged = false;
+        const bool active = ImGui::IsItemActive();
+        const ImVec2 mouse = ImGui::GetIO().MousePos;
+        if (ImGui::IsItemActivated()) startX = mouse.x, stepped = 0, dragged = false;
+        if (active) {
+            const float dx = mouse.x - startX - stepped;
+            if (std::fabs(dx) > 8) dragged = true;
+            if (std::fabs(dx) > spacing * 0.6f) {
+                const int step = dx < 0 ? 1 : -1;
+                const int next = f.camFilter + step;
+                if (next >= 0 && next < kCamFilters) press(kCamFilter0 + next);
+                stepped += dx < 0 ? -spacing * 0.6f : spacing * 0.6f;
+                dragged = true;
+            }
         }
+        if (ImGui::IsItemDeactivated() && !dragged) {
+            const float rel = (mouse.x - (o.x + cx)) / spacing;
+            const int k = static_cast<int>(std::lround(rel));
+            if (k == 0) press(kCamShutter);
+            else if (f.camFilter + k >= 0 && f.camFilter + k < kCamFilters) press(kCamFilter0 + f.camFilter + k);
+        }
+        ImGui::PopID();
+        for (int k = -2; k <= 2; ++k) {
+            const int fi = f.camFilter + k;
+            if (fi < 0 || fi >= kCamFilters) continue;
+            const ImVec2 c{o.x + cx + k * spacing, o.y + stripY};
+            if (k == 0) {
+                const bool down = active && !dragged;
+                d->AddCircle(c, 54, kWhite, 40, 6);
+                d->AddCircleFilled(c, down ? 40.0f : 44.0f, kWhite, 40);
+            } else {
+                const float r = k == 1 || k == -1 ? 28.0f : 20.0f;
+                d->AddCircleFilled(c, r, IM_COL32(0, 0, 0, 110), 32);
+                d->AddCircle(c, r, IM_COL32(255, 255, 255, 200), 32, 2.5f);
+                if (r > 25) label(c, std::string(kNames[fi]).substr(0, 3).c_str(), g_text->FontSize * 0.5f, kWhite);
+            }
+        }
+        label({o.x + cx, o.y + stripY - 66}, kNames[std::clamp(f.camFilter, 0, kCamFilters - 1)], g_text->FontSize * 0.6f, kWhite);
     }
     return action;
 }
@@ -208,6 +249,7 @@ Action drawCameraTray(const Frame& f, int* index) {
 
 std::atomic<bool> g_cameraTrayWanted{false};
 void setCameraTrayWanted(bool on) { g_cameraTrayWanted.store(on); }
+void setCameraAspect(float a) { g_cameraAspect.store(a); }
 
 // The tray closed (the tabs alone): their part of kBuildTray, 0..1 from its left. The camera app's is always open.
 float buildTrayLeft() {

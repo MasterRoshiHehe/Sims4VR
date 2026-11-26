@@ -37,21 +37,55 @@ static bool pokeTray(const armik::Hand hands[2], const bool use[2]) {
     return false;
 }
 
+// Portrait / landscape by how the phone is held, like a phone's camera: sideways past ~50 degrees of roll it is
+// landscape, upright again under ~37 (hysteresis); the camera app gets 41 (portrait) / 42 (landscape) on each change.
+// x: the glass' right axis in the world (y up), so |x.y| is how far the phone is rolled.
+static void camAutoTurn(const XrVector3f& x) {
+    static int last = -1;
+    static ULONGLONG at = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (now - at > 2000) last = -1;  // a new photo session
+    at = now;
+    const float roll = std::fabs(x.y);
+    int want = last;
+    if (last != 1 && roll > 0.77f) want = 1;
+    else if (last != 0 && roll < 0.6f) want = 0;
+    else if (last < 0) want = roll > 0.68f ? 1 : 0;
+    if (want != last) {
+        last = want;
+        grab::pushControl(8800041 + want);
+        LOG("Camera app: phone %s (roll %.2f)", want ? "sideways, landscape photos" : "upright, portrait photos", roll);
+    }
+}
+
 // Every frame the tablet is drawn: the tray on its glass (p3's overlay) and its sheet for pokes and the laser.
 static void placeTray(phone3d::Phone& p3, const XrVector3f& centre, const XrVector3f& x, const XrVector3f& y,
                       const XrVector3f& z, float menuW, float menuH, bool camera = false) {
-    // The phone camera (GLA-52/122/123): across the whole glass like a phone's camera app, shutter at the bottom
-    // centre, close / flash / turn at the top; the strip at the right edge is for the build tray only.
+    // The phone camera (user 2026-11-26): see-through controls across the whole glass; the HUD atlas' tray region is
+    // cropped to the glass' own shape (hud::setCameraAspect lays the controls out on it).
     const float trayAspect = hud::kBuildTray.w / hud::kBuildTray.h;
-    const float h = camera ? std::min(0.98f, 0.96f * menuW / menuH / trayAspect) : std::min(0.96f, kTrayHeight * g_config.tabletTrayScale);
-    const float top = camera ? 0.99f - h : std::max(0.02f, std::min(0.98f - h, kTrayMiddle - h / 2)), bottom = top + h;
-    const float w = h * menuH / menuW * trayAspect;
+    const float glassAspect = menuW / menuH;
+    const float h = camera ? 1.0f : std::min(0.96f, kTrayHeight * g_config.tabletTrayScale);
+    const float top = camera ? 0.0f : std::max(0.02f, std::min(0.98f - h, kTrayMiddle - h / 2)), bottom = top + h;
+    const float w = camera ? 1.0f : h * menuH / menuW * trayAspect;
     // Closed, the tabs alone: the overlay and the sheet only that wide, so the UI left of them takes the laser.
     const float left = camera ? 0.0f : hud::buildTrayLeft();
     hud::Rect area = hud::kBuildTray;
+    if (camera) {
+        hud::setCameraAspect(glassAspect);
+        if (glassAspect <= trayAspect) {
+            const float cw = area.h * glassAspect;
+            area.x += (area.w - cw) / 2;
+            area.w = cw;
+        } else {
+            const float ch = area.w / glassAspect;
+            area.y += (area.h - ch) / 2;
+            area.h = ch;
+        }
+    }
     area.x += left * area.w;
     area.w -= left * area.w;
-    const float x1 = camera ? 0.5f + w / 2 : kTrayRight, x0 = x1 - w * (1 - left);
+    const float x1 = camera ? 1.0f : kTrayRight, x0 = x1 - w * (1 - left);
     g_trayAt[0] = x0, g_trayAt[1] = top, g_trayAt[2] = x1, g_trayAt[3] = bottom;
     g_trayArea = area;
     p3.overlay = true;
@@ -60,6 +94,7 @@ static void placeTray(phone3d::Phone& p3, const XrVector3f& centre, const XrVect
     p3.overlayCrop[1] = area.y / hud::kHeight;
     p3.overlayCrop[2] = (area.x + area.w) / hud::kWidth;
     p3.overlayCrop[3] = (area.y + area.h) / hud::kHeight;
+    if (camera) camAutoTurn(x);
     const float lx = ((x0 + x1) / 2 - 0.5f) * menuW, ly = (0.5f - (top + bottom) / 2) * menuH, lz = 0.0005f;
     const XrVector3f at{centre.x + x.x * lx + y.x * ly + z.x * lz, centre.y + x.y * lx + y.y * ly + z.y * lz,
                         centre.z + x.z * lx + y.z * ly + z.z * lz};
@@ -94,27 +129,30 @@ static void cycleSnap(int until = -1) {
 // The phone camera app (camapp.py, controls 8800000 + n): n 0 shutter, 1 shutter with flash, 2 zoom in, 3 zoom out,
 // 4 next filter, 5 previous filter, 6 turn the frame, 7 close, 8..10 photo size small..large. Flash and the size are
 // kept here (lit buttons) and go with the shutter.
-static int g_camSize = 1;
+// The zoom chips x1 x2 x3 are our own (the game's phone cameras have no zoom, ZoomCapability.NO_ZOOM): a narrower lens
+// view (18_stereo.inc lensPose). Flip turns the lens to the other side of the phone (camera::setPhotoSelfie).
+static const float kCamZooms[3] = {1.0f, 2.0f, 3.0f};
 static void cameraTool(int tool) {
     using namespace hud;
     int code = -1;
-    switch (tool) {
-        case kCamShutter: code = trayOn(20 + kCamFlash - kCamShutter) ? 1 : 0; break;
-        case kCamZoomIn: code = 2; break;
-        case kCamZoomOut: code = 3; break;
-        case kCamFilterNext: code = 4; break;
-        case kCamFilterPrev: code = 5; break;
-        case kCamOrient: code = 6; break;
-        case kCamClose: code = 7; break;
-        case kCamFlash: setTrayLit(20 + kCamFlash - kCamShutter, !trayOn(20 + kCamFlash - kCamShutter)); break;
-        case kCamSmall:
-        case kCamMedium:
-        case kCamLarge:
-            g_camSize = tool - kCamSmall;
-            for (int k = 0; k < 3; ++k) setTrayLit(20 + kCamSmall - kCamShutter + k, k == g_camSize);
-            code = 8 + g_camSize;
-            break;
-        default: return;
+    if (tool >= kCamFilter0 && tool < kCamFilter0 + kCamFilters) {
+        g_camFilter = tool - kCamFilter0;
+        code = 20 + g_camFilter;
+    } else {
+        switch (tool) {
+            case kCamShutter: code = 0; break;
+            case kCamClose: code = 7; break;
+            case kCamHome: grab::pushControl(8800007); hud::phoneHome(); break;
+            case kCamLastPhoto: code = 40; break;
+            case kCamZoom1:
+            case kCamZoom2:
+            case kCamZoom3: g_camZoom = tool - kCamZoom1; break;
+            case kCamFlip:
+                camera::setPhotoSelfie(!camera::photoSelfie());
+                g_camZoom = 0;
+                break;
+            default: return;
+        }
     }
     if (code >= 0) grab::pushControl(8800000 + code);
     static int logged = 0;

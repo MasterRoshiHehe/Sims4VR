@@ -785,7 +785,8 @@ static bool renderStereo(ID3D11Texture2D* backbuffer, const D3D11_TEXTURE2D_DESC
               g_phoneBodyPose.position.z + back.z * away * side};
         const XrQuaternionf b = g_phoneBodyPose.orientation;  // x right, y up, z back: the lens looks out the back
         o = selfie ? XrQuaternionf{-b.z, b.w, b.x, -b.y} : b;  // a selfie: turned half a turn about the phone's up
-        const float vertical = kLensFov * 0.5f * 0.0174533f;  // half the lens' vertical angle
+        const float zoom = selfie ? 1.0f : kCamZooms[std::clamp(g_camZoom, 0, 2)];  // the zoom chips (13b_build_tray.inc)
+        const float vertical = std::atan(std::tan(kLensFov * 0.5f * 0.0174533f) / zoom);  // half the lens' vertical angle
         const float horizontal = std::atan(std::tan(vertical) * static_cast<float>(desc.Width) /
                                            static_cast<float>(desc.Height));
         fov = {-horizontal, horizontal, vertical, -vertical};
