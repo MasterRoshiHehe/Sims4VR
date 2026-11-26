@@ -4,11 +4,22 @@ on:
   push:
     branches: [ci-test]
 jobs:
-  hello:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - run: echo hello-from-ci > hello.txt
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq mingw-w64 cmake
+          for t in gcc g++; do sudo update-alternatives --set x86_64-w64-mingw32-$t /usr/bin/x86_64-w64-mingw32-$t-posix || true; done
+      - name: Configure + build DLL
+        run: |
+          cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=$PWD/tools/mingw-toolchain.cmake -DCMAKE_BUILD_TYPE=Release -DS4VR_BUILD_VERSION=ci-${{ github.run_number }} -DS4VR_BUILD_COMMIT=${GITHUB_SHA::7}
+          cmake --build build -j$(nproc) --target sims4vr
       - uses: actions/upload-artifact@v4
         with:
-          name: hello
-          path: hello.txt
+          name: sims4vr-dll
+          path: |
+            build/package/sims4vr/
+            build/sims4vr.map
