@@ -19,7 +19,7 @@ cork board with paper notes pinned on it, over the art's front. Close a hand on 
 carry it, and open the hand at the board to pin it in another column (moved in Linear); open it away from the
 board and the note goes back. Taps, the laser and the details card work as on a screen.
 
-Our own object for it (GLA-125): the "Linear Scrumboard" in Buy mode (Decorations), a cork board on an oak stand
+Our own object for it (GLA-125): the "SCRUM Board" in Buy mode, a cork board on an oak stand
 (Mods\\sims4vr_linearscrumboard.package); the same "Open Linear scrumboard" puts the board on its cork.
 
 Switches: [linear] on and [linear] cork in sims4vr.ini (debug menu: Options > Interface > Pickers on objects).
@@ -30,7 +30,7 @@ SLOT = 2  # claudescreen::kLinear
 GUID = 0x5653434C4C494E45
 CORK_GUID = 0x5653434C4C494E46
 MIN_ART = 0.3  # metres: smaller wall art is no board
-# Our own object (tools/cc/build_corkboard.py, GLA-125): the "Linear Scrumboard", a cork board on an oak stand
+# Our own object (tools/cc/build_corkboard.py, GLA-125): the "SCRUM Board", a cork board on an oak stand
 # (Buy > Decorations, 150). Its definition id and the board's front in the object's space (metres, +z = front):
 # the frame's outer edges, the picture just in front of the frame.
 STAND_ID = 0xC715BC4CD06CAD43
@@ -66,7 +66,7 @@ def _options():
 
 
 def is_stand(obj):
-    """Our Linear Scrumboard object (a cork board on a stand)."""
+    """Our SCRUM Board object (a cork board on a stand)."""
     return getattr(getattr(obj, 'definition', None), 'id', None) == STAND_ID
 
 
