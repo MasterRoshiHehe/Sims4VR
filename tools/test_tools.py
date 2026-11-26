@@ -23,4 +23,9 @@ with tempfile.TemporaryDirectory() as d:
     assert r.returncode == 1 and r.stdout.count('a.cpp:') == 1, r.stdout
     (s / 'a.cpp').write_text("int x = 0x811c9dc5;\n")
     assert run(here / 'check_addrs.py', s).returncode == 0
+    ec = d / 'eyes.log'
+    ec.write_text("[10:00:10.000] [misc] Pass time (last 10 s, scene list stages, CPU on job threads): stage 0: left 100 x 0.01 ms, right 100 x 0.01 ms; mirrors: left 100 x 0.5 ms, right 10 x 0.5 ms\n"
+                  "[10:00:20.000] [misc] Shadow lists (last 10 s): left eye 90 runs 0.03 ms each, right eye 0 runs 0.00 ms each, 0 left out of the right eye\n")
+    r = run(here / 'eye_counts.py', ec)
+    assert 'PASS  stage 0' in r.stdout and 'WARN  mirrors' in r.stdout and 'WARN  shadow lists' in r.stdout, r.stdout
 print('ok')

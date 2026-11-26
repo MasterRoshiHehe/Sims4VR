@@ -140,15 +140,34 @@ bool hookSet(void** vtbl) {
                            reinterpret_cast<void**>(&g_drawInstanced[I]),
                            reinterpret_cast<void**>(&g_drawIndexedIndirect[I]),
                            reinterpret_cast<void**>(&g_drawIndirect[I])};
+    // The deferred context shares some of the immediate context's functions (log 916: slot 21 was the same
+    // function in both, so the second CreateHook failed with MH_ERROR_ALREADY_CREATED and reuse stayed off).
+    // A function already hooked for the first set is not hooked again: its trampoline is reused (the detour
+    // tells the contexts apart by the context pointer).
+    static void* s_target[6] = {};
+    static void* s_trampoline[6] = {};
+    bool shared[6] = {};
     for (int k = 0; k < 6; ++k) {
-        MH_STATUS s = MH_CreateHook(vtbl[kSlots[k]], detours[k], originals[k]);
+        void* target = vtbl[kSlots[k]];
+        if (I == 1 && s_target[k] == target && s_trampoline[k]) {
+            *originals[k] = s_trampoline[k];
+            shared[k] = true;
+            continue;
+        }
+        MH_STATUS s = MH_CreateHook(target, detours[k], originals[k]);
         if (s != MH_OK) {
             LOG("Shadow reuse: draw hook %zu failed (%s); off", kSlots[k], MH_StatusToString(s));
             return false;
         }
+        if (I == 0) {
+            s_target[k] = target;
+            s_trampoline[k] = *originals[k];
+        }
     }
-    for (int k = 0; k < 6; ++k)
+    for (int k = 0; k < 6; ++k) {
+        if (shared[k]) continue;
         if (MH_EnableHook(vtbl[kSlots[k]]) != MH_OK) return false;
+    }
     return true;
 }
 
