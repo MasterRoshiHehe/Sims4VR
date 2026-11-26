@@ -265,6 +265,9 @@ void setPhoneCalendar(const char* data, size_t size);
 // The My Sim app's values (phonesim.py records).
 // The phone's screen is off (it comes out dark until the holding hand's trigger): presses on it do nothing.
 void setPhoneAsleep(bool asleep);
+// The lock screen (any thread): shown over everything but a call until swiped up (setPhoneLocked(false) by the swipe).
+void setPhoneLocked(bool locked);
+bool phoneLocked();
 // The build tray's open category (0 = Objects), -1 closed.
 int trayCategory();
 // A phone call of your Sim (phonecall.py): 0 none, 1 incoming, 2 in call; data: "call" 0x1f mode 0x1f name 0x1f portrait.
