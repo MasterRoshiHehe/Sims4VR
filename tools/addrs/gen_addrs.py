@@ -178,14 +178,16 @@ def sig_from_bytes(md, hexbytes, rva):
 
 
 def find_anchor(md, pe, rows_by_name, grow):
-    """A table function whose first 0x300 bytes read global rva `grow` via rip-relative: (name, dispOff, endOff)."""
-    for r in rows_by_name.values():
-        if r['kind'] != 'function' or not r.get('unique'):
-            continue
-        code = pe.read(r['rva'], 0x300)
-        for b, m, tgt, doff, size, at in masked_insns(md, code, r['rva']):
-            if tgt == grow:
-                return r['name'], at + doff, at + size
+    """A table function whose first 0x300 (else 0x2000) bytes read global rva `grow` via rip-relative: (name, dispOff, endOff)."""
+    # First the cheap window; then, for a global read only deep inside a big function, a wider one.
+    for window in (0x300, 0x2000):
+        for r in rows_by_name.values():
+            if r['kind'] != 'function' or not r.get('unique'):
+                continue
+            code = pe.read(r['rva'], window)
+            for b, m, tgt, doff, size, at in masked_insns(md, code, r['rva']):
+                if tgt == grow:
+                    return r['name'], at + doff, at + size
     return None
 
 
