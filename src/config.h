@@ -167,7 +167,6 @@ struct Config {
 
     // UI panel (stereo): the game's UI on a floating panel, in metres from the recentered head
     bool uiPanel = true;
-    bool flatGameMenu = true;  // [ui] flat_game_menu: the game menu (Escape) shows on the flat screen, as in the main menu
     float uiDistance = 1.0f;
     float uiWidth = 1.3f;
     float uiHeight = -0.15f;  // centre, relative to eye level

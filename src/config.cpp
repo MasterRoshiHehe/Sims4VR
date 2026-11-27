@@ -144,7 +144,6 @@ Config loadConfig(const std::wstring& ini) {
     c.nearFade = readInt(ini, "stereo", "near_fade", 0) != 0;
 
     c.uiPanel = readInt(ini, "ui", "panel", 1) != 0;
-    c.flatGameMenu = readInt(ini, "ui", "flat_game_menu", 1) != 0;
     c.uiDistance = readFloat(ini, "ui", "distance", c.uiDistance);
     c.uiWidth = readFloat(ini, "ui", "width", c.uiWidth);
     c.uiHeight = readFloat(ini, "ui", "height", c.uiHeight);
