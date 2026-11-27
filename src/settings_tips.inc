@@ -367,6 +367,7 @@ const TipText kTips[] = {
     {"ui.width", L"How big the game's menu panel is."},
     {"ui.height", L"Raises or lowers the menu panel relative to your eyes."},
     {"quad.distance", L"How far away the flat game screen is."},
+    {"ui.flat_game_menu", L"The game menu (Escape, save, options) shows on the flat game screen, like the main menu, instead of on the phone or a panel."},
     {"quad.width", L"How big the flat game screen is."},
     {"ui.wrist_width", L"How wide the game's menu is when it sits on your wrist."},
     // Wrist HUD
