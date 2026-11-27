@@ -142,7 +142,7 @@ void writeFile() {
             out += std::string(missing.empty() ? "ON   " : "OFF  ") + f.name + (missing.empty() ? "" : " - missing: " + missing) + "\n";
         }
         const bool exact = gameaddr::recognised();
-        out += std::string(exact ? "ON   " : "OFF  ") + "Fixed-address features (mirror capture, sim cache, texture probe, mirror camera counter)" +
+        out += std::string(exact ? "ON   " : "OFF  ") + "Texture probe (log only; needs the exact build. Mirror capture, sim cache and the mirror clip run from table rows)" +
                (exact ? "" : " - need the exact build") + "\n";
         out += "Pattern/RTTI features (camera copy hook, audio listener, camera finder, virtual gamepad): see 'rtti' and 'hooks'.\n";
     }

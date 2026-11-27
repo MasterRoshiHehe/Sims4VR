@@ -1,3 +1,1 @@
-# file:substring # reason. Entries here are known gaps, not approvals; remove when ported to the table.
-camera.cpp:0x280cb7c # mirror clip flag, 1.128 raw global (STATUS.md open issue)
-camera.cpp:0x280cb9c # mirror counter, 1.128 raw global
+# file:substring # reason. Empty: every raw address is now a table row.
