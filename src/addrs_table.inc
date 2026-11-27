@@ -118,4 +118,9 @@ constexpr Row kRows[] = {
     {"OptGetFloat", 'f', 0x117e520, "48 89 5c 24 08 57 48 83 ec 30 0f 29 74 24 20 48 8b da 0f 28 f2 48 8b f9", "", 0, 0},
     {"OptGetUInt", 'f', 0x117e660, "48 89 5c 24 08 48 89 74 24 10 57 48 83 ec 20 41 8b d8 48 8b fa 48 8b f1 e8 ?? ?? ?? ?? 48 85 c0 74 37 4c 8d 4c 24 48 4c 8b c7 48 8b d6 48 8b c8 e8 ?? ?? ?? ?? 84 c0 74 20 48 8b 4c 24 48 33 d2 44 8d 42 0a e8 ?? ?? ?? ?? 48 8b 5c 24 30 48 8b 74 24 38 48 83 c4 20 5f c3 48 8b 74 24 38 8b c3", "", 0, 0},
     {"OptGetVec4", 'f', 0x117e770, "48 89 5c 24 08 48 89 74 24 10 57 48 83 ec 50 49 8b d8 48 8b fa 48 8b f1", "", 0, 0},
+    {"WaterClipUser", 'f', 0x11ce100, "48 89 5c 24 08 57 48 83 ec 50 48 8b da 48 8b f9 e8 ?? ?? ?? ?? 80 3d ?? ?? ?? ?? 00", "", 0, 0},
+    {"MirrorPassMain", 'f', 0x11c5743, "44 0f 29 bc 24 70 1d 00 00 4c 89 45 08 45 0f 57 ff 0f 1f 40 00 0f 1f 84 00 00 00 00 00", "", 0, 0},
+    {"MirrorClipFlag", 'g', 0x280cb7c, "", "MirrorPassMain", 3147, 3151},
+    {"WaterClipFlag", 'g', 0x280cb71, "", "WaterClipUser", 23, 28},
+    {"MirrorCounter", 'g', 0x280cb9c, "", "ListStage0", 209, 213},
 };

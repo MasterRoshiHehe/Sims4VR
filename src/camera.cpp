@@ -1838,7 +1838,9 @@ void applyEye(uint8_t* dst) {
         static bool tried = false;
         if (!tried) {
             tried = true;
-            if (gameaddr::recognised() && !gameaddr::dx9()) flag = reinterpret_cast<uint8_t*>(GetModuleHandleW(nullptr)) + 0x280cb7c;
+            // By table name (anchored in the game's code), so it follows a game patch; null when not found.
+            if (!gameaddr::dx9()) flag = addrs::global("MirrorClipFlag");
+            if (!flag) LOG("Mirror clip: the mirror clip byte was not found in this game build; left alone");
         }
         if (flag) {
             if (original < 0) {
@@ -1857,7 +1859,12 @@ void applyEye(uint8_t* dst) {
         // lopsided (no switch; the mirrors' mirror_clip stays as it was). Untested guess: not proven to be the cause.
         static uint8_t* waterFlag = nullptr;
         static int waterOriginal = -1;
-        if (flag) waterFlag = flag - 0xb;  // 0x280cb71
+        static bool waterTried = false;
+        if (!waterTried) {
+            waterTried = true;
+            if (!gameaddr::dx9()) waterFlag = addrs::global("WaterClipFlag");
+            if (!waterFlag) LOG("Water clip: the water clip byte was not found in this game build; left alone");
+        }
         if (waterFlag) {
             if (waterOriginal < 0) {
                 waterOriginal = *waterFlag;
@@ -3414,8 +3421,8 @@ void logMirrorCamera(const uint8_t* cam, const uint8_t* eye) {
     if (logs >= 24 || calls[pass]++ % 400 != 0) return;
     ++logs;
     auto f = [](const uint8_t* c, size_t at) { return *reinterpret_cast<const float*>(c + at); };
-    static const uint8_t* base = reinterpret_cast<const uint8_t*>(GetModuleHandleW(nullptr));
-    const int counter = gameaddr::recognised() && !gameaddr::dx9() ? *reinterpret_cast<const int*>(base + 0x280cb9c) : -1;
+    static const int* counterAt = gameaddr::dx9() ? nullptr : reinterpret_cast<const int*>(addrs::global("MirrorCounter"));
+    const int counter = counterAt ? *counterAt : -1;
     LOG("Mirror camera (%s eye pass, counter %d): centre %.3f %.3f size %.3f %.3f crop %.2f %.2f %.2f %.2f at %.2f %.2f %.2f;"
         " eye camera centre %.3f %.3f size %.3f %.3f crop %.2f %.2f %.2f %.2f at %.2f %.2f %.2f; eyes at %.2f %.2f %.2f / %.2f %.2f %.2f",
         pass ? "right" : "left", counter, f(cam, 0x1f0), f(cam, 0x1f4), f(cam, 0x14), f(cam, 0x18), f(cam, 0x270),
