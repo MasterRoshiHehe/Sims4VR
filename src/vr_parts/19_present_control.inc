@@ -497,7 +497,19 @@ void setMode(Mode mode) {
 }
 
 // Create a Sim draws with your eyes whatever the mode is (the menus run in the flat screen mode): camera::casActive.
-Mode mode() { return camera::casActive() ? Mode::Stereo : static_cast<Mode>(g_mode.load()); }
+// The game menu (Escape: save, load, options, quit) is the flat screen too, the same plain 2D screen as the main menu
+// (user 2026-11-27): the mode shows Quad while it is open, and the view is recentered on the way in and out.
+Mode mode() {
+    if (camera::casActive()) return Mode::Stereo;
+    Mode m = static_cast<Mode>(g_mode.load());
+    static std::atomic<bool> flatMenu{false};
+    const bool want = m == Mode::Stereo && g_config.flatGameMenu && g_gameMenuReported && g_gameMenuOpen.load();
+    if (flatMenu.exchange(want) != want) {
+        g_recenterRequested = true;
+        LOG("Game menu: %s", want ? "flat screen" : "back to the 3D view");
+    }
+    return want ? Mode::Quad : m;
+}
 
 std::string status() {
     std::lock_guard<std::mutex> lock(g_statusMutex);

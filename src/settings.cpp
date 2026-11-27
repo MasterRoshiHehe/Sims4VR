@@ -1236,6 +1236,7 @@ std::vector<Row> makeRows() {
         number(L"Menus panels", L"Menu panel distance", "ui", "distance", &Config::uiDistance, 0.5f, 3, 0.1f, 1, L"%.1f m"),
         number(L"Menus panels", L"Menu panel size", "ui", "width", &Config::uiWidth, 0.5f, 3, 0.1f, 1, L"%.1f m"),
         number(L"Menus panels", L"Menu panel height", "ui", "height", &Config::uiHeight, -1, 1, 0.05f, 1, L"%+.2f m"),
+        toggle(L"Menus panels", L"Game menu on the flat screen", "ui", "flat_game_menu", &Config::flatGameMenu),
         number(L"Menus panels", L"Flat screen distance", "quad", "distance", &Config::quadDistance, 1, 5, 0.1f, 1, L"%.1f m"),
         number(L"Menus panels", L"Flat screen size", "quad", "width", &Config::quadWidth, 1, 5, 0.1f, 1, L"%.1f m"),
 
