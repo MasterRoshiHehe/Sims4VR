@@ -109,15 +109,22 @@ def masked_insns(md, code, rva):
     for i in md.disasm(code, rva):
         m = [False] * i.size
         tgt = None
+        disp_at = 0
         for op in i.operands:
-            if op.type == X86_OP_MEM and op.mem.base == X86_REG_RIP and i.disp_size == 4:
+            if op.type == X86_OP_MEM and op.mem.base == X86_REG_RIP:
+                # Some capstone builds report disp_size 0 for SSE forms with 66/REX prefixes (SkinVerts,
+                # 66 44 0f 6f 0d disp32): then find the 4 displacement bytes by value.
+                off = i.disp_offset if i.disp_size == 4 else bytes(i.bytes).rfind(struct.pack('<i', op.mem.disp), 2)
+                if off < 0 or off + 4 > i.size:
+                    continue
                 for k in range(4):
-                    m[i.disp_offset + k] = True
+                    m[off + k] = True
                 tgt = i.address + i.size + op.mem.disp
+                disp_at = off
         if (i.group(CS_GRP_CALL) or i.group(CS_GRP_JUMP)) and i.imm_size == 4:
             for k in range(4):
                 m[i.imm_offset + k] = True
-        out.append((bytes(i.bytes), m, tgt, i.disp_offset if tgt is not None else 0, i.size, i.address - rva))
+        out.append((bytes(i.bytes), m, tgt, disp_at if tgt is not None else 0, i.size, i.address - rva))
     return out
 
 

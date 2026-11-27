@@ -114,8 +114,8 @@ OptGetBool	function	0x117e430	mirrorcap	48 89 5c 24 08 48 89 74 24 10 57 48 83 e
 OptGetFloat	function	0x117e520	mirrorcap	48 89 5c 24 08 57 48 83 ec 30 0f 29 74 24 20 48	48 89 5c 24 08 57 48 83 ec 30 0f 29 74 24 20 48 8b da 0f 28 f2 48 8b f9	Option getter float(options, name, fallback).
 OptGetUInt	function	0x117e660	simcache	48 89 5c 24 08 48 89 74 24 10 57 48 83 ec 20 41	48 89 5c 24 08 48 89 74 24 10 57 48 83 ec 20 41 8b d8 48 8b fa 48 8b f1 e8 ?? ?? ?? ?? 48 85 c0 74 37 4c 8d 4c 24 48 4c 8b c7 48 8b d6 48 8b c8 e8 ?? ?? ?? ?? 84 c0 74 20 48 8b 4c 24 48 33 d2 44 8d 42 0a e8 ?? ?? ?? ?? 48 8b 5c 24 30 48 8b 74 24 38 48 83 c4 20 5f c3 48 8b 74 24 38 8b c3	Option getter uint(options, name, fallback).
 OptGetVec4	function	0x117e770	simcache	48 89 5c 24 08 48 89 74 24 10 57 48 83 ec 50 49	48 89 5c 24 08 48 89 74 24 10 57 48 83 ec 50 49 8b d8 48 8b fa 48 8b f1	Option getter vec4(options, name, fallback).
-MirrorClipUser	function	0x11c74c0	camera			Reads the mirror glass-clip byte and the mirror counter (small; anchor for those globals)
 WaterClipUser	function	0x11ce100	camera			Reads the water-plane clip byte (CameraObliqueClip caller; anchor for the water flag)
+MirrorPassMain	function	0x11c5743	camera			Mirror pass body (pdata function, 0x1ae7 bytes); reads the mirror clip byte. Anchor for MirrorClipFlag
 MirrorClipFlag	global	0x280cb7c	camera			Byte: the mirror pass clips its camera at the glass (game 1.128 0x280cb7c)
 WaterClipFlag	global	0x280cb71	camera			Byte: the water reflection clips its camera at the water plane
 MirrorCounter	global	0x280cb9c	camera			Int: mirror camera counter (log only)
